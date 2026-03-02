@@ -186,6 +186,9 @@ This document specifies the requirements for the Bajaj Document Processing Syste
 5. WHEN the application loads on mobile devices, THE System SHALL render a responsive layout optimized for the screen size
 6. WHEN displaying forms, THE System SHALL use consistent input styling across all screens
 7. WHEN errors occur, THE System SHALL display user-friendly error messages in Bajaj brand styling
+8. WHEN designing any screen, THE System SHALL optimize layout to minimize vertical scrolling and fit primary content within the viewport
+9. WHEN displaying data tables or lists, THE System SHALL use pagination or compact layouts to reduce scroll requirements
+10. WHEN showing multi-step forms, THE System SHALL display one step at a time to keep content within viewport bounds
 
 ### Requirement 12: Data Persistence and Integrity
 
@@ -256,3 +259,28 @@ This document specifies the requirements for the Bajaj Document Processing Syste
 5. WHEN audit events occur, THE System SHALL log user actions with timestamps and IP addresses
 6. WHEN personal data is accessed, THE System SHALL log the access for compliance auditing
 7. WHEN API keys or secrets are stored, THE System SHALL use secure key management services
+
+### Requirement 17: Enhanced Upload Page UI and Empty State
+
+**User Story:** As an Agency user, I want an intuitive and visually appealing upload interface with clear empty states, so that I can easily submit my documents with a clear understanding of requirements and progress.
+
+#### Acceptance Criteria
+
+1. WHEN an Agency user accesses the "All Requests" page with no submissions, THE System SHALL display an empty state with a document icon, "No requests found" heading, and "Create your first request to get started" subtext
+2. WHEN the empty state is displayed, THE System SHALL show a centered "Create New Request" button with a plus icon, blue background (#0066FF or similar), white text, and rounded corners
+3. WHEN a user clicks the centered "Create New Request" button, THE System SHALL navigate to the upload page
+4. WHEN the "All Requests" page has existing submissions, THE System SHALL display the list of requests without the empty state
+5. WHEN the upload page loads, THE System SHALL display a step progress indicator showing "Step X of 4" with percentage completion and a blue progress bar
+6. WHEN the upload page displays step indicators, THE System SHALL show circular icons for each step (Purchase Order, Invoice, Photos & Cost Summary, Additional Documents) with blue background for current/completed steps and gray for incomplete steps
+7. WHEN the upload page loads, THE System SHALL display clear document type cards with blue icon backgrounds and blue accent colors for headings
+8. WHEN a user views a document upload card, THE System SHALL show the document type name in blue text, accepted file formats, and maximum file size
+9. WHEN a user has not uploaded a document, THE System SHALL display a dashed border upload area with blue cloud upload icon and "Click to upload" text in blue
+10. WHEN a user successfully uploads a document, THE System SHALL display a green checkmark icon and the filename in a green-tinted success card
+11. WHEN a user hovers over or taps an upload card, THE System SHALL provide visual feedback (highlight, shadow, or border change)
+12. WHEN all required documents are uploaded, THE System SHALL enable the "Submit for Review" button with green background color
+13. WHEN the "Submit for Review" button is disabled, THE System SHALL display it in a muted gray state
+14. WHEN the upload page is displayed on mobile devices, THE System SHALL stack document cards vertically with appropriate spacing
+15. WHEN the upload page is displayed on desktop, THE System SHALL arrange document cards in a responsive grid layout (2-3 columns)
+16. WHEN a user uploads a file that exceeds size limits or has an invalid format, THE System SHALL display an inline error message on the specific card
+17. WHEN the "All Requests" page header shows "Create New Request" button in the top right, THE System SHALL either remove it or ensure it navigates to the upload page (consistent with centered button)
+18. WHEN the upload page displays the header, THE System SHALL use "Create New Request" as the title in dark text with a subtitle explaining the process

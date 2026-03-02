@@ -4,6 +4,7 @@ using Microsoft.IdentityModel.Tokens;
 using BajajDocumentProcessing.Infrastructure;
 using BajajDocumentProcessing.Infrastructure.Persistence;
 using BajajDocumentProcessing.API.Middleware;
+using BajajDocumentProcessing.API.Filters;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -36,6 +37,9 @@ builder.Services.AddSwaggerGen(options =>
             Array.Empty<string>()
         }
     });
+    
+    // Enable file upload support in Swagger
+    options.OperationFilter<FileUploadOperationFilter>();
 });
 
 // Add Infrastructure layer
