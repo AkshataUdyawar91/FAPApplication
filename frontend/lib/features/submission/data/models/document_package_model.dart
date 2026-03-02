@@ -1,0 +1,34 @@
+import 'package:json_annotation/json_annotation.dart';
+import '../../domain/entities/document_package.dart';
+import 'document_model.dart';
+
+part 'document_package_model.g.dart';
+
+/// Document package model with JSON serialization
+@JsonSerializable()
+class DocumentPackageModel extends DocumentPackage {
+  const DocumentPackageModel({
+    required super.id,
+    required super.userId,
+    required super.state,
+    required super.createdAt,
+    super.updatedAt,
+    super.documents,
+  });
+
+  factory DocumentPackageModel.fromJson(Map<String, dynamic> json) =>
+      _$DocumentPackageModelFromJson(json);
+
+  Map<String, dynamic> toJson() => _$DocumentPackageModelToJson(this);
+
+  factory DocumentPackageModel.fromEntity(DocumentPackage package) {
+    return DocumentPackageModel(
+      id: package.id,
+      userId: package.userId,
+      state: package.state,
+      createdAt: package.createdAt,
+      updatedAt: package.updatedAt,
+      documents: package.documents,
+    );
+  }
+}
