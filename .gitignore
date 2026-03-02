@@ -1,0 +1,43 @@
+# Backend (.NET)
+backend/**/bin/
+backend/**/obj/
+backend/**/*.user
+backend/**/*.suo
+backend/**/*.cache
+backend/.vs/
+backend/**/.vscode/
+
+# Frontend (Flutter)
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.packages
+frontend/.pub-cache/
+frontend/.pub/
+frontend/build/
+frontend/**/*.g.dart
+frontend/**/*.freezed.dart
+frontend/**/*.mocks.dart
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets (only exclude production)
+**/appsettings.Production.json
+**/appsettings.Development.json
+**/*.env
+**/*.env.local
+
+# Logs
+*.log
+logs/
+
+# Local storage
+C:/BajajDocuments/
