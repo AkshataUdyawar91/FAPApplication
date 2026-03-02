@@ -57,11 +57,47 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException("File validation failed");
         }
 
+        // Create or get package
+        Guid actualPackageId;
+        if (packageId.HasValue && packageId.Value != Guid.Empty)
+        {
+            // Use existing package
+            actualPackageId = packageId.Value;
+            
+            // Verify package exists and belongs to user
+            var existingPackage = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == packageId.Value && p.SubmittedByUserId == userId);
+            
+            if (existingPackage == null)
+            {
+                throw new InvalidOperationException("Package not found or access denied");
+            }
+        }
+        else
+        {
+            // Create new package for first document (PO)
+            var newPackage = new DocumentPackage
+            {
+                Id = Guid.NewGuid(),
+                SubmittedByUserId = userId,
+                State = PackageState.Uploaded,
+                CreatedAt = DateTime.UtcNow,
+                CreatedBy = userId.ToString()
+            };
+            
+            await _context.DocumentPackages.AddAsync(newPackage);
+            await _context.SaveChangesAsync();
+            
+            actualPackageId = newPackage.Id;
+            
+            _logger.LogInformation("Created new package: {PackageId} for user {UserId}", actualPackageId, userId);
+        }
+
         // Check photo limit (20 photos max per package)
-        if (documentType == DocumentType.Photo && packageId.HasValue && packageId.Value != Guid.Empty)
+        if (documentType == DocumentType.Photo)
         {
             var photoCount = await _context.Documents
-                .CountAsync(d => d.PackageId == packageId.Value && d.Type == DocumentType.Photo);
+                .CountAsync(d => d.PackageId == actualPackageId && d.Type == DocumentType.Photo);
             
             if (photoCount >= 20)
             {
@@ -80,7 +116,7 @@ public class DocumentService : IDocumentService
         var document = new Document
         {
             Id = Guid.NewGuid(),
-            PackageId = packageId ?? Guid.Empty, // Will be updated when package is created
+            PackageId = actualPackageId,
             Type = documentType,
             FileName = file.FileName,
             BlobUrl = blobUrl,
@@ -95,12 +131,13 @@ public class DocumentService : IDocumentService
         await _context.SaveChangesAsync();
 
         _logger.LogInformation(
-            "Document uploaded: {DocumentId}, Type: {DocumentType}, Size: {Size} bytes",
-            document.Id, documentType, file.Length);
+            "Document uploaded: {DocumentId}, Type: {DocumentType}, Size: {Size} bytes, Package: {PackageId}",
+            document.Id, documentType, file.Length, actualPackageId);
 
         return new UploadDocumentResponse
         {
             DocumentId = document.Id,
+            PackageId = actualPackageId,
             FileName = document.FileName,
             FileSizeBytes = document.FileSizeBytes,
             DocumentType = document.Type,

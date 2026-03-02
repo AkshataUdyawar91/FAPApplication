@@ -33,17 +33,17 @@ public class DocumentAgent : IDocumentAgent
         _logger = logger;
         _httpClient = httpClient;
 
-        var endpoint = configuration["AzureServices:OpenAI:Endpoint"] 
+        var endpoint = configuration["AzureOpenAI:Endpoint"] 
             ?? throw new InvalidOperationException("Azure OpenAI endpoint not configured");
-        var apiKey = configuration["AzureServices:OpenAI:ApiKey"] 
+        var apiKey = configuration["AzureOpenAI:ApiKey"] 
             ?? throw new InvalidOperationException("Azure OpenAI API key not configured");
-        _deploymentName = configuration["AzureServices:OpenAI:DeploymentName"] ?? "gpt-4";
+        _deploymentName = configuration["AzureOpenAI:DeploymentName"] ?? "gpt-4";
 
         _openAIClient = new OpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey));
 
-        var docIntelEndpoint = configuration["AzureServices:DocumentIntelligence:Endpoint"] 
+        var docIntelEndpoint = configuration["AzureDocumentIntelligence:Endpoint"] 
             ?? throw new InvalidOperationException("Azure Document Intelligence endpoint not configured");
-        var docIntelApiKey = configuration["AzureServices:DocumentIntelligence:ApiKey"] 
+        var docIntelApiKey = configuration["AzureDocumentIntelligence:ApiKey"] 
             ?? throw new InvalidOperationException("Azure Document Intelligence API key not configured");
 
         _documentAnalysisClient = new DocumentAnalysisClient(

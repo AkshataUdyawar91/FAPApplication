@@ -3,6 +3,7 @@ using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace BajajDocumentProcessing.API.Controllers;
 
@@ -162,8 +163,13 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
-            var userRole = User.FindFirst("role")?.Value;
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+            {
+                return Unauthorized(new { message = "Invalid user" });
+            }
+            
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
             var query = _context.DocumentPackages
                 .Include(p => p.Documents)
@@ -196,13 +202,71 @@ public class SubmissionsController : ControllerBase
                 total,
                 page,
                 pageSize,
-                items = packages.Select(p => new
+                items = packages.Select(p =>
                 {
-                    id = p.Id,
-                    state = p.State.ToString(),
-                    createdAt = p.CreatedAt,
-                    updatedAt = p.UpdatedAt,
-                    documentCount = p.Documents.Count
+                    // Extract invoice data from documents
+                    var invoiceDoc = p.Documents.FirstOrDefault(d => d.Type == DocumentType.Invoice);
+                    string? invoiceNumber = null;
+                    decimal? invoiceAmount = null;
+
+                    if (invoiceDoc != null && !string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
+                    {
+                        try
+                        {
+                            var invoiceData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(invoiceDoc.ExtractedDataJson);
+                            
+                            // Try to get invoice number
+                            if (invoiceData.TryGetProperty("InvoiceNumber", out var invNum))
+                            {
+                                invoiceNumber = invNum.GetString();
+                            }
+                            else if (invoiceData.TryGetProperty("invoiceNumber", out var invNum2))
+                            {
+                                invoiceNumber = invNum2.GetString();
+                            }
+
+                            // Try to get invoice amount
+                            if (invoiceData.TryGetProperty("TotalAmount", out var amt))
+                            {
+                                if (amt.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                {
+                                    invoiceAmount = amt.GetDecimal();
+                                }
+                                else if (amt.ValueKind == System.Text.Json.JsonValueKind.String)
+                                {
+                                    decimal.TryParse(amt.GetString(), out var parsedAmount);
+                                    invoiceAmount = parsedAmount;
+                                }
+                            }
+                            else if (invoiceData.TryGetProperty("totalAmount", out var amt2))
+                            {
+                                if (amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                {
+                                    invoiceAmount = amt2.GetDecimal();
+                                }
+                                else if (amt2.ValueKind == System.Text.Json.JsonValueKind.String)
+                                {
+                                    decimal.TryParse(amt2.GetString(), out var parsedAmount);
+                                    invoiceAmount = parsedAmount;
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            // If parsing fails, leave as null
+                        }
+                    }
+
+                    return new
+                    {
+                        id = p.Id,
+                        state = p.State.ToString(),
+                        createdAt = p.CreatedAt,
+                        updatedAt = p.UpdatedAt,
+                        documentCount = p.Documents.Count,
+                        invoiceNumber = invoiceNumber,
+                        invoiceAmount = invoiceAmount
+                    };
                 })
             });
         }
@@ -328,6 +392,44 @@ public class SubmissionsController : ControllerBase
         {
             _logger.LogError(ex, "Error requesting reupload for submission {Id}", id);
             return StatusCode(500, new { error = "An error occurred while requesting reupload" });
+        }
+    }
+
+    /// <summary>
+    /// Manually move submission to PendingApproval state (for testing without Azure services)
+    /// </summary>
+    [HttpPatch("{id}/move-to-pending")]
+    [Authorize]
+    public async Task<IActionResult> MoveToPendingApproval(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            // Only allow moving from Uploaded state
+            if (package.State != PackageState.Uploaded)
+            {
+                return BadRequest(new { error = $"Cannot move submission from {package.State} to PendingApproval" });
+            }
+
+            package.State = PackageState.PendingApproval;
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Submission {Id} manually moved to PendingApproval", id);
+
+            return Ok(new { id = package.Id, state = package.State.ToString() });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error moving submission {Id} to pending approval", id);
+            return StatusCode(500, new { error = "An error occurred while updating submission state" });
         }
     }
 }

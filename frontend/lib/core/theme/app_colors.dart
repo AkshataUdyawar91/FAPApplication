@@ -1,34 +1,54 @@
 import 'package:flutter/material.dart';
 
-/// Bajaj brand colors
+/// App color palette matching Figma design
 class AppColors {
-  AppColors._();
-
-  // Primary Bajaj colors
-  static const Color white = Color(0xFFFFFFFF);
-  static const Color lightBlue = Color(0x00A3E0FF);
-  static const Color darkBlue = Color(0xFF003087);
-
-  // Semantic colors
-  static const Color success = Color(0xFF4CAF50);
-  static const Color error = Color(0xFFF44336);
-  static const Color warning = Color(0xFFFF9800);
-  static const Color info = Color(0xFF2196F3);
-
-  // Neutral colors
-  static const Color grey50 = Color(0xFFFAFAFA);
-  static const Color grey100 = Color(0xFFF5F5F5);
-  static const Color grey200 = Color(0xFFEEEEEE);
-  static const Color grey300 = Color(0xFFE0E0E0);
-  static const Color grey400 = Color(0xFFBDBDBD);
-  static const Color grey500 = Color(0xFF9E9E9E);
-  static const Color grey600 = Color(0xFF757575);
-  static const Color grey700 = Color(0xFF616161);
-  static const Color grey800 = Color(0xFF424242);
-  static const Color grey900 = Color(0xFF212121);
-
-  // Text colors
-  static const Color textPrimary = grey900;
-  static const Color textSecondary = grey600;
-  static const Color textDisabled = grey400;
+  // Primary Colors
+  static const Color primary = Color(0xFF0066FF); // Blue 600
+  static const Color primaryDark = Color(0xFF0052CC);
+  static const Color primaryLight = Color(0xFF3385FF);
+  
+  // Background Colors
+  static const Color background = Color(0xFFF9FAFB); // Gray 50
+  static const Color cardBackground = Color(0xFFFFFFFF);
+  static const Color inputBackground = Color(0xFFF3F4F6); // Gray 100
+  
+  // Text Colors
+  static const Color textPrimary = Color(0xFF111827); // Gray 900
+  static const Color textSecondary = Color(0xFF6B7280); // Gray 500
+  static const Color textTertiary = Color(0xFF9CA3AF); // Gray 400
+  
+  // Border Colors
+  static const Color border = Color(0xFFE5E7EB); // Gray 200
+  static const Color borderLight = Color(0xFFF3F4F6); // Gray 100
+  
+  // Status Colors - Pending
+  static const Color pendingBackground = Color(0xFFFEF3C7); // Yellow 100
+  static const Color pendingText = Color(0xFF92400E); // Yellow 900
+  static const Color pendingBorder = Color(0xFFFDE68A); // Yellow 200
+  
+  // Status Colors - Under Review
+  static const Color reviewBackground = Color(0xFFDBEAFE); // Blue 100
+  static const Color reviewText = Color(0xFF1E40AF); // Blue 800
+  static const Color reviewBorder = Color(0xFFBFDBFE); // Blue 200
+  
+  // Status Colors - Approved
+  static const Color approvedBackground = Color(0xFFD1FAE5); // Green 100
+  static const Color approvedText = Color(0xFF065F46); // Green 800
+  static const Color approvedBorder = Color(0xFFA7F3D0); // Green 200
+  
+  // Status Colors - Rejected
+  static const Color rejectedBackground = Color(0xFFFEE2E2); // Red 100
+  static const Color rejectedText = Color(0xFF991B1B); // Red 800
+  static const Color rejectedBorder = Color(0xFFFECACA); // Red 200
+  
+  // Gradient Colors
+  static const List<Color> gradientBlue = [
+    Color(0xFFEFF6FF), // Blue 50
+    Color(0xFFFFFFFF), // White
+    Color(0xFFEFF6FF), // Blue 50
+  ];
+  
+  // Shadow Colors
+  static const Color shadow = Color(0x1A000000); // 10% black
+  static const Color shadowLight = Color(0x0D000000); // 5% black
 }
