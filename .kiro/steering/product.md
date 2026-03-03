@@ -14,7 +14,7 @@ Streamline document submission, validation, and approval processes for Bajaj Aut
 
 ## Key Capabilities
 
-- Automated document classification and data extraction using Azure Document Intelligence and GPT-4 Vision
+- Automated document classification and data extraction using Azure OpenAI GPT-4 Vision
 - Cross-document validation with SAP integration
 - Weighted confidence scoring (PO 30%, Invoice 30%, Cost Summary 20%, Activity 10%, Photos 10%)
 - AI-generated approval recommendations with evidence

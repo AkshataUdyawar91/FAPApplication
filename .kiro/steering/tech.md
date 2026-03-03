@@ -9,8 +9,7 @@
 
 ### AI & Azure Services
 - **Semantic Kernel**: AI orchestration framework
-- **Azure OpenAI GPT-4**: Natural language processing and vision
-- **Azure Document Intelligence**: Document extraction (prebuilt-invoice, prebuilt-document models)
+- **Azure OpenAI GPT-4**: Natural language processing, vision, and document extraction
 - **Azure AI Search**: Vector database for semantic search
 - **Azure Blob Storage**: Document storage
 - **Azure Communication Services**: Email delivery
@@ -25,7 +24,6 @@
 - Microsoft.AspNetCore.Authentication.JwtBearer (8.0.0)
 - Swashbuckle.AspNetCore (6.5.0)
 - Azure.AI.OpenAI
-- Azure.AI.FormRecognizer.DocumentAnalysis
 - MetadataExtractor (for EXIF data)
 
 ## Frontend (Flutter)

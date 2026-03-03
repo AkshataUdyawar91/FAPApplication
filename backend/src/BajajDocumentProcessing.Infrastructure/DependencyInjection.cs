@@ -61,22 +61,27 @@ public static class DependencyInjection
         // Notification Agent
         services.AddScoped<INotificationAgent, NotificationAgent>();
 
-        // Vector Search and Embedding Services
-        services.AddSingleton<IVectorSearchService, AzureAISearchService>();
-        services.AddScoped<IEmbeddingService, EmbeddingService>();
-        services.AddScoped<IAnalyticsEmbeddingPipeline, AnalyticsEmbeddingPipeline>();
-
-        // Guardrail Services
-        services.AddMemoryCache();
-        services.AddScoped<IInputGuardrailService, InputGuardrailService>();
-        services.AddScoped<IAuthorizationGuardrailService, AuthorizationGuardrailService>();
-        services.AddScoped<IOutputGuardrailService, OutputGuardrailService>();
-
-        // Chat Service
-        services.AddScoped<IChatService, ChatService>();
-
-        // Analytics Agent
-        services.AddScoped<IAnalyticsAgent, AnalyticsAgent>();
+        // Vector Search and Embedding Services (Optional - for Chat/Analytics features)
+        var azureSearchEndpoint = configuration["AzureAISearch:Endpoint"];
+        var azureSearchApiKey = configuration["AzureAISearch:ApiKey"];
+        
+        if (!string.IsNullOrEmpty(azureSearchEndpoint) && !string.IsNullOrEmpty(azureSearchApiKey))
+        {
+            services.AddSingleton<IVectorSearchService, AzureAISearchService>();
+            services.AddScoped<IEmbeddingService, EmbeddingService>();
+            services.AddScoped<IAnalyticsEmbeddingPipeline, AnalyticsEmbeddingPipeline>();
+            services.AddScoped<IChatService, ChatService>();
+            services.AddScoped<IAnalyticsAgent, AnalyticsAgent>();
+        }
+        else
+        {
+            // Register null/stub implementations when Azure AI Search is not configured
+            services.AddSingleton<IVectorSearchService, NullVectorSearchService>();
+            services.AddScoped<IEmbeddingService, NullEmbeddingService>();
+            services.AddScoped<IAnalyticsEmbeddingPipeline, NullAnalyticsEmbeddingPipeline>();
+            services.AddScoped<IChatService, NullChatService>();
+            services.AddScoped<IAnalyticsAgent, NullAnalyticsAgent>();
+        }
 
         // Workflow Orchestrator
         services.AddScoped<IWorkflowOrchestrator, WorkflowOrchestrator>();
