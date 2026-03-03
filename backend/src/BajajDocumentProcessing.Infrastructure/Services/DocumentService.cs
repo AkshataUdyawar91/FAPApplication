@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.Documents;
@@ -17,6 +18,8 @@ public class DocumentService : IDocumentService
     private readonly ApplicationDbContext _context;
     private readonly IFileStorageService _fileStorageService;
     private readonly IMalwareScanService _malwareScanService;
+    private readonly IDocumentAgent _documentAgent;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly ILogger<DocumentService> _logger;
 
     // File size limits in bytes
@@ -37,11 +40,15 @@ public class DocumentService : IDocumentService
         ApplicationDbContext context,
         IFileStorageService fileStorageService,
         IMalwareScanService malwareScanService,
+        IDocumentAgent documentAgent,
+        IServiceScopeFactory serviceScopeFactory,
         ILogger<DocumentService> logger)
     {
         _context = context;
         _fileStorageService = fileStorageService;
         _malwareScanService = malwareScanService;
+        _documentAgent = documentAgent;
+        _serviceScopeFactory = serviceScopeFactory;
         _logger = logger;
     }
 
@@ -134,6 +141,19 @@ public class DocumentService : IDocumentService
             "Document uploaded: {DocumentId}, Type: {DocumentType}, Size: {Size} bytes, Package: {PackageId}",
             document.Id, documentType, file.Length, actualPackageId);
 
+        // Trigger extraction asynchronously (fire and forget)
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ExtractDocumentDataAsync(document.Id, document.BlobUrl, documentType);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error extracting document {DocumentId}", document.Id);
+            }
+        });
+
         return new UploadDocumentResponse
         {
             DocumentId = document.Id,
@@ -144,6 +164,85 @@ public class DocumentService : IDocumentService
             BlobUrl = document.BlobUrl,
             UploadedAt = document.CreatedAt
         };
+    }
+
+    private async Task ExtractDocumentDataAsync(Guid documentId, string blobUrl, DocumentType documentType)
+    {
+        // Create a new scope for the background task
+        using var scope = _serviceScopeFactory.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        
+        try
+        {
+            _logger.LogInformation("Starting extraction for document {DocumentId}, Type: {Type}", documentId, documentType);
+
+            // Classify document first
+            var classification = await _documentAgent.ClassifyAsync(blobUrl);
+            
+            _logger.LogInformation(
+                "Document {DocumentId} classified as {Type} with confidence {Confidence}",
+                documentId, classification.Type, classification.Confidence);
+
+            // Extract data based on type
+            object? extractedData = null;
+            double confidence = classification.Confidence;
+
+            switch (documentType)
+            {
+                case DocumentType.PO:
+                    var poData = await _documentAgent.ExtractPOAsync(blobUrl);
+                    extractedData = poData;
+                    confidence = poData.FieldConfidences.Values.Any() ? poData.FieldConfidences.Values.Average() : 0.5;
+                    break;
+
+                case DocumentType.Invoice:
+                    var invoiceData = await _documentAgent.ExtractInvoiceAsync(blobUrl);
+                    extractedData = invoiceData;
+                    confidence = invoiceData.FieldConfidences.Values.Any() ? invoiceData.FieldConfidences.Values.Average() : 0.5;
+                    break;
+
+                case DocumentType.CostSummary:
+                    var costSummaryData = await _documentAgent.ExtractCostSummaryAsync(blobUrl);
+                    extractedData = costSummaryData;
+                    confidence = costSummaryData.FieldConfidences.Values.Any() ? costSummaryData.FieldConfidences.Values.Average() : 0.5;
+                    break;
+
+                case DocumentType.Photo:
+                    var photoMetadata = await _documentAgent.ExtractPhotoMetadataAsync(blobUrl);
+                    extractedData = photoMetadata;
+                    confidence = photoMetadata.FieldConfidences.Values.Any() 
+                        ? photoMetadata.FieldConfidences.Values.Average() 
+                        : 0.5;
+                    break;
+
+                default:
+                    _logger.LogInformation("No extraction needed for document type {Type}", documentType);
+                    return;
+            }
+
+            if (extractedData != null)
+            {
+                // Save extracted data to database using the new scope's context
+                var document = await context.Documents.FindAsync(documentId);
+                if (document != null)
+                {
+                    document.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(extractedData);
+                    document.ExtractionConfidence = confidence;
+                    document.UpdatedAt = DateTime.UtcNow;
+                    
+                    await context.SaveChangesAsync();
+                    
+                    _logger.LogInformation(
+                        "Extracted data saved for document {DocumentId} with confidence {Confidence}",
+                        documentId, confidence);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to extract data for document {DocumentId}", documentId);
+            throw;
+        }
     }
 
     public async Task<bool> ValidateFileAsync(IFormFile file, DocumentType documentType)

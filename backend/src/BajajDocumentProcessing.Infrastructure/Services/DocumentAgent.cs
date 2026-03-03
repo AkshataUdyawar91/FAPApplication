@@ -1,6 +1,5 @@
 using Azure;
 using Azure.AI.OpenAI;
-using Azure.AI.FormRecognizer.DocumentAnalysis;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.Documents;
 using BajajDocumentProcessing.Domain.Enums;
@@ -13,25 +12,27 @@ using MetadataExtractor.Formats.Exif;
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
 /// <summary>
-/// Document Agent service for document classification and field extraction
+/// Document Agent service for document classification and field extraction using Azure OpenAI
 /// </summary>
 public class DocumentAgent : IDocumentAgent
 {
     private readonly OpenAIClient _openAIClient;
-    private readonly DocumentAnalysisClient _documentAnalysisClient;
     private readonly string _deploymentName;
     private readonly ILogger<DocumentAgent> _logger;
     private readonly HttpClient _httpClient;
+    private readonly IFileStorageService _fileStorageService;
     private const double CONFIDENCE_THRESHOLD = 0.70;
     private const double FIELD_CONFIDENCE_THRESHOLD = 0.60;
 
     public DocumentAgent(
         IConfiguration configuration,
         ILogger<DocumentAgent> logger,
-        HttpClient httpClient)
+        HttpClient httpClient,
+        IFileStorageService fileStorageService)
     {
         _logger = logger;
         _httpClient = httpClient;
+        _fileStorageService = fileStorageService;
 
         var endpoint = configuration["AzureOpenAI:Endpoint"] 
             ?? throw new InvalidOperationException("Azure OpenAI endpoint not configured");
@@ -40,15 +41,38 @@ public class DocumentAgent : IDocumentAgent
         _deploymentName = configuration["AzureOpenAI:DeploymentName"] ?? "gpt-4";
 
         _openAIClient = new OpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey));
+    }
 
-        var docIntelEndpoint = configuration["AzureDocumentIntelligence:Endpoint"] 
-            ?? throw new InvalidOperationException("Azure Document Intelligence endpoint not configured");
-        var docIntelApiKey = configuration["AzureDocumentIntelligence:ApiKey"] 
-            ?? throw new InvalidOperationException("Azure Document Intelligence API key not configured");
-
-        _documentAnalysisClient = new DocumentAnalysisClient(
-            new Uri(docIntelEndpoint), 
-            new AzureKeyCredential(docIntelApiKey));
+    /// <summary>
+    /// Prepares image data for Azure OpenAI Vision API
+    /// Always converts to base64 since Azure OpenAI can't access private blob URLs
+    /// </summary>
+    private async Task<string> PrepareImageDataAsync(string blobUrl)
+    {
+        try
+        {
+            // Always convert to base64 - Azure OpenAI can't access private blob URLs
+            var fileBytes = await _fileStorageService.GetFileBytesAsync(blobUrl);
+            var base64 = Convert.ToBase64String(fileBytes);
+            
+            // Determine MIME type from file extension
+            var mimeType = "image/jpeg"; // default
+            if (blobUrl.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                mimeType = "image/png";
+            else if (blobUrl.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                mimeType = "application/pdf";
+            else if (blobUrl.EndsWith(".tiff", StringComparison.OrdinalIgnoreCase) || 
+                     blobUrl.EndsWith(".tif", StringComparison.OrdinalIgnoreCase))
+                mimeType = "image/tiff";
+            
+            _logger.LogInformation("Converted file to base64: {BlobUrl}, Size: {Size} bytes", blobUrl, fileBytes.Length);
+            return $"data:{mimeType};base64,{base64}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to convert file to base64: {BlobUrl}", blobUrl);
+            throw;
+        }
     }
 
     /// <summary>
@@ -61,6 +85,9 @@ public class DocumentAgent : IDocumentAgent
         try
         {
             _logger.LogInformation("Starting document classification for URL: {BlobUrl}", blobUrl);
+
+            // Prepare image data (convert local files to base64)
+            var imageData = await PrepareImageDataAsync(blobUrl);
 
             var chatCompletionsOptions = new ChatCompletionsOptions
             {
@@ -88,10 +115,8 @@ Where:
 - reasoning is a brief explanation of your classification
 
 Be precise and confident in your classification."),
-                    new ChatRequestUserMessage($"Please classify this document. Image URL: {blobUrl}")
-                },
-                MaxTokens = 500,
-                Temperature = 0.1f // Low temperature for consistent classification
+                    new ChatRequestUserMessage($"Please classify this document. Image: {imageData.Substring(0, Math.Min(50, imageData.Length))}...")
+                }
             };
 
             var response = await _openAIClient.GetChatCompletionsAsync(
@@ -186,33 +211,21 @@ Be precise and confident in your classification."),
 
     private class ClassificationResponse
     {
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
         public string TypeString { get; set; } = string.Empty;
+        
+        [System.Text.Json.Serialization.JsonIgnore]
         public DocumentType Type { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("confidence")]
         public double Confidence { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("reasoning")]
         public string Reasoning { get; set; } = string.Empty;
-
-        // For JSON deserialization
-        public string type
-        {
-            get => TypeString;
-            set => TypeString = value;
-        }
-
-        public double confidence
-        {
-            get => Confidence;
-            set => Confidence = value;
-        }
-
-        public string reasoning
-        {
-            get => Reasoning;
-            set => Reasoning = value;
-        }
     }
 
     /// <summary>
-    /// Extracts structured data from a Purchase Order document
+    /// Extracts structured data from a Purchase Order document using GPT-4 Vision
     /// </summary>
     public async Task<POData> ExtractPOAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
@@ -220,114 +233,55 @@ Be precise and confident in your classification."),
         {
             _logger.LogInformation("Starting PO extraction for URL: {BlobUrl}", blobUrl);
 
-            var operation = await _documentAnalysisClient.AnalyzeDocumentFromUriAsync(
-                WaitUntil.Completed,
-                "prebuilt-invoice", // Using prebuilt invoice model for PO extraction
-                new Uri(blobUrl),
-                cancellationToken: cancellationToken);
-
-            var result = operation.Value;
-            var poData = new POData();
-            var fieldConfidences = new Dictionary<string, double>();
-
-            // Extract from the first document
-            if (result.Documents.Count > 0)
+            var chatCompletionsOptions = new ChatCompletionsOptions
             {
-                var document = result.Documents[0];
-
-                // Extract PO Number (using InvoiceId field)
-                if (document.Fields.TryGetValue("InvoiceId", out var poNumberField) && poNumberField.Content != null)
+                DeploymentName = _deploymentName,
+                Messages =
                 {
-                    poData.PONumber = poNumberField.Content;
-                    fieldConfidences["PONumber"] = poNumberField.Confidence ?? 0.0;
+                    new ChatRequestSystemMessage(@"You are a Purchase Order data extraction expert.
+Analyze the provided PO document image and extract the following information:
+- PO Number
+- Vendor Name
+- PO Date
+- Total Amount
+- Line Items (ItemCode, Description, Quantity, UnitPrice, LineTotal)
+
+Respond ONLY with a JSON object in this exact format:
+{
+  ""poNumber"": ""string"",
+  ""vendorName"": ""string"",
+  ""poDate"": ""YYYY-MM-DD"",
+  ""totalAmount"": 0.00,
+  ""lineItems"": [
+    {
+      ""itemCode"": ""string"",
+      ""description"": ""string"",
+      ""quantity"": 0,
+      ""unitPrice"": 0.00,
+      ""lineTotal"": 0.00
+    }
+  ],
+  ""confidence"": 0.0
+}
+
+Where confidence is your overall confidence in the extraction (0.0 to 1.0).
+If a field is not found, use null or empty values."),
+                    new ChatRequestUserMessage($"Please extract data from this Purchase Order. Image URL: {blobUrl}")
                 }
+            };
 
-                // Extract Vendor Name
-                if (document.Fields.TryGetValue("VendorName", out var vendorField) && vendorField.Content != null)
-                {
-                    poData.VendorName = vendorField.Content;
-                    fieldConfidences["VendorName"] = vendorField.Confidence ?? 0.0;
-                }
+            var response = await _openAIClient.GetChatCompletionsAsync(
+                chatCompletionsOptions, 
+                cancellationToken);
 
-                // Extract PO Date (using InvoiceDate)
-                if (document.Fields.TryGetValue("InvoiceDate", out var dateField))
-                {
-                    var dateValue = dateField.Value?.AsDate();
-                    if (dateValue.HasValue)
-                    {
-                        poData.PODate = dateValue.Value.DateTime;
-                        fieldConfidences["PODate"] = dateField.Confidence ?? 0.0;
-                    }
-                }
+            var content = response.Value.Choices[0].Message.Content;
+            _logger.LogInformation("Received PO extraction response");
 
-                // Extract Total Amount
-                if (document.Fields.TryGetValue("InvoiceTotal", out var totalField))
-                {
-                    var currencyValue = totalField.Value?.AsCurrency();
-                    if (currencyValue.HasValue)
-                    {
-                        poData.TotalAmount = (decimal)currencyValue.Value.Amount;
-                        fieldConfidences["TotalAmount"] = totalField.Confidence ?? 0.0;
-                    }
-                }
-
-                // Extract Line Items
-                if (document.Fields.TryGetValue("Items", out var itemsField))
-                {
-                    var items = itemsField.Value?.AsList();
-                    if (items != null)
-                    {
-                        foreach (var item in items)
-                        {
-                            var itemDict = item.Value?.AsDictionary();
-                            if (itemDict != null)
-                            {
-                                var lineItem = new POLineItem();
-
-                                if (itemDict.TryGetValue("ProductCode", out var codeField) && codeField.Content != null)
-                                    lineItem.ItemCode = codeField.Content;
-
-                                if (itemDict.TryGetValue("Description", out var descField) && descField.Content != null)
-                                    lineItem.Description = descField.Content;
-
-                                if (itemDict.TryGetValue("Quantity", out var qtyField))
-                                {
-                                    var qtyValue = qtyField.Value?.AsDouble();
-                                    if (qtyValue.HasValue)
-                                        lineItem.Quantity = (int)qtyValue.Value;
-                                }
-
-                                if (itemDict.TryGetValue("UnitPrice", out var priceField))
-                                {
-                                    var priceValue = priceField.Value?.AsCurrency();
-                                    if (priceValue.HasValue)
-                                        lineItem.UnitPrice = (decimal)priceValue.Value.Amount;
-                                }
-
-                                if (itemDict.TryGetValue("Amount", out var amountField))
-                                {
-                                    var amountValue = amountField.Value?.AsCurrency();
-                                    if (amountValue.HasValue)
-                                        lineItem.LineTotal = (decimal)amountValue.Value.Amount;
-                                }
-
-                                poData.LineItems.Add(lineItem);
-                            }
-                        }
-                        fieldConfidences["LineItems"] = itemsField.Confidence ?? 0.0;
-                    }
-                }
-            }
-
-            poData.FieldConfidences = fieldConfidences;
-
-            // Calculate overall document confidence and flag if below threshold
-            var documentConfidence = CalculateDocumentConfidence(fieldConfidences);
-            poData.IsFlaggedForReview = documentConfidence < CONFIDENCE_THRESHOLD;
+            var poData = ParsePOResponse(content);
 
             _logger.LogInformation(
-                "PO extraction completed. PO Number: {PONumber}, Line Items: {ItemCount}, Confidence: {Confidence}, Flagged: {Flagged}",
-                poData.PONumber, poData.LineItems.Count, documentConfidence, poData.IsFlaggedForReview);
+                "PO extraction completed. PO Number: {PONumber}, Line Items: {ItemCount}, Flagged: {Flagged}",
+                poData.PONumber, poData.LineItems.Count, poData.IsFlaggedForReview);
 
             return poData;
         }
@@ -338,8 +292,78 @@ Be precise and confident in your classification."),
         }
     }
 
+    private POData ParsePOResponse(string content)
+    {
+        try
+        {
+            var jsonContent = CleanJsonResponse(content);
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            var parsed = JsonSerializer.Deserialize<PODataResponse>(jsonContent, options);
+            
+            if (parsed == null)
+            {
+                throw new InvalidOperationException("Failed to parse PO response");
+            }
+
+            var poData = new POData
+            {
+                PONumber = parsed.PONumber ?? string.Empty,
+                VendorName = parsed.VendorName ?? string.Empty,
+                PODate = parsed.PODate ?? DateTime.Now,
+                TotalAmount = parsed.TotalAmount,
+                LineItems = parsed.LineItems?.Select(li => new POLineItem
+                {
+                    ItemCode = li.ItemCode ?? string.Empty,
+                    Description = li.Description ?? string.Empty,
+                    Quantity = li.Quantity,
+                    UnitPrice = li.UnitPrice,
+                    LineTotal = li.LineTotal
+                }).ToList() ?? new List<POLineItem>(),
+                FieldConfidences = new Dictionary<string, double>
+                {
+                    ["Overall"] = parsed.Confidence
+                },
+                IsFlaggedForReview = parsed.Confidence < CONFIDENCE_THRESHOLD
+            };
+
+            return poData;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to parse PO response: {Content}", content);
+            return new POData
+            {
+                FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
+                IsFlaggedForReview = true
+            };
+        }
+    }
+
+    private class PODataResponse
+    {
+        public string? PONumber { get; set; }
+        public string? VendorName { get; set; }
+        public DateTime? PODate { get; set; }
+        public decimal TotalAmount { get; set; }
+        public List<POLineItemResponse>? LineItems { get; set; }
+        public double Confidence { get; set; }
+    }
+
+    private class POLineItemResponse
+    {
+        public string? ItemCode { get; set; }
+        public string? Description { get; set; }
+        public int Quantity { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal LineTotal { get; set; }
+    }
+
     /// <summary>
-    /// Extracts structured data from an Invoice document
+    /// Extracts structured data from an Invoice document using GPT-4 Vision
     /// </summary>
     public async Task<InvoiceData> ExtractInvoiceAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
@@ -347,135 +371,59 @@ Be precise and confident in your classification."),
         {
             _logger.LogInformation("Starting Invoice extraction for URL: {BlobUrl}", blobUrl);
 
-            var operation = await _documentAnalysisClient.AnalyzeDocumentFromUriAsync(
-                WaitUntil.Completed,
-                "prebuilt-invoice",
-                new Uri(blobUrl),
-                cancellationToken: cancellationToken);
-
-            var result = operation.Value;
-            var invoiceData = new InvoiceData();
-            var fieldConfidences = new Dictionary<string, double>();
-
-            if (result.Documents.Count > 0)
+            var chatCompletionsOptions = new ChatCompletionsOptions
             {
-                var document = result.Documents[0];
-
-                // Extract Invoice Number
-                if (document.Fields.TryGetValue("InvoiceId", out var invoiceIdField) && invoiceIdField.Content != null)
+                DeploymentName = _deploymentName,
+                Messages =
                 {
-                    invoiceData.InvoiceNumber = invoiceIdField.Content;
-                    fieldConfidences["InvoiceNumber"] = invoiceIdField.Confidence ?? 0.0;
+                    new ChatRequestSystemMessage(@"You are an Invoice data extraction expert.
+Analyze the provided invoice document image and extract the following information:
+- Invoice Number
+- Vendor Name
+- Invoice Date
+- SubTotal
+- Tax Amount
+- Total Amount
+- Line Items (ItemCode, Description, Quantity, UnitPrice, LineTotal)
+
+Respond ONLY with a JSON object in this exact format:
+{
+  ""invoiceNumber"": ""string"",
+  ""vendorName"": ""string"",
+  ""invoiceDate"": ""YYYY-MM-DD"",
+  ""subTotal"": 0.00,
+  ""taxAmount"": 0.00,
+  ""totalAmount"": 0.00,
+  ""lineItems"": [
+    {
+      ""itemCode"": ""string"",
+      ""description"": ""string"",
+      ""quantity"": 0,
+      ""unitPrice"": 0.00,
+      ""lineTotal"": 0.00
+    }
+  ],
+  ""confidence"": 0.0
+}
+
+Where confidence is your overall confidence in the extraction (0.0 to 1.0).
+If a field is not found, use null or empty values."),
+                    new ChatRequestUserMessage($"Please extract data from this Invoice. Image URL: {blobUrl}")
                 }
+            };
 
-                // Extract Vendor Name
-                if (document.Fields.TryGetValue("VendorName", out var vendorField) && vendorField.Content != null)
-                {
-                    invoiceData.VendorName = vendorField.Content;
-                    fieldConfidences["VendorName"] = vendorField.Confidence ?? 0.0;
-                }
+            var response = await _openAIClient.GetChatCompletionsAsync(
+                chatCompletionsOptions, 
+                cancellationToken);
 
-                // Extract Invoice Date
-                if (document.Fields.TryGetValue("InvoiceDate", out var dateField))
-                {
-                    var dateValue = dateField.Value?.AsDate();
-                    if (dateValue.HasValue)
-                    {
-                        invoiceData.InvoiceDate = dateValue.Value.DateTime;
-                        fieldConfidences["InvoiceDate"] = dateField.Confidence ?? 0.0;
-                    }
-                }
+            var content = response.Value.Choices[0].Message.Content;
+            _logger.LogInformation("Received Invoice extraction response");
 
-                // Extract SubTotal
-                if (document.Fields.TryGetValue("SubTotal", out var subTotalField))
-                {
-                    var subTotalValue = subTotalField.Value?.AsCurrency();
-                    if (subTotalValue.HasValue)
-                    {
-                        invoiceData.SubTotal = (decimal)subTotalValue.Value.Amount;
-                        fieldConfidences["SubTotal"] = subTotalField.Confidence ?? 0.0;
-                    }
-                }
-
-                // Extract Tax Amount
-                if (document.Fields.TryGetValue("TotalTax", out var taxField))
-                {
-                    var taxValue = taxField.Value?.AsCurrency();
-                    if (taxValue.HasValue)
-                    {
-                        invoiceData.TaxAmount = (decimal)taxValue.Value.Amount;
-                        fieldConfidences["TaxAmount"] = taxField.Confidence ?? 0.0;
-                    }
-                }
-
-                // Extract Total Amount
-                if (document.Fields.TryGetValue("InvoiceTotal", out var totalField))
-                {
-                    var totalValue = totalField.Value?.AsCurrency();
-                    if (totalValue.HasValue)
-                    {
-                        invoiceData.TotalAmount = (decimal)totalValue.Value.Amount;
-                        fieldConfidences["TotalAmount"] = totalField.Confidence ?? 0.0;
-                    }
-                }
-
-                // Extract Line Items
-                if (document.Fields.TryGetValue("Items", out var itemsField))
-                {
-                    var items = itemsField.Value?.AsList();
-                    if (items != null)
-                    {
-                        foreach (var item in items)
-                        {
-                            var itemDict = item.Value?.AsDictionary();
-                            if (itemDict != null)
-                            {
-                                var lineItem = new InvoiceLineItem();
-
-                                if (itemDict.TryGetValue("ProductCode", out var codeField) && codeField.Content != null)
-                                    lineItem.ItemCode = codeField.Content;
-
-                                if (itemDict.TryGetValue("Description", out var descField) && descField.Content != null)
-                                    lineItem.Description = descField.Content;
-
-                                if (itemDict.TryGetValue("Quantity", out var qtyField))
-                                {
-                                    var qtyValue = qtyField.Value?.AsDouble();
-                                    if (qtyValue.HasValue)
-                                        lineItem.Quantity = (int)qtyValue.Value;
-                                }
-
-                                if (itemDict.TryGetValue("UnitPrice", out var priceField))
-                                {
-                                    var priceValue = priceField.Value?.AsCurrency();
-                                    if (priceValue.HasValue)
-                                        lineItem.UnitPrice = (decimal)priceValue.Value.Amount;
-                                }
-
-                                if (itemDict.TryGetValue("Amount", out var amountField))
-                                {
-                                    var amountValue = amountField.Value?.AsCurrency();
-                                    if (amountValue.HasValue)
-                                        lineItem.LineTotal = (decimal)amountValue.Value.Amount;
-                                }
-
-                                invoiceData.LineItems.Add(lineItem);
-                            }
-                        }
-                        fieldConfidences["LineItems"] = itemsField.Confidence ?? 0.0;
-                    }
-                }
-            }
-
-            invoiceData.FieldConfidences = fieldConfidences;
-
-            // Calculate overall document confidence and flag if below threshold
-            var documentConfidence = CalculateDocumentConfidence(fieldConfidences);
-            invoiceData.IsFlaggedForReview = documentConfidence < CONFIDENCE_THRESHOLD;
+            var invoiceData = ParseInvoiceResponse(content);
 
             _logger.LogInformation(
-                "Invoice extraction completed. Invoice Number: {InvoiceNumber}, Line Items: {ItemCount}, Confidence: {Confidence}, Flagged: {Flagged}",
-                invoiceData.InvoiceNumber, invoiceData.LineItems.Count, documentConfidence, invoiceData.IsFlaggedForReview);
+                "Invoice extraction completed. Invoice Number: {InvoiceNumber}, Line Items: {ItemCount}, Flagged: {Flagged}",
+                invoiceData.InvoiceNumber, invoiceData.LineItems.Count, invoiceData.IsFlaggedForReview);
 
             return invoiceData;
         }
@@ -486,8 +434,82 @@ Be precise and confident in your classification."),
         }
     }
 
+    private InvoiceData ParseInvoiceResponse(string content)
+    {
+        try
+        {
+            var jsonContent = CleanJsonResponse(content);
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            var parsed = JsonSerializer.Deserialize<InvoiceDataResponse>(jsonContent, options);
+            
+            if (parsed == null)
+            {
+                throw new InvalidOperationException("Failed to parse Invoice response");
+            }
+
+            var invoiceData = new InvoiceData
+            {
+                InvoiceNumber = parsed.InvoiceNumber ?? string.Empty,
+                VendorName = parsed.VendorName ?? string.Empty,
+                InvoiceDate = parsed.InvoiceDate ?? DateTime.Now,
+                SubTotal = parsed.SubTotal,
+                TaxAmount = parsed.TaxAmount,
+                TotalAmount = parsed.TotalAmount,
+                LineItems = parsed.LineItems?.Select(li => new InvoiceLineItem
+                {
+                    ItemCode = li.ItemCode ?? string.Empty,
+                    Description = li.Description ?? string.Empty,
+                    Quantity = li.Quantity,
+                    UnitPrice = li.UnitPrice,
+                    LineTotal = li.LineTotal
+                }).ToList() ?? new List<InvoiceLineItem>(),
+                FieldConfidences = new Dictionary<string, double>
+                {
+                    ["Overall"] = parsed.Confidence
+                },
+                IsFlaggedForReview = parsed.Confidence < CONFIDENCE_THRESHOLD
+            };
+
+            return invoiceData;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to parse Invoice response: {Content}", content);
+            return new InvoiceData
+            {
+                FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
+                IsFlaggedForReview = true
+            };
+        }
+    }
+
+    private class InvoiceDataResponse
+    {
+        public string? InvoiceNumber { get; set; }
+        public string? VendorName { get; set; }
+        public DateTime? InvoiceDate { get; set; }
+        public decimal SubTotal { get; set; }
+        public decimal TaxAmount { get; set; }
+        public decimal TotalAmount { get; set; }
+        public List<InvoiceLineItemResponse>? LineItems { get; set; }
+        public double Confidence { get; set; }
+    }
+
+    private class InvoiceLineItemResponse
+    {
+        public string? ItemCode { get; set; }
+        public string? Description { get; set; }
+        public int Quantity { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal LineTotal { get; set; }
+    }
+
     /// <summary>
-    /// Extracts structured data from a Cost Summary document
+    /// Extracts structured data from a Cost Summary document using GPT-4 Vision
     /// </summary>
     public async Task<CostSummaryData> ExtractCostSummaryAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
@@ -495,121 +517,54 @@ Be precise and confident in your classification."),
         {
             _logger.LogInformation("Starting Cost Summary extraction for URL: {BlobUrl}", blobUrl);
 
-            // Use general document model for cost summaries (could be spreadsheets or PDFs)
-            var operation = await _documentAnalysisClient.AnalyzeDocumentFromUriAsync(
-                WaitUntil.Completed,
-                "prebuilt-document",
-                new Uri(blobUrl),
-                cancellationToken: cancellationToken);
-
-            var result = operation.Value;
-            var costSummaryData = new CostSummaryData();
-            var fieldConfidences = new Dictionary<string, double>();
-
-            // Extract key-value pairs and tables
-            if (result.KeyValuePairs.Count > 0)
+            var chatCompletionsOptions = new ChatCompletionsOptions
             {
-                foreach (var kvp in result.KeyValuePairs)
+                DeploymentName = _deploymentName,
+                Messages =
                 {
-                    var key = kvp.Key.Content?.ToLower() ?? "";
-                    var value = kvp.Value.Content ?? "";
-                    var confidence = kvp.Confidence;
+                    new ChatRequestSystemMessage(@"You are a Cost Summary data extraction expert.
+Analyze the provided cost summary document image and extract the following information:
+- Campaign Name
+- State
+- Campaign Start Date
+- Campaign End Date
+- Total Cost
+- Cost Breakdowns (Category, Amount)
 
-                    if (key.Contains("campaign") && key.Contains("name"))
-                    {
-                        costSummaryData.CampaignName = value;
-                        fieldConfidences["CampaignName"] = confidence;
-                    }
-                    else if (key.Contains("state"))
-                    {
-                        costSummaryData.State = value;
-                        fieldConfidences["State"] = confidence;
-                    }
-                    else if (key.Contains("start") && key.Contains("date"))
-                    {
-                        if (DateTime.TryParse(value, out var startDate))
-                        {
-                            costSummaryData.CampaignStartDate = startDate;
-                            fieldConfidences["CampaignStartDate"] = confidence;
-                        }
-                    }
-                    else if (key.Contains("end") && key.Contains("date"))
-                    {
-                        if (DateTime.TryParse(value, out var endDate))
-                        {
-                            costSummaryData.CampaignEndDate = endDate;
-                            fieldConfidences["CampaignEndDate"] = confidence;
-                        }
-                    }
-                    else if (key.Contains("total") && key.Contains("cost"))
-                    {
-                        var cleanValue = value.Replace("$", "").Replace(",", "").Trim();
-                        if (decimal.TryParse(cleanValue, out var totalCost))
-                        {
-                            costSummaryData.TotalCost = totalCost;
-                            fieldConfidences["TotalCost"] = confidence;
-                        }
-                    }
+Respond ONLY with a JSON object in this exact format:
+{
+  ""campaignName"": ""string"",
+  ""state"": ""string"",
+  ""campaignStartDate"": ""YYYY-MM-DD"",
+  ""campaignEndDate"": ""YYYY-MM-DD"",
+  ""totalCost"": 0.00,
+  ""costBreakdowns"": [
+    {
+      ""category"": ""string"",
+      ""amount"": 0.00
+    }
+  ],
+  ""confidence"": 0.0
+}
+
+Where confidence is your overall confidence in the extraction (0.0 to 1.0).
+If a field is not found, use null or empty values."),
+                    new ChatRequestUserMessage($"Please extract data from this Cost Summary. Image URL: {blobUrl}")
                 }
-            }
+            };
 
-            // Extract cost breakdowns from tables
-            if (result.Tables.Count > 0)
-            {
-                var table = result.Tables[0]; // Use first table
-                
-                // Find category and amount columns
-                int categoryCol = -1;
-                int amountCol = -1;
+            var response = await _openAIClient.GetChatCompletionsAsync(
+                chatCompletionsOptions, 
+                cancellationToken);
 
-                for (int i = 0; i < table.ColumnCount; i++)
-                {
-                    var headerCell = table.Cells.FirstOrDefault(c => c.RowIndex == 0 && c.ColumnIndex == i);
-                    if (headerCell != null)
-                    {
-                        var headerText = headerCell.Content.ToLower();
-                        if (headerText.Contains("category") || headerText.Contains("item"))
-                            categoryCol = i;
-                        else if (headerText.Contains("amount") || headerText.Contains("cost"))
-                            amountCol = i;
-                    }
-                }
+            var content = response.Value.Choices[0].Message.Content;
+            _logger.LogInformation("Received Cost Summary extraction response");
 
-                if (categoryCol >= 0 && amountCol >= 0)
-                {
-                    for (int row = 1; row < table.RowCount; row++)
-                    {
-                        var categoryCell = table.Cells.FirstOrDefault(c => c.RowIndex == row && c.ColumnIndex == categoryCol);
-                        var amountCell = table.Cells.FirstOrDefault(c => c.RowIndex == row && c.ColumnIndex == amountCol);
-
-                        if (categoryCell != null && amountCell != null)
-                        {
-                            var category = categoryCell.Content;
-                            var amountStr = amountCell.Content.Replace("$", "").Replace(",", "").Trim();
-                            
-                            if (decimal.TryParse(amountStr, out var amount))
-                            {
-                                costSummaryData.CostBreakdowns.Add(new CostBreakdown
-                                {
-                                    Category = category,
-                                    Amount = amount
-                                });
-                            }
-                        }
-                    }
-                    fieldConfidences["CostBreakdowns"] = 0.85; // Table extraction confidence
-                }
-            }
-
-            costSummaryData.FieldConfidences = fieldConfidences;
-
-            // Calculate overall document confidence and flag if below threshold
-            var documentConfidence = CalculateDocumentConfidence(fieldConfidences);
-            costSummaryData.IsFlaggedForReview = documentConfidence < CONFIDENCE_THRESHOLD;
+            var costSummaryData = ParseCostSummaryResponse(content);
 
             _logger.LogInformation(
-                "Cost Summary extraction completed. Campaign: {Campaign}, Cost Breakdowns: {BreakdownCount}, Confidence: {Confidence}, Flagged: {Flagged}",
-                costSummaryData.CampaignName, costSummaryData.CostBreakdowns.Count, documentConfidence, costSummaryData.IsFlaggedForReview);
+                "Cost Summary extraction completed. Campaign: {Campaign}, Cost Breakdowns: {BreakdownCount}, Flagged: {Flagged}",
+                costSummaryData.CampaignName, costSummaryData.CostBreakdowns.Count, costSummaryData.IsFlaggedForReview);
 
             return costSummaryData;
         }
@@ -618,6 +573,72 @@ Be precise and confident in your classification."),
             _logger.LogError(ex, "Error extracting Cost Summary data from URL: {BlobUrl}", blobUrl);
             throw;
         }
+    }
+
+    private CostSummaryData ParseCostSummaryResponse(string content)
+    {
+        try
+        {
+            var jsonContent = CleanJsonResponse(content);
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            var parsed = JsonSerializer.Deserialize<CostSummaryDataResponse>(jsonContent, options);
+            
+            if (parsed == null)
+            {
+                throw new InvalidOperationException("Failed to parse Cost Summary response");
+            }
+
+            var costSummaryData = new CostSummaryData
+            {
+                CampaignName = parsed.CampaignName ?? string.Empty,
+                State = parsed.State ?? string.Empty,
+                CampaignStartDate = parsed.CampaignStartDate ?? DateTime.Now,
+                CampaignEndDate = parsed.CampaignEndDate ?? DateTime.Now,
+                TotalCost = parsed.TotalCost,
+                CostBreakdowns = parsed.CostBreakdowns?.Select(cb => new CostBreakdown
+                {
+                    Category = cb.Category ?? string.Empty,
+                    Amount = cb.Amount
+                }).ToList() ?? new List<CostBreakdown>(),
+                FieldConfidences = new Dictionary<string, double>
+                {
+                    ["Overall"] = parsed.Confidence
+                },
+                IsFlaggedForReview = parsed.Confidence < CONFIDENCE_THRESHOLD
+            };
+
+            return costSummaryData;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to parse Cost Summary response: {Content}", content);
+            return new CostSummaryData
+            {
+                FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
+                IsFlaggedForReview = true
+            };
+        }
+    }
+
+    private class CostSummaryDataResponse
+    {
+        public string? CampaignName { get; set; }
+        public string? State { get; set; }
+        public DateTime? CampaignStartDate { get; set; }
+        public DateTime? CampaignEndDate { get; set; }
+        public decimal TotalCost { get; set; }
+        public List<CostBreakdownResponse>? CostBreakdowns { get; set; }
+        public double Confidence { get; set; }
+    }
+
+    private class CostBreakdownResponse
+    {
+        public string? Category { get; set; }
+        public decimal Amount { get; set; }
     }
 
     /// <summary>
@@ -687,6 +708,7 @@ Be precise and confident in your classification."),
                     metadata.ImageWidth = width;
                     fieldConfidences["ImageWidth"] = 1.0;
                 }
+
                 if (exifSubIfdDirectory.TryGetInt32(ExifDirectoryBase.TagExifImageHeight, out var height))
                 {
                     metadata.ImageHeight = height;
@@ -743,5 +765,26 @@ Be precise and confident in your classification."),
             finalConfidence, averageConfidence, penalty);
 
         return finalConfidence;
+    }
+
+    /// <summary>
+    /// Cleans JSON response by removing markdown code blocks
+    /// </summary>
+    private string CleanJsonResponse(string content)
+    {
+        var jsonContent = content.Trim();
+        if (jsonContent.StartsWith("```json"))
+        {
+            jsonContent = jsonContent.Substring(7);
+        }
+        if (jsonContent.StartsWith("```"))
+        {
+            jsonContent = jsonContent.Substring(3);
+        }
+        if (jsonContent.EndsWith("```"))
+        {
+            jsonContent = jsonContent.Substring(0, jsonContent.Length - 3);
+        }
+        return jsonContent.Trim();
     }
 }

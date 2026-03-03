@@ -3,6 +3,8 @@
 
 This guide provides step-by-step instructions for configuring all required Azure services.
 
+> **Note**: This system uses **Azure OpenAI GPT-4 Vision** for all document processing tasks (classification and data extraction). Azure Document Intelligence is NOT required.
+
 ---
 
 ## 1. Azure OpenAI Service
@@ -21,17 +23,13 @@ This guide provides step-by-step instructions for configuring all required Azure
 ### Deploy Models
 After creation, go to Azure OpenAI Studio:
 
-1. **GPT-4 Deployment**
-   - Model: `gpt-4` (version 0613 or later)
+1. **GPT-4 Deployment** (Required for document processing)
+   - Model: `gpt-4` or `gpt-4-turbo` (with vision capabilities)
    - Deployment name: `gpt-4`
    - Tokens per minute: 10K (adjust based on needs)
+   - **Note**: This single deployment handles both text and vision tasks
 
-2. **GPT-4 Vision Deployment**
-   - Model: `gpt-4-vision-preview`
-   - Deployment name: `gpt-4-vision`
-   - Tokens per minute: 10K
-
-3. **Embedding Model Deployment**
+2. **Embedding Model Deployment** (Required for semantic search)
    - Model: `text-embedding-ada-002`
    - Deployment name: `text-embedding-ada-002`
    - Tokens per minute: 120K
@@ -41,57 +39,19 @@ After creation, go to Azure OpenAI Studio:
 - Copy:
   - **Endpoint**: `https://bajaj-openai-service.openai.azure.com/`
   - **API Key**: (Key 1 or Key 2)
-  - **Deployment Names**: gpt-4, gpt-4-vision, text-embedding-ada-002
+  - **Deployment Names**: gpt-4, text-embedding-ada-002
+
+### Document Processing with GPT-4 Vision
+The system uses GPT-4 Vision for:
+- **Document Classification**: Identifying document types (PO, Invoice, Cost Summary, Photo, Additional)
+- **Data Extraction**: Extracting structured data from documents using vision + structured prompts
+- **Photo Analysis**: Analyzing activity photos and extracting metadata
+
+No custom model training is required - GPT-4 Vision handles all document types out of the box.
 
 ---
 
-## 2. Azure Document Intelligence (Form Recognizer)
-
-### Create Resource
-1. Navigate to Azure Portal → Create a resource
-2. Search for "Document Intelligence" or "Form Recognizer"
-3. Click Create
-4. Configure:
-   - **Subscription**: Select your subscription
-   - **Resource Group**: Same as above
-   - **Region**: Same as OpenAI or closest
-   - **Name**: `bajaj-document-intelligence`
-   - **Pricing Tier**: Standard S0
-
-### Train Custom Models
-Use Document Intelligence Studio:
-
-1. **Purchase Order Model**
-   - Create custom model
-   - Upload sample PO documents (minimum 5)
-   - Label fields: PO Number, Vendor, Date, Line Items, Total Amount
-   - Train model
-   - Note Model ID
-
-2. **Invoice Model**
-   - Create custom model
-   - Upload sample invoices (minimum 5)
-   - Label fields: Invoice Number, Date, Line Items, Total Amount
-   - Train model
-   - Note Model ID
-
-3. **Cost Summary Model**
-   - Create custom model
-   - Upload sample cost summaries (minimum 5)
-   - Label fields: Project Name, Total Cost, Breakdown Items
-   - Train model
-   - Note Model ID
-
-### Get Configuration Values
-- Navigate to: Resource → Keys and Endpoint
-- Copy:
-  - **Endpoint**: `https://bajaj-document-intelligence.cognitiveservices.azure.com/`
-  - **API Key**: (Key 1 or Key 2)
-  - **Model IDs**: (from training above)
-
----
-
-## 3. Azure Blob Storage
+## 2. Azure Blob Storage
 
 ### Create Storage Account
 1. Navigate to Azure Portal → Create a resource
@@ -134,7 +94,7 @@ After creation:
 
 ---
 
-## 4. Azure AI Search (Cognitive Search)
+## 3. Azure AI Search (Cognitive Search)
 
 ### Create Resource
 1. Navigate to Azure Portal → Create a resource
@@ -205,7 +165,7 @@ Use Azure Portal or REST API:
 
 ---
 
-## 5. Azure Communication Services
+## 4. Azure Communication Services
 
 ### Create Resource
 1. Navigate to Azure Portal → Create a resource
@@ -245,7 +205,7 @@ Use Azure Portal or REST API:
 
 ---
 
-## 6. Azure SQL Database
+## 5. Azure SQL Database
 
 ### Create Resource
 1. Navigate to Azure Portal → Create a resource
@@ -288,7 +248,7 @@ Use Azure Portal or REST API:
 
 ---
 
-## 7. Azure Key Vault
+## 6. Azure Key Vault
 
 ### Create Resource
 1. Navigate to Azure Portal → Create a resource
@@ -313,21 +273,19 @@ Navigate to: Key Vault → Secrets → Generate/Import
 Add the following secrets:
 1. **AzureOpenAI--ApiKey**: (OpenAI API key)
 2. **AzureOpenAI--Endpoint**: (OpenAI endpoint)
-3. **DocumentIntelligence--ApiKey**: (Document Intelligence key)
-4. **DocumentIntelligence--Endpoint**: (Document Intelligence endpoint)
-5. **BlobStorage--ConnectionString**: (Storage connection string)
-6. **AzureSearch--ApiKey**: (Search admin key)
-7. **AzureSearch--Endpoint**: (Search endpoint)
-8. **CommunicationServices--ConnectionString**: (ACS connection string)
-9. **ConnectionStrings--DefaultConnection**: (SQL connection string)
-10. **Jwt--SecretKey**: (Generate strong random key, min 32 chars)
+3. **BlobStorage--ConnectionString**: (Storage connection string)
+4. **AzureSearch--ApiKey**: (Search admin key)
+5. **AzureSearch--Endpoint**: (Search endpoint)
+6. **CommunicationServices--ConnectionString**: (ACS connection string)
+7. **ConnectionStrings--DefaultConnection**: (SQL connection string)
+8. **Jwt--SecretKey**: (Generate strong random key, min 32 chars)
 
 ### Get Configuration Values
 - **Key Vault URI**: `https://bajaj-keyvault.vault.azure.net/`
 
 ---
 
-## 8. Azure App Service (Backend API)
+## 7. Azure App Service (Backend API)
 
 ### Create Resource
 1. Navigate to Azure Portal → Create a resource
@@ -373,7 +331,7 @@ After creation:
 
 ---
 
-## 9. Azure Static Web Apps (Flutter Frontend)
+## 8. Azure Static Web Apps (Flutter Frontend)
 
 ### Create Resource
 1. Navigate to Azure Portal → Create a resource
@@ -411,7 +369,7 @@ After creation:
 
 ---
 
-## 10. Azure Content Safety (Optional but Recommended)
+## 9. Azure Content Safety (Optional but Recommended)
 
 ### Create Resource
 1. Navigate to Azure Portal → Create a resource
@@ -445,15 +403,7 @@ After completing all steps, update your `appsettings.json`:
     "Endpoint": "https://bajaj-openai-service.openai.azure.com/",
     "ApiKey": "your-api-key",
     "DeploymentName": "gpt-4",
-    "VisionDeploymentName": "gpt-4-vision",
     "EmbeddingDeploymentName": "text-embedding-ada-002"
-  },
-  "DocumentIntelligence": {
-    "Endpoint": "https://bajaj-document-intelligence.cognitiveservices.azure.com/",
-    "ApiKey": "your-api-key",
-    "POModelId": "your-po-model-id",
-    "InvoiceModelId": "your-invoice-model-id",
-    "CostSummaryModelId": "your-cost-summary-model-id"
   },
   "BlobStorage": {
     "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=bajajdocumentstorage;...",
@@ -490,7 +440,6 @@ After completing all steps, update your `appsettings.json`:
 
 ### Development Environment
 - Azure OpenAI: ~$50-100 (based on usage)
-- Document Intelligence: ~$30-50
 - Blob Storage: ~$5-10
 - AI Search (Basic): ~$75
 - Communication Services: ~$10-20
@@ -498,11 +447,10 @@ After completing all steps, update your `appsettings.json`:
 - App Service (B1): ~$13
 - Static Web Apps (Free): $0
 - Key Vault: ~$1
-- **Total: ~$334-419/month**
+- **Total: ~$304-369/month**
 
 ### Production Environment
 - Azure OpenAI: ~$200-500 (based on usage)
-- Document Intelligence: ~$100-200
 - Blob Storage: ~$20-50
 - AI Search (Standard): ~$250
 - Communication Services: ~$50-100
@@ -511,7 +459,7 @@ After completing all steps, update your `appsettings.json`:
 - Static Web Apps (Standard): ~$9
 - Key Vault: ~$1
 - Content Safety: ~$20-50
-- **Total: ~$1,261-1,771/month**
+- **Total: ~$1,161-1,571/month**
 
 ---
 
@@ -533,7 +481,6 @@ After completing all steps, update your `appsettings.json`:
 ## Support Resources
 
 - Azure OpenAI: https://learn.microsoft.com/azure/ai-services/openai/
-- Document Intelligence: https://learn.microsoft.com/azure/ai-services/document-intelligence/
 - Azure AI Search: https://learn.microsoft.com/azure/search/
 - Communication Services: https://learn.microsoft.com/azure/communication-services/
 - App Service: https://learn.microsoft.com/azure/app-service/
