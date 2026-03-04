@@ -11,4 +11,5 @@ public interface IFileStorageService
     Task<bool> DeleteFileAsync(string blobUrl);
     Task<Stream> DownloadFileAsync(string blobUrl);
     Task<bool> FileExistsAsync(string blobUrl);
+    Task<byte[]> GetFileBytesAsync(string blobUrl);
 }

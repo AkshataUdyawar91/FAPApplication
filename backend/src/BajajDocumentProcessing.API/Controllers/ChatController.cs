@@ -40,6 +40,11 @@ public class ChatController : ControllerBase
 
             return Ok(response);
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not available"))
+        {
+            _logger.LogWarning("Chat service not available: {Message}", ex.Message);
+            return StatusCode(503, new { error = "Chat service is not available. Azure AI Search must be configured to use this feature." });
+        }
         catch (System.UnauthorizedAccessException ex)
         {
             _logger.LogWarning(ex, "Unauthorized chat query");

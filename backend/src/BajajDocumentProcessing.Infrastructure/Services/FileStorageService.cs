@@ -18,8 +18,8 @@ public class FileStorageService : IFileStorageService
 
     public FileStorageService(IConfiguration configuration, ILogger<FileStorageService> logger)
     {
-        var connectionString = configuration["AzureServices:BlobStorage:ConnectionString"];
-        _containerName = configuration["AzureServices:BlobStorage:ContainerName"] ?? "documents";
+        var connectionString = configuration["AzureBlobStorage:ConnectionString"];
+        _containerName = configuration["AzureBlobStorage:ContainerName"] ?? "documents";
         _logger = logger;
 
         if (string.IsNullOrEmpty(connectionString))
@@ -133,11 +133,71 @@ public class FileStorageService : IFileStorageService
 
     private async Task<string> SimulateLocalStorageAsync(IFormFile file, string containerName, string fileName)
     {
-        // For development without Azure, return a simulated URL
-        var simulatedUrl = $"https://localhost/storage/{containerName}/{fileName}";
-        _logger.LogInformation("Simulated file upload: {FileName} -> {Url}", fileName, simulatedUrl);
+        // For development without Azure, save files locally
+        var localStoragePath = Path.Combine(Directory.GetCurrentDirectory(), "LocalStorage", containerName);
+        Directory.CreateDirectory(localStoragePath);
         
-        await Task.CompletedTask; // Simulate async operation
-        return simulatedUrl;
+        var filePath = Path.Combine(localStoragePath, fileName);
+        
+        using (var stream = new FileStream(filePath, FileMode.Create))
+        {
+            await file.CopyToAsync(stream);
+        }
+        
+        // Return local file path as URL
+        var localUrl = $"file:///{filePath.Replace("\\", "/")}";
+        _logger.LogInformation("Saved file locally: {FileName} -> {Path}", fileName, filePath);
+        
+        return localUrl;
+    }
+    
+    public async Task<byte[]> GetFileBytesAsync(string blobUrl)
+    {
+        try
+        {
+            if (blobUrl.StartsWith("file:///"))
+            {
+                // Local file
+                var filePath = blobUrl.Replace("file:///", "").Replace("/", "\\");
+                if (File.Exists(filePath))
+                {
+                    return await File.ReadAllBytesAsync(filePath);
+                }
+                throw new FileNotFoundException($"Local file not found: {filePath}");
+            }
+            else if (_blobServiceClient != null)
+            {
+                // Azure Blob Storage - extract container and blob name from URL
+                var uri = new Uri(blobUrl);
+                var pathParts = uri.AbsolutePath.TrimStart('/').Split('/', 2);
+                
+                if (pathParts.Length < 2)
+                {
+                    throw new InvalidOperationException($"Invalid blob URL format: {blobUrl}");
+                }
+                
+                var containerName = pathParts[0];
+                var blobName = pathParts[1];
+                
+                _logger.LogInformation("Downloading blob: Container={Container}, Blob={Blob}", containerName, blobName);
+                
+                var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+                var blobClient = containerClient.GetBlobClient(blobName);
+                
+                var response = await blobClient.DownloadAsync();
+                using var memoryStream = new MemoryStream();
+                await response.Value.Content.CopyToAsync(memoryStream);
+                return memoryStream.ToArray();
+            }
+            else
+            {
+                throw new InvalidOperationException("Cannot retrieve file bytes - no storage configured");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting file bytes from: {BlobUrl}", blobUrl);
+            throw;
+        }
     }
 }
