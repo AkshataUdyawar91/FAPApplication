@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/analytics_providers.dart';
+import '../providers/analytics_notifier.dart';
 import '../widgets/kpi_card.dart';
 import '../widgets/ai_insight_card.dart';
 

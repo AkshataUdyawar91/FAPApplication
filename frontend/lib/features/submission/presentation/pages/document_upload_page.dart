@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../providers/submission_providers.dart';
+import '../providers/submission_notifier.dart';
 import '../widgets/document_upload_card.dart';
 
 class DocumentUploadPage extends ConsumerWidget {

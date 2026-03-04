@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/chat_providers.dart';
+import '../providers/chat_notifier.dart';
 import '../widgets/chat_message_bubble.dart';
 
 class ChatPage extends ConsumerStatefulWidget {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/approval_providers.dart';
+import '../providers/approval_notifier.dart';
 import '../widgets/validation_result_card.dart';
 import '../widgets/confidence_score_widget.dart';
 import '../widgets/recommendation_card.dart';
@@ -276,26 +277,27 @@ class _SubmissionReviewPageState extends ConsumerState<SubmissionReviewPage> {
         const SizedBox(height: 16),
         _buildDocumentsList(state),
         const SizedBox(height: 16),
-        if (state.currentPackage!.validationResult != null)
-          ValidationResultCard(
-            validationResult: ValidationResultModel.fromJson(
-              state.currentPackage!.validationResult!,
-            ),
-          ),
-        const SizedBox(height: 16),
-        if (state.currentPackage!.confidenceScore != null)
-          ConfidenceScoreWidget(
-            confidenceScore: ConfidenceScoreModel.fromJson(
-              state.currentPackage!.confidenceScore!,
-            ),
-          ),
-        const SizedBox(height: 16),
-        if (state.currentPackage!.recommendation != null)
-          RecommendationCard(
-            recommendation: RecommendationModel.fromJson(
-              state.currentPackage!.recommendation!,
-            ),
-          ),
+        // TODO: Add validation result when backend provides it
+        // if (state.currentPackage!.validationResult != null)
+        //   ValidationResultCard(
+        //     validationResult: ValidationResultModel.fromJson(
+        //       state.currentPackage!.validationResult!,
+        //     ),
+        //   ),
+        // const SizedBox(height: 16),
+        // if (state.currentPackage!.confidenceScore != null)
+        //   ConfidenceScoreWidget(
+        //     confidenceScore: ConfidenceScoreModel.fromJson(
+        //       state.currentPackage!.confidenceScore!,
+        //     ),
+        //   ),
+        // const SizedBox(height: 16),
+        // if (state.currentPackage!.recommendation != null)
+        //   RecommendationCard(
+        //     recommendation: RecommendationModel.fromJson(
+        //       state.currentPackage!.recommendation!,
+        //     ),
+        //   ),
       ],
     );
   }
@@ -319,26 +321,28 @@ class _SubmissionReviewPageState extends ConsumerState<SubmissionReviewPage> {
           flex: 1,
           child: Column(
             children: [
-              if (state.currentPackage!.validationResult != null)
-                ValidationResultCard(
-                  validationResult: ValidationResultModel.fromJson(
-                    state.currentPackage!.validationResult!,
-                  ),
-                ),
-              const SizedBox(height: 16),
-              if (state.currentPackage!.confidenceScore != null)
-                ConfidenceScoreWidget(
-                  confidenceScore: ConfidenceScoreModel.fromJson(
-                    state.currentPackage!.confidenceScore!,
-                  ),
-                ),
-              const SizedBox(height: 16),
-              if (state.currentPackage!.recommendation != null)
-                RecommendationCard(
-                  recommendation: RecommendationModel.fromJson(
-                    state.currentPackage!.recommendation!,
-                  ),
-                ),
+              // TODO: Add validation result when backend provides it
+              // if (state.currentPackage!.validationResult != null)
+              //   ValidationResultCard(
+              //     validationResult: ValidationResultModel.fromJson(
+              //       state.currentPackage!.validationResult!,
+              //     ),
+              //   ),
+              // const SizedBox(height: 16),
+              // if (state.currentPackage!.confidenceScore != null)
+              //   ConfidenceScoreWidget(
+              //     confidenceScore: ConfidenceScoreModel.fromJson(
+              //       state.currentPackage!.confidenceScore!,
+              //     ),
+              //   ),
+              // const SizedBox(height: 16),
+              // if (state.currentPackage!.recommendation != null)
+              //   RecommendationCard(
+              //     recommendation: RecommendationModel.fromJson(
+              //       state.currentPackage!.recommendation!,
+              //     ),
+              //   ),
+              const Text('Validation details will appear here'),
             ],
           ),
         ),
