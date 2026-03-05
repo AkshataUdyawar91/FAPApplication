@@ -315,6 +315,22 @@ public class NotificationAgent : INotificationAgent
         string reason,
         CancellationToken cancellationToken = default)
     {
+        // Check if notification already exists for this package and type
+        var existingNotification = await _context.Notifications
+            .FirstOrDefaultAsync(
+                n => n.UserId == userId && 
+                     n.Type == NotificationType.Rejected && 
+                     n.RelatedEntityId == packageId,
+                cancellationToken);
+
+        if (existingNotification != null)
+        {
+            _logger.LogInformation(
+                "Rejected notification already exists for package {PackageId}, skipping duplicate",
+                packageId);
+            return;
+        }
+
         await SendNotificationAsync(
             userId,
             NotificationType.Rejected,

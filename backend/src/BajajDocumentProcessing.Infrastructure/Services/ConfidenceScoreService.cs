@@ -67,28 +67,39 @@ public class ConfidenceScoreService : IConfidenceScoreService
             // Determine if flagged for review
             var isFlaggedForReview = overallConfidence < LOW_CONFIDENCE_THRESHOLD;
 
-            // Check if confidence score already exists
+            // Check if confidence score already exists (use AsNoTracking to avoid tracking conflicts)
             var existingScore = await _context.ConfidenceScores
+                .AsNoTracking()
                 .FirstOrDefaultAsync(cs => cs.PackageId == packageId, cancellationToken);
 
             ConfidenceScore confidenceScore;
 
             if (existingScore != null)
             {
-                // Update existing score
-                existingScore.PoConfidence = poConfidence;
-                existingScore.InvoiceConfidence = invoiceConfidence;
-                existingScore.CostSummaryConfidence = costSummaryConfidence;
-                existingScore.ActivityConfidence = activityConfidence;
-                existingScore.PhotosConfidence = photosConfidence;
-                existingScore.OverallConfidence = overallConfidence;
-                existingScore.IsFlaggedForReview = isFlaggedForReview;
-                existingScore.UpdatedAt = DateTime.UtcNow;
+                _logger.LogInformation("Updating existing confidence score {ScoreId} for package {PackageId}", existingScore.Id, packageId);
+                
+                // Update existing score - attach and mark as modified
+                confidenceScore = new ConfidenceScore
+                {
+                    Id = existingScore.Id, // Keep same ID
+                    PackageId = packageId,
+                    PoConfidence = poConfidence,
+                    InvoiceConfidence = invoiceConfidence,
+                    CostSummaryConfidence = costSummaryConfidence,
+                    ActivityConfidence = activityConfidence,
+                    PhotosConfidence = photosConfidence,
+                    OverallConfidence = overallConfidence,
+                    IsFlaggedForReview = isFlaggedForReview,
+                    CreatedAt = existingScore.CreatedAt, // Preserve original creation time
+                    UpdatedAt = DateTime.UtcNow
+                };
 
-                confidenceScore = existingScore;
+                _context.ConfidenceScores.Update(confidenceScore);
             }
             else
             {
+                _logger.LogInformation("Creating new confidence score for package {PackageId}", packageId);
+                
                 // Create new score
                 confidenceScore = new ConfidenceScore
                 {

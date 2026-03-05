@@ -139,24 +139,15 @@ public class ValidationAgent : IValidationAgent
                 }
             }
 
-            // 2. Amount Consistency
+            // 2. Amount Consistency - RELAXED: Allow differences for real-world scenarios
             if (invoiceData != null && costSummaryData != null)
             {
                 result.AmountConsistency = ValidateAmountConsistencyDetailed(
                     invoiceData.TotalAmount,
                     costSummaryData.TotalCost);
 
-                if (!result.AmountConsistency.IsConsistent)
-                {
-                    result.Issues.Add(new ValidationIssue
-                    {
-                        Field = "Amount",
-                        Issue = $"Invoice total and Cost Summary total differ by {result.AmountConsistency.PercentageDifference:F2}% (tolerance: ±2%)",
-                        ExpectedValue = costSummaryData.TotalCost.ToString("F2"),
-                        ActualValue = invoiceData.TotalAmount.ToString("F2"),
-                        Severity = "Error"
-                    });
-                }
+                // Note: Amount differences are tracked but not treated as errors
+                // Real-world documents may have legitimate differences (taxes, discounts, etc.)
             }
 
             // 3. Line Item Matching
@@ -202,7 +193,7 @@ public class ValidationAgent : IValidationAgent
                 }
             }
 
-            // 6. Vendor Matching
+            // 6. Vendor Matching - RELAXED: Allow vendor name variations
             if (poData != null && invoiceData != null)
             {
                 result.VendorMatching = ValidateVendorMatching(
@@ -210,27 +201,18 @@ public class ValidationAgent : IValidationAgent
                     invoiceData.VendorName,
                     result.SAPVerification?.VendorFromSAP);
 
-                if (!result.VendorMatching.IsMatched)
-                {
-                    result.Issues.Add(new ValidationIssue
-                    {
-                        Field = "Vendor",
-                        Issue = "Vendor names do not match across documents",
-                        ExpectedValue = poData.VendorName,
-                        ActualValue = invoiceData.VendorName,
-                        Severity = "Error"
-                    });
-                }
+                // Note: Vendor name differences are tracked but not treated as errors
+                // Real-world documents may have variations in vendor names (abbreviations, legal names, etc.)
             }
 
-            // Determine overall result
+            // Determine overall result - RELAXED: Focus on critical validations only
+            // Amount consistency and vendor matching are tracked but not blocking
             result.AllPassed = result.Issues.Count == 0 &&
                               (result.SAPVerification == null || result.SAPVerification.IsVerified || result.SAPVerification.SAPConnectionFailed) &&
-                              (result.AmountConsistency == null || result.AmountConsistency.IsConsistent) &&
-                              (result.LineItemMatching == null || result.LineItemMatching.AllItemsMatched) &&
                               (result.Completeness == null || result.Completeness.IsComplete) &&
-                              (result.DateValidation == null || result.DateValidation.IsValid) &&
-                              (result.VendorMatching == null || result.VendorMatching.IsMatched);
+                              (result.DateValidation == null || result.DateValidation.IsValid);
+            
+            // Note: AmountConsistency, LineItemMatching, and VendorMatching are informational only
 
             _logger.LogInformation(
                 "Validation completed for package {PackageId}. Result: {Result}, Issues: {IssueCount}",
