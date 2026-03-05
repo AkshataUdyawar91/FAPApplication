@@ -855,8 +855,8 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
         {
             _logger.LogInformation("Starting photo metadata extraction for URL: {BlobUrl}", blobUrl);
 
-            // Download the image
-            var imageBytes = await _httpClient.GetByteArrayAsync(blobUrl, cancellationToken);
+            // Download the image using file storage service (handles authentication)
+            var imageBytes = await _fileStorageService.GetFileBytesAsync(blobUrl);
             
             using var stream = new MemoryStream(imageBytes);
             var directories = ImageMetadataReader.ReadMetadata(stream);

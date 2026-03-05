@@ -97,10 +97,9 @@ public class SubmissionsController : ControllerBase
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
             if (string.IsNullOrEmpty(userIdClaim))
             {
-                _logger.LogWarning("User ID claim not found in token");
                 return Unauthorized(new { error = "User ID not found in token" });
             }
-
+            
             var userId = Guid.Parse(userIdClaim);
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
 

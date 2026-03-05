@@ -133,14 +133,24 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             // Process each document
             foreach (var document in package.Documents)
             {
-                // Classify document
-                var classification = await _documentAgent.ClassifyAsync(
-                    document.BlobUrl,
-                    cancellationToken);
-                
-                document.Type = classification.Type;
-                document.ExtractionConfidence = classification.Confidence;
-                document.IsFlaggedForReview = classification.IsFlaggedForReview;
+                // Only classify if document type is not already set (e.g., AdditionalDocument)
+                // For user-specified types (PO, Invoice, CostSummary), skip classification
+                if (document.Type == Domain.Enums.DocumentType.AdditionalDocument || 
+                    document.Type == Domain.Enums.DocumentType.Photo)
+                {
+                    // Classify document
+                    var classification = await _documentAgent.ClassifyAsync(
+                        document.BlobUrl,
+                        cancellationToken);
+                    
+                    document.Type = classification.Type;
+                    document.ExtractionConfidence = classification.Confidence;
+                    document.IsFlaggedForReview = classification.IsFlaggedForReview;
+                }
+                else
+                {
+                    _logger.LogInformation("Document type already set to {Type}, skipping classification", document.Type);
+                }
 
                 // Extract data based on type
                 string extractedDataJson = document.Type switch

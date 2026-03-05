@@ -1,6 +1,9 @@
 # Login and Process Package
 # This script will login, get a new token, and trigger the workflow
 
+# Ensure API is running in Development mode (uses real API keys)
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+
 $packageId = "7dbd1de3-bb3b-4d4e-a70f-e929c8cd94b8"
 
 Write-Host "Step 1: Logging in..." -ForegroundColor Cyan
