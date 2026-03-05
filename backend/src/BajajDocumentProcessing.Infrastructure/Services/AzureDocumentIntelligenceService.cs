@@ -188,6 +188,55 @@ public class AzureDocumentIntelligenceService
                 poData.PONumber = poNumber.Content;
                 poData.FieldConfidences["PONumber"] = poNumber.Confidence ?? 0.0;
             }
+            
+            // Fallback: If PO number not found, try to extract from raw text
+            if (string.IsNullOrEmpty(poData.PONumber))
+            {
+                _logger.LogInformation("PO Number not found in structured fields, attempting text extraction");
+                
+                // Extract all text from the document
+                foreach (var page in result.Pages)
+                {
+                    foreach (var line in page.Lines)
+                    {
+                        var lineText = line.Content;
+                        
+                        // Look for patterns like "PO Number:", "Purchase Order:", "PO No:", etc.
+                        if (lineText.Contains("PO Number:", StringComparison.OrdinalIgnoreCase) ||
+                            lineText.Contains("Purchase Order:", StringComparison.OrdinalIgnoreCase) ||
+                            lineText.Contains("PO No:", StringComparison.OrdinalIgnoreCase) ||
+                            lineText.Contains("P.O. Number:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Extract the PO number after the label
+                            var parts = lineText.Split(new[] { ':', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                            if (parts.Length > 1)
+                            {
+                                // Take the part after "PO Number" or similar label
+                                var poNumberCandidate = string.Join(" ", parts.Skip(2)).Trim();
+                                if (!string.IsNullOrEmpty(poNumberCandidate))
+                                {
+                                    poData.PONumber = poNumberCandidate;
+                                    poData.FieldConfidences["PONumber"] = 0.85; // High confidence for text extraction
+                                    _logger.LogInformation("Extracted PO Number from text: {PONumber}", poData.PONumber);
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Also check if the line starts with "PO/" which is common in PO numbers
+                        if (lineText.StartsWith("PO/", StringComparison.OrdinalIgnoreCase) && lineText.Length > 10)
+                        {
+                            poData.PONumber = lineText.Trim();
+                            poData.FieldConfidences["PONumber"] = 0.90; // Very high confidence
+                            _logger.LogInformation("Extracted PO Number from text pattern: {PONumber}", poData.PONumber);
+                            break;
+                        }
+                    }
+                    
+                    if (!string.IsNullOrEmpty(poData.PONumber))
+                        break;
+                }
+            }
 
             if (doc.Fields.TryGetValue("VendorName", out var vendorName))
             {
