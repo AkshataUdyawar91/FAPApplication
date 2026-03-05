@@ -32,6 +32,9 @@ public static class DependencyInjection
         services.AddScoped<IFileStorageService, FileStorageService>();
         services.AddScoped<IMalwareScanService, MalwareScanService>();
         services.AddScoped<IDocumentService, DocumentService>();
+        
+        // Azure Document Intelligence
+        services.AddScoped<AzureDocumentIntelligenceService>();
 
         // AI Agents
         services.AddHttpClient<IDocumentAgent, DocumentAgent>();

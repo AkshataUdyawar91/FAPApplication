@@ -40,21 +40,38 @@ public class AuthService : IAuthService
 
         if (user == null)
         {
+            Console.WriteLine($"[AuthService] User not found or inactive: {request.Email}");
             return null; // User not found or inactive
         }
 
+        Console.WriteLine($"[AuthService] User found: {user.Email}");
+        Console.WriteLine($"[AuthService] Stored hash: {user.PasswordHash}");
+        Console.WriteLine($"[AuthService] Attempting to verify password...");
+
         // Verify password using BCrypt
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        try
         {
-            return null; // Invalid password
+            var isValid = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash);
+            Console.WriteLine($"[AuthService] Password verification result: {isValid}");
+            
+            if (!isValid)
+            {
+                return null; // Invalid password
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AuthService] BCrypt verification error: {ex.Message}");
+            return null;
         }
 
         // Update last login timestamp
         user.LastLoginAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        // Generate JWT token
-        var token = GenerateToken(user.Id, user.Email, user.Role.ToString());
+        // Generate JWT token with role name (not numeric value)
+        var roleName = Enum.GetName(typeof(Domain.Enums.UserRole), user.Role) ?? user.Role.ToString();
+        var token = GenerateToken(user.Id, user.Email, roleName);
         var expiresAt = DateTime.UtcNow.AddMinutes(_jwtExpirationMinutes);
 
         return new LoginResponse
@@ -124,8 +141,9 @@ public class AuthService : IAuthService
                 return null;
             }
 
-            // Generate new token
-            var newToken = GenerateToken(user.Id, user.Email, user.Role.ToString());
+            // Generate new token with role name (not numeric value)
+            var roleName = Enum.GetName(typeof(Domain.Enums.UserRole), user.Role) ?? user.Role.ToString();
+            var newToken = GenerateToken(user.Id, user.Email, roleName);
             var expiresAt = DateTime.UtcNow.AddMinutes(_jwtExpirationMinutes);
 
             return new LoginResponse

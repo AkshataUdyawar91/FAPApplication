@@ -1,6 +1,7 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace BajajDocumentProcessing.API.Controllers;
 
@@ -30,7 +31,15 @@ public class ChatController : ControllerBase
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                _logger.LogWarning("User ID claim not found in token");
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
 
             var response = await _chatService.ProcessQueryAsync(
                 userId,
@@ -72,7 +81,15 @@ public class ChatController : ControllerBase
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                _logger.LogWarning("User ID claim not found in token");
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
 
             if (!conversationId.HasValue)
             {

@@ -9,7 +9,7 @@ namespace BajajDocumentProcessing.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-// [Authorize] // DISABLED FOR TESTING
+[Authorize]
 public class SubmissionsController : ControllerBase
 {
     private readonly IApplicationDbContext _context;
@@ -37,7 +37,15 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                _logger.LogWarning("User ID claim not found in token");
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
 
             // Create document package
             var package = new Domain.Entities.DocumentPackage
@@ -85,8 +93,16 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
-            var userRole = User.FindFirst("role")?.Value;
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                _logger.LogWarning("User ID claim not found in token");
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
 
             var query = _context.DocumentPackages
                 .Include(p => p.Documents)
@@ -163,24 +179,16 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            Guid userId;
-            
-            // For testing without authentication
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out userId))
-            {
-                _logger.LogWarning("No authenticated user found, listing all submissions for testing");
-                userId = Guid.Empty; // Will not filter by user
-            }
-            
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new System.UnauthorizedAccessException());
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
             var query = _context.DocumentPackages
                 .Include(p => p.Documents)
+                .Include(p => p.ConfidenceScore)
                 .AsQueryable();
 
-            // Agency users can only see their own submissions (skip filter for testing)
-            if (userRole == "Agency" && userId != Guid.Empty)
+            // Agency users can only see their own submissions
+            if (userRole == "Agency")
             {
                 query = query.Where(p => p.SubmittedByUserId == userId);
             }
@@ -261,6 +269,59 @@ public class SubmissionsController : ControllerBase
                         }
                     }
 
+                    // Extract PO data from documents
+                    var poDoc = p.Documents.FirstOrDefault(d => d.Type == DocumentType.PO);
+                    string? poNumber = null;
+                    decimal? poAmount = null;
+
+                    if (poDoc != null && !string.IsNullOrEmpty(poDoc.ExtractedDataJson))
+                    {
+                        try
+                        {
+                            var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(poDoc.ExtractedDataJson);
+                            
+                            // Try to get PO number
+                            if (poData.TryGetProperty("PONumber", out var poNum))
+                            {
+                                poNumber = poNum.GetString();
+                            }
+                            else if (poData.TryGetProperty("poNumber", out var poNum2))
+                            {
+                                poNumber = poNum2.GetString();
+                            }
+
+                            // Try to get PO amount
+                            if (poData.TryGetProperty("TotalAmount", out var amt))
+                            {
+                                if (amt.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                {
+                                    poAmount = amt.GetDecimal();
+                                }
+                                else if (amt.ValueKind == System.Text.Json.JsonValueKind.String)
+                                {
+                                    decimal.TryParse(amt.GetString(), out var parsedAmount);
+                                    poAmount = parsedAmount;
+                                }
+                            }
+                            else if (poData.TryGetProperty("totalAmount", out var amt2))
+                            {
+                                if (amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                {
+                                    poAmount = amt2.GetDecimal();
+                                }
+                                else if (amt2.ValueKind == System.Text.Json.JsonValueKind.String)
+                                {
+                                    decimal.TryParse(amt2.GetString(), out var parsedAmount);
+                                    poAmount = parsedAmount;
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            // If parsing fails, leave as null
+                        }
+                    }
+
                     return new
                     {
                         id = p.Id,
@@ -269,7 +330,10 @@ public class SubmissionsController : ControllerBase
                         updatedAt = p.UpdatedAt,
                         documentCount = p.Documents.Count,
                         invoiceNumber = invoiceNumber,
-                        invoiceAmount = invoiceAmount
+                        invoiceAmount = invoiceAmount,
+                        poNumber = poNumber,
+                        poAmount = poAmount,
+                        overallConfidence = p.ConfidenceScore?.OverallConfidence
                     };
                 })
             });
@@ -408,19 +472,38 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new System.UnauthorizedAccessException());
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                _logger.LogWarning("User ID claim not found in token");
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+            _logger.LogInformation("User {UserId} submitting package {PackageId}", userId, packageId);
 
             var package = await _context.DocumentPackages
                 .Include(p => p.Documents)
-                .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
             {
-                return NotFound(new { error = "Package not found or access denied" });
+                _logger.LogWarning("Package {PackageId} not found", packageId);
+                return NotFound(new { error = "Package not found" });
+            }
+
+            // Verify ownership
+            if (package.SubmittedByUserId != userId)
+            {
+                _logger.LogWarning("User {UserId} attempted to submit package {PackageId} owned by {OwnerId}", 
+                    userId, packageId, package.SubmittedByUserId);
+                return Forbid();
             }
 
             if (package.State != PackageState.Uploaded)
             {
+                _logger.LogWarning("Package {PackageId} is in state {State}, cannot submit", packageId, package.State);
                 return BadRequest(new { error = $"Package is already in {package.State} state" });
             }
 
@@ -428,6 +511,9 @@ public class SubmissionsController : ControllerBase
             var hasPO = package.Documents.Any(d => d.Type == DocumentType.PO);
             var hasInvoice = package.Documents.Any(d => d.Type == DocumentType.Invoice);
             var hasCostSummary = package.Documents.Any(d => d.Type == DocumentType.CostSummary);
+
+            _logger.LogInformation("Package {PackageId} document check: PO={HasPO}, Invoice={HasInvoice}, CostSummary={HasCostSummary}", 
+                packageId, hasPO, hasInvoice, hasCostSummary);
 
             if (!hasPO)
             {
@@ -444,18 +530,21 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = "Cost Summary document is required" });
             }
 
-            _logger.LogInformation("Submitting package {PackageId} for processing", packageId);
+            _logger.LogInformation("Submitting package {PackageId} for processing with {Count} documents", 
+                packageId, package.Documents.Count);
 
             // Trigger workflow orchestrator asynchronously
             _ = Task.Run(async () =>
             {
                 try
                 {
+                    _logger.LogInformation("Starting background workflow for package {PackageId}", packageId);
                     await _orchestrator.ProcessSubmissionAsync(packageId, CancellationToken.None);
+                    _logger.LogInformation("Background workflow completed for package {PackageId}", packageId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error processing package {PackageId}", packageId);
+                    _logger.LogError(ex, "Error processing package {PackageId} in background", packageId);
                 }
             }, cancellationToken);
 
@@ -463,7 +552,8 @@ public class SubmissionsController : ControllerBase
             { 
                 message = "Package submitted for processing", 
                 packageId,
-                documentCount = package.Documents.Count
+                documentCount = package.Documents.Count,
+                status = "Processing started in background"
             });
         }
         catch (Exception ex)
@@ -508,6 +598,54 @@ public class SubmissionsController : ControllerBase
         {
             _logger.LogError(ex, "Error moving submission {Id} to pending approval", id);
             return StatusCode(500, new { error = "An error occurred while updating submission state" });
+        }
+    }
+
+    /// <summary>
+    /// Manually trigger workflow for a package (synchronous for testing)
+    /// </summary>
+    [HttpPost("{packageId}/process-now")]
+    [Authorize]
+    public async Task<IActionResult> ProcessPackageNow(Guid packageId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation("Manual workflow trigger requested for package {PackageId}", packageId);
+
+            var package = await _context.DocumentPackages
+                .Include(p => p.Documents)
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Package not found" });
+            }
+
+            _logger.LogInformation("Starting synchronous workflow for package {PackageId}", packageId);
+            
+            // Run workflow synchronously for testing
+            var result = await _orchestrator.ProcessSubmissionAsync(packageId, cancellationToken);
+            
+            _logger.LogInformation("Workflow completed for package {PackageId}, Result: {Result}", packageId, result);
+
+            // Reload package to get updated state
+            package = await _context.DocumentPackages
+                .Include(p => p.Documents)
+                .Include(p => p.ConfidenceScore)
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+
+            return Ok(new 
+            { 
+                success = result,
+                packageId,
+                currentState = package?.State.ToString() ?? "Unknown",
+                message = result ? "Workflow completed successfully" : "Workflow failed - check logs"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing package {PackageId}", packageId);
+            return StatusCode(500, new { error = $"Error: {ex.Message}" });
         }
     }
 }

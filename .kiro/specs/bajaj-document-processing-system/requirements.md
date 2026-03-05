@@ -284,3 +284,106 @@ This document specifies the requirements for the Bajaj Document Processing Syste
 16. WHEN a user uploads a file that exceeds size limits or has an invalid format, THE System SHALL display an inline error message on the specific card
 17. WHEN the "All Requests" page header shows "Create New Request" button in the top right, THE System SHALL either remove it or ensure it navigates to the upload page (consistent with centered button)
 18. WHEN the upload page displays the header, THE System SHALL use "Create New Request" as the title in dark text with a subtitle explaining the process
+
+### Requirement 18: Enhanced Submissions Dashboard with PO Details and AI Confidence Score
+
+**User Story:** As an Agency user, I want to view comprehensive submission details including PO information and AI confidence scores in the dashboard, so that I can quickly assess the status and quality of my reimbursement requests without opening individual submissions.
+
+#### Acceptance Criteria
+
+##### AC1: Display PO Number and Amount
+
+1. WHEN an Agency user views the submissions dashboard, THE System SHALL display PO Number and PO Amount columns for each submission
+2. WHEN a submission has been processed and PO data extracted, THE System SHALL display the PO Number in the "PO NO." column
+3. WHEN a submission has been processed and PO data extracted, THE System SHALL display the PO Amount in the "PO AMT" column formatted as currency with ₹ symbol
+4. WHEN a submission has not yet been processed or PO data is unavailable, THE System SHALL display "-" in both PO Number and PO Amount columns
+5. WHEN displaying PO amounts, THE System SHALL right-align the values for better readability
+
+
+
+##### AC2: Display AI Confidence Score
+
+1. WHEN an Agency user views the submissions dashboard, THE System SHALL display an AI Confidence Score column showing the overall confidence percentage
+2. WHEN a submission has been processed through the AI workflow, THE System SHALL display the overall confidence score as a percentage (e.g., "85%")
+3. WHEN displaying the AI confidence score, THE System SHALL center-align the value in the "AI SCORE" column
+4. WHEN a submission has not yet been scored by the AI system, THE System SHALL display "-" in the AI Score column
+
+##### AC3: Proper Column Alignment and Layout
+
+1. WHEN the submissions table is rendered, THE System SHALL display column headers in this order: FAP NUMBER, PO NO., PO AMT, INVOICE NO., INVOICE AMT, SUBMITTED DATE, AI SCORE, STATUS, View
+2. WHEN displaying table data, THE System SHALL left-align text fields (FAP NUMBER, PO NO., INVOICE NO., SUBMITTED DATE)
+3. WHEN displaying table data, THE System SHALL right-align monetary amounts (PO AMT, INVOICE AMT)
+4. WHEN displaying table data, THE System SHALL center-align status indicators (AI SCORE, STATUS)
+5. WHEN rendering the table, THE System SHALL use consistent flex values (flex: 2) for all data columns to ensure proper alignment
+6. WHEN displaying currency values, THE System SHALL format amounts with two decimal places and ₹ symbol
+
+##### AC4: Secure Authentication
+
+1. WHEN a user attempts to access the submissions dashboard, THE System SHALL require valid JWT authentication
+2. WHEN a user provides valid credentials (email and password), THE System SHALL generate a JWT token with user claims
+3. WHEN a user successfully authenticates, THE System SHALL allow access to the submissions dashboard
+4. WHEN an Agency user accesses the submissions list, THE System SHALL filter results to show only submissions created by that user
+5. WHEN authentication fails, THE System SHALL return an "Invalid email or password" error message
+6. WHEN making API requests, THE System SHALL include the JWT token in the Authorization header
+
+##### AC5: Backend API Response Structure
+
+1. WHEN the GET /api/submissions endpoint is called, THE System SHALL return a paginated response with total, page, pageSize, and items fields
+2. WHEN returning submission items, THE System SHALL include these fields for each submission: id, state, createdAt, updatedAt, documentCount, invoiceNumber, invoiceAmount, poNumber, poAmount, overallConfidence
+3. WHEN extracting PO data, THE System SHALL parse the ExtractedDataJson field from PO documents to retrieve PONumber and TotalAmount
+4. WHEN extracting invoice data, THE System SHALL parse the ExtractedDataJson field from Invoice documents to retrieve InvoiceNumber and TotalAmount
+5. WHEN including confidence scores, THE System SHALL load the ConfidenceScore relationship using .Include(p => p.ConfidenceScore)
+6. WHEN a field is not available, THE System SHALL return null to allow the frontend to display appropriate placeholders
+
+#### Technical Implementation Notes
+
+**Backend Changes:**
+- SubmissionsController.cs: Added `.Include(p => p.ConfidenceScore)` to load confidence scores, added `overallConfidence` field to API response, enabled `[Authorize]` attribute for authentication
+- AuthService.cs: Fixed BCrypt password hashing and verification, added detailed logging for authentication debugging, proper JWT token generation with user claims
+- Database: Updated user password hashes to use proper BCrypt format (nvarchar(512))
+
+**Frontend Changes:**
+- agency_dashboard_page.dart: Added PO NO., PO AMT, and AI SCORE columns to table header, updated table row rendering to display PO data and confidence scores, fixed column alignment (all data columns use flex: 2), proper formatting for currency values with ₹ symbol
+
+**API Endpoints:**
+- POST /api/auth/login - User authentication with JWT token generation
+- GET /api/submissions - List submissions with PO and confidence data (paginated)
+- GET /api/submissions/{id} - Get detailed submission information
+
+**Authentication:**
+- JWT-based authentication with BCrypt password hashing (BCrypt.Net-Next 4.0.3)
+- Token expiration: 30 minutes (configurable in appsettings.json)
+- Role-based access control (Agency, ASM, HQ)
+- Password hash format: BCrypt with work factor 12
+
+**Test Credentials:**
+- Agency User: agency@bajaj.com / Password123!
+- ASM User: asm@bajaj.com / Password123!
+- HQ User: hq@bajaj.com / Password123!
+
+### Requirement 19: ASM FAP Review Page with AI Quick Summary
+
+**User Story:** As an ASM user, I want to review each FAP in a single stacked page layout with AI quick summary and document-level confidence scores, so that I can quickly evaluate submissions without navigating tabs and make faster approval decisions.
+
+#### Acceptance Criteria
+
+1. WHEN an ASM user views an Agency, THE System SHALL display all FAPs submitted by that Agency in a list view
+2. WHEN an ASM selects a FAP, THE System SHALL display PO, Invoice, Photos, Cost Summary, and other documents in stacked vertical sections on a single page (no tab-based navigation) with each document having view/download feature
+3. WHEN rendering the FAP review page, THE System SHALL optimize layout spacing to reduce oversized sections and minimize unnecessary scrolling
+4. WHEN the FAP review page loads, THE System SHALL display an AI Quick Summary section at the top of the page
+5. WHEN displaying the AI Quick Summary, THE System SHALL present a crisp bullet-point text summary of overall document quality and key validation insights
+6. WHEN displaying the AI Quick Summary, THE System SHALL show the overall Confidence Score prominently near the summary (e.g., "94%" with visual indicator)
+7. WHEN rendering each document section (PO, Invoice, Cost Summary, Photos), THE System SHALL display the individual AI Confidence Score beside the respective document title or within its section header
+8. WHEN showing document confidence percentages, THE System SHALL visually align the percentage next to the document name for clarity (e.g., "Invoice 92%", "Cost Summary 90%")
+9. WHEN displaying AI validation results for each document, THE System SHALL provide a concise bullet-point explanation summarizing why the score was assigned instead of displaying raw technical validation logs
+10. WHEN validation issues exist, THE System SHALL highlight key discrepancies in brief bullet points within the respective document section
+11. WHEN confidence scores are high (>85%), THE System SHALL display a visual indicator (e.g., green checkmark badge)
+12. WHEN confidence scores are medium (70-85%), THE System SHALL display amber indicators
+13. WHEN confidence scores are low (<70%), THE System SHALL display red indicators
+14. WHEN multiple documents are displayed, THE System SHALL maintain consistent section layout and alignment for all document types
+15. WHEN the page is viewed on desktop, THE System SHALL utilize horizontal space efficiently to display summary text and confidence metrics side-by-side where possible
+16. WHEN the page is viewed on smaller screens, THE System SHALL stack summary and confidence sections responsively without breaking readability
+17. WHEN the ASM reviews a FAP, THE System SHALL display a "Review Decision" panel on the right side with "Approve FAP" (green) and "Reject FAP" (red) buttons
+18. WHEN the ASM clicks "Approve FAP", THE System SHALL update the FAP state to Approved and notify the Agency user
+19. WHEN the ASM clicks "Reject FAP", THE System SHALL prompt for rejection comments and update the FAP state to Rejected
+20. WHEN displaying the FAP header, THE System SHALL show the campaign name, FAP ID, submission date, and total amount prominently

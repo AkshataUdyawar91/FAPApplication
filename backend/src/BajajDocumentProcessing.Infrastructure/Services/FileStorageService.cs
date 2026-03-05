@@ -1,5 +1,6 @@
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Azure.Storage.Sas;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -161,6 +162,7 @@ public class FileStorageService : IFileStorageService
                 var filePath = blobUrl.Replace("file:///", "").Replace("/", "\\");
                 if (File.Exists(filePath))
                 {
+                    _logger.LogInformation("Reading local file: {FilePath}", filePath);
                     return await File.ReadAllBytesAsync(filePath);
                 }
                 throw new FileNotFoundException($"Local file not found: {filePath}");
@@ -187,7 +189,9 @@ public class FileStorageService : IFileStorageService
                 var response = await blobClient.DownloadAsync();
                 using var memoryStream = new MemoryStream();
                 await response.Value.Content.CopyToAsync(memoryStream);
-                return memoryStream.ToArray();
+                var bytes = memoryStream.ToArray();
+                _logger.LogInformation("Downloaded {Size} bytes from blob", bytes.Length);
+                return bytes;
             }
             else
             {
@@ -197,6 +201,69 @@ public class FileStorageService : IFileStorageService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting file bytes from: {BlobUrl}", blobUrl);
+            throw;
+        }
+    }
+    
+    public async Task<string> GetPublicUrlWithSasAsync(string blobUrl, TimeSpan validity)
+    {
+        try
+        {
+            if (blobUrl.StartsWith("file:///"))
+            {
+                // For local files, return the file URL as-is (development only)
+                _logger.LogWarning("Cannot generate SAS URL for local file: {BlobUrl}", blobUrl);
+                return blobUrl;
+            }
+            
+            if (_blobServiceClient == null)
+            {
+                throw new InvalidOperationException("Azure Blob Storage not configured");
+            }
+
+            // Extract container and blob name from URL
+            var uri = new Uri(blobUrl);
+            var pathParts = uri.AbsolutePath.TrimStart('/').Split('/', 2);
+            
+            if (pathParts.Length < 2)
+            {
+                throw new InvalidOperationException($"Invalid blob URL format: {blobUrl}");
+            }
+            
+            var containerName = pathParts[0];
+            var blobName = pathParts[1];
+            
+            var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+            var blobClient = containerClient.GetBlobClient(blobName);
+            
+            // Check if blob exists
+            if (!await blobClient.ExistsAsync())
+            {
+                throw new FileNotFoundException($"Blob not found: {blobUrl}");
+            }
+            
+            // Generate SAS token
+            var sasBuilder = new BlobSasBuilder
+            {
+                BlobContainerName = containerName,
+                BlobName = blobName,
+                Resource = "b", // b = blob
+                StartsOn = DateTimeOffset.UtcNow.AddMinutes(-5), // Allow for clock skew
+                ExpiresOn = DateTimeOffset.UtcNow.Add(validity)
+            };
+            
+            sasBuilder.SetPermissions(BlobSasPermissions.Read);
+            
+            var sasToken = blobClient.GenerateSasUri(sasBuilder);
+            
+            _logger.LogInformation("Generated SAS URL for blob: {BlobName}, Valid until: {ExpiresOn}", 
+                blobName, sasBuilder.ExpiresOn);
+            
+            return sasToken.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating SAS URL for: {BlobUrl}", blobUrl);
             throw;
         }
     }

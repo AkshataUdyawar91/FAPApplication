@@ -12,4 +12,5 @@ public interface IFileStorageService
     Task<Stream> DownloadFileAsync(string blobUrl);
     Task<bool> FileExistsAsync(string blobUrl);
     Task<byte[]> GetFileBytesAsync(string blobUrl);
+    Task<string> GetPublicUrlWithSasAsync(string blobUrl, TimeSpan validity);
 }

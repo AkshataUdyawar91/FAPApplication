@@ -4,6 +4,7 @@ import 'features/auth/presentation/pages/new_login_page.dart';
 import 'features/submission/presentation/pages/agency_dashboard_page.dart';
 import 'features/submission/presentation/pages/agency_upload_page.dart';
 import 'features/approval/presentation/pages/asm_review_page.dart';
+import 'features/approval/presentation/pages/asm_review_detail_page.dart';
 import 'features/analytics/presentation/pages/hq_analytics_page.dart';
 
 void main() {
@@ -46,6 +47,15 @@ class MyApp extends StatelessWidget {
             final args = settings.arguments as Map<String, dynamic>?;
             return MaterialPageRoute(
               builder: (context) => ASMReviewPage(
+                token: args?['token'] ?? '',
+                userName: args?['userName'] ?? 'User',
+              ),
+            );
+          case '/asm/review-detail':
+            final args = settings.arguments as Map<String, dynamic>?;
+            return MaterialPageRoute(
+              builder: (context) => ASMReviewDetailPage(
+                submissionId: args?['submissionId'] ?? '',
                 token: args?['token'] ?? '',
                 userName: args?['userName'] ?? 'User',
               ),
