@@ -8,6 +8,7 @@ public enum DocumentType
     PO = 1,
     Invoice = 2,
     CostSummary = 3,
-    Photo = 4,
-    AdditionalDocument = 5
+    Activity = 4,
+    Photo = 5,
+    AdditionalDocument = 6
 }

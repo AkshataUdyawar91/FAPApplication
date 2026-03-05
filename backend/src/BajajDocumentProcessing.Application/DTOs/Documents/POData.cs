@@ -6,6 +6,7 @@ namespace BajajDocumentProcessing.Application.DTOs.Documents;
 public class POData
 {
     public string PONumber { get; set; } = string.Empty;
+    public string AgencyCode { get; set; } = string.Empty;
     public string VendorName { get; set; } = string.Empty;
     public DateTime PODate { get; set; }
     public List<POLineItem> LineItems { get; set; } = new();

@@ -1,7 +1,7 @@
 namespace BajajDocumentProcessing.Application.DTOs.Documents;
 
 /// <summary>
-/// Photo EXIF metadata
+/// Photo EXIF metadata and AI-detected content
 /// </summary>
 public class PhotoMetadata
 {
@@ -12,6 +12,13 @@ public class PhotoMetadata
     public string? DeviceModel { get; set; }
     public int? ImageWidth { get; set; }
     public int? ImageHeight { get; set; }
+    
+    // AI-detected content (from Azure OpenAI Vision)
+    public bool HasBlueTshirtPerson { get; set; }
+    public bool HasBajajVehicle { get; set; }
+    public double BlueTshirtConfidence { get; set; }
+    public double VehicleConfidence { get; set; }
+    
     public Dictionary<string, double> FieldConfidences { get; set; } = new();
     public bool IsFlaggedForReview { get; set; }
 }
