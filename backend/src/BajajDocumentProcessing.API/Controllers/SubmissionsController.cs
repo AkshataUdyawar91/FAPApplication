@@ -85,8 +85,15 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
-            var userRole = User.FindFirst("role")?.Value;
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+            
+            var userId = Guid.Parse(userIdClaim);
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
 
             var query = _context.DocumentPackages
                 .Include(p => p.Documents)

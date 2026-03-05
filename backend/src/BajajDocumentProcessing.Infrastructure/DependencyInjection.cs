@@ -25,6 +25,9 @@ public static class DependencyInjection
         services.AddScoped<IApplicationDbContext>(provider => 
             provider.GetRequiredService<ApplicationDbContext>());
 
+        // Add Memory Cache
+        services.AddMemoryCache();
+
         // Authentication service
         services.AddScoped<IAuthService, AuthService>();
 
