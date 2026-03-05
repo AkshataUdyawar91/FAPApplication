@@ -282,4 +282,43 @@ public class AzureDocumentIntelligenceService
             IsFlaggedForReview = true
         };
     }
+
+    /// <summary>
+    /// Extracts all text from a document using the prebuilt-read model
+    /// </summary>
+    public async Task<string> ExtractTextFromDocumentAsync(Uri documentUri, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            _logger.LogInformation("Starting Document Intelligence text extraction for: {Uri}", documentUri);
+
+            var operation = await _client.AnalyzeDocumentFromUriAsync(
+                WaitUntil.Completed,
+                "prebuilt-read",
+                documentUri,
+                cancellationToken: cancellationToken);
+
+            var result = operation.Value;
+            
+            // Extract all text content
+            var textBuilder = new System.Text.StringBuilder();
+            foreach (var page in result.Pages)
+            {
+                foreach (var line in page.Lines)
+                {
+                    textBuilder.AppendLine(line.Content);
+                }
+            }
+
+            var extractedText = textBuilder.ToString();
+            _logger.LogInformation("Text extraction completed. Extracted {Length} characters", extractedText.Length);
+            
+            return extractedText;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting text with Document Intelligence");
+            throw;
+        }
+    }
 }
