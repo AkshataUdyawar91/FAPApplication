@@ -456,19 +456,38 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new System.UnauthorizedAccessException());
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                _logger.LogWarning("User ID claim not found in token");
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+            _logger.LogInformation("User {UserId} submitting package {PackageId}", userId, packageId);
 
             var package = await _context.DocumentPackages
                 .Include(p => p.Documents)
-                .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
             {
-                return NotFound(new { error = "Package not found or access denied" });
+                _logger.LogWarning("Package {PackageId} not found", packageId);
+                return NotFound(new { error = "Package not found" });
+            }
+
+            // Verify ownership
+            if (package.SubmittedByUserId != userId)
+            {
+                _logger.LogWarning("User {UserId} attempted to submit package {PackageId} owned by {OwnerId}", 
+                    userId, packageId, package.SubmittedByUserId);
+                return Forbid();
             }
 
             if (package.State != PackageState.Uploaded)
             {
+                _logger.LogWarning("Package {PackageId} is in state {State}, cannot submit", packageId, package.State);
                 return BadRequest(new { error = $"Package is already in {package.State} state" });
             }
 
@@ -476,6 +495,9 @@ public class SubmissionsController : ControllerBase
             var hasPO = package.Documents.Any(d => d.Type == DocumentType.PO);
             var hasInvoice = package.Documents.Any(d => d.Type == DocumentType.Invoice);
             var hasCostSummary = package.Documents.Any(d => d.Type == DocumentType.CostSummary);
+
+            _logger.LogInformation("Package {PackageId} document check: PO={HasPO}, Invoice={HasInvoice}, CostSummary={HasCostSummary}", 
+                packageId, hasPO, hasInvoice, hasCostSummary);
 
             if (!hasPO)
             {
@@ -492,18 +514,21 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = "Cost Summary document is required" });
             }
 
-            _logger.LogInformation("Submitting package {PackageId} for processing", packageId);
+            _logger.LogInformation("Submitting package {PackageId} for processing with {Count} documents", 
+                packageId, package.Documents.Count);
 
             // Trigger workflow orchestrator asynchronously
             _ = Task.Run(async () =>
             {
                 try
                 {
+                    _logger.LogInformation("Starting background workflow for package {PackageId}", packageId);
                     await _orchestrator.ProcessSubmissionAsync(packageId, CancellationToken.None);
+                    _logger.LogInformation("Background workflow completed for package {PackageId}", packageId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error processing package {PackageId}", packageId);
+                    _logger.LogError(ex, "Error processing package {PackageId} in background", packageId);
                 }
             }, cancellationToken);
 
@@ -511,7 +536,8 @@ public class SubmissionsController : ControllerBase
             { 
                 message = "Package submitted for processing", 
                 packageId,
-                documentCount = package.Documents.Count
+                documentCount = package.Documents.Count,
+                status = "Processing started in background"
             });
         }
         catch (Exception ex)

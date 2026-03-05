@@ -114,10 +114,9 @@ app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
 app.UseCors("AllowFlutterApp");
-// TEMPORARILY DISABLED FOR TESTING
-// app.UseAuthentication();
+app.UseAuthentication();
 app.UseAuditLogging();
-// app.UseAuthorization();
+app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
