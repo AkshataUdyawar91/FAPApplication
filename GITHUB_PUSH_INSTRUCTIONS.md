@@ -13,6 +13,7 @@ Run these commands from the root `FAPLatest` directory:
 ```bash
 # Remove nested git folders
 Remove-Item -Path "backend\.git" -Recurse -Force
+Remove-Item -Path "backend\.git" -Recurse -Force
 Remove-Item -Path "frontend\.git" -Recurse -Force -ErrorAction SilentlyContinue
 
 # Initialize git in root

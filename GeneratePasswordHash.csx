@@ -4,11 +4,11 @@
 using BCrypt.Net;
 
 // Generate BCrypt hash for "Password123!"
-string password = "Password123!";
-string hash = BCrypt.Net.BCrypt.HashPassword(password, 11);
+var password = "Password123!";
+var hash = BCrypt.HashPassword(password, BCrypt.GenerateSalt(12));
 
-Console.WriteLine("Password: " + password);
-Console.WriteLine("BCrypt Hash: " + hash);
+Console.WriteLine($"Password: {password}");
+Console.WriteLine($"BCrypt Hash: {hash}");
 Console.WriteLine();
 Console.WriteLine("SQL Update Statement:");
-Console.WriteLine("UPDATE Users SET PasswordHash = '" + hash + "' WHERE Email IN ('agency@bajaj.com', 'asm@bajaj.com', 'hq@bajaj.com');");
+Console.WriteLine($"UPDATE Users SET PasswordHash = '{hash}' WHERE Email IN ('agency@bajaj.com', 'asm@bajaj.com', 'hq@bajaj.com');");

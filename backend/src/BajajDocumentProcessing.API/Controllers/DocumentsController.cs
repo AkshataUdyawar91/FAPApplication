@@ -12,7 +12,7 @@ namespace BajajDocumentProcessing.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
-// [Authorize] // DISABLED FOR TESTING
+[Authorize] // Authentication enabled
 public class DocumentsController : ControllerBase
 {
     private readonly IDocumentService _documentService;
@@ -44,15 +44,13 @@ public class DocumentsController : ControllerBase
                 return BadRequest(new { message = "No file provided" });
             }
 
-            // Get user ID from claims (or use default for testing)
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            Guid userId;
+            // Get user ID from claims
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                ?? throw new System.UnauthorizedAccessException("User ID not found in token");
             
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out userId))
+            if (!Guid.TryParse(userIdClaim, out var userId))
             {
-                // For testing without authentication, use the agency user's ID
-                _logger.LogWarning("No authenticated user found, using default agency user for testing");
-                userId = Guid.Parse("3690062E-CA9C-46B9-AF75-8EFE403A18E7"); // agency@bajaj.com
+                throw new System.UnauthorizedAccessException("Invalid user ID format");
             }
 
             // Validate file

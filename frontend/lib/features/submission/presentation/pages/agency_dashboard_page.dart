@@ -618,11 +618,43 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                 Expanded(
                   flex: 2,
                   child: Text(
+                    'PO NO.',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'PO AMT',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.right,
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
                     'INVOICE NO.',
                     style: AppTextStyles.bodySmall.copyWith(
                       fontWeight: FontWeight.w600,
                       color: AppColors.textSecondary,
                     ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'INVOICE AMT',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.right,
                   ),
                 ),
                 Expanded(
@@ -638,12 +670,12 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                 Expanded(
                   flex: 1,
                   child: Text(
-                    'INVOICE AMT',
+                    'AI SCORE',
                     style: AppTextStyles.bodySmall.copyWith(
                       fontWeight: FontWeight.w600,
                       color: AppColors.textSecondary,
                     ),
-                    textAlign: TextAlign.right,
+                    textAlign: TextAlign.center,
                   ),
                 ),
                 Expanded(
@@ -675,22 +707,27 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     final status = _normalizeStatus(request['state']?.toString() ?? 'pending');
     final fapNumber = 'FAP-${request['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     
-    // Get invoice data from API or use placeholder
-    var invoiceNumber = request['invoiceNumber']?.toString();
+    // Get PO data from API
+    var poNumber = request['poNumber']?.toString() ?? '-';
+    var poAmount = request['poAmount'];
+    
+    // Get invoice data from API
+    var invoiceNumber = request['invoiceNumber']?.toString() ?? '-';
     var invoiceAmount = request['invoiceAmount'];
     
-    // If no data from API, generate placeholder based on FAP number for demo
-    if (invoiceNumber == null || invoiceNumber.isEmpty || invoiceNumber == '-') {
-      final hash = fapNumber.hashCode.abs();
-      invoiceNumber = 'INV/${(2024 + (hash % 3))}/${(hash % 9000 + 1000)}';
-    }
+    // Format amounts
+    final poAmountStr = poAmount != null 
+        ? '₹${double.parse(poAmount.toString()).toStringAsFixed(2)}' 
+        : '-';
+    final invoiceAmountStr = invoiceAmount != null 
+        ? '₹${double.parse(invoiceAmount.toString()).toStringAsFixed(2)}' 
+        : '-';
     
-    if (invoiceAmount == null) {
-      final hash = fapNumber.hashCode.abs();
-      invoiceAmount = (hash % 90000 + 10000).toDouble(); // Random amount between 10k-100k
-    }
-    
-    final invoiceAmountStr = '₹${double.parse(invoiceAmount.toString()).toStringAsFixed(2)}';
+    // AI Confidence Score from API
+    final overallConfidence = request['overallConfidence'];
+    final aiScore = overallConfidence != null 
+        ? '${(overallConfidence * 100).toStringAsFixed(0)}%' 
+        : '-';
     
     return Container(
       padding: const EdgeInsets.all(16),
@@ -713,10 +750,41 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           Expanded(
             flex: 2,
             child: Text(
+              poNumber,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              poAmountStr,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.right,
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
               invoiceNumber,
               style: AppTextStyles.bodyMedium.copyWith(
                 color: AppColors.textSecondary,
               ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              invoiceAmountStr,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.right,
             ),
           ),
           Expanded(
@@ -730,13 +798,14 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           ),
           Expanded(
             flex: 1,
-            child: Text(
-              invoiceAmountStr,
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.textSecondary,
-                fontWeight: FontWeight.w600,
+            child: Center(
+              child: Text(
+                aiScore,
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-              textAlign: TextAlign.right,
             ),
           ),
           Expanded(
