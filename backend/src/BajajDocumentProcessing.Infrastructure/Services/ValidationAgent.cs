@@ -701,6 +701,10 @@ public class ValidationAgent : IValidationAgent
         if (invoiceData.TotalAmount <= 0)
             missingFields.Add("Invoice Amount");
 
+        // Requirement 1: Invoice PO Number Field Presence
+        if (string.IsNullOrWhiteSpace(invoiceData.PONumber))
+            missingFields.Add("PO Number");
+
         result.MissingFields = missingFields;
         result.AllFieldsPresent = missingFields.Count == 0;
 
@@ -798,22 +802,34 @@ public class ValidationAgent : IValidationAgent
         }
 
         // 2. Element wise Cost - Required (check if cost breakdowns have amounts)
+        // Requirement 6: Cost Summary Element-wise Cost Field Presence
         if (costSummaryData.CostBreakdowns == null || !costSummaryData.CostBreakdowns.Any())
         {
             missingFields.Add("Element wise Cost");
         }
-        else if (costSummaryData.CostBreakdowns.All(cb => cb.Amount <= 0))
+        else
         {
-            missingFields.Add("Element wise Cost (all amounts are zero or negative)");
+            // Check each element individually for missing or invalid amounts
+            var elementsWithMissingCost = costSummaryData.CostBreakdowns
+                .Where(cb => cb.Amount <= 0)
+                .Select(cb => cb.ElementName ?? cb.Category)
+                .ToList();
+
+            if (elementsWithMissingCost.Any())
+            {
+                missingFields.Add($"Element wise Cost (missing for: {string.Join(", ", elementsWithMissingCost)})");
+            }
         }
 
         // 3. No of Days - Required
+        // Requirement 7: Cost Summary Number of Days Field Presence
         if (!costSummaryData.NumberOfDays.HasValue || costSummaryData.NumberOfDays.Value <= 0)
         {
             missingFields.Add("Number of Days");
         }
 
         // 4. Element wise Quantity - Required (check if cost breakdowns have quantities)
+        // Requirement 8: Cost Summary Element-wise Quantity Field Presence
         if (costSummaryData.CostBreakdowns == null || !costSummaryData.CostBreakdowns.Any())
         {
             if (!missingFields.Contains("Element wise Cost"))
@@ -821,9 +837,18 @@ public class ValidationAgent : IValidationAgent
                 missingFields.Add("Element wise Quantity");
             }
         }
-        else if (costSummaryData.CostBreakdowns.All(cb => !cb.Quantity.HasValue || cb.Quantity.Value <= 0))
+        else
         {
-            missingFields.Add("Element wise Quantity");
+            // Check each element individually for missing or invalid quantities
+            var elementsWithMissingQuantity = costSummaryData.CostBreakdowns
+                .Where(cb => !cb.Quantity.HasValue || cb.Quantity.Value <= 0)
+                .Select(cb => cb.ElementName ?? cb.Category)
+                .ToList();
+
+            if (elementsWithMissingQuantity.Any())
+            {
+                missingFields.Add($"Element wise Quantity (missing for: {string.Join(", ", elementsWithMissingQuantity)})");
+            }
         }
 
         // 5. Total Cost - Required

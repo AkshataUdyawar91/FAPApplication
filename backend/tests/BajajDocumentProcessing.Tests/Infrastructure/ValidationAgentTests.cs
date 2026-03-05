@@ -204,3 +204,69 @@ public class ValidationAgentTests : IDisposable
     [Fact]
     public async Task ValidatePackage_InvoiceAllFieldsPresent_ShouldPass()
     {
+        // Arrange
+        var invoiceData = new InvoiceData
+        {
+            AgencyName = "Test Agency",
+            AgencyAddress = "123 Test St",
+            AgencyCode = "AG001",
+            BillingName = "Test Billing",
+            BillingAddress = "456 Billing Ave",
+            StateName = "Maharashtra",
+            StateCode = "MH",
+            InvoiceNumber = "INV001",
+            InvoiceDate = DateTime.UtcNow,
+            VendorCode = "V001",
+            VendorName = "Test Vendor",
+            GSTNumber = "27AABCU9603R1ZM",
+            GSTPercentage = 18,
+            HSNSACCode = "998361",
+            PONumber = "PO001",
+            TotalAmount = 50000
+        };
+
+        var poData = new POData
+        {
+            PONumber = "PO001",
+            PODate = DateTime.UtcNow.AddDays(-5),
+            AgencyCode = "AG001",
+            VendorName = "Test Vendor",
+            TotalAmount = 60000,
+            LineItems = new List<POLineItem>()
+        };
+
+        var package = CreateTestPackage(poData: poData, invoiceData: invoiceData);
+        SetupMockDbSet(_mockPackageSet, new List<DocumentPackage> { package });
+
+        // Setup reference data service mocks
+        _mockReferenceDataService.Setup(r => r.ValidateGSTStateMapping(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(true);
+        _mockReferenceDataService.Setup(r => r.ValidateHSNSACCode(It.IsAny<string>()))
+            .Returns(true);
+        _mockReferenceDataService.Setup(r => r.GetDefaultGSTPercentage(It.IsAny<string>()))
+            .Returns(18);
+
+        // Act
+        var result = await _validationAgent.ValidatePackageAsync(package.Id);
+
+        // Assert
+        Assert.NotNull(result.InvoiceFieldPresence);
+        Assert.True(result.InvoiceFieldPresence.AllFieldsPresent);
+        Assert.Empty(result.InvoiceFieldPresence.MissingFields);
+    }
+
+    #endregion
+
+    #region Helper Method for DbSet Mock
+
+    private void SetupMockDbSet<T>(Mock<DbSet<T>> mockSet, List<T> data) where T : class
+    {
+        var queryable = data.AsQueryable();
+        mockSet.As<IQueryable<T>>().Setup(m => m.Provider).Returns(queryable.Provider);
+        mockSet.As<IQueryable<T>>().Setup(m => m.Expression).Returns(queryable.Expression);
+        mockSet.As<IQueryable<T>>().Setup(m => m.ElementType).Returns(queryable.ElementType);
+        mockSet.As<IQueryable<T>>().Setup(m => m.GetEnumerator()).Returns(queryable.GetEnumerator());
+    }
+
+    #endregion
+}
