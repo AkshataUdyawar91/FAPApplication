@@ -51,6 +51,7 @@ public class RecommendationAgent : IRecommendationAgent
         try
         {
             // Load package with related data
+            _logger.LogInformation("Loading package {PackageId} with documents", packageId);
             var package = await _context.DocumentPackages
                 .Include(p => p.Documents)
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
@@ -60,12 +61,16 @@ public class RecommendationAgent : IRecommendationAgent
                 _logger.LogError("Package {PackageId} not found", packageId);
                 throw new InvalidOperationException($"Package {packageId} not found");
             }
+            _logger.LogInformation("Package {PackageId} loaded successfully with {DocumentCount} documents", packageId, package.Documents.Count);
 
             // Get validation result
+            _logger.LogInformation("Loading validation result for package {PackageId}", packageId);
             var validationResult = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.PackageId == packageId, cancellationToken);
+            _logger.LogInformation("Validation result loaded: {ValidationPassed}", validationResult?.AllValidationsPassed ?? false);
 
             // Get confidence score
+            _logger.LogInformation("Loading confidence score for package {PackageId}", packageId);
             var confidenceScore = await _context.ConfidenceScores
                 .FirstOrDefaultAsync(cs => cs.PackageId == packageId, cancellationToken);
 
@@ -74,50 +79,66 @@ public class RecommendationAgent : IRecommendationAgent
                 _logger.LogError("Confidence score not found for package {PackageId}", packageId);
                 throw new InvalidOperationException($"Confidence score not found for package {packageId}");
             }
+            _logger.LogInformation("Confidence score loaded: {OverallConfidence:F2}%", confidenceScore.OverallConfidence);
 
             // Determine recommendation type based on confidence and validation
+            _logger.LogInformation("Determining recommendation type for package {PackageId}", packageId);
             var recommendationType = DetermineRecommendationType(
                 confidenceScore.OverallConfidence,
                 validationResult?.AllValidationsPassed ?? false);
+            _logger.LogInformation("Recommendation type determined: {RecommendationType}", recommendationType);
 
             // Generate evidence summary with AI
+            _logger.LogInformation("Generating AI evidence for package {PackageId}", packageId);
             var evidence = await GenerateEvidenceWithAIAsync(
                 package,
                 validationResult,
                 confidenceScore,
                 recommendationType,
                 cancellationToken);
+            _logger.LogInformation("AI evidence generated successfully for package {PackageId}", packageId);
 
-            // Check if recommendation already exists
+            // Check if recommendation already exists (use AsNoTracking to avoid tracking conflicts)
+            _logger.LogInformation("Checking for existing recommendation for package {PackageId}", packageId);
             var existingRecommendation = await _context.Recommendations
+                .AsNoTracking()
                 .FirstOrDefaultAsync(r => r.PackageId == packageId, cancellationToken);
 
             Recommendation recommendation;
 
             if (existingRecommendation != null)
             {
-                // Update existing recommendation
-                existingRecommendation.Type = recommendationType;
-                existingRecommendation.Evidence = evidence;
-                existingRecommendation.ConfidenceScore = confidenceScore.OverallConfidence;
-                existingRecommendation.ValidationIssuesJson = validationResult != null
-                    ? JsonSerializer.Serialize(new
-                    {
-                        AllPassed = validationResult.AllValidationsPassed,
-                        SAPVerified = validationResult.SapVerificationPassed,
-                        AmountConsistent = validationResult.AmountConsistencyPassed,
-                        LineItemsMatched = validationResult.LineItemMatchingPassed,
-                        Complete = validationResult.CompletenessCheckPassed,
-                        DatesValid = validationResult.DateValidationPassed,
-                        VendorMatched = validationResult.VendorMatchingPassed
-                    })
-                    : null;
-                existingRecommendation.UpdatedAt = DateTime.UtcNow;
+                _logger.LogInformation("Updating existing recommendation {RecommendationId} for package {PackageId}", existingRecommendation.Id, packageId);
+                
+                // Update existing recommendation - create new instance with same ID
+                recommendation = new Recommendation
+                {
+                    Id = existingRecommendation.Id, // Keep same ID
+                    PackageId = packageId,
+                    Type = recommendationType,
+                    Evidence = evidence,
+                    ConfidenceScore = confidenceScore.OverallConfidence,
+                    ValidationIssuesJson = validationResult != null
+                        ? JsonSerializer.Serialize(new
+                        {
+                            AllPassed = validationResult.AllValidationsPassed,
+                            SAPVerified = validationResult.SapVerificationPassed,
+                            AmountConsistent = validationResult.AmountConsistencyPassed,
+                            LineItemsMatched = validationResult.LineItemMatchingPassed,
+                            Complete = validationResult.CompletenessCheckPassed,
+                            DatesValid = validationResult.DateValidationPassed,
+                            VendorMatched = validationResult.VendorMatchingPassed
+                        })
+                        : null,
+                    CreatedAt = existingRecommendation.CreatedAt, // Preserve original creation time
+                    UpdatedAt = DateTime.UtcNow
+                };
 
-                recommendation = existingRecommendation;
+                _context.Recommendations.Update(recommendation);
             }
             else
             {
+                _logger.LogInformation("Creating new recommendation for package {PackageId}", packageId);
                 // Create new recommendation
                 recommendation = new Recommendation
                 {
@@ -145,7 +166,9 @@ public class RecommendationAgent : IRecommendationAgent
                 _context.Recommendations.Add(recommendation);
             }
 
+            _logger.LogInformation("Saving recommendation to database for package {PackageId}", packageId);
             await _context.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Recommendation saved successfully for package {PackageId}", packageId);
 
             _logger.LogInformation(
                 "Recommendation generated for package {PackageId}: {Type} (Confidence: {Confidence:F2})",
