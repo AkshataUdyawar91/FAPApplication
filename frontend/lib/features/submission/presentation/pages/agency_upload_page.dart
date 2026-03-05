@@ -195,10 +195,21 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                 options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
           }
         }
+        
+        // CRITICAL: Submit the package to trigger AI workflow
+        _showSuccess('Documents uploaded. Starting AI processing...');
+        
+        final submitResponse = await _dio.post(
+          '/submissions/$packageId/submit',
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+        
+        if (submitResponse.statusCode == 200) {
+          _showSuccess('Documents submitted successfully! AI processing started.');
+        }
       }
 
       if (mounted) {
-        _showSuccess('Documents submitted successfully!');
         Navigator.pushReplacementNamed(
           context,
           '/agency/dashboard',

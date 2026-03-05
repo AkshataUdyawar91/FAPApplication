@@ -365,75 +365,235 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
       );
     }
 
-    return Column(
-      children: filtered.map((doc) => _buildDocumentCard(doc)).toList(),
+    return Card(
+      elevation: 2,
+      child: Column(
+        children: [
+          // Table Header
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(8),
+                topRight: Radius.circular(8),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'FAP NUMBER',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'PO NO.',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'PO AMT',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.right,
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'INVOICE NO.',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'INVOICE AMT',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.right,
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    'SUBMITTED DATE',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 1,
+                  child: Text(
+                    'AI SCORE',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                Expanded(
+                  flex: 1,
+                  child: Text(
+                    'STATUS',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(width: 80), // Space for View button
+              ],
+            ),
+          ),
+          // Table Rows
+          ...filtered.map((doc) => _buildDocumentRow(doc)).toList(),
+        ],
+      ),
     );
   }
 
-  Widget _buildDocumentCard(Map<String, dynamic> doc) {
+  Widget _buildDocumentRow(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final documentCount = doc['documentCount'] ?? 0;
+    final fapNumber = 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     
-    return Card(
-      elevation: 2,
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: AppColors.reviewBackground,
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: const Icon(
-                    Icons.description,
-                    color: AppColors.primary,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Submission ${doc['id']?.toString().substring(0, 8) ?? 'Unknown'}',
-                        style: AppTextStyles.h3.copyWith(
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      Text(
-                        'Document ID: ${doc['id']}',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _buildStatusBadge(status),
-              ],
+    // Get PO data from API
+    var poNumber = doc['poNumber']?.toString() ?? '-';
+    var poAmount = doc['poAmount'];
+    
+    // Get invoice data from API
+    var invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
+    var invoiceAmount = doc['invoiceAmount'];
+    
+    // Format amounts
+    final poAmountStr = poAmount != null 
+        ? '₹${double.parse(poAmount.toString()).toStringAsFixed(2)}' 
+        : '-';
+    final invoiceAmountStr = invoiceAmount != null 
+        ? '₹${double.parse(invoiceAmount.toString()).toStringAsFixed(2)}' 
+        : '-';
+    
+    // AI Confidence Score from API
+    final overallConfidence = doc['overallConfidence'];
+    final aiScore = overallConfidence != null 
+        ? '${(overallConfidence * 100).toStringAsFixed(0)}%' 
+        : '-';
+    
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: AppColors.border),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: Text(
+              fapNumber,
+              style: AppTextStyles.bodyMedium.copyWith(
+                fontWeight: FontWeight.w500,
+              ),
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(child: _buildInfoItem('Documents', '$documentCount files')),
-                Expanded(child: _buildInfoItem('Submitted', _formatDate(doc['createdAt']))),
-                Expanded(child: _buildInfoItem('Last Updated', _formatDate(doc['updatedAt']))),
-                Expanded(child: _buildInfoItem('Status', _getStatusLabel(status))),
-              ],
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              poNumber,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              poAmountStr,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.right,
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              invoiceNumber,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              invoiceAmountStr,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.right,
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              _formatDate(doc['createdAt']),
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 1,
+            child: Center(
+              child: Text(
+                aiScore,
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 1,
+            child: Center(
+              child: _buildStatusBadge(status),
+            ),
+          ),
+          SizedBox(
+            width: 80,
+            child: Center(
+              child: IconButton(
+                icon: const Icon(Icons.visibility_outlined),
+                color: AppColors.primary,
                 onPressed: () {
-                  // Navigate to detail page
                   Navigator.pushNamed(
                     context,
                     '/asm/review-detail',
@@ -444,34 +604,12 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                     },
                   );
                 },
-                child: Text(status == 'asm-review' ? 'Review Submission' : 'View Details'),
+                tooltip: 'View Details',
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    );
-  }
-
-  Widget _buildInfoItem(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: AppTextStyles.bodySmall.copyWith(
-            color: AppColors.textSecondary,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: AppTextStyles.bodyMedium.copyWith(
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
-          ),
-        ),
-      ],
     );
   }
 

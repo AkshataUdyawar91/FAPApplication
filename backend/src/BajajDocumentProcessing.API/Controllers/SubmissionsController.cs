@@ -9,7 +9,7 @@ namespace BajajDocumentProcessing.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-// [Authorize] // DISABLED FOR TESTING
+[Authorize]
 public class SubmissionsController : ControllerBase
 {
     private readonly IApplicationDbContext _context;
@@ -163,24 +163,16 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            Guid userId;
-            
-            // For testing without authentication
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out userId))
-            {
-                _logger.LogWarning("No authenticated user found, listing all submissions for testing");
-                userId = Guid.Empty; // Will not filter by user
-            }
-            
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new System.UnauthorizedAccessException());
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
             var query = _context.DocumentPackages
                 .Include(p => p.Documents)
+                .Include(p => p.ConfidenceScore)
                 .AsQueryable();
 
-            // Agency users can only see their own submissions (skip filter for testing)
-            if (userRole == "Agency" && userId != Guid.Empty)
+            // Agency users can only see their own submissions
+            if (userRole == "Agency")
             {
                 query = query.Where(p => p.SubmittedByUserId == userId);
             }
@@ -261,6 +253,59 @@ public class SubmissionsController : ControllerBase
                         }
                     }
 
+                    // Extract PO data from documents
+                    var poDoc = p.Documents.FirstOrDefault(d => d.Type == DocumentType.PO);
+                    string? poNumber = null;
+                    decimal? poAmount = null;
+
+                    if (poDoc != null && !string.IsNullOrEmpty(poDoc.ExtractedDataJson))
+                    {
+                        try
+                        {
+                            var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(poDoc.ExtractedDataJson);
+                            
+                            // Try to get PO number
+                            if (poData.TryGetProperty("PONumber", out var poNum))
+                            {
+                                poNumber = poNum.GetString();
+                            }
+                            else if (poData.TryGetProperty("poNumber", out var poNum2))
+                            {
+                                poNumber = poNum2.GetString();
+                            }
+
+                            // Try to get PO amount
+                            if (poData.TryGetProperty("TotalAmount", out var amt))
+                            {
+                                if (amt.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                {
+                                    poAmount = amt.GetDecimal();
+                                }
+                                else if (amt.ValueKind == System.Text.Json.JsonValueKind.String)
+                                {
+                                    decimal.TryParse(amt.GetString(), out var parsedAmount);
+                                    poAmount = parsedAmount;
+                                }
+                            }
+                            else if (poData.TryGetProperty("totalAmount", out var amt2))
+                            {
+                                if (amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                {
+                                    poAmount = amt2.GetDecimal();
+                                }
+                                else if (amt2.ValueKind == System.Text.Json.JsonValueKind.String)
+                                {
+                                    decimal.TryParse(amt2.GetString(), out var parsedAmount);
+                                    poAmount = parsedAmount;
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            // If parsing fails, leave as null
+                        }
+                    }
+
                     return new
                     {
                         id = p.Id,
@@ -269,7 +314,10 @@ public class SubmissionsController : ControllerBase
                         updatedAt = p.UpdatedAt,
                         documentCount = p.Documents.Count,
                         invoiceNumber = invoiceNumber,
-                        invoiceAmount = invoiceAmount
+                        invoiceAmount = invoiceAmount,
+                        poNumber = poNumber,
+                        poAmount = poAmount,
+                        overallConfidence = p.ConfidenceScore?.OverallConfidence
                     };
                 })
             });

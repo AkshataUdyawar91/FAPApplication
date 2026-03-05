@@ -1,40 +1,16 @@
--- Update User Passwords with correct BCrypt hash for "Password123!"
-USE BajajDocumentProcessing;
-GO
+-- Update user passwords with correct BCrypt hash
+UPDATE Users 
+SET PasswordHash = '$2a$12$wc4OTK9Q0DaCP2t8.GrAoe8Bedog6UNDfjC5PY6fdjFxjnicOKIYK'
+WHERE Email = 'agency@bajaj.com';
 
-UPDATE Users
-SET PasswordHash = '$2a$11$3nkoyQ2QLmsMbza1OGa.oOHXEsi7D9c7FGt4UIK4k.TtCskRFs3DC'
-WHERE Email IN ('agency@bajaj.com', 'asm@bajaj.com', 'hq@bajaj.com');
-GO
+UPDATE Users 
+SET PasswordHash = '$2a$12$wc4OTK9Q0DaCP2t8.GrAoe8Bedog6UNDfjC5PY6fdjFxjnicOKIYK'
+WHERE Email = 'asm@bajaj.com';
 
--- Verify update
-SELECT 
-    Email,
-    FullName,
-    CASE Role
-        WHEN 0 THEN 'Agency'
-        WHEN 1 THEN 'ASM'
-        WHEN 2 THEN 'HQ'
-    END as RoleName,
-    IsActive,
-    LEFT(PasswordHash, 30) as PasswordHashPrefix
-FROM Users
-WHERE IsDeleted = 0
-ORDER BY Role;
-GO
+UPDATE Users 
+SET PasswordHash = '$2a$12$wc4OTK9Q0DaCP2t8.GrAoe8Bedog6UNDfjC5PY6fdjFxjnicOKIYK'
+WHERE Email = 'hq@bajaj.com';
 
-PRINT '';
-PRINT '==============================================';
-PRINT 'Passwords updated successfully!';
-PRINT '==============================================';
-PRINT '';
-PRINT 'All users now have password: Password123!';
-PRINT '';
-PRINT 'Login Credentials:';
-PRINT '  agency@bajaj.com / Password123!';
-PRINT '  asm@bajaj.com / Password123!';
-PRINT '  hq@bajaj.com / Password123!';
-PRINT '';
-PRINT 'Test at: http://localhost:5000/swagger';
-PRINT '==============================================';
+-- Verify
+SELECT Email, PasswordHash, LEN(PasswordHash) AS HashLength FROM Users;
 GO
