@@ -196,16 +196,21 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           }
         }
         
-        // CRITICAL: Submit the package to trigger AI workflow
+        // CRITICAL: Submit and process the package synchronously to see errors immediately
         _showSuccess('Documents uploaded. Starting AI processing...');
         
         final submitResponse = await _dio.post(
-          '/submissions/$packageId/submit',
+          '/submissions/$packageId/process-now',
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
         
         if (submitResponse.statusCode == 200) {
-          _showSuccess('Documents submitted successfully! AI processing started.');
+          final result = submitResponse.data;
+          if (result['success'] == true) {
+            _showSuccess('Documents processed successfully! Package is ready for review.');
+          } else {
+            _showError('Processing completed with issues. Check package status.');
+          }
         }
       }
 
