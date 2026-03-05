@@ -584,6 +584,54 @@ public class SubmissionsController : ControllerBase
             return StatusCode(500, new { error = "An error occurred while updating submission state" });
         }
     }
+
+    /// <summary>
+    /// Manually trigger workflow for a package (synchronous for testing)
+    /// </summary>
+    [HttpPost("{packageId}/process-now")]
+    [Authorize]
+    public async Task<IActionResult> ProcessPackageNow(Guid packageId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation("Manual workflow trigger requested for package {PackageId}", packageId);
+
+            var package = await _context.DocumentPackages
+                .Include(p => p.Documents)
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Package not found" });
+            }
+
+            _logger.LogInformation("Starting synchronous workflow for package {PackageId}", packageId);
+            
+            // Run workflow synchronously for testing
+            var result = await _orchestrator.ProcessSubmissionAsync(packageId, cancellationToken);
+            
+            _logger.LogInformation("Workflow completed for package {PackageId}, Result: {Result}", packageId, result);
+
+            // Reload package to get updated state
+            package = await _context.DocumentPackages
+                .Include(p => p.Documents)
+                .Include(p => p.ConfidenceScore)
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+
+            return Ok(new 
+            { 
+                success = result,
+                packageId,
+                currentState = package?.State.ToString() ?? "Unknown",
+                message = result ? "Workflow completed successfully" : "Workflow failed - check logs"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing package {PackageId}", packageId);
+            return StatusCode(500, new { error = $"Error: {ex.Message}" });
+        }
+    }
 }
 
 public record CreateSubmissionRequest();

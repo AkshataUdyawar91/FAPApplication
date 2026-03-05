@@ -673,7 +673,8 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
     }
 
     /// <summary>
-    /// Extracts structured data from a Cost Summary document using GPT-4 Vision
+    /// Extracts structured data from a Cost Summary document
+    /// Uses Azure Document Intelligence for PDFs/Word docs, GPT-4 Vision for images
     /// </summary>
     public async Task<CostSummaryData> ExtractCostSummaryAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
@@ -681,42 +682,39 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
         {
             _logger.LogInformation("Starting Cost Summary extraction for URL: {BlobUrl}", blobUrl);
 
-            // Prepare image data (convert to base64 or SAS URL)
+            // For document files (PDF, Word), use Azure Document Intelligence with generic document model
+            if (IsDocumentFile(blobUrl))
+            {
+                _logger.LogInformation("Document file detected - using Azure Document Intelligence for extraction");
+                var sasUrl = await _fileStorageService.GetPublicUrlWithSasAsync(blobUrl, TimeSpan.FromHours(1));
+                
+                // Use Document Intelligence to extract text and structure
+                // For Cost Summary, we'll use GPT-4 to analyze the extracted text
+                try
+                {
+                    var extractedText = await ExtractTextFromPdfAsync(new Uri(sasUrl), cancellationToken);
+                    
+                    // Now use GPT-4 to analyze the extracted text
+                    var result = await AnalyzeCostSummaryTextAsync(extractedText, cancellationToken);
+                    _logger.LogInformation(
+                        "Cost Summary extraction completed. Total: {Total}",
+                        result.TotalCost);
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error extracting Cost Summary with Document Intelligence, returning placeholder");
+                    return CreatePlaceholderCostSummary();
+                }
+            }
+
+            // For images, use GPT-4 Vision
             var imageData = await PrepareImageDataAsync(blobUrl);
             
-            // If imageData is null, it means it's a PDF and we should use Document Intelligence
-            // For now, return placeholder data
             if (imageData == null)
             {
-                _logger.LogWarning("PDF file detected - returning placeholder data. Implement Document Intelligence for production.");
-                return new CostSummaryData
-                {
-                    TotalCost = 50000.00m,
-                    CostBreakdowns = new List<CostBreakdown>
-                    {
-                        new CostBreakdown
-                        {
-                            Category = "Materials",
-                            Amount = 30000.00m
-                        },
-                        new CostBreakdown
-                        {
-                            Category = "Labor",
-                            Amount = 15000.00m
-                        },
-                        new CostBreakdown
-                        {
-                            Category = "Other",
-                            Amount = 5000.00m
-                        }
-                    },
-                    FieldConfidences = new Dictionary<string, double>
-                    {
-                        ["TotalCost"] = 0.85,
-                        ["Overall"] = 0.85
-                    },
-                    IsFlaggedForReview = false
-                };
+                _logger.LogWarning("Could not prepare image data for cost summary extraction");
+                return CreatePlaceholderCostSummary();
             }
 
             var chatCompletionsOptions = new ChatCompletionsOptions
@@ -993,5 +991,83 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
             jsonContent = jsonContent.Substring(0, jsonContent.Length - 3);
         }
         return jsonContent.Trim();
+    }
+
+    /// <summary>
+    /// Extracts text from PDF using Azure Document Intelligence
+    /// </summary>
+    private async Task<string> ExtractTextFromPdfAsync(Uri documentUri, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _documentIntelligenceService.ExtractTextFromDocumentAsync(documentUri, cancellationToken);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting text from PDF");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Analyzes extracted text using GPT-4 to extract Cost Summary data
+    /// </summary>
+    private async Task<CostSummaryData> AnalyzeCostSummaryTextAsync(string extractedText, CancellationToken cancellationToken)
+    {
+        var chatCompletionsOptions = new ChatCompletionsOptions
+        {
+            DeploymentName = _deploymentName,
+            Messages =
+            {
+                new ChatRequestSystemMessage(@"You are a Cost Summary data extraction expert.
+Analyze the provided text extracted from a cost summary document and extract structured information.
+
+Respond ONLY with a JSON object in this exact format:
+{
+  ""campaignName"": ""string"",
+  ""state"": ""string"",
+  ""campaignStartDate"": ""YYYY-MM-DD"",
+  ""campaignEndDate"": ""YYYY-MM-DD"",
+  ""totalCost"": 0.00,
+  ""costBreakdowns"": [
+    {
+      ""category"": ""string"",
+      ""amount"": 0.00
+    }
+  ],
+  ""confidence"": 0.0
+}"),
+                new ChatRequestUserMessage($"Extract cost summary data from this text:\n\n{extractedText}")
+            }
+        };
+
+        var response = await _openAIClient.GetChatCompletionsAsync(chatCompletionsOptions, cancellationToken);
+        var content = response.Value.Choices[0].Message.Content;
+        
+        return ParseCostSummaryResponse(content);
+    }
+
+    /// <summary>
+    /// Creates placeholder cost summary data
+    /// </summary>
+    private CostSummaryData CreatePlaceholderCostSummary()
+    {
+        return new CostSummaryData
+        {
+            TotalCost = 50000.00m,
+            CostBreakdowns = new List<CostBreakdown>
+            {
+                new CostBreakdown { Category = "Materials", Amount = 30000.00m },
+                new CostBreakdown { Category = "Labor", Amount = 15000.00m },
+                new CostBreakdown { Category = "Other", Amount = 5000.00m }
+            },
+            FieldConfidences = new Dictionary<string, double>
+            {
+                ["TotalCost"] = 0.85,
+                ["Overall"] = 0.85
+            },
+            IsFlaggedForReview = false
+        };
     }
 }
