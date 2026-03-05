@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.Documents;
@@ -17,11 +18,16 @@ public class DocumentsController : ControllerBase
 {
     private readonly IDocumentService _documentService;
     private readonly ILogger<DocumentsController> _logger;
+    private readonly IApplicationDbContext _context;
 
-    public DocumentsController(IDocumentService documentService, ILogger<DocumentsController> logger)
+    public DocumentsController(
+        IDocumentService documentService, 
+        ILogger<DocumentsController> logger,
+        IApplicationDbContext context)
     {
         _documentService = documentService;
         _logger = logger;
+        _context = context;
     }
 
     /// <summary>
@@ -50,9 +56,18 @@ public class DocumentsController : ControllerBase
             
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out userId))
             {
-                // For testing without authentication, use the agency user's ID
-                _logger.LogWarning("No authenticated user found, using default agency user for testing");
-                userId = Guid.Parse("3690062E-CA9C-46B9-AF75-8EFE403A18E7"); // agency@bajaj.com
+                // For testing without authentication, find the agency user from database
+                _logger.LogWarning("No authenticated user found, looking up default agency user for testing");
+                var agencyUser = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Email == "agency@bajaj.com");
+                
+                if (agencyUser == null)
+                {
+                    return Unauthorized(new { message = "No authenticated user and default agency user not found. Please login first." });
+                }
+                
+                userId = agencyUser.Id;
+                _logger.LogInformation("Using agency user {UserId} for testing", userId);
             }
 
             // Validate file
