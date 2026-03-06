@@ -68,6 +68,11 @@ public static class DependencyInjection
         // Notification Agent
         services.AddScoped<INotificationAgent, NotificationAgent>();
 
+        // Guardrail Services (for Chat)
+        services.AddScoped<IInputGuardrailService, InputGuardrailService>();
+        services.AddScoped<IAuthorizationGuardrailService, AuthorizationGuardrailService>();
+        services.AddScoped<IOutputGuardrailService, OutputGuardrailService>();
+
         // Vector Search and Embedding Services (Optional - for Chat/Analytics features)
         var azureSearchEndpoint = configuration["AzureAISearch:Endpoint"];
         var azureSearchApiKey = configuration["AzureAISearch:ApiKey"];
@@ -77,8 +82,6 @@ public static class DependencyInjection
             services.AddSingleton<IVectorSearchService, AzureAISearchService>();
             services.AddScoped<IEmbeddingService, EmbeddingService>();
             services.AddScoped<IAnalyticsEmbeddingPipeline, AnalyticsEmbeddingPipeline>();
-            services.AddScoped<IChatService, ChatService>();
-            services.AddScoped<IAnalyticsAgent, AnalyticsAgent>();
         }
         else
         {
@@ -86,6 +89,19 @@ public static class DependencyInjection
             services.AddSingleton<IVectorSearchService, NullVectorSearchService>();
             services.AddScoped<IEmbeddingService, NullEmbeddingService>();
             services.AddScoped<IAnalyticsEmbeddingPipeline, NullAnalyticsEmbeddingPipeline>();
+        }
+        
+        // Chat and Analytics services - always register if Azure OpenAI is configured
+        var azureOpenAIEndpoint = configuration["AzureOpenAI:Endpoint"];
+        var azureOpenAIApiKey = configuration["AzureOpenAI:ApiKey"];
+        
+        if (!string.IsNullOrEmpty(azureOpenAIEndpoint) && !string.IsNullOrEmpty(azureOpenAIApiKey))
+        {
+            services.AddScoped<IChatService, ChatService>();
+            services.AddScoped<IAnalyticsAgent, AnalyticsAgent>();
+        }
+        else
+        {
             services.AddScoped<IChatService, NullChatService>();
             services.AddScoped<IAnalyticsAgent, NullAnalyticsAgent>();
         }
@@ -100,6 +116,11 @@ public static class DependencyInjection
         services.AddScoped<IRequestQueueService, RequestQueueService>();
 
         // Azure services configuration will be added in subsequent tasks
+        
+        // Background workflow processor
+        services.AddSingleton<BackgroundWorkflowProcessor>();
+        services.AddHostedService(provider => provider.GetRequiredService<BackgroundWorkflowProcessor>());
+        services.AddSingleton<IBackgroundWorkflowQueue, BackgroundWorkflowQueue>();
         
         return services;
     }

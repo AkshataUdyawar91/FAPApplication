@@ -54,12 +54,21 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 return false;
             }
 
-            // Check for idempotency - if already processing or completed, skip
-            if (package.State != PackageState.Uploaded)
+            // Check for idempotency - allow reprocessing of failed packages
+            // Skip only if already in final states or approval states
+            if (package.State == PackageState.PendingASMApproval || 
+                package.State == PackageState.ASMApproved ||
+                package.State == PackageState.PendingHQApproval ||
+                package.State == PackageState.Approved || 
+                package.State == PackageState.RejectedByASM ||
+                package.State == PackageState.RejectedByHQ)
             {
-                _logger.LogWarning("Package {PackageId} is in state {State}, skipping processing", packageId, package.State);
+                _logger.LogWarning("Package {PackageId} is in final/approval state {State}, skipping processing", packageId, package.State);
                 return true;
             }
+            
+            // Allow reprocessing of packages in intermediate states (Uploaded, Extracting, Validating, Scoring, Recommending)
+            _logger.LogInformation("Package {PackageId} is in state {State}, will process/reprocess", packageId, package.State);
 
             // Step 1: Document Classification and Extraction
             if (!await ExecuteExtractionStepAsync(package, cancellationToken))
@@ -90,7 +99,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             }
 
             // Step 5: Final state transition
-            package.State = PackageState.PendingApproval;
+            package.State = PackageState.PendingASMApproval;  // Changed from PendingApproval
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -194,17 +203,35 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Check if validation result already exists (idempotency)
+            // Validate package
+            var validationResult = await _validationAgent.ValidatePackageAsync(
+                package.Id,
+                cancellationToken);
+
+            // Check if validation result already exists
             var existingValidation = await _context.ValidationResults
-                .FirstOrDefaultAsync(vr => vr.PackageId == package.Id, cancellationToken);
+                .FirstOrDefaultAsync(v => v.PackageId == package.Id, cancellationToken);
 
-            if (existingValidation == null)
+            if (existingValidation != null)
             {
-                // Validate package
-                var validationResult = await _validationAgent.ValidatePackageAsync(
-                    package.Id,
-                    cancellationToken);
-
+                _logger.LogInformation("Updating existing validation result for package {PackageId}", package.Id);
+                
+                // Update existing validation result
+                existingValidation.SapVerificationPassed = validationResult.SAPVerification?.IsVerified ?? false;
+                existingValidation.AmountConsistencyPassed = validationResult.AmountConsistency?.IsConsistent ?? false;
+                existingValidation.LineItemMatchingPassed = validationResult.LineItemMatching?.AllItemsMatched ?? false;
+                existingValidation.CompletenessCheckPassed = validationResult.Completeness?.IsComplete ?? false;
+                existingValidation.DateValidationPassed = validationResult.DateValidation?.IsValid ?? true;
+                existingValidation.VendorMatchingPassed = validationResult.VendorMatching?.IsMatched ?? true;
+                existingValidation.AllValidationsPassed = validationResult.AllPassed;
+                existingValidation.ValidationDetailsJson = System.Text.Json.JsonSerializer.Serialize(validationResult);
+                existingValidation.FailureReason = validationResult.AllPassed ? null : string.Join("; ", validationResult.Issues.Select(i => i.Issue));
+                existingValidation.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _logger.LogInformation("Creating new validation result for package {PackageId}", package.Id);
+                
                 // Convert PackageValidationResult to ValidationResult entity
                 var validationEntity = new Domain.Entities.ValidationResult
                 {
@@ -225,16 +252,12 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
                 // Store validation result
                 _context.ValidationResults.Add(validationEntity);
-                await _context.SaveChangesAsync(cancellationToken);
-                
-                _logger.LogInformation("Validation step completed for package {PackageId}, Passed: {Passed}", 
-                    package.Id, validationResult.AllPassed);
-            }
-            else
-            {
-                _logger.LogInformation("Validation result already exists for package {PackageId}, skipping", package.Id);
             }
             
+            await _context.SaveChangesAsync(cancellationToken);
+            
+            _logger.LogInformation("Validation step completed for package {PackageId}, Passed: {Passed}", 
+                package.Id, validationResult.AllPassed);
             return true;
         }
         catch (Exception ex)
@@ -256,29 +279,13 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Check if confidence score already exists (idempotency)
-            var existingScore = await _context.ConfidenceScores
-                .FirstOrDefaultAsync(cs => cs.PackageId == package.Id, cancellationToken);
-
-            if (existingScore == null)
-            {
-                // Calculate confidence score
-                var confidenceScore = await _confidenceScoreService.CalculateConfidenceScoreAsync(
-                    package.Id,
-                    cancellationToken);
-
-                // Store confidence score
-                _context.ConfidenceScores.Add(confidenceScore);
-                await _context.SaveChangesAsync(cancellationToken);
-                
-                _logger.LogInformation("Scoring step completed for package {PackageId}, Score: {Score}", 
-                    package.Id, confidenceScore.OverallConfidence);
-            }
-            else
-            {
-                _logger.LogInformation("Confidence score already exists for package {PackageId}, skipping", package.Id);
-            }
+            // Calculate confidence score (service handles create/update internally)
+            var confidenceScore = await _confidenceScoreService.CalculateConfidenceScoreAsync(
+                package.Id,
+                cancellationToken);
             
+            _logger.LogInformation("Scoring step completed for package {PackageId}, Score: {Score}", 
+                package.Id, confidenceScore.OverallConfidence);
             return true;
         }
         catch (Exception ex)
@@ -300,29 +307,13 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Check if recommendation already exists (idempotency)
-            var existingRecommendation = await _context.Recommendations
-                .FirstOrDefaultAsync(r => r.PackageId == package.Id, cancellationToken);
-
-            if (existingRecommendation == null)
-            {
-                // Generate recommendation
-                var recommendation = await _recommendationAgent.GenerateRecommendationAsync(
-                    package.Id,
-                    cancellationToken);
-
-                // Store recommendation
-                _context.Recommendations.Add(recommendation);
-                await _context.SaveChangesAsync(cancellationToken);
-                
-                _logger.LogInformation("Recommendation step completed for package {PackageId}, Type: {Type}", 
-                    package.Id, recommendation.Type);
-            }
-            else
-            {
-                _logger.LogInformation("Recommendation already exists for package {PackageId}, skipping", package.Id);
-            }
+            // Generate recommendation (service handles create/update internally)
+            var recommendation = await _recommendationAgent.GenerateRecommendationAsync(
+                package.Id,
+                cancellationToken);
             
+            _logger.LogInformation("Recommendation step completed for package {PackageId}, Type: {Type}", 
+                package.Id, recommendation.Type);
             return true;
         }
         catch (Exception ex)

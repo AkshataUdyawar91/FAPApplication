@@ -1,5 +1,6 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Enums;
+using BajajDocumentProcessing.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,15 +15,18 @@ public class SubmissionsController : ControllerBase
 {
     private readonly IApplicationDbContext _context;
     private readonly IWorkflowOrchestrator _orchestrator;
+    private readonly IBackgroundWorkflowQueue _backgroundQueue;
     private readonly ILogger<SubmissionsController> _logger;
 
     public SubmissionsController(
         IApplicationDbContext context,
         IWorkflowOrchestrator orchestrator,
+        IBackgroundWorkflowQueue backgroundQueue,
         ILogger<SubmissionsController> logger)
     {
         _context = context;
         _orchestrator = orchestrator;
+        _backgroundQueue = backgroundQueue;
         _logger = logger;
     }
 
@@ -60,23 +64,15 @@ public class SubmissionsController : ControllerBase
             _context.DocumentPackages.Add(package);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Start workflow orchestration asynchronously
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _orchestrator.ProcessSubmissionAsync(package.Id, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing submission {PackageId}", package.Id);
-                }
-            }, cancellationToken);
+            // Queue workflow for background processing (non-blocking)
+            await _backgroundQueue.QueueWorkflowAsync(package.Id);
+            
+            _logger.LogInformation("Submission {PackageId} created and queued for processing", package.Id);
 
             return CreatedAtAction(
                 nameof(GetSubmission),
                 new { id = package.Id },
-                new { id = package.Id, state = package.State.ToString() });
+                new { id = package.Id, state = package.State.ToString(), message = "Submission received and is being processed" });
         }
         catch (Exception ex)
         {
@@ -129,6 +125,15 @@ public class SubmissionsController : ControllerBase
                 state = package.State.ToString(),
                 createdAt = package.CreatedAt,
                 updatedAt = package.UpdatedAt,
+                // ASM Approval info
+                asmReviewedAt = package.ASMReviewedAt,
+                asmReviewNotes = package.ASMReviewNotes,
+                // HQ Approval info
+                hqReviewedAt = package.HQReviewedAt,
+                hqReviewNotes = package.HQReviewNotes,
+                // Legacy review info
+                reviewedAt = package.ReviewedAt,
+                reviewNotes = package.ReviewNotes,
                 documents = package.Documents.Select(d => new
                 {
                     id = d.Id,
@@ -180,6 +185,8 @@ public class SubmissionsController : ControllerBase
         {
             var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new System.UnauthorizedAccessException());
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            
+            _logger.LogInformation("ListSubmissions - UserId: {UserId}, Role: {Role}", userId, userRole);
 
             var query = _context.DocumentPackages
                 .Include(p => p.Documents)
@@ -187,9 +194,14 @@ public class SubmissionsController : ControllerBase
                 .AsQueryable();
 
             // Agency users can only see their own submissions
-            if (userRole == "Agency")
+            if (userRole == "Agency" || userRole == "0")
             {
+                _logger.LogInformation("Filtering submissions for Agency user: {UserId}", userId);
                 query = query.Where(p => p.SubmittedByUserId == userId);
+            }
+            else
+            {
+                _logger.LogInformation("Showing all submissions for role: {Role}", userRole);
             }
 
             // Filter by state if provided
@@ -203,6 +215,9 @@ public class SubmissionsController : ControllerBase
 
             // Pagination
             var total = await query.CountAsync(cancellationToken);
+            
+            _logger.LogInformation("Total submissions found: {Total}", total);
+            
             var packages = await query
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
@@ -345,14 +360,19 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// Approve a submission (ASM only)
+    /// Approve a submission by ASM - moves to HQ approval
     /// </summary>
-    [HttpPatch("{id}/approve")]
+    [HttpPatch("{id}/asm-approve")]
     [Authorize(Roles = "ASM")]
-    public async Task<IActionResult> ApproveSubmission(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> ASMApproveSubmission(
+        Guid id,
+        [FromBody] ApproveSubmissionRequest? request,
+        CancellationToken cancellationToken)
     {
         try
         {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
             var package = await _context.DocumentPackages
                 .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
@@ -361,28 +381,177 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingApproval)
+            if (package.State != PackageState.PendingASMApproval)
             {
-                return BadRequest(new { error = "Submission is not in pending approval state" });
+                return BadRequest(new { error = $"Submission is not in pending ASM approval state. Current state: {package.State}" });
             }
 
-            package.State = PackageState.Approved;
+            package.State = PackageState.PendingHQApproval;
+            package.ASMReviewedByUserId = userId;
+            package.ASMReviewedAt = DateTime.UtcNow;
+            package.ASMReviewNotes = request?.Notes ?? "Approved by ASM";
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} approved", id);
+            _logger.LogInformation("Submission {Id} approved by ASM {UserId}, moved to HQ approval", id, userId);
 
-            return Ok(new { id = package.Id, state = package.State.ToString() });
+            return Ok(new { id = package.Id, state = package.State.ToString(), message = "Approved by ASM, pending HQ approval" });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error approving submission {Id}", id);
+            _logger.LogError(ex, "Error approving submission {Id} by ASM", id);
             return StatusCode(500, new { error = "An error occurred while approving the submission" });
         }
     }
 
     /// <summary>
-    /// Reject a submission (ASM only)
+    /// Reject a submission by ASM - sends back to Agency
+    /// </summary>
+    [HttpPatch("{id}/asm-reject")]
+    [Authorize(Roles = "ASM")]
+    public async Task<IActionResult> ASMRejectSubmission(
+        Guid id,
+        [FromBody] RejectSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            if (package.State != PackageState.PendingASMApproval)
+            {
+                return BadRequest(new { error = $"Submission is not in pending ASM approval state. Current state: {package.State}" });
+            }
+
+            package.State = PackageState.RejectedByASM;
+            package.ASMReviewedByUserId = userId;
+            package.ASMReviewedAt = DateTime.UtcNow;
+            package.ASMReviewNotes = request.Reason;
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Submission {Id} rejected by ASM {UserId} with reason: {Reason}", id, userId, request.Reason);
+
+            return Ok(new { id = package.Id, state = package.State.ToString(), message = "Rejected by ASM" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error rejecting submission {Id} by ASM", id);
+            return StatusCode(500, new { error = "An error occurred while rejecting the submission" });
+        }
+    }
+
+    /// <summary>
+    /// Approve a submission by HQ - final approval
+    /// </summary>
+    [HttpPatch("{id}/hq-approve")]
+    [Authorize(Roles = "HQ")]
+    public async Task<IActionResult> HQApproveSubmission(
+        Guid id,
+        [FromBody] ApproveSubmissionRequest? request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            if (package.State != PackageState.PendingHQApproval)
+            {
+                return BadRequest(new { error = $"Submission is not in pending HQ approval state. Current state: {package.State}" });
+            }
+
+            package.State = PackageState.Approved;
+            package.HQReviewedByUserId = userId;
+            package.HQReviewedAt = DateTime.UtcNow;
+            package.HQReviewNotes = request?.Notes ?? "Approved by HQ";
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Submission {Id} approved by HQ {UserId} - final approval", id, userId);
+
+            return Ok(new { id = package.Id, state = package.State.ToString(), message = "Final approval by HQ" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error approving submission {Id} by HQ", id);
+            return StatusCode(500, new { error = "An error occurred while approving the submission" });
+        }
+    }
+
+    /// <summary>
+    /// Reject a submission by HQ - sends back to ASM
+    /// </summary>
+    [HttpPatch("{id}/hq-reject")]
+    [Authorize(Roles = "HQ")]
+    public async Task<IActionResult> HQRejectSubmission(
+        Guid id,
+        [FromBody] RejectSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            if (package.State != PackageState.PendingHQApproval)
+            {
+                return BadRequest(new { error = $"Submission is not in pending HQ approval state. Current state: {package.State}" });
+            }
+
+            package.State = PackageState.RejectedByHQ;
+            package.HQReviewedByUserId = userId;
+            package.HQReviewedAt = DateTime.UtcNow;
+            package.HQReviewNotes = request.Reason;
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Submission {Id} rejected by HQ {UserId} with reason: {Reason}", id, userId, request.Reason);
+
+            return Ok(new { id = package.Id, state = package.State.ToString(), message = "Rejected by HQ, sent back to ASM" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error rejecting submission {Id} by HQ", id);
+            return StatusCode(500, new { error = "An error occurred while rejecting the submission" });
+        }
+    }
+
+    /// <summary>
+    /// Legacy approve endpoint - kept for backward compatibility
+    /// </summary>
+    [HttpPatch("{id}/approve")]
+    [Authorize(Roles = "ASM")]
+    public async Task<IActionResult> ApproveSubmission(Guid id, CancellationToken cancellationToken)
+    {
+        // Redirect to ASM approve
+        return await ASMApproveSubmission(id, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Legacy reject endpoint - kept for backward compatibility
     /// </summary>
     [HttpPatch("{id}/reject")]
     [Authorize(Roles = "ASM")]
@@ -391,8 +560,23 @@ public class SubmissionsController : ControllerBase
         [FromBody] RejectSubmissionRequest request,
         CancellationToken cancellationToken)
     {
+        // Redirect to ASM reject
+        return await ASMRejectSubmission(id, request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Agency resubmits a rejected package for review
+    /// </summary>
+    [HttpPatch("{id}/resubmit")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> ResubmitPackage(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
         try
         {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
             var package = await _context.DocumentPackages
                 .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
@@ -401,23 +585,122 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingApproval)
+            // Can only resubmit if rejected by ASM
+            if (package.State != PackageState.RejectedByASM)
             {
-                return BadRequest(new { error = "Submission is not in pending approval state" });
+                return BadRequest(new { error = $"Can only resubmit packages rejected by ASM. Current state: {package.State}" });
             }
 
-            package.State = PackageState.Rejected;
+            // Verify the package belongs to the user
+            if (package.SubmittedByUserId != userId)
+            {
+                return Forbid();
+            }
+
+            // Track resubmission
+            package.ResubmissionCount = (package.ResubmissionCount ?? 0) + 1;
+            
+            // Reset to uploaded state to trigger workflow
+            package.State = PackageState.Uploaded;
+            package.ASMReviewNotes = null;
+            package.ASMReviewedAt = null;
+            package.ASMReviewedByUserId = null;
             package.UpdatedAt = DateTime.UtcNow;
+            
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} rejected with reason: {Reason}", id, request.Reason);
+            _logger.LogInformation("Package {Id} resubmitted by Agency user {UserId} (Resubmission #{Count})", 
+                id, userId, package.ResubmissionCount);
 
-            return Ok(new { id = package.Id, state = package.State.ToString() });
+            // Trigger workflow processing
+            try
+            {
+                await _orchestrator.ProcessSubmissionAsync(id, cancellationToken);
+                _logger.LogInformation("Workflow triggered for resubmitted package {Id}", id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error triggering workflow for resubmitted package {Id}", id);
+                // Don't fail the resubmit if workflow fails - it can be triggered manually
+            }
+
+            return Ok(new 
+            { 
+                id = package.Id, 
+                state = package.State.ToString(), 
+                resubmissionCount = package.ResubmissionCount,
+                message = "Package resubmitted successfully and workflow triggered" 
+            });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error rejecting submission {Id}", id);
-            return StatusCode(500, new { error = "An error occurred while rejecting the submission" });
+            _logger.LogError(ex, "Error resubmitting package {Id}", id);
+            return StatusCode(500, new { error = "An error occurred while resubmitting the package" });
+        }
+    }
+
+    /// <summary>
+    /// ASM resubmits a package to HQ after HQ rejection
+    /// </summary>
+    [HttpPatch("{id}/resubmit-to-hq")]
+    [Authorize(Roles = "ASM")]
+    public async Task<IActionResult> ResubmitToHQ(
+        Guid id,
+        [FromBody] ResubmitToHQRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            // Can only resubmit if rejected by HQ
+            if (package.State != PackageState.RejectedByHQ)
+            {
+                return BadRequest(new { error = $"Can only resubmit packages rejected by HQ. Current state: {package.State}" });
+            }
+
+            // Track HQ resubmission
+            package.HQResubmissionCount = (package.HQResubmissionCount ?? 0) + 1;
+            
+            // Move back to pending HQ approval
+            package.State = PackageState.PendingHQApproval;
+            
+            // Append resubmission notes to ASM notes
+            var resubmissionNote = $"\n\n[Resubmission #{package.HQResubmissionCount} - {DateTime.UtcNow:yyyy-MM-dd HH:mm}]\n{request.Notes}";
+            package.ASMReviewNotes = (package.ASMReviewNotes ?? "") + resubmissionNote;
+            
+            // Clear HQ rejection (but keep history in notes)
+            package.HQReviewNotes = null;
+            package.HQReviewedAt = null;
+            package.HQReviewedByUserId = null;
+            
+            package.UpdatedAt = DateTime.UtcNow;
+            
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Package {Id} resubmitted to HQ by ASM user {UserId} (HQ Resubmission #{Count})", 
+                id, userId, package.HQResubmissionCount);
+
+            return Ok(new 
+            { 
+                id = package.Id, 
+                state = package.State.ToString(), 
+                hqResubmissionCount = package.HQResubmissionCount,
+                message = "Package resubmitted to HQ successfully" 
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resubmitting package {Id} to HQ", id);
+            return StatusCode(500, new { error = "An error occurred while resubmitting to HQ" });
         }
     }
 
@@ -651,6 +934,10 @@ public class SubmissionsController : ControllerBase
 
 public record CreateSubmissionRequest();
 
+public record ApproveSubmissionRequest(string? Notes);
+
 public record RejectSubmissionRequest(string Reason);
+
+public record ResubmitToHQRequest(string Notes);
 
 public record RequestReuploadRequest(List<string> Fields);

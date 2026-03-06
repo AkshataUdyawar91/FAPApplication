@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
+import 'dart:html' as html;
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 
@@ -74,14 +75,15 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     
     try {
       final response = await _dio.patch(
-        '/submissions/${widget.submissionId}/approve',
+        '/submissions/${widget.submissionId}/asm-approve',
+        data: {'notes': _commentsController.text.trim()},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       
       if (response.statusCode == 200 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('FAP approved successfully'),
+            content: Text('FAP approved and sent to HQ'),
             backgroundColor: AppColors.approvedText,
           ),
         );
@@ -119,7 +121,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     
     try {
       final response = await _dio.patch(
-        '/submissions/${widget.submissionId}/reject',
+        '/submissions/${widget.submissionId}/asm-reject',
         data: {'reason': _commentsController.text.trim()},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
@@ -127,7 +129,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       if (response.statusCode == 200 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('FAP rejected'),
+            content: Text('FAP rejected (sent back to Agency)'),
             backgroundColor: AppColors.rejectedText,
           ),
         );
@@ -175,6 +177,8 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             _buildHeader(),
+                            const SizedBox(height: 24),
+                            _buildHQRejectionSection(),
                             const SizedBox(height: 24),
                             _buildAIQuickSummary(),
                             const SizedBox(height: 24),
@@ -321,6 +325,195 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
         ),
       ],
     );
+  }
+
+  Widget _buildHQRejectionSection() {
+    final state = _submission!['state']?.toString().toLowerCase() ?? '';
+    final hqReviewedAt = _submission!['hqReviewedAt'];
+    final hqReviewNotes = _submission!['hqReviewNotes'];
+    
+    // Only show if rejected by HQ
+    if (state != 'rejectedbyhq' || hqReviewedAt == null) {
+      return const SizedBox.shrink();
+    }
+    
+    return Card(
+      elevation: 0,
+      color: const Color(0xFFFEE2E2),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: Color(0xFFEF4444), width: 2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.cancel, color: const Color(0xFFEF4444), size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Rejected by HQ',
+                  style: AppTextStyles.h3.copyWith(
+                    color: const Color(0xFFEF4444),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Rejected on: ${_formatDate(hqReviewedAt)}',
+              style: AppTextStyles.bodySmall.copyWith(
+                color: const Color(0xFFB91C1C),
+              ),
+            ),
+            if (hqReviewNotes != null && hqReviewNotes.toString().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'HQ Rejection Reason:',
+                style: AppTextStyles.bodyMedium.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFFB91C1C),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                hqReviewNotes.toString(),
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: const Color(0xFF7F1D1D),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: const Color(0xFFEF4444), size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Please review HQ feedback and resubmit if appropriate.',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: const Color(0xFF7F1D1D),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Resubmit to HQ button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _showResubmitToHQDialog,
+                icon: const Icon(Icons.send),
+                label: const Text('Resubmit to HQ'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showResubmitToHQDialog() {
+    final notesController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Resubmit to HQ'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Please provide notes explaining what has been addressed or corrected:',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: notesController,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                hintText: 'Enter your notes here...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (notesController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please provide notes before resubmitting'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(context);
+              _resubmitToHQ(notesController.text.trim());
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+            ),
+            child: const Text('Resubmit'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _resubmitToHQ(String notes) async {
+    try {
+      final response = await _dio.patch(
+        '/submissions/${widget.submissionId}/resubmit-to-hq',
+        data: {'notes': notes},
+        options: Options(
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Package resubmitted to HQ successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        
+        // Navigate back to review list
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to resubmit to HQ: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildAIQuickSummary() {
@@ -533,6 +726,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     double? confidence,
   ) {
     final filename = document['filename'] ?? 'document.pdf';
+    final blobUrl = document['blobUrl'];
     final extractedData = document['extractedData'];
     final confidencePercent = confidence != null ? (confidence * 100).toInt() : 0;
     
@@ -611,6 +805,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       confidencePercent,
       filename,
       analysisPoints,
+      blobUrl: blobUrl,
       costBreakdown: costBreakdown,
     );
   }
@@ -765,6 +960,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     int confidence,
     String filename,
     List<String> analysisPoints, {
+    String? blobUrl,
     Map<String, int>? costBreakdown,
   }) {
     return Card(
@@ -817,7 +1013,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                 ),
                 const SizedBox(width: 12),
                 OutlinedButton.icon(
-                  onPressed: () {},
+                  onPressed: () => _downloadDocument(blobUrl, filename),
                   icon: const Icon(Icons.download, size: 16),
                   label: const Text('Download'),
                   style: OutlinedButton.styleFrom(
@@ -1060,6 +1256,41 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       return '${dt.day} Mar ${dt.year}';
     } catch (e) {
       return 'N/A';
+    }
+  }
+
+  void _downloadDocument(String? blobUrl, String? filename) {
+    if (blobUrl == null || blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Document URL not available'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    try {
+      html.window.open(blobUrl, '_blank');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Opening ${filename ?? 'document'}...'),
+            backgroundColor: AppColors.approvedText,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to open document: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 }

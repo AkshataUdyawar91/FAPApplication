@@ -98,10 +98,9 @@ public class RecommendationAgent : IRecommendationAgent
                 cancellationToken);
             _logger.LogInformation("AI evidence generated successfully for package {PackageId}", packageId);
 
-            // Check if recommendation already exists (use AsNoTracking to avoid tracking conflicts)
+            // Check if recommendation already exists (WITH tracking to enable proper updates)
             _logger.LogInformation("Checking for existing recommendation for package {PackageId}", packageId);
             var existingRecommendation = await _context.Recommendations
-                .AsNoTracking()
                 .FirstOrDefaultAsync(r => r.PackageId == packageId, cancellationToken);
 
             Recommendation recommendation;
@@ -110,31 +109,26 @@ public class RecommendationAgent : IRecommendationAgent
             {
                 _logger.LogInformation("Updating existing recommendation {RecommendationId} for package {PackageId}", existingRecommendation.Id, packageId);
                 
-                // Update existing recommendation - create new instance with same ID
-                recommendation = new Recommendation
-                {
-                    Id = existingRecommendation.Id, // Keep same ID
-                    PackageId = packageId,
-                    Type = recommendationType,
-                    Evidence = evidence,
-                    ConfidenceScore = confidenceScore.OverallConfidence,
-                    ValidationIssuesJson = validationResult != null
-                        ? JsonSerializer.Serialize(new
-                        {
-                            AllPassed = validationResult.AllValidationsPassed,
-                            SAPVerified = validationResult.SapVerificationPassed,
-                            AmountConsistent = validationResult.AmountConsistencyPassed,
-                            LineItemsMatched = validationResult.LineItemMatchingPassed,
-                            Complete = validationResult.CompletenessCheckPassed,
-                            DatesValid = validationResult.DateValidationPassed,
-                            VendorMatched = validationResult.VendorMatchingPassed
-                        })
-                        : null,
-                    CreatedAt = existingRecommendation.CreatedAt, // Preserve original creation time
-                    UpdatedAt = DateTime.UtcNow
-                };
+                // Update existing tracked entity - EF Core will generate UPDATE statement
+                existingRecommendation.Type = recommendationType;
+                existingRecommendation.Evidence = evidence;
+                existingRecommendation.ConfidenceScore = confidenceScore.OverallConfidence;
+                existingRecommendation.ValidationIssuesJson = validationResult != null
+                    ? JsonSerializer.Serialize(new
+                    {
+                        AllPassed = validationResult.AllValidationsPassed,
+                        SAPVerified = validationResult.SapVerificationPassed,
+                        AmountConsistent = validationResult.AmountConsistencyPassed,
+                        LineItemsMatched = validationResult.LineItemMatchingPassed,
+                        Complete = validationResult.CompletenessCheckPassed,
+                        DatesValid = validationResult.DateValidationPassed,
+                        VendorMatched = validationResult.VendorMatchingPassed
+                    })
+                    : null;
+                existingRecommendation.UpdatedAt = DateTime.UtcNow;
+                // CreatedAt is preserved automatically
 
-                _context.Recommendations.Update(recommendation);
+                recommendation = existingRecommendation;
             }
             else
             {

@@ -14,21 +14,25 @@ namespace BajajDocumentProcessing.Tests.Infrastructure;
 public class DocumentAgentTests
 {
     private readonly Mock<ILogger<DocumentAgent>> _mockLogger;
+    private readonly Mock<IFileStorageService> _mockFileStorage;
+    private readonly Mock<ILogger<AzureDocumentIntelligenceService>> _mockDocIntelLogger;
     private readonly IConfiguration _configuration;
 
     public DocumentAgentTests()
     {
         _mockLogger = new Mock<ILogger<DocumentAgent>>();
+        _mockFileStorage = new Mock<IFileStorageService>();
+        _mockDocIntelLogger = new Mock<ILogger<AzureDocumentIntelligenceService>>();
         
         // Create configuration with Azure OpenAI and Document Intelligence settings
         var configurationBuilder = new ConfigurationBuilder();
         configurationBuilder.AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["AzureServices:OpenAI:Endpoint"] = "https://test.openai.azure.com/",
-            ["AzureServices:OpenAI:ApiKey"] = "test-api-key",
-            ["AzureServices:OpenAI:DeploymentName"] = "gpt-4",
-            ["AzureServices:DocumentIntelligence:Endpoint"] = "https://test.documentintelligence.azure.com/",
-            ["AzureServices:DocumentIntelligence:ApiKey"] = "test-doc-intel-key"
+            ["AzureOpenAI:Endpoint"] = "https://test.openai.azure.com/",
+            ["AzureOpenAI:ApiKey"] = "test-api-key",
+            ["AzureOpenAI:DeploymentName"] = "gpt-4",
+            ["AzureDocumentIntelligence:Endpoint"] = "https://test.documentintelligence.azure.com/",
+            ["AzureDocumentIntelligence:ApiKey"] = "test-doc-intel-key"
         });
         _configuration = configurationBuilder.Build();
     }
@@ -38,9 +42,10 @@ public class DocumentAgentTests
     {
         // Arrange
         var httpClient = new HttpClient();
+        var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
 
         // Act
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService);
 
         // Assert
         Assert.NotNull(documentAgent);
@@ -54,13 +59,14 @@ public class DocumentAgentTests
         var configBuilder = new ConfigurationBuilder();
         configBuilder.AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["AzureServices:OpenAI:ApiKey"] = "test-api-key"
+            ["AzureOpenAI:ApiKey"] = "test-api-key"
         });
         var config = configBuilder.Build();
+        var docIntelService = new AzureDocumentIntelligenceService(config, _mockDocIntelLogger.Object);
 
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => 
-            new DocumentAgent(config, _mockLogger.Object, httpClient));
+            new DocumentAgent(config, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService));
         Assert.Contains("endpoint not configured", exception.Message);
     }
 
@@ -72,13 +78,14 @@ public class DocumentAgentTests
         var configBuilder = new ConfigurationBuilder();
         configBuilder.AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["AzureServices:OpenAI:Endpoint"] = "https://test.openai.azure.com/"
+            ["AzureOpenAI:Endpoint"] = "https://test.openai.azure.com/"
         });
         var config = configBuilder.Build();
+        var docIntelService = new AzureDocumentIntelligenceService(config, _mockDocIntelLogger.Object);
 
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => 
-            new DocumentAgent(config, _mockLogger.Object, httpClient));
+            new DocumentAgent(config, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService));
         Assert.Contains("API key not configured", exception.Message);
     }
 
@@ -91,7 +98,8 @@ public class DocumentAgentTests
         
         // Arrange
         var httpClient = new HttpClient();
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient);
+        var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService);
         var testUrl = "https://example.com/test-document.pdf";
 
         // Act & Assert
@@ -154,7 +162,8 @@ public class DocumentAgentTests
     {
         // Arrange
         var httpClient = new HttpClient();
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient);
+        var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService);
         var fieldConfidences = new Dictionary<string, double>
         {
             { "Field1", 0.95 },
@@ -175,7 +184,8 @@ public class DocumentAgentTests
     {
         // Arrange
         var httpClient = new HttpClient();
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient);
+        var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService);
         var fieldConfidences = new Dictionary<string, double>
         {
             { "Field1", 0.50 },
@@ -195,7 +205,8 @@ public class DocumentAgentTests
     {
         // Arrange
         var httpClient = new HttpClient();
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient);
+        var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService);
         var fieldConfidences = new Dictionary<string, double>
         {
             { "Field1", 0.95 },
@@ -217,7 +228,8 @@ public class DocumentAgentTests
     {
         // Arrange
         var httpClient = new HttpClient();
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient);
+        var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService);
         var fieldConfidences = new Dictionary<string, double>();
 
         // Act

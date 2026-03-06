@@ -7,7 +7,7 @@ namespace BajajDocumentProcessing.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "HQ")]
+[Authorize] // Changed from [Authorize(Roles = "HQ")] to allow all authenticated users
 public class ChatController : ControllerBase
 {
     private readonly IChatService _chatService;
@@ -52,7 +52,7 @@ public class ChatController : ControllerBase
         catch (InvalidOperationException ex) when (ex.Message.Contains("not available"))
         {
             _logger.LogWarning("Chat service not available: {Message}", ex.Message);
-            return StatusCode(503, new { error = "Chat service is not available. Azure AI Search must be configured to use this feature." });
+            return StatusCode(503, new { error = "Chat service is not available. Azure OpenAI must be configured to use this feature." });
         }
         catch (System.UnauthorizedAccessException ex)
         {
