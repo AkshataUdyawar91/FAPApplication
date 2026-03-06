@@ -1,10 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/network/dio_client.dart';
 import '../providers/chat_providers.dart';
+import '../providers/chat_notifier.dart';
 import '../widgets/chat_message_bubble.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
-  const ChatPage({super.key});
+  final String token;
+  final String userName;
+
+  const ChatPage({
+    super.key,
+    required this.token,
+    required this.userName,
+  });
 
   @override
   ConsumerState<ChatPage> createState() => _ChatPageState();
@@ -17,6 +26,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void initState() {
     super.initState();
+    // Set auth token in provider
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(authTokenProvider.notifier).state = widget.token;
+    });
     Future.microtask(
       () => ref.read(chatNotifierProvider.notifier).loadConversationHistory(),
     );

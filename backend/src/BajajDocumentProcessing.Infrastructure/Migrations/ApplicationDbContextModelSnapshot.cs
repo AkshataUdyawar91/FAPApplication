@@ -291,14 +291,44 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("ASMReviewNotes")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("ASMReviewedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ASMReviewedById")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("ASMReviewedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("CreatedBy")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<int?>("HQResubmissionCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("HQReviewNotes")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("HQReviewedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("HQReviewedById")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("HQReviewedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
+
+                    b.Property<int?>("ResubmissionCount")
+                        .HasColumnType("int");
 
                     b.Property<string>("ReviewNotes")
                         .HasMaxLength(2000)
@@ -324,7 +354,11 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ASMReviewedById");
+
                     b.HasIndex("CreatedAt");
+
+                    b.HasIndex("HQReviewedById");
 
                     b.HasIndex("ReviewedByUserId");
 
@@ -621,6 +655,14 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.DocumentPackage", b =>
                 {
+                    b.HasOne("BajajDocumentProcessing.Domain.Entities.User", "ASMReviewedBy")
+                        .WithMany()
+                        .HasForeignKey("ASMReviewedById");
+
+                    b.HasOne("BajajDocumentProcessing.Domain.Entities.User", "HQReviewedBy")
+                        .WithMany()
+                        .HasForeignKey("HQReviewedById");
+
                     b.HasOne("BajajDocumentProcessing.Domain.Entities.User", "ReviewedBy")
                         .WithMany("ReviewedPackages")
                         .HasForeignKey("ReviewedByUserId")
@@ -631,6 +673,10 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasForeignKey("SubmittedByUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("ASMReviewedBy");
+
+                    b.Navigation("HQReviewedBy");
 
                     b.Navigation("ReviewedBy");
 

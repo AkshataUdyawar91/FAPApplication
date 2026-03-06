@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
@@ -54,9 +55,11 @@ public class UploadConfirmationProperties
         
         var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var file = CreateMockFile("test.pdf", 2048, "application/pdf");
         var userId = Guid.NewGuid();
@@ -87,9 +90,11 @@ public class UploadConfirmationProperties
         
         var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var expectedSize = 5 * 1024 * 1024; // 5MB
         var file = CreateMockFile("large.pdf", expectedSize, "application/pdf");
@@ -113,9 +118,11 @@ public class UploadConfirmationProperties
         
         var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var originalFileName = "My Important Document.pdf";
         var file = CreateMockFile(originalFileName, 1024, "application/pdf");
@@ -139,9 +146,11 @@ public class UploadConfirmationProperties
         
         var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var file = CreateMockFile("photo.jpg", 1024, "image/jpeg");
 

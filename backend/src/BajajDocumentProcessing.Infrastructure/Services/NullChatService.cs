@@ -13,24 +13,24 @@ public class NullChatService : IChatService
     public NullChatService(ILogger<NullChatService> logger)
     {
         _logger = logger;
-        _logger.LogWarning("Azure AI Search is not configured. Chat features are disabled.");
+        _logger.LogWarning("Azure OpenAI is not configured. Chat features are disabled.");
     }
 
     public Task<ChatResponse> ProcessQueryAsync(Guid userId, string query, Guid? conversationId = null, CancellationToken cancellationToken = default)
     {
-        _logger.LogWarning("Chat service called but Azure AI Search is not configured");
-        throw new InvalidOperationException("Chat service is not available. Azure AI Search must be configured to use chat features.");
+        _logger.LogWarning("Chat service called but Azure OpenAI is not configured");
+        throw new InvalidOperationException("Chat service is not available. Azure OpenAI must be configured to use chat features.");
     }
 
     public Task<List<ChatMessage>> GetConversationHistoryAsync(Guid conversationId, CancellationToken cancellationToken = default)
     {
-        _logger.LogDebug("Get conversation history skipped - Azure AI Search not configured");
+        _logger.LogDebug("Get conversation history skipped - Azure OpenAI not configured");
         return Task.FromResult(new List<ChatMessage>());
     }
 
     public Task ClearConversationAsync(Guid conversationId, CancellationToken cancellationToken = default)
     {
-        _logger.LogDebug("Clear conversation skipped - Azure AI Search not configured");
+        _logger.LogDebug("Clear conversation skipped - Azure OpenAI not configured");
         return Task.CompletedTask;
     }
 }

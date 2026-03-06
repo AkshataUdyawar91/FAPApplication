@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/widgets/chat_fab.dart';
 
 class AgencyDashboardPage extends StatefulWidget {
   final String token;
@@ -94,13 +95,17 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           matchesStatus = state == 'uploaded' || state == 'extracting' || state == 'validating' || state == 'scoring';
           break;
         case 'under_review':
-          matchesStatus = state == 'validated' || state == 'recommending' || state == 'pendingapproval';
+          matchesStatus = state == 'validated' || state == 'recommending' || 
+                         state == 'pendingasmapproval' || state == 'pendingapproval' ||
+                         state == 'pendinghqapproval';
           break;
         case 'approved':
           matchesStatus = state == 'approved';
           break;
         case 'rejected':
-          matchesStatus = state == 'rejected' || state == 'validationfailed' || state == 'reuploadrequested';
+          matchesStatus = state == 'rejected' || state == 'validationfailed' || 
+                         state == 'reuploadrequested' || state == 'rejectedbyasm' || 
+                         state == 'rejectedbyhq';
           break;
       }
       
@@ -117,12 +122,16 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       }).length,
       'underReview': _requests.where((r) {
         final state = r['state']?.toString().toLowerCase() ?? '';
-        return state == 'validated' || state == 'recommending' || state == 'pendingapproval';
+        return state == 'validated' || state == 'recommending' || 
+               state == 'pendingasmapproval' || state == 'pendingapproval' ||
+               state == 'pendinghqapproval';
       }).length,
       'approved': _requests.where((r) => r['state']?.toString().toLowerCase() == 'approved').length,
       'rejected': _requests.where((r) {
         final state = r['state']?.toString().toLowerCase() ?? '';
-        return state == 'rejected' || state == 'validationfailed' || state == 'reuploadrequested';
+        return state == 'rejected' || state == 'validationfailed' || 
+               state == 'reuploadrequested' || state == 'rejectedbyasm' || 
+               state == 'rejectedbyhq';
       }).length,
     };
   }
@@ -440,7 +449,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       children: [
         Expanded(
           child: _buildStatCard(
-            'Pending Requests',
+            'Processing',
             stats['pending']!,
             Icons.schedule,
             const Color(0xFF3B82F6),
@@ -449,7 +458,16 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         const SizedBox(width: 16),
         Expanded(
           child: _buildStatCard(
-            'Approved This Month',
+            'Pending ASM Approval',
+            stats['underReview']!,
+            Icons.pending_actions,
+            const Color(0xFFF59E0B),
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: _buildStatCard(
+            'Approved',
             stats['approved']!,
             Icons.check_circle,
             const Color(0xFF10B981),
@@ -458,19 +476,10 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         const SizedBox(width: 16),
         Expanded(
           child: _buildStatCard(
-            'Total Reimbursed',
-            '₹${_calculateTotalAmount()}',
-            Icons.account_balance_wallet,
-            const Color(0xFF8B5CF6),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: _buildStatCard(
-            'Drafts',
+            'Rejected',
             stats['rejected']!,
-            Icons.drafts,
-            const Color(0xFFF59E0B),
+            Icons.cancel,
+            const Color(0xFFEF4444),
           ),
         ),
       ],
@@ -821,8 +830,16 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                 icon: const Icon(Icons.visibility_outlined),
                 color: AppColors.primary,
                 onPressed: () {
-                  // Show detailed view dialog
-                  _showSubmissionDetails(request);
+                  // Navigate to detailed view page
+                  Navigator.pushNamed(
+                    context,
+                    '/agency/submission-detail',
+                    arguments: {
+                      'submissionId': request['id'],
+                      'token': widget.token,
+                      'userName': widget.userName,
+                    },
+                  );
                 },
                 tooltip: 'View Details',
               ),
@@ -841,22 +858,34 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       case 'approved':
         bgColor = AppColors.approvedBackground;
         textColor = AppColors.approvedText;
-        label = 'Submitted';
+        label = 'Approved';
         break;
       case 'rejected':
+      case 'rejected_by_asm':
         bgColor = AppColors.rejectedBackground;
         textColor = AppColors.rejectedText;
-        label = 'Draft';
+        label = 'Rejected by ASM';
+        break;
+      case 'rejected_by_hq':
+        bgColor = AppColors.rejectedBackground;
+        textColor = AppColors.rejectedText;
+        label = 'Rejected by HQ';
         break;
       case 'under_review':
+      case 'pending_asm':
         bgColor = AppColors.reviewBackground;
         textColor = AppColors.reviewText;
-        label = 'On Hold';
+        label = 'Pending ASM Approval';
+        break;
+      case 'pending_hq':
+        bgColor = AppColors.pendingBackground;
+        textColor = AppColors.pendingText;
+        label = 'Pending HQ Approval';
         break;
       default:
         bgColor = AppColors.pendingBackground;
         textColor = AppColors.pendingText;
-        label = 'Submitted';
+        label = 'Processing';
     }
     
     return Container(
@@ -882,6 +911,14 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         return 'Approved';
       case 'rejected':
         return 'Rejected';
+      case 'rejected_by_asm':
+        return 'Rejected by ASM';
+      case 'rejected_by_hq':
+        return 'Rejected by HQ';
+      case 'pending_asm':
+        return 'Pending ASM Approval';
+      case 'pending_hq':
+        return 'Pending HQ Approval';
       case 'under_review':
         return 'Under Review';
       default:
@@ -905,10 +942,18 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     // Map backend states to UI states
     if (state == 'uploaded' || state == 'extracting' || state == 'validating' || state == 'scoring') {
       return 'pending';
-    } else if (state == 'validated' || state == 'recommending' || state == 'pendingapproval') {
-      return 'under_review';
+    } else if (state == 'validated' || state == 'recommending') {
+      return 'pending';
+    } else if (state == 'pendingasmapproval' || state == 'pendingapproval') {
+      return 'pending_asm';
+    } else if (state == 'pendinghqapproval') {
+      return 'pending_hq';
     } else if (state == 'approved') {
       return 'approved';
+    } else if (state == 'rejectedbyasm') {
+      return 'rejected_by_asm';
+    } else if (state == 'rejectedbyhq') {
+      return 'rejected_by_hq';
     } else if (state == 'rejected' || state == 'validationfailed' || state == 'reuploadrequested') {
       return 'rejected';
     }
@@ -919,6 +964,8 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   void _showSubmissionDetails(Map<String, dynamic> request) {
     final fapNumber = 'FAP-${request['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final status = _normalizeStatus(request['state']?.toString() ?? 'pending');
+    final asmReviewNotes = request['asmReviewNotes'];
+    final hqReviewNotes = request['hqReviewNotes'];
     
     showDialog(
       context: context,
@@ -934,6 +981,99 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
               _buildDetailRow('Submitted Date', _formatDate(request['createdAt'])),
               _buildDetailRow('Last Updated', _formatDate(request['updatedAt'])),
               _buildDetailRow('Documents', '${request['documentCount'] ?? 0} files'),
+              
+              // Show ASM rejection notes if rejected by ASM
+              if (status == 'rejected_by_asm' && asmReviewNotes != null && asmReviewNotes.toString().isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEE2E2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFEF4444)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.cancel, color: Color(0xFFDC2626), size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Rejected by ASM',
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFFB91C1C),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Reason:',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFF991B1B),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        asmReviewNotes.toString(),
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          color: const Color(0xFF7F1D1D),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              
+              // Show HQ rejection notes if rejected by HQ
+              if (status == 'rejected_by_hq' && hqReviewNotes != null && hqReviewNotes.toString().isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEE2E2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFEF4444)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.cancel, color: Color(0xFFDC2626), size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Rejected by HQ',
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFFB91C1C),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Reason:',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFF991B1B),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        hqReviewNotes.toString(),
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          color: const Color(0xFF7F1D1D),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              
               const SizedBox(height: 16),
               Text(
                 'Note: Full details will be available after AI processing.',
@@ -946,6 +1086,20 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           ),
         ),
         actions: [
+          // Show Resubmit button if rejected by ASM
+          if (status == 'rejected_by_asm')
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                _resubmitPackage(request['id']);
+              },
+              icon: const Icon(Icons.refresh),
+              label: const Text('Resubmit for Review'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
@@ -953,6 +1107,64 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _resubmitPackage(dynamic packageId) async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Resubmit Package'),
+        content: const Text(
+          'This will resubmit the package for ASM review. The AI will reprocess all documents. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+            ),
+            child: const Text('Resubmit'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final response = await _dio.patch(
+        '/submissions/$packageId/resubmit',
+        options: Options(
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Package resubmitted successfully! AI processing started.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        
+        // Reload requests
+        await _loadRequests();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to resubmit package: ${e.toString()}'),
+            backgroundColor: AppColors.rejectedText,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildChatPanel() {
@@ -1206,12 +1418,13 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       if (response.statusCode == 200 && mounted) {
         setState(() {
           _chatMessages.add({
-            'text': response.data['response'] ?? 'I received your message.',
+            'text': response.data['message'] ?? 'I received your message.',
             'isUser': false,
           });
         });
       }
     } catch (e) {
+      print('Chat API error: $e');
       // Mock response for demo
       await Future.delayed(const Duration(seconds: 1));
       if (mounted) {
@@ -1243,7 +1456,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     } else if (lowerMessage.contains('help')) {
       return 'I can help you with:\n• Check submission status\n• View pending requests\n• Get approval statistics\n• Answer questions about your submissions';
     } else {
-      return 'I understand your question. The AI chat service will be available once Azure OpenAI is configured. For now, you can view your submissions in the dashboard.';
+      return 'I can help you with information about your submissions. Try asking about status, pending requests, or approved submissions.';
     }
   }
 

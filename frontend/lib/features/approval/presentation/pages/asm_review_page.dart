@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/widgets/chat_fab.dart';
 
 class ASMReviewPage extends StatefulWidget {
   final String token;
@@ -27,24 +28,30 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   List<Map<String, dynamic>> _documents = [];
   
   String _normalizeStatus(String backendState) {
-    final state = backendState.toLowerCase();
+    final state = backendState.toLowerCase().replaceAll('_', '');
     
     // Map backend states to ASM UI states
-    if (state == 'pendingapproval') {
+    if (state == 'pendingasmapproval' || state == 'pendingapproval') {
       return 'asm-review';
+    } else if (state == 'pendinghqapproval') {
+      return 'with-hq';
     } else if (state == 'approved') {
       return 'approved';
-    } else if (state == 'rejected' || state == 'validationfailed' || state == 'reuploadrequested') {
+    } else if (state == 'rejectedbyasm' || state == 'rejected' || state == 'rejectedbyhq' || state == 'validationfailed' || state == 'reuploadrequested') {
       return 'rejected';
+    } else if (state == 'uploaded' || state == 'extracting' || state == 'validating' || state == 'scoring' || state == 'recommending') {
+      // These are processing states - don't show to ASM yet
+      return 'processing';
     }
     
-    // Other states are not shown to ASM (still processing)
+    // Unknown state - log it and treat as processing
+    print('Unknown state in ASM review: $backendState');
     return 'processing';
   }
   
   int get _pendingCount => _documents.where((d) {
     final state = d['state']?.toString().toLowerCase() ?? '';
-    return state == 'pendingapproval';
+    return state == 'pendingasmapproval' || state == 'pendingapproval' || state == 'rejectedbyhq';
   }).length;
   
   int get _approvedCount => _documents.where((d) {
@@ -54,7 +61,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   
   int get _rejectedCount => _documents.where((d) {
     final state = d['state']?.toString().toLowerCase() ?? '';
-    return state == 'rejected' || state == 'validationfailed' || state == 'reuploadrequested';
+    return state == 'rejectedbyasm' || state == 'rejected' || state == 'validationfailed' || state == 'reuploadrequested';
   }).length;
 
   @override
@@ -78,14 +85,26 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       
+      print('ASM Review - API Response Status: ${response.statusCode}');
+      print('ASM Review - API Response Data: ${response.data}');
+      
       if (response.statusCode == 200 && mounted) {
         setState(() {
           // Backend returns paginated response: { total, page, pageSize, items }
           final data = response.data;
           if (data is Map && data.containsKey('items')) {
             _documents = List<Map<String, dynamic>>.from(data['items']);
+            print('ASM Review - Loaded ${_documents.length} documents');
+            
+            // Debug: Print each document state
+            for (var doc in _documents) {
+              final state = doc['state']?.toString() ?? 'null';
+              final normalized = _normalizeStatus(state);
+              print('ASM Review - Document ${doc['id']}: state=$state, normalized=$normalized');
+            }
           } else {
             _documents = [];
+            print('ASM Review - No items in response');
           }
           _isLoading = false;
         });
@@ -105,19 +124,34 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   }
 
   List<Map<String, dynamic>> get _filteredDocuments {
-    return _documents.where((doc) {
+    final filtered = _documents.where((doc) {
       final status = _normalizeStatus(doc['state']?.toString() ?? '');
       
-      // Don't show documents still in processing
-      if (status == 'processing') return false;
+      // ASM should see:
+      // - Submissions ready for review (asm-review)
+      // - Submissions with HQ (with-hq)
+      // - Completed submissions (approved, rejected)
+      // But NOT submissions still processing (uploaded, extracting, validating, scoring)
+      if (status == 'processing') {
+        print('ASM Review - Filtering out processing document: ${doc['id']}');
+        return false;
+      }
       
       final matchesSearch = _searchController.text.isEmpty ||
-          doc['id']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true;
+          doc['id']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true ||
+          doc['invoiceNumber']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true ||
+          doc['poNumber']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true;
       
       final matchesStatus = _statusFilter == 'all' || status == _statusFilter;
       
-      return matchesSearch && matchesStatus;
+      final passes = matchesSearch && matchesStatus;
+      print('ASM Review - Document ${doc['id']}: status=$status, matchesSearch=$matchesSearch, matchesStatus=$matchesStatus, passes=$passes');
+      
+      return passes;
     }).toList();
+    
+    print('ASM Review - Filtered documents count: ${filtered.length}');
+    return filtered;
   }
 
   @override
@@ -141,6 +175,10 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
             ),
           ],
         ),
+      ),
+      floatingActionButton: ChatFAB(
+        token: widget.token,
+        userName: widget.userName,
       ),
     );
   }
@@ -317,6 +355,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                     items: const [
                       DropdownMenuItem(value: 'all', child: Text('All Status')),
                       DropdownMenuItem(value: 'asm-review', child: Text('Pending Review')),
+                      DropdownMenuItem(value: 'with-hq', child: Text('With HQ')),
                       DropdownMenuItem(value: 'approved', child: Text('Approved')),
                       DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
                     ],

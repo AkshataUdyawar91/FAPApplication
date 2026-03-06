@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Workflow Fix</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        button {
+            background-color: #003087;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background-color: #00A3E0;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .info {
+            color: blue;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test Workflow Fix</h1>
+    <p>Package ID: <strong>48c7854b-fca6-41e7-84e8-3075c880d536</strong></p>
+    
+    <div>
+        <button onclick="login()">1. Login</button>
+        <button onclick="processPackage()" id="processBtn" disabled>2. Process Package</button>
+        <button onclick="checkStatus()" id="checkBtn" disabled>3. Check Status</button>
+    </div>
+    
+    <div id="result" class="result"></div>
+
+    <script>
+        const API_URL = 'http://localhost:5000/api';
+        const PACKAGE_ID = '48c7854b-fca6-41e7-84e8-3075c880d536';
+        let token = '';
+
+        function log(message, type = 'info') {
+            const resultDiv = document.getElementById('result');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'success' ? 'success' : type === 'error' ? 'error' : 'info';
+            resultDiv.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            resultDiv.scrollTop = resultDiv.scrollHeight;
+        }
+
+        async function login() {
+            log('Logging in as agency@example.com...');
+            try {
+                const response = await fetch(`${API_URL}/Auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: 'agency@bajaj.com',
+                        password: 'Password123!'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Login failed: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                token = data.token;
+                log('✓ Login successful!', 'success');
+                log(`Token: ${token.substring(0, 50)}...`);
+                
+                document.getElementById('processBtn').disabled = false;
+                document.getElementById('checkBtn').disabled = false;
+            } catch (error) {
+                log(`✗ Login failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function processPackage() {
+            log('\n===========================================');
+            log('Processing package (this will take 30-60 seconds)...');
+            log('Please wait...');
+            
+            const processBtn = document.getElementById('processBtn');
+            processBtn.disabled = true;
+            processBtn.textContent = 'Processing...';
+            
+            try {
+                const response = await fetch(`${API_URL}/Submissions/${PACKAGE_ID}/process-now`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Process failed: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                log('\n✓ Process completed!', 'success');
+                log(`Response: ${JSON.stringify(data, null, 2)}`);
+                
+                if (data.success && data.currentState === 'PendingApproval') {
+                    log('\n🎉 SUCCESS! Package is now in PendingApproval state!', 'success');
+                } else if (data.currentState === 'Scoring') {
+                    log('\n⚠ Package still in Scoring state - workflow may have failed', 'error');
+                } else {
+                    log(`\nPackage state: ${data.currentState}`);
+                }
+            } catch (error) {
+                log(`\n✗ Process failed: ${error.message}`, 'error');
+            } finally {
+                processBtn.disabled = false;
+                processBtn.textContent = '2. Process Package';
+            }
+        }
+
+        async function checkStatus() {
+            log('\n===========================================');
+            log('Checking package status...');
+            
+            try {
+                const response = await fetch(`${API_URL}/Submissions/${PACKAGE_ID}`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Check failed: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                log('\n✓ Package details retrieved!', 'success');
+                log(`\nState: ${data.state}`);
+                log(`Validation Passed: ${data.validationResult?.allValidationsPassed}`);
+                log(`Overall Confidence: ${(data.confidenceScore?.overallConfidence * 100).toFixed(2)}%`);
+                log(`Recommendation: ${data.recommendation ? data.recommendation.type : 'NULL'}`);
+                
+                if (data.state === 'PendingApproval' && data.recommendation) {
+                    log('\n🎉 SUCCESS! Workflow completed successfully!', 'success');
+                    log('Package is ready for ASM review', 'success');
+                } else if (data.state === 'Scoring' && !data.recommendation) {
+                    log('\n⚠ Package stuck in Scoring state with no recommendation', 'error');
+                    log('The workflow failed at the recommendation step', 'error');
+                } else {
+                    log(`\nCurrent state: ${data.state}`);
+                }
+                
+                log(`\nFull response:\n${JSON.stringify(data, null, 2)}`);
+            } catch (error) {
+                log(`\n✗ Check failed: ${error.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html>
