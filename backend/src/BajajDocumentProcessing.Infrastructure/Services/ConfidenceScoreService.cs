@@ -67,9 +67,8 @@ public class ConfidenceScoreService : IConfidenceScoreService
             // Determine if flagged for review
             var isFlaggedForReview = overallConfidence < LOW_CONFIDENCE_THRESHOLD;
 
-            // Check if confidence score already exists (use AsNoTracking to avoid tracking conflicts)
+            // Check if confidence score already exists (WITH tracking to enable proper updates)
             var existingScore = await _context.ConfidenceScores
-                .AsNoTracking()
                 .FirstOrDefaultAsync(cs => cs.PackageId == packageId, cancellationToken);
 
             ConfidenceScore confidenceScore;
@@ -78,23 +77,18 @@ public class ConfidenceScoreService : IConfidenceScoreService
             {
                 _logger.LogInformation("Updating existing confidence score {ScoreId} for package {PackageId}", existingScore.Id, packageId);
                 
-                // Update existing score - attach and mark as modified
-                confidenceScore = new ConfidenceScore
-                {
-                    Id = existingScore.Id, // Keep same ID
-                    PackageId = packageId,
-                    PoConfidence = poConfidence,
-                    InvoiceConfidence = invoiceConfidence,
-                    CostSummaryConfidence = costSummaryConfidence,
-                    ActivityConfidence = activityConfidence,
-                    PhotosConfidence = photosConfidence,
-                    OverallConfidence = overallConfidence,
-                    IsFlaggedForReview = isFlaggedForReview,
-                    CreatedAt = existingScore.CreatedAt, // Preserve original creation time
-                    UpdatedAt = DateTime.UtcNow
-                };
+                // Update existing tracked entity - EF Core will generate UPDATE statement
+                existingScore.PoConfidence = poConfidence;
+                existingScore.InvoiceConfidence = invoiceConfidence;
+                existingScore.CostSummaryConfidence = costSummaryConfidence;
+                existingScore.ActivityConfidence = activityConfidence;
+                existingScore.PhotosConfidence = photosConfidence;
+                existingScore.OverallConfidence = overallConfidence;
+                existingScore.IsFlaggedForReview = isFlaggedForReview;
+                existingScore.UpdatedAt = DateTime.UtcNow;
+                // CreatedAt is preserved automatically
 
-                _context.ConfidenceScores.Update(confidenceScore);
+                confidenceScore = existingScore;
             }
             else
             {

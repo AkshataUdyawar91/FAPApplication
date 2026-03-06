@@ -150,4 +150,204 @@ public class AnalyticsPlugin
 
         await Task.CompletedTask;
     }
+
+    [KernelFunction, Description("Get list of pending submissions awaiting approval")]
+    public async Task<string> GetPendingSubmissions(
+        [Description("Optional filter: 'asm' for ASM pending, 'hq' for HQ pending, or null for all pending")] string? approvalLevel = null)
+    {
+        try
+        {
+            var query = _context.DocumentPackages.AsQueryable();
+
+            if (approvalLevel?.ToLower() == "asm")
+            {
+                query = query.Where(p => p.State == Domain.Enums.PackageState.PendingASMApproval);
+            }
+            else if (approvalLevel?.ToLower() == "hq")
+            {
+                query = query.Where(p => p.State == Domain.Enums.PackageState.PendingHQApproval);
+            }
+            else
+            {
+                query = query.Where(p => 
+                    p.State == Domain.Enums.PackageState.PendingASMApproval || 
+                    p.State == Domain.Enums.PackageState.PendingHQApproval);
+            }
+
+            var submissions = query
+                .OrderByDescending(p => p.CreatedAt)
+                .Take(20)
+                .Select(p => new
+                {
+                    Id = p.Id,
+                    State = p.State.ToString(),
+                    CreatedAt = p.CreatedAt,
+                    OverallConfidence = p.ConfidenceScore != null ? p.ConfidenceScore.OverallConfidence : 0,
+                    DocumentCount = p.Documents.Count
+                })
+                .ToList();
+
+            if (!submissions.Any())
+            {
+                return approvalLevel != null 
+                    ? $"No pending submissions found for {approvalLevel.ToUpper()} approval."
+                    : "No pending submissions found.";
+            }
+
+            var result = new
+            {
+                TotalPending = submissions.Count,
+                Submissions = submissions.Select(s => new
+                {
+                    FAP_ID = $"FAP-{s.Id.ToString().Substring(0, 8).ToUpper()}",
+                    Status = s.State,
+                    SubmittedOn = s.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                    Confidence = $"{(s.OverallConfidence * 100):F0}%",
+                    Documents = s.DocumentCount
+                })
+            };
+
+            return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            return $"Error retrieving pending submissions: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
+    }
+
+    [KernelFunction, Description("Get list of approved submissions")]
+    public async Task<string> GetApprovedSubmissions(
+        [Description("Number of recent approved submissions to retrieve (default 20)")] int count = 20)
+    {
+        try
+        {
+            var submissions = _context.DocumentPackages
+                .Where(p => p.State == Domain.Enums.PackageState.Approved)
+                .OrderByDescending(p => p.UpdatedAt ?? p.CreatedAt)
+                .Take(count)
+                .Select(p => new
+                {
+                    Id = p.Id,
+                    CreatedAt = p.CreatedAt,
+                    ApprovedAt = p.UpdatedAt,
+                    OverallConfidence = p.ConfidenceScore != null ? p.ConfidenceScore.OverallConfidence : 0,
+                    DocumentCount = p.Documents.Count
+                })
+                .ToList();
+
+            if (!submissions.Any())
+            {
+                return "No approved submissions found.";
+            }
+
+            var result = new
+            {
+                TotalApproved = submissions.Count,
+                Submissions = submissions.Select(s => new
+                {
+                    FAP_ID = $"FAP-{s.Id.ToString().Substring(0, 8).ToUpper()}",
+                    SubmittedOn = s.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                    ApprovedOn = s.ApprovedAt?.ToString("yyyy-MM-dd HH:mm") ?? "N/A",
+                    Confidence = $"{(s.OverallConfidence * 100):F0}%",
+                    Documents = s.DocumentCount
+                })
+            };
+
+            return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            return $"Error retrieving approved submissions: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
+    }
+
+    [KernelFunction, Description("Get list of rejected submissions")]
+    public async Task<string> GetRejectedSubmissions(
+        [Description("Number of recent rejected submissions to retrieve (default 20)")] int count = 20)
+    {
+        try
+        {
+            var submissions = _context.DocumentPackages
+                .Where(p => p.State == Domain.Enums.PackageState.RejectedByASM || 
+                           p.State == Domain.Enums.PackageState.RejectedByHQ)
+                .OrderByDescending(p => p.UpdatedAt ?? p.CreatedAt)
+                .Take(count)
+                .Select(p => new
+                {
+                    Id = p.Id,
+                    State = p.State.ToString(),
+                    CreatedAt = p.CreatedAt,
+                    RejectedAt = p.UpdatedAt,
+                    RejectionReason = p.State == Domain.Enums.PackageState.RejectedByASM ? p.ASMReviewNotes : p.HQReviewNotes,
+                    DocumentCount = p.Documents.Count
+                })
+                .ToList();
+
+            if (!submissions.Any())
+            {
+                return "No rejected submissions found.";
+            }
+
+            var result = new
+            {
+                TotalRejected = submissions.Count,
+                Submissions = submissions.Select(s => new
+                {
+                    FAP_ID = $"FAP-{s.Id.ToString().Substring(0, 8).ToUpper()}",
+                    Status = s.State,
+                    SubmittedOn = s.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                    RejectedOn = s.RejectedAt?.ToString("yyyy-MM-dd HH:mm") ?? "N/A",
+                    Reason = !string.IsNullOrEmpty(s.RejectionReason) ? s.RejectionReason : "No reason provided",
+                    Documents = s.DocumentCount
+                })
+            };
+
+            return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            return $"Error retrieving rejected submissions: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
+    }
+
+    [KernelFunction, Description("Get summary of all submissions by status")]
+    public async Task<string> GetSubmissionsSummary()
+    {
+        try
+        {
+            var allPackages = _context.DocumentPackages.ToList();
+
+            var summary = new
+            {
+                Total = allPackages.Count,
+                PendingASM = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingASMApproval),
+                PendingHQ = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingHQApproval),
+                Approved = allPackages.Count(p => p.State == Domain.Enums.PackageState.Approved),
+                RejectedByASM = allPackages.Count(p => p.State == Domain.Enums.PackageState.RejectedByASM),
+                RejectedByHQ = allPackages.Count(p => p.State == Domain.Enums.PackageState.RejectedByHQ),
+                Processing = allPackages.Count(p => 
+                    p.State == Domain.Enums.PackageState.Uploaded ||
+                    p.State == Domain.Enums.PackageState.Extracting ||
+                    p.State == Domain.Enums.PackageState.Validating ||
+                    p.State == Domain.Enums.PackageState.Scoring ||
+                    p.State == Domain.Enums.PackageState.Recommending),
+                AvgConfidence = allPackages.Where(p => p.ConfidenceScore != null)
+                    .Average(p => p.ConfidenceScore!.OverallConfidence) * 100
+            };
+
+            return JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            return $"Error retrieving submissions summary: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
+    }
 }

@@ -71,14 +71,35 @@ public class ChatService : IChatService
             await _authorizationGuardrail.ValidateUserAccessAsync(userId, cancellationToken);
             var dataScope = await _authorizationGuardrail.GetUserDataScopeAsync(userId, cancellationToken);
 
-            // Step 3: Vector Search
-            var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(query, cancellationToken);
-            var filter = new VectorSearchFilter
+            // Step 3: Vector Search (optional - skip if not configured)
+            var relevantData = new List<VectorSearchResult>();
+            var context = "";
+            
+            // Check if vector search is available (not the null implementation)
+            if (_vectorSearchService.GetType().Name != "NullVectorSearchService")
             {
-                States = dataScope.States,
-                Campaigns = dataScope.Campaigns
-            };
-            var relevantData = await _vectorSearchService.SearchAsync(queryEmbedding, topK: 5, filter: filter, cancellationToken);
+                try
+                {
+                    var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(query, cancellationToken);
+                    var filter = new VectorSearchFilter
+                    {
+                        States = dataScope.States,
+                        Campaigns = dataScope.Campaigns
+                    };
+                    relevantData = await _vectorSearchService.SearchAsync(queryEmbedding, topK: 5, filter: filter, cancellationToken);
+                    
+                    // Build context from vector search results
+                    context = string.Join("\n\n", relevantData.Select(d => $"- {d.Content}"));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Vector search failed, continuing without it");
+                }
+            }
+            else
+            {
+                _logger.LogInformation("Vector search not configured, using database queries only");
+            }
 
             // Step 4: Get or create conversation
             var conversation = conversationId.HasValue
@@ -98,18 +119,32 @@ public class ChatService : IChatService
                 _context.Conversations.Add(conversation);
             }
 
-            // Step 5: Build context from vector search results
-            var context = string.Join("\n\n", relevantData.Select(d => $"- {d.Content}"));
-
             // Step 6: Build chat history
             var chatHistory = new ChatHistory();
             
-            // Add system message
-            chatHistory.AddSystemMessage(@"You are an analytics assistant for the Bajaj Document Processing System.
-Answer the user's question using ONLY the provided context from the analytics database.
+            // Add system message with database query capabilities
+            var systemMessage = @"You are an analytics assistant for the Bajaj Document Processing System.
+
+You have access to database query functions to retrieve real-time submission data:
+- GetPendingSubmissions: Show pending submissions (ASM/HQ/all)
+- GetApprovedSubmissions: List approved requests
+- GetRejectedSubmissions: Show rejected with reasons
+- GetSubmissionsSummary: Overall status summary
+- GetKPIs: Performance metrics
+
+When users ask about submissions, approvals, rejections, or statistics, USE THESE FUNCTIONS to get accurate data.
 Always cite specific data sources, time ranges, and metrics in your response.
-If the context doesn't contain enough information to answer the question, say so clearly.
-Be concise and focus on the key insights.");
+Be concise and focus on the key insights.";
+
+            if (!string.IsNullOrEmpty(context))
+            {
+                systemMessage += $@"
+
+Additional context from analytics database:
+{context}";
+            }
+            
+            chatHistory.AddSystemMessage(systemMessage);
 
             // Add conversation history (last 10 messages)
             if (conversation.Messages.Any())
@@ -127,20 +162,17 @@ Be concise and focus on the key insights.");
                 }
             }
 
-            // Add current query with context
-            var userMessage = $@"Context from analytics database:
-{context}
+            // Add current query
+            chatHistory.AddUserMessage(query);
 
-User Question: {query}";
-            chatHistory.AddUserMessage(userMessage);
-
-            // Step 7: Semantic Kernel Processing
+            // Step 7: Semantic Kernel Processing with function calling
             var chatCompletionService = _kernel.GetRequiredService<IChatCompletionService>();
             var executionSettings = new OpenAIPromptExecutionSettings
             {
                 MaxTokens = 1000,
                 Temperature = 0.7,
-                TopP = 0.9
+                TopP = 0.9,
+                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions // Enable function calling
             };
 
             var result = await chatCompletionService.GetChatMessageContentAsync(

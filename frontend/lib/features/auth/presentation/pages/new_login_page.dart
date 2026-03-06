@@ -117,7 +117,7 @@ class _NewLoginPageState extends State<NewLoginPage> {
       case UserRole.asm:
         return '/asm/review';
       case UserRole.hq:
-        return '/hq/analytics';
+        return '/hq/review';
     }
   }
 

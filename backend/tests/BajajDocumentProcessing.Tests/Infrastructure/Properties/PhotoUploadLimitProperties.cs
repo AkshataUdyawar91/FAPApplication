@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
@@ -54,9 +55,11 @@ public class PhotoUploadLimitProperties
         
         var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var packageId = Guid.NewGuid();
         var userId = Guid.NewGuid();
@@ -89,9 +92,11 @@ public class PhotoUploadLimitProperties
         
         var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var packageId1 = Guid.NewGuid();
         var packageId2 = Guid.NewGuid();
@@ -125,9 +130,11 @@ public class PhotoUploadLimitProperties
         
         var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var userId = Guid.NewGuid();
 
@@ -160,9 +167,11 @@ public class PhotoUploadLimitProperties
         
         var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var packageId = Guid.NewGuid();
         var userId = Guid.NewGuid();

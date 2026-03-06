@@ -5,7 +5,7 @@ namespace BajajDocumentProcessing.Domain.Enums;
 /// </summary>
 public enum UserRole
 {
-    Agency = 1,
-    ASM = 2,
-    HQ = 3
+    Agency = 0,
+    ASM = 1,
+    HQ = 2
 }
