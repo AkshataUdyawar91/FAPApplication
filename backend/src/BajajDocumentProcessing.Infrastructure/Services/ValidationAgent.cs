@@ -364,7 +364,8 @@ public class ValidationAgent : IValidationAgent
                               (result.CostSummaryCrossDocument == null || result.CostSummaryCrossDocument.AllChecksPass) &&
                               (result.ActivityFieldPresence == null || result.ActivityFieldPresence.AllFieldsPresent) &&
                               (result.ActivityCrossDocument == null || result.ActivityCrossDocument.AllChecksPass) &&
-                              (result.PhotoCrossDocument == null || result.PhotoCrossDocument.AllChecksPass);
+                              (result.PhotoCrossDocument == null || result.PhotoCrossDocument.AllChecksPass) &&
+                              (result.DateValidation == null || result.DateValidation.IsValid);
             
             // Note: AmountConsistency, LineItemMatching, and VendorMatching are informational only
 
