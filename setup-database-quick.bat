@@ -7,7 +7,7 @@ echo  QUICK DATABASE SETUP
 echo ========================================
 echo.
 
-set server=localhost\SQLEXPRESS01
+set server=localhost\SQLEXPRESS
 set database=BajajDocumentProcessing
 
 echo Step 1: Running EF migrations...

@@ -16,7 +16,7 @@ echo [PASS] API is running
 echo.
 
 echo Step 2: Check database connection...
-sqlcmd -S localhost\SQLEXPRESS01 -d BajajDocumentProcessing -E -C -Q "SELECT @@VERSION" >nul 2>&1
+sqlcmd -S localhost\SQLEXPRESS -d BajajDocumentProcessing -E -C -Q "SELECT @@VERSION" >nul 2>&1
 if errorlevel 1 (
     echo [FAIL] Cannot connect to database
     pause
@@ -26,11 +26,11 @@ echo [PASS] Database connection OK
 echo.
 
 echo Step 3: Check if users exist...
-sqlcmd -S localhost\SQLEXPRESS01 -d BajajDocumentProcessing -E -C -Q "SELECT COUNT(*) as UserCount FROM Users"
+sqlcmd -S localhost\SQLEXPRESS -d BajajDocumentProcessing -E -C -Q "SELECT COUNT(*) as UserCount FROM Users"
 echo.
 
 echo Step 4: Check password hash for agency user...
-sqlcmd -S localhost\SQLEXPRESS01 -d BajajDocumentProcessing -E -C -Q "SELECT Email, LEFT(PasswordHash, 50) as PasswordHashPreview FROM Users WHERE Email = 'agency@bajaj.com'"
+sqlcmd -S localhost\SQLEXPRESS -d BajajDocumentProcessing -E -C -Q "SELECT Email, LEFT(PasswordHash, 50) as PasswordHashPreview FROM Users WHERE Email = 'agency@bajaj.com'"
 echo.
 
 echo Step 5: Test login...

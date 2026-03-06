@@ -53,6 +53,7 @@ public static class DependencyInjection
             client.DefaultRequestHeaders.Add("APIKey", sapApiKey);
             client.Timeout = TimeSpan.FromSeconds(30);
         });
+        services.AddScoped<IReferenceDataService, ReferenceDataService>();
         services.AddScoped<IValidationAgent, ValidationAgent>();
 
         // Confidence Score Service

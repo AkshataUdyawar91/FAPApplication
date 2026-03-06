@@ -16,7 +16,7 @@ echo WARNING: This will delete all existing data!
 echo.
 pause
 
-set server=localhost\SQLEXPRESS01
+set server=localhost\SQLEXPRESS
 set database=BajajDocumentProcessing
 
 echo.

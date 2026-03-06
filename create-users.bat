@@ -53,7 +53,7 @@ REM Execute the SQL script
 echo Executing CREATE_USERS.sql...
 echo.
 
-%SQLCMD_PATH% -S localhost\SQLEXPRESS01 -d BajajDocumentProcessing -E -C -i "%SCRIPT_DIR%CREATE_USERS.sql"
+%SQLCMD_PATH% -S localhost\SQLEXPRESS -d BajajDocumentProcessing -E -C -i "%SCRIPT_DIR%CREATE_USERS.sql"
 
 if errorlevel 1 (
     echo.
@@ -100,7 +100,7 @@ echo.
 REM Verify users were created
 echo Verifying users...
 echo.
-%SQLCMD_PATH% -S localhost\SQLEXPRESS01 -d BajajDocumentProcessing -E -C -Q "SELECT Email, FullName, CASE Role WHEN 0 THEN 'Agency' WHEN 1 THEN 'ASM' WHEN 2 THEN 'HQ' END as RoleName FROM Users WHERE IsDeleted = 0 ORDER BY Role"
+%SQLCMD_PATH% -S localhost\SQLEXPRESS -d BajajDocumentProcessing -E -C -Q "SELECT Email, FullName, CASE Role WHEN 0 THEN 'Agency' WHEN 1 THEN 'ASM' WHEN 2 THEN 'HQ' END as RoleName FROM Users WHERE IsDeleted = 0 ORDER BY Role"
 
 echo.
 pause

@@ -61,6 +61,14 @@ public class PackageValidationResult
     public CompletenessResult? Completeness { get; set; }
     public DateValidationResult? DateValidation { get; set; }
     public VendorMatchingResult? VendorMatching { get; set; }
+    public InvoiceFieldPresenceResult? InvoiceFieldPresence { get; set; }
+    public InvoiceCrossDocumentResult? InvoiceCrossDocument { get; set; }
+    public CostSummaryFieldPresenceResult? CostSummaryFieldPresence { get; set; }
+    public CostSummaryCrossDocumentResult? CostSummaryCrossDocument { get; set; }
+    public ActivityFieldPresenceResult? ActivityFieldPresence { get; set; }
+    public ActivityCrossDocumentResult? ActivityCrossDocument { get; set; }
+    public PhotoFieldPresenceResult? PhotoFieldPresence { get; set; }
+    public PhotoCrossDocumentResult? PhotoCrossDocument { get; set; }
     public List<ValidationIssue> Issues { get; set; } = new();
     public DateTime ValidatedAt { get; set; }
 }
@@ -148,4 +156,97 @@ public class ValidationIssue
     public string? ExpectedValue { get; set; }
     public string? ActualValue { get; set; }
     public string Severity { get; set; } = "Error"; // Error, Warning
+}
+
+/// <summary>
+/// Invoice field presence validation result
+/// </summary>
+public class InvoiceFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public List<string> MissingFields { get; set; } = new();
+}
+
+/// <summary>
+/// Invoice cross-document validation result
+/// </summary>
+public class InvoiceCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool AgencyCodeMatches { get; set; }
+    public bool PONumberMatches { get; set; }
+    public bool GSTStateMatches { get; set; }
+    public bool HSNSACCodeValid { get; set; }
+    public bool InvoiceAmountValid { get; set; }
+    public bool GSTPercentageValid { get; set; }
+    public List<string> Issues { get; set; } = new();
+}
+
+/// <summary>
+/// Cost Summary field presence validation result
+/// </summary>
+public class CostSummaryFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public List<string> MissingFields { get; set; } = new();
+}
+
+/// <summary>
+/// Cost Summary cross-document validation result
+/// </summary>
+public class CostSummaryCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool TotalCostValid { get; set; }
+    public bool ElementCostsValid { get; set; }
+    public bool FixedCostsValid { get; set; }
+    public bool VariableCostsValid { get; set; }
+    public List<string> Issues { get; set; } = new();
+}
+
+/// <summary>
+/// Activity Summary field presence validation result
+/// </summary>
+public class ActivityFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public List<string> MissingFields { get; set; } = new();
+}
+
+/// <summary>
+/// Activity Summary cross-document validation result
+/// </summary>
+public class ActivityCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool NumberOfDaysMatches { get; set; }
+    public List<string> Issues { get; set; } = new();
+}
+
+/// <summary>
+/// Photo Proofs field presence validation result
+/// </summary>
+public class PhotoFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public int TotalPhotos { get; set; }
+    public int PhotosWithDate { get; set; }
+    public int PhotosWithLocation { get; set; }
+    public int PhotosWithBlueTshirt { get; set; }
+    public int PhotosWithVehicle { get; set; }
+    public List<string> MissingFields { get; set; } = new();
+}
+
+/// <summary>
+/// Photo Proofs cross-document validation result
+/// </summary>
+public class PhotoCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool PhotoCountMatchesManDays { get; set; }
+    public bool ManDaysWithinCostSummaryDays { get; set; }
+    public int PhotoCount { get; set; }
+    public int ManDays { get; set; }
+    public int CostSummaryDays { get; set; }
+    public List<string> Issues { get; set; } = new();
 }

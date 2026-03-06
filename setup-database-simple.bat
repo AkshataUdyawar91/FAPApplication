@@ -4,7 +4,7 @@ REM Run this from the project root directory
 
 setlocal
 
-set SERVER=localhost\SQLEXPRESS01
+set SERVER=localhost\SQLEXPRESS
 set DATABASE=BajajDocumentProcessing
 
 echo.

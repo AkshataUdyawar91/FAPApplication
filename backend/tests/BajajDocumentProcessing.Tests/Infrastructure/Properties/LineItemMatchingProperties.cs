@@ -25,11 +25,13 @@ public class LineItemMatchingProperties
         var mockContext = new Mock<IApplicationDbContext>();
         var mockLogger = new Mock<ILogger<ValidationAgent>>();
         var mockHttpClientFactory = new Mock<IHttpClientFactory>();
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
 
         _validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object);
     }
 
     /// <summary>

@@ -3,7 +3,7 @@ REM Database Setup - Skip Tests
 
 setlocal
 
-set SERVER=localhost\SQLEXPRESS01
+set SERVER=localhost\SQLEXPRESS
 set DATABASE=BajajDocumentProcessing
 
 echo.

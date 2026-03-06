@@ -279,10 +279,27 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Calculate confidence score (service handles create/update internally)
-            var confidenceScore = await _confidenceScoreService.CalculateConfidenceScoreAsync(
-                package.Id,
-                cancellationToken);
+            // Check if confidence score already exists (idempotency)
+            var existingScore = await _context.ConfidenceScores
+                .FirstOrDefaultAsync(cs => cs.PackageId == package.Id, cancellationToken);
+
+            Domain.Entities.ConfidenceScore confidenceScore;
+            
+            if (existingScore == null)
+            {
+                // Calculate confidence score (this already saves to DB inside the service)
+                confidenceScore = await _confidenceScoreService.CalculateConfidenceScoreAsync(
+                    package.Id,
+                    cancellationToken);
+                
+                _logger.LogInformation("Scoring step completed for package {PackageId}, Score: {Score}", 
+                    package.Id, confidenceScore.OverallConfidence);
+            }
+            else
+            {
+                confidenceScore = existingScore;
+                _logger.LogInformation("Confidence score already exists for package {PackageId}, skipping", package.Id);
+            }
             
             _logger.LogInformation("Scoring step completed for package {PackageId}, Score: {Score}", 
                 package.Id, confidenceScore.OverallConfidence);

@@ -10,7 +10,7 @@ import '../../domain/usecases/export_analytics_usecase.dart';
 import 'analytics_notifier.dart';
 
 final analyticsRemoteDataSourceProvider = Provider<AnalyticsRemoteDataSource>(
-  (ref) => AnalyticsRemoteDataSourceImpl(ref.watch(dioProvider)),
+  (ref) => AnalyticsRemoteDataSourceImpl(ref.watch(dioClientProvider)),
 );
 
 final analyticsRepositoryProvider = Provider<AnalyticsRepository>(

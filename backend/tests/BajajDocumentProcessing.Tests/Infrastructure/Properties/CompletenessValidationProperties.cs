@@ -29,11 +29,13 @@ public class CompletenessValidationProperties
         _mockContext = new Mock<IApplicationDbContext>();
         var mockLogger = new Mock<ILogger<ValidationAgent>>();
         var mockHttpClientFactory = new Mock<IHttpClientFactory>();
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
 
         _validationAgent = new ValidationAgent(
             _mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object);
     }
 
     /// <summary>

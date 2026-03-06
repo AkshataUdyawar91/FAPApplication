@@ -7,7 +7,7 @@ import '../../domain/usecases/send_message_usecase.dart';
 import 'chat_notifier.dart';
 
 final chatRemoteDataSourceProvider = Provider<ChatRemoteDataSource>(
-  (ref) => ChatRemoteDataSourceImpl(ref.watch(dioProvider)),
+  (ref) => ChatRemoteDataSourceImpl(ref.watch(dioClientProvider)),
 );
 
 final chatRepositoryProvider = Provider<ChatRepository>(

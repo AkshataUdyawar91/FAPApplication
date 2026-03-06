@@ -1,7 +1,7 @@
 @echo off
 REM Check submission state in database
 
-set SERVER=localhost\SQLEXPRESS01
+set SERVER=localhost\SQLEXPRESS
 set DATABASE=BajajDocumentProcessing
 
 echo.
