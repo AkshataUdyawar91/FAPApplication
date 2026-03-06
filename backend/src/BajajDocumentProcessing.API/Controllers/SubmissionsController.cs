@@ -807,27 +807,17 @@ public class SubmissionsController : ControllerBase
             _logger.LogInformation("Submitting package {PackageId} for processing with {Count} documents", 
                 packageId, package.Documents.Count);
 
-            // Trigger workflow orchestrator asynchronously
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    _logger.LogInformation("Starting background workflow for package {PackageId}", packageId);
-                    await _orchestrator.ProcessSubmissionAsync(packageId, CancellationToken.None);
-                    _logger.LogInformation("Background workflow completed for package {PackageId}", packageId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing package {PackageId} in background", packageId);
-                }
-            }, cancellationToken);
+            // Queue workflow for background processing
+            await _backgroundQueue.QueueWorkflowAsync(packageId);
+            
+            _logger.LogInformation("Package {PackageId} queued for background processing", packageId);
 
             return Ok(new 
             { 
                 message = "Package submitted for processing", 
                 packageId,
                 documentCount = package.Documents.Count,
-                status = "Processing started in background"
+                status = "Queued for processing"
             });
         }
         catch (Exception ex)

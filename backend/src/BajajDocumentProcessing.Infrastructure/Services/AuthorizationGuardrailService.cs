@@ -29,14 +29,8 @@ public class AuthorizationGuardrailService : IAuthorizationGuardrailService
             throw new Application.Common.Interfaces.UnauthorizedAccessException("User not found");
         }
 
-        // Only HQ users can access ChatService
-        if (user.Role != UserRole.HQ)
-        {
-            _logger.LogWarning("User {UserId} with role {Role} attempted to access analytics chat", userId, user.Role);
-            throw new Application.Common.Interfaces.UnauthorizedAccessException("Only HQ users can access analytics chat");
-        }
-
-        _logger.LogDebug("User {UserId} authorized for analytics chat", userId);
+        // All authenticated users can access ChatService
+        _logger.LogDebug("User {UserId} with role {Role} authorized for chat", userId, user.Role);
     }
 
     public async Task<DataScope> GetUserDataScopeAsync(Guid userId, CancellationToken cancellationToken = default)

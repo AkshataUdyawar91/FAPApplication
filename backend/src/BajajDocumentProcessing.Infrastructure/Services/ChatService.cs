@@ -169,9 +169,7 @@ Additional context from analytics database:
             var chatCompletionService = _kernel.GetRequiredService<IChatCompletionService>();
             var executionSettings = new OpenAIPromptExecutionSettings
             {
-                MaxTokens = 1000,
-                Temperature = 0.7,
-                TopP = 0.9,
+                // GPT-5-mini only supports default values for temperature and top_p
                 ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions // Enable function calling
             };
 
