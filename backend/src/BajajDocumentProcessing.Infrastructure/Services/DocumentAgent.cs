@@ -335,16 +335,31 @@ Be precise and confident in your classification."),
         {
             _logger.LogInformation("Starting PO extraction for URL: {BlobUrl}", blobUrl);
 
-            // For document files (PDF, Word), use Azure Document Intelligence
+            // CHANGE: Switched from direct Document Intelligence to hybrid approach (Doc Intelligence extracts text → OpenAI analyzes text)
+            // For document files (PDF, Word), use Azure Document Intelligence to extract text, then OpenAI to analyze
             if (IsDocumentFile(blobUrl))
             {
-                _logger.LogInformation("Document file detected - using Azure Document Intelligence for extraction");
+                _logger.LogInformation("Document file detected - using hybrid extraction (Document Intelligence + OpenAI)");
                 var sasUrl = await _fileStorageService.GetPublicUrlWithSasAsync(blobUrl, TimeSpan.FromHours(1));
-                var result = await _documentIntelligenceService.ExtractPOAsync(new Uri(sasUrl), cancellationToken);
-                _logger.LogInformation(
-                    "Document Intelligence extraction completed. PO: {PONumber}, Amount: {Amount}",
-                    result.PONumber, result.TotalAmount);
-                return result;
+                
+                try
+                {
+                    // CHANGE: Extract raw text from PDF using Document Intelligence
+                    var extractedText = await ExtractTextFromPdfAsync(new Uri(sasUrl), cancellationToken);
+                    
+                    // CHANGE: Send extracted text to OpenAI for detailed field extraction
+                    var result = await AnalyzePOTextAsync(extractedText, cancellationToken);
+                    _logger.LogInformation(
+                        "PO hybrid extraction completed. PO: {PONumber}, Amount: {Amount}",
+                        result.PONumber, result.TotalAmount);
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in hybrid PO extraction, falling back to Document Intelligence only");
+                    var result = await _documentIntelligenceService.ExtractPOAsync(new Uri(sasUrl), cancellationToken);
+                    return result;
+                }
             }
 
             // For images, use GPT-4 Vision
@@ -365,19 +380,56 @@ Be precise and confident in your classification."),
                 DeploymentName = _deploymentName,
                 Messages =
                 {
+                    // CHANGE: Expanded PO image prompt to extract all fields like Invoice
                     new ChatRequestSystemMessage(@"You are a Purchase Order data extraction expert with exceptional OCR capabilities.
 Carefully analyze the provided PO document image and extract ALL visible information with high accuracy.
 
+REQUIRED FIELDS TO EXTRACT:
+1. PO Number - Look for: 'PO No', 'PO Number', 'Purchase Order'
+2. PO Type - Look for: 'PO TYPE', 'Order Type' (e.g., 'Marketing PO')
+3. Agency Code - Agency/customer identifier
+4. Agency Name - Name of the agency/customer
+5. Agency Address - Full address of the agency
+6. Vendor Name - Look for: 'Vendor', 'Supplier'
+7. Vendor Code - Look for: 'Vendor Code'
+8. Vendor Address - Look for: 'Vendor Address'
+9. Buyer Name - Look for: 'Buyer'
+10. Purchasing Org - Look for: 'Purchasing Org'
+11. State Name - State of supply/delivery
+12. State Code - 2-digit state code
+13. GST Number - 15-character GSTIN if visible
+14. GST Percentage - GST rate if visible
+15. HSN/SAC Code - In line items or tax section
+16. Delivery Terms - Look for: 'Delivery Terms'
+17. Payment Terms - Look for: 'Payment Terms'
+18. PO Date - Look for: 'PO Date' (format: YYYY-MM-DD)
+19. Total Amount - Look for: 'Total PO Price', 'Total Amount'
+20. Line Items - ALL items with Item Code, Description, Qty, Rate, Amount, Plant, Tax Code, Currency
+
 CRITICAL INSTRUCTIONS:
-1. Extract EXACT values as they appear in the document
-2. For PO numbers, look for fields labeled 'PO Number', 'Purchase Order', 'PO No', etc.
-3. Extract all line items with complete details
-4. Pay attention to totals, subtotals, and tax amounts
+- Extract EXACT values visible in the image.
+- Remove currency symbols and commas from amounts.
+- If a field is not found, use empty string for text, 0 for numbers.
 
 Respond ONLY with a JSON object in this exact format:
 {
   ""poNumber"": ""string"",
+  ""poType"": ""string"",
+  ""agencyCode"": ""string"",
+  ""agencyName"": ""string"",
+  ""agencyAddress"": ""string"",
   ""vendorName"": ""string"",
+  ""vendorCode"": ""string"",
+  ""vendorAddress"": ""string"",
+  ""buyerName"": ""string"",
+  ""purchasingOrg"": ""string"",
+  ""stateName"": ""string"",
+  ""stateCode"": ""string"",
+  ""gstNumber"": ""string"",
+  ""gstPercentage"": 0,
+  ""hsnSacCode"": ""string"",
+  ""deliveryTerms"": ""string"",
+  ""paymentTerms"": ""string"",
   ""poDate"": ""YYYY-MM-DD"",
   ""totalAmount"": 0.00,
   ""lineItems"": [
@@ -386,7 +438,11 @@ Respond ONLY with a JSON object in this exact format:
       ""description"": ""string"",
       ""quantity"": 0,
       ""unitPrice"": 0.00,
-      ""lineTotal"": 0.00
+      ""lineTotal"": 0.00,
+      ""plant"": ""string"",
+      ""taxCode"": ""string"",
+      ""currency"": ""string"",
+      ""hsnSacCode"": ""string""
     }
   ],
   ""confidence"": 0.0
@@ -445,7 +501,23 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
             var poData = new POData
             {
                 PONumber = parsed.PONumber ?? string.Empty,
+                // CHANGE: Added mapping for all new PO fields
+                POType = parsed.PoType ?? string.Empty,
+                AgencyCode = parsed.AgencyCode ?? string.Empty,
+                AgencyName = parsed.AgencyName ?? string.Empty,
+                AgencyAddress = parsed.AgencyAddress ?? string.Empty,
                 VendorName = parsed.VendorName ?? string.Empty,
+                VendorCode = parsed.VendorCode ?? string.Empty,
+                VendorAddress = parsed.VendorAddress ?? string.Empty,
+                BuyerName = parsed.BuyerName ?? string.Empty,
+                PurchasingOrg = parsed.PurchasingOrg ?? string.Empty,
+                StateName = parsed.StateName ?? string.Empty,
+                StateCode = parsed.StateCode ?? string.Empty,
+                GSTNumber = parsed.GstNumber ?? string.Empty,
+                GSTPercentage = parsed.GstPercentage,
+                HSNSACCode = parsed.HsnSacCode ?? string.Empty,
+                DeliveryTerms = parsed.DeliveryTerms ?? string.Empty,
+                PaymentTerms = parsed.PaymentTerms ?? string.Empty,
                 PODate = parsed.PODate ?? DateTime.Now,
                 TotalAmount = parsed.TotalAmount,
                 LineItems = parsed.LineItems?.Select(li => new POLineItem
@@ -454,7 +526,12 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
                     Description = li.Description ?? string.Empty,
                     Quantity = li.Quantity,
                     UnitPrice = li.UnitPrice,
-                    LineTotal = li.LineTotal
+                    LineTotal = li.LineTotal,
+                    // CHANGE: Added new line item field mappings
+                    Plant = li.Plant ?? string.Empty,
+                    TaxCode = li.TaxCode ?? string.Empty,
+                    Currency = li.Currency ?? string.Empty,
+                    HSNSACCode = li.HsnSacCode ?? string.Empty
                 }).ToList() ?? new List<POLineItem>(),
                 FieldConfidences = new Dictionary<string, double>
                 {
@@ -476,16 +553,33 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
         }
     }
 
+    // CHANGE: Added all new fields to PODataResponse to match expanded POData DTO
     private class PODataResponse
     {
         public string? PONumber { get; set; }
+        public string? PoType { get; set; }
+        public string? AgencyCode { get; set; }
+        public string? AgencyName { get; set; }
+        public string? AgencyAddress { get; set; }
         public string? VendorName { get; set; }
+        public string? VendorCode { get; set; }
+        public string? VendorAddress { get; set; }
+        public string? BuyerName { get; set; }
+        public string? PurchasingOrg { get; set; }
+        public string? StateName { get; set; }
+        public string? StateCode { get; set; }
+        public string? GstNumber { get; set; }
+        public decimal GstPercentage { get; set; }
+        public string? HsnSacCode { get; set; }
+        public string? DeliveryTerms { get; set; }
+        public string? PaymentTerms { get; set; }
         public DateTime? PODate { get; set; }
         public decimal TotalAmount { get; set; }
         public List<POLineItemResponse>? LineItems { get; set; }
         public double Confidence { get; set; }
     }
 
+    // CHANGE: Added Plant, TaxCode, Currency, HsnSacCode to POLineItemResponse
     private class POLineItemResponse
     {
         public string? ItemCode { get; set; }
@@ -493,6 +587,10 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
         public int Quantity { get; set; }
         public decimal UnitPrice { get; set; }
         public decimal LineTotal { get; set; }
+        public string? Plant { get; set; }
+        public string? TaxCode { get; set; }
+        public string? Currency { get; set; }
+        public string? HsnSacCode { get; set; }
     }
 
     /// <summary>
@@ -505,16 +603,31 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
         {
             _logger.LogInformation("Starting Invoice extraction for URL: {BlobUrl}", blobUrl);
 
-            // For document files (PDF, Word), use Azure Document Intelligence
+            // CHANGE: Switched from direct Document Intelligence to hybrid approach (Doc Intelligence extracts text → OpenAI analyzes text)
+            // For document files (PDF, Word), use Azure Document Intelligence to extract text, then OpenAI to analyze
             if (IsDocumentFile(blobUrl))
             {
-                _logger.LogInformation("Document file detected - using Azure Document Intelligence for extraction");
+                _logger.LogInformation("Document file detected - using hybrid extraction (Document Intelligence + OpenAI)");
                 var sasUrl = await _fileStorageService.GetPublicUrlWithSasAsync(blobUrl, TimeSpan.FromHours(1));
-                var result = await _documentIntelligenceService.ExtractInvoiceAsync(new Uri(sasUrl), cancellationToken);
-                _logger.LogInformation(
-                    "Document Intelligence extraction completed. Invoice: {InvoiceNumber}, Amount: {Amount}",
-                    result.InvoiceNumber, result.TotalAmount);
-                return result;
+                
+                try
+                {
+                    // CHANGE: Extract raw text from PDF using Document Intelligence
+                    var extractedText = await ExtractTextFromPdfAsync(new Uri(sasUrl), cancellationToken);
+                    
+                    // CHANGE: Send extracted text to OpenAI for detailed field extraction
+                    var result = await AnalyzeInvoiceTextAsync(extractedText, cancellationToken);
+                    _logger.LogInformation(
+                        "Invoice hybrid extraction completed. Invoice: {InvoiceNumber}, Amount: {Amount}",
+                        result.InvoiceNumber, result.TotalAmount);
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in hybrid invoice extraction, falling back to Document Intelligence only");
+                    var result = await _documentIntelligenceService.ExtractInvoiceAsync(new Uri(sasUrl), cancellationToken);
+                    return result;
+                }
             }
 
             // For images, use GPT-4 Vision
@@ -535,38 +648,369 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
                 DeploymentName = _deploymentName,
                 Messages =
                 {
-                    new ChatRequestSystemMessage(@"You are an Invoice data extraction expert with exceptional OCR capabilities.
-Carefully analyze the provided invoice document image and extract ALL visible information with high accuracy.
+                    new ChatRequestSystemMessage(@"You are an AI Invoice Data Extraction Engine specialized in invoices.
 
-CRITICAL INSTRUCTIONS:
-1. Look for fields labeled 'Total', 'Tot Inv. Amt', 'Total Amount', 'Grand Total', 'Invoice Total', or similar
-2. Extract the EXACT numeric values you see, including decimals
-3. For invoice numbers, look for fields labeled 'Invoice No', 'Invoice Number', 'Bill No', etc.
-4. Pay special attention to tables and line items
-5. If you see multiple totals (like 'Total' and 'Tot Inv. Amt'), use the larger/final total amount
+Your task is to analyze OCR-extracted text from an invoice document and extract structured information with maximum accuracy.
 
-Respond ONLY with a JSON object in this exact format:
+Extract only the information present in the document. Do NOT guess or hallucinate values.
+
+Think step-by-step and carefully verify each extracted value before producing the final JSON output.
+
+--------------------------------------------------
+STEP 1 — UNDERSTAND DOCUMENT STRUCTURE
+--------------------------------------------------
+
+First analyze the invoice text and identify these sections if present:
+
+1. Vendor / Supplier details
+2. Customer / Agency details
+3. Billing information (Bill To)
+4. Invoice metadata (Invoice number, invoice date)
+5. GST information
+6. Purchase order references
+7. Line item table
+8. Tax summary and totals
+
+After identifying these sections, extract the required fields.
+
+--------------------------------------------------
+STEP 2 — INVOICE METADATA
+--------------------------------------------------
+
+Extract the Invoice Number.
+
+Look for keywords:
+Invoice No
+Invoice Number
+Inv No
+Bill No
+Tax Invoice No
+
+Return the exact value.
+
+Extract the Invoice Date and normalize it to ISO format:
+
+YYYY-MM-DD
+
+Handle formats like:
+12/03/2025
+12-03-25
+12 March 2025
+Mar 12 2025
+
+--------------------------------------------------
+STEP 3 — AGENCY / CUSTOMER DETAILS
+--------------------------------------------------
+
+Extract:
+Agency Name
+Agency Address
+Agency Code
+
+Possible labels:
+Customer
+Client
+Agency
+Ship To
+Consignee
+
+Agency Code is typically:
+Alphanumeric
+Length between 4–10 characters
+
+Example:
+AGT104
+CUS9087
+
+--------------------------------------------------
+STEP 4 — BILLING DETAILS
+--------------------------------------------------
+
+Extract:
+Billing Name
+Billing Address
+
+Look near sections labeled:
+Bill To
+Billed To
+Invoice To
+Billing Address
+
+Billing name may be the same as agency name.
+
+--------------------------------------------------
+STEP 5 — VENDOR / SUPPLIER DETAILS
+--------------------------------------------------
+
+Extract:
+Vendor Name
+Vendor Code
+
+Look near:
+Supplier
+Vendor
+Company Name
+Registered Office
+From
+
+Vendor code may appear close to the vendor name.
+
+--------------------------------------------------
+STEP 6 — GST INFORMATION (CRITICAL)
+--------------------------------------------------
+
+Extract the GSTIN.
+
+GSTIN format:
+15 characters
+
+Example:
+27ABCDE1234F1Z5
+
+Structure:
+First 2 digits = State Code
+Next 10 = PAN
+Next 1 = Entity number
+Next 1 = Z
+Last 1 = checksum
+
+Rules:
+Extract the first valid GSTIN.
+If both vendor and customer GSTIN exist, prefer Vendor GSTIN.
+
+Also extract:
+State Code → first two digits of GSTIN
+State Name → derive using state code
+
+Example state mapping:
+27 = Maharashtra
+29 = Karnataka
+07 = Delhi
+33 = Tamil Nadu
+24 = Gujarat
+19 = West Bengal
+
+--------------------------------------------------
+STEP 7 — HSN / SAC CODE
+--------------------------------------------------
+
+Extract the HSN or SAC code.
+
+Possible labels:
+HSN
+SAC
+HSN/SAC
+HSN Code
+
+Typical formats:
+9983
+998314
+847130
+
+Remove spaces if present.
+
+--------------------------------------------------
+STEP 8 — PURCHASE ORDER NUMBER
+--------------------------------------------------
+
+Extract PO Number.
+
+Look for:
+PO No
+PO Number
+Purchase Order
+PO Ref
+Ref PO
+Purchase No
+
+Return the first valid PO reference.
+
+--------------------------------------------------
+STEP 9 — TAX DETAILS
+--------------------------------------------------
+
+Extract:
+GST Percentage
+Tax Amount
+Sub Total
+Total Amount
+
+Common GST rates:
+5
+12
+18
+28
+
+Currency normalization:
+Remove symbols like:
+₹
+INR
+Rs.
+,
+
+Example:
+₹12,450.00 → 12450
+
+Total Amount Rule:
+If multiple totals exist, select the FINAL payable amount or the largest value.
+
+Ignore:
+Round Off
+Adjustment
+Discount
+
+--------------------------------------------------
+STEP 10 — LINE ITEM TABLE EXTRACTION
+--------------------------------------------------
+
+Identify the invoice item table.
+
+Possible headers:
+Description
+Item
+Product
+Qty
+Quantity
+Rate
+Unit Price
+Amount
+HSN
+GST
+
+Extract ALL rows.
+
+For each line item extract:
+
+description
+quantity
+unit_price
+amount
+hsn_sac_code
+gst_percentage
+
+Rules:
+Quantity must be numeric.
+Unit price must be numeric.
+Amount must be numeric.
+
+If any field is missing, return empty or zero.
+
+--------------------------------------------------
+STEP 11 — CROSS VALIDATION
+--------------------------------------------------
+
+Validate totals:
+
+Sub Total + Tax Amount ≈ Total Amount
+
+If mismatch occurs, prefer the explicit totals shown in the invoice summary.
+
+--------------------------------------------------
+STEP 12 — MISSING FIELD HANDLING
+--------------------------------------------------
+
+If a field is not present in the document:
+
+Return:
+"" for text fields
+0 for numeric fields
+
+--------------------------------------------------
+STEP 13 — OUTPUT JSON SCHEMA
+--------------------------------------------------
+
+Return ONLY valid JSON in the following structure:
+
 {
-  ""invoiceNumber"": ""string"",
-  ""vendorName"": ""string"",
-  ""invoiceDate"": ""YYYY-MM-DD"",
-  ""subTotal"": 0.00,
-  ""taxAmount"": 0.00,
-  ""totalAmount"": 0.00,
-  ""lineItems"": [
+  ""invoice_number"": "" "",
+  ""invoice_date"": "" "",
+  ""agency_name"": """",
+  ""agency_address"": """",
+  ""agency_code"": """",
+  ""billing_name"": """",
+  ""billing_address"": """",
+  ""vendor_name"": """",
+  ""vendor_code"": """",
+  ""state_name"": """",
+  ""state_code"": """",
+  ""gst_number"": """",
+  ""gst_percentage"": 0,
+  ""hsn_sac_code"": """",
+  ""po_number"": """",
+  ""sub_total"": 0,
+  ""tax_amount"": 0,
+  ""total_amount"": 0,
+  ""line_items"": [
     {
-      ""itemCode"": ""string"",
-      ""description"": ""string"",
+      ""description"": """",
       ""quantity"": 0,
-      ""unitPrice"": 0.00,
-      ""lineTotal"": 0.00
+      ""unit_price"": 0,
+      ""amount"": 0,
+      ""hsn_sac_code"": """",
+      ""gst_percentage"": 0
     }
   ],
   ""confidence"": 0.0
 }
 
-Where confidence is your overall confidence in the extraction (0.0 to 1.0).
-Extract EVERY field you can see. Do not leave fields empty if data is visible in the image."),
+--------------------------------------------------
+STEP 14 — CONFIDENCE SCORE
+--------------------------------------------------
+
+Return a confidence score between 0.0 and 1.0.
+
+Guidelines:
+
+0.9 – 1.0 → Clear structured invoice  
+0.75 – 0.9 → Minor OCR noise  
+0.6 – 0.75 → Some fields missing  
+0.4 – 0.6 → Partial extraction  
+<0.4 → Poor quality OCR
+
+--------------------------------------------------
+FINAL RULES
+--------------------------------------------------
+
+Return ONLY valid JSON.
+
+Do NOT include explanations.
+Do NOT add extra text.
+Do NOT invent values.
+
+Ensure the JSON strictly follows the schema above."),
+
+//                     (@"You are an Invoice data extraction expert with exceptional OCR capabilities.
+// Carefully analyze the provided invoice document image and extract ALL visible information with high accuracy.
+
+// CRITICAL INSTRUCTIONS:
+// 1. Look for fields labeled 'Total', 'Tot Inv. Amt', 'Total Amount', 'Grand Total', 'Invoice Total', or similar
+// 2. Extract the EXACT numeric values you see, including decimals
+// 3. For invoice numbers, look for fields labeled 'Invoice No', 'Invoice Number', 'Bill No', etc.
+// 4. Pay special attention to tables and line items
+// 5. If you see multiple totals (like 'Total' and 'Tot Inv. Amt'), use the larger/final total amount
+
+// Respond ONLY with a JSON object in this exact format:
+// {
+//   ""invoiceNumber"": ""string"",
+//   ""vendorName"": ""string"",
+//   ""invoiceDate"": ""YYYY-MM-DD"",
+//   ""subTotal"": 0.00,
+//   ""taxAmount"": 0.00,
+//   ""totalAmount"": 0.00,
+//   ""lineItems"": [
+//     {
+//       ""itemCode"": ""string"",
+//       ""description"": ""string"",
+//       ""quantity"": 0,
+//       ""unitPrice"": 0.00,
+//       ""lineTotal"": 0.00
+//     }
+//   ],
+//   ""confidence"": 0.0
+// }
+
+// Where confidence is your overall confidence in the extraction (0.0 to 1.0).
+// Extract EVERY field you can see. Do not leave fields empty if data is visible in the image."),
                     new ChatRequestUserMessage(
                         new ChatMessageContentItem[]
                         {
@@ -615,11 +1059,24 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
                 throw new InvalidOperationException("Failed to parse Invoice response");
             }
 
+            // CHANGE: Added mapping for all new fields (Agency, Billing, GST, HSN, PO, State, VendorCode)
             var invoiceData = new InvoiceData
             {
                 InvoiceNumber = parsed.InvoiceNumber ?? string.Empty,
                 VendorName = parsed.VendorName ?? string.Empty,
+                VendorCode = parsed.VendorCode ?? string.Empty,
                 InvoiceDate = parsed.InvoiceDate ?? DateTime.Now,
+                AgencyName = parsed.AgencyName ?? string.Empty,
+                AgencyAddress = parsed.AgencyAddress ?? string.Empty,
+                AgencyCode = parsed.AgencyCode ?? string.Empty,
+                BillingName = parsed.BillingName ?? string.Empty,
+                BillingAddress = parsed.BillingAddress ?? string.Empty,
+                StateName = parsed.StateName ?? string.Empty,
+                StateCode = parsed.StateCode ?? string.Empty,
+                GSTNumber = parsed.GstNumber ?? string.Empty,
+                GSTPercentage = parsed.GstPercentage,
+                HSNSACCode = parsed.HsnSacCode ?? string.Empty,
+                PONumber = parsed.PoNumber ?? string.Empty,
                 SubTotal = parsed.SubTotal,
                 TaxAmount = parsed.TaxAmount,
                 TotalAmount = parsed.TotalAmount,
@@ -651,11 +1108,24 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
         }
     }
 
+    // CHANGE: Added all missing fields to match InvoiceData DTO for complete extraction
     private class InvoiceDataResponse
     {
         public string? InvoiceNumber { get; set; }
         public string? VendorName { get; set; }
+        public string? VendorCode { get; set; }
         public DateTime? InvoiceDate { get; set; }
+        public string? AgencyName { get; set; }
+        public string? AgencyAddress { get; set; }
+        public string? AgencyCode { get; set; }
+        public string? BillingName { get; set; }
+        public string? BillingAddress { get; set; }
+        public string? StateName { get; set; }
+        public string? StateCode { get; set; }
+        public string? GstNumber { get; set; }
+        public decimal GstPercentage { get; set; }
+        public string? HsnSacCode { get; set; }
+        public string? PoNumber { get; set; }
         public decimal SubTotal { get; set; }
         public decimal TaxAmount { get; set; }
         public decimal TotalAmount { get; set; }
@@ -722,33 +1192,59 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
                 DeploymentName = _deploymentName,
                 Messages =
                 {
+                    // CHANGE: Expanded Cost Summary image prompt to extract all required fields
                     new ChatRequestSystemMessage(@"You are a Cost Summary data extraction expert with exceptional OCR capabilities.
 Carefully analyze the provided cost summary document image and extract ALL visible information with high accuracy.
 
-CRITICAL INSTRUCTIONS:
-1. Extract EXACT values as they appear in the document
-2. Look for campaign details, dates, and cost breakdowns
-3. Extract all cost categories and their amounts
-4. Pay attention to totals and subtotals
+REQUIRED FIELDS TO EXTRACT:
+1. Campaign Name - Activity/campaign title
+2. State - State name
+3. Place of Supply - Look for: 'Place of Supply', 'State'
+4. Campaign Start Date - Start date (format: YYYY-MM-DD)
+5. Campaign End Date - End date (format: YYYY-MM-DD)
+6. Number of Days - Look for 'Days' column, text like '90 day'. Use MAXIMUM days value.
+7. Number of Teams - Look for 'Team', 'No of Teams', text like 'By 2 Team'
+8. Number of Activations - Look for 'Activations'
+9. Total Cost - Final total including tax
+10. Cost Breakdowns - EVERY line item with ALL details
+
+FOR EACH COST BREAKDOWN ITEM:
+- category: Item name (e.g., 'Vehicle Branding', 'Promoter')
+- elementName: Same as category
+- amount: Total column value
+- quantity: Qty column value
+- unit: Unit of measurement
+- isFixedCost: true if 'One Time' in Days column
+- isVariableCost: true if numeric Days (78, 90)
+
+CRITICAL: Do NOT include tax rows (CGST, SGST) as breakdown items.
 
 Respond ONLY with a JSON object in this exact format:
 {
   ""campaignName"": ""string"",
   ""state"": ""string"",
+  ""placeOfSupply"": ""string"",
   ""campaignStartDate"": ""YYYY-MM-DD"",
   ""campaignEndDate"": ""YYYY-MM-DD"",
+  ""numberOfDays"": 0,
+  ""numberOfTeams"": 0,
+  ""numberOfActivations"": 0,
   ""totalCost"": 0.00,
   ""costBreakdowns"": [
     {
       ""category"": ""string"",
-      ""amount"": 0.00
+      ""elementName"": ""string"",
+      ""amount"": 0.00,
+      ""quantity"": 0,
+      ""unit"": ""string"",
+      ""isFixedCost"": false,
+      ""isVariableCost"": false
     }
   ],
   ""confidence"": 0.0
 }
 
-Where confidence is your overall confidence in the extraction (0.0 to 1.0).
-Extract EVERY field you can see. Do not leave fields empty if data is visible in the image."),
+Extract EVERY field you can see. Do not leave fields empty if data is visible."),
                     new ChatRequestUserMessage(
                         new ChatMessageContentItem[]
                         {
@@ -797,17 +1293,27 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
                 throw new InvalidOperationException("Failed to parse Cost Summary response");
             }
 
+            // CHANGE: Added mapping for all new Cost Summary fields (PlaceOfSupply, NumberOfDays, NumberOfTeams, NumberOfActivations, and breakdown details)
             var costSummaryData = new CostSummaryData
             {
                 CampaignName = parsed.CampaignName ?? string.Empty,
                 State = parsed.State ?? string.Empty,
+                PlaceOfSupply = parsed.PlaceOfSupply,
                 CampaignStartDate = parsed.CampaignStartDate ?? DateTime.Now,
                 CampaignEndDate = parsed.CampaignEndDate ?? DateTime.Now,
                 TotalCost = parsed.TotalCost,
+                NumberOfDays = parsed.NumberOfDays,
+                NumberOfTeams = parsed.NumberOfTeams,
+                NumberOfActivations = parsed.NumberOfActivations,
                 CostBreakdowns = parsed.CostBreakdowns?.Select(cb => new CostBreakdown
                 {
                     Category = cb.Category ?? string.Empty,
-                    Amount = cb.Amount
+                    ElementName = cb.ElementName,
+                    Amount = cb.Amount,
+                    Quantity = cb.Quantity,
+                    Unit = cb.Unit,
+                    IsFixedCost = cb.IsFixedCost,
+                    IsVariableCost = cb.IsVariableCost
                 }).ToList() ?? new List<CostBreakdown>(),
                 FieldConfidences = new Dictionary<string, double>
                 {
@@ -829,21 +1335,32 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
         }
     }
 
+    // CHANGE: Added all missing fields to CostSummaryDataResponse (PlaceOfSupply, NumberOfDays, NumberOfTeams, NumberOfActivations)
     private class CostSummaryDataResponse
     {
         public string? CampaignName { get; set; }
         public string? State { get; set; }
+        public string? PlaceOfSupply { get; set; }
         public DateTime? CampaignStartDate { get; set; }
         public DateTime? CampaignEndDate { get; set; }
         public decimal TotalCost { get; set; }
+        public int? NumberOfDays { get; set; }
+        public int? NumberOfTeams { get; set; }
+        public int? NumberOfActivations { get; set; }
         public List<CostBreakdownResponse>? CostBreakdowns { get; set; }
         public double Confidence { get; set; }
     }
 
+    // CHANGE: Added ElementName, Quantity, Unit, IsFixedCost, IsVariableCost to CostBreakdownResponse
     private class CostBreakdownResponse
     {
         public string? Category { get; set; }
+        public string? ElementName { get; set; }
         public decimal Amount { get; set; }
+        public int? Quantity { get; set; }
+        public string? Unit { get; set; }
+        public bool IsFixedCost { get; set; }
+        public bool IsVariableCost { get; set; }
     }
 
     /// <summary>
@@ -923,6 +1440,52 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
 
             metadata.FieldConfidences = fieldConfidences;
 
+            // CHANGE: Added OpenAI Vision analysis to detect blue tshirt persons, 3W vehicles, and read GPS overlay text
+            try
+            {
+                var imageData = Convert.ToBase64String(imageBytes);
+                var visionAnalysis = await AnalyzePhotoContentAsync(imageData, cancellationToken);
+                
+                metadata.HasBlueTshirtPerson = visionAnalysis.HasBlueTshirtPerson;
+                metadata.BlueTshirtPersonCount = visionAnalysis.BlueTshirtPersonCount;
+                metadata.HasBajajVehicle = visionAnalysis.HasBajajVehicle;
+                metadata.Has3WVehicle = visionAnalysis.Has3WVehicle;
+                metadata.BlueTshirtConfidence = visionAnalysis.BlueTshirtConfidence;
+                metadata.VehicleConfidence = visionAnalysis.VehicleConfidence;
+                metadata.PhotoDateFromOverlay = visionAnalysis.PhotoDateFromOverlay;
+                metadata.LocationText = visionAnalysis.LocationText;
+                
+                // Use overlay date if EXIF timestamp is missing
+                if (!metadata.Timestamp.HasValue && !string.IsNullOrEmpty(visionAnalysis.PhotoDateFromOverlay))
+                {
+                    if (DateTime.TryParse(visionAnalysis.PhotoDateFromOverlay, out var overlayDate))
+                    {
+                        metadata.Timestamp = overlayDate;
+                        fieldConfidences["Timestamp"] = 0.85;
+                    }
+                }
+                
+                // Use overlay lat/long if EXIF GPS is missing
+                if (!metadata.Latitude.HasValue && visionAnalysis.OverlayLatitude.HasValue)
+                {
+                    metadata.Latitude = visionAnalysis.OverlayLatitude;
+                    metadata.Longitude = visionAnalysis.OverlayLongitude;
+                    fieldConfidences["Location"] = 0.85;
+                }
+                
+                fieldConfidences["BlueTshirt"] = visionAnalysis.BlueTshirtConfidence;
+                fieldConfidences["Vehicle"] = visionAnalysis.VehicleConfidence;
+                metadata.FieldConfidences = fieldConfidences;
+                
+                _logger.LogInformation(
+                    "Photo Vision analysis completed. BlueTshirt: {HasBlue} (count: {Count}), 3W Vehicle: {Has3W}, OverlayDate: {Date}",
+                    metadata.HasBlueTshirtPerson, metadata.BlueTshirtPersonCount, metadata.Has3WVehicle, metadata.PhotoDateFromOverlay);
+            }
+            catch (Exception visionEx)
+            {
+                _logger.LogWarning(visionEx, "Vision analysis failed for photo, continuing with EXIF data only");
+            }
+
             // Calculate overall document confidence and flag if below threshold
             var documentConfidence = CalculateDocumentConfidence(fieldConfidences);
             metadata.IsFlaggedForReview = documentConfidence < CONFIDENCE_THRESHOLD;
@@ -944,6 +1507,94 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
                 IsFlaggedForReview = true // Flag for review when extraction fails
             };
         }
+    }
+
+    // CHANGE: Added new method - Analyzes photo using OpenAI Vision to detect blue tshirt, 3W vehicle, and read GPS overlay
+    /// <summary>
+    /// Analyzes photo content using GPT-4 Vision
+    /// </summary>
+    private async Task<PhotoVisionResponse> AnalyzePhotoContentAsync(string imageData, CancellationToken cancellationToken)
+    {
+        var chatCompletionsOptions = new ChatCompletionsOptions
+        {
+            DeploymentName = _deploymentName,
+            Messages =
+            {
+                new ChatRequestSystemMessage(@"You are a photo analysis expert for marketing campaign verification in India.
+
+Analyze this photo carefully and detect the following. Be precise and thorough.
+
+WHAT TO DETECT:
+
+1. PERSON WITH BLUE T-SHIRT/SHIRT:
+   - Look for any person wearing blue clothing (light blue, dark blue, navy, royal blue)
+   - Must be worn by a real person (not on a banner/poster)
+   - Count how many people are wearing blue
+   - Confidence: 0.9+ if clearly visible, 0.5-0.8 if partially visible
+
+2. 3-WHEEL VEHICLE (Auto-Rickshaw / Cargo Vehicle):
+   - Three-wheeled vehicle (auto-rickshaw, Bajaj RE, cargo 3-wheeler)
+   - May have Bajaj branding
+   - Common in Indian streets
+   - Set has3WVehicle=true if ANY 3-wheeler is visible
+
+3. GPS OVERLAY TEXT (if visible at bottom of image):
+   - Read the DATE from the overlay (format like '01/04/2025')
+   - Read the LAT LONG values
+   - Read the LOCATION text (city, state, country)
+   - Many campaign photos have a GPS Map Camera overlay with this info
+
+Respond ONLY with JSON:
+{
+  ""hasBlueTshirtPerson"": false,
+  ""blueTshirtPersonCount"": 0,
+  ""blueTshirtConfidence"": 0.0,
+  ""hasBajajVehicle"": false,
+  ""has3WVehicle"": false,
+  ""vehicleConfidence"": 0.0,
+  ""photoDateFromOverlay"": ""YYYY-MM-DD"",
+  ""overlayLatitude"": null,
+  ""overlayLongitude"": null,
+  ""locationText"": ""string""
+}
+
+If GPS overlay is not visible, set photoDateFromOverlay to empty string and lat/long to null."),
+                new ChatRequestUserMessage(
+                    new ChatMessageContentItem[]
+                    {
+                        new ChatMessageTextContentItem("Analyze this campaign photo. Detect: 1) People with blue t-shirt (count them), 2) Any 3-wheel vehicle, 3) Read GPS overlay text if visible (date, lat/long, location)."),
+                        CreateImageContentItem(imageData)
+                    })
+            }
+        };
+
+        var response = await _openAIClient.GetChatCompletionsAsync(chatCompletionsOptions, cancellationToken);
+        var content = response.Value.Choices[0].Message.Content;
+        
+        _logger.LogInformation("Received photo vision analysis response: {Response}", content);
+        
+        var jsonContent = CleanJsonResponse(content);
+        var visionResult = JsonSerializer.Deserialize<PhotoVisionResponse>(jsonContent, new JsonSerializerOptions 
+        { 
+            PropertyNameCaseInsensitive = true 
+        });
+        
+        return visionResult ?? new PhotoVisionResponse();
+    }
+
+    // CHANGE: Added PhotoVisionResponse class for Vision API response parsing
+    private class PhotoVisionResponse
+    {
+        public bool HasBlueTshirtPerson { get; set; }
+        public int BlueTshirtPersonCount { get; set; }
+        public double BlueTshirtConfidence { get; set; }
+        public bool HasBajajVehicle { get; set; }
+        public bool Has3WVehicle { get; set; }
+        public double VehicleConfidence { get; set; }
+        public string? PhotoDateFromOverlay { get; set; }
+        public double? OverlayLatitude { get; set; }
+        public double? OverlayLongitude { get; set; }
+        public string? LocationText { get; set; }
     }
 
     /// <summary>
@@ -1010,6 +1661,183 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
         }
     }
 
+    // CHANGE: Added new method - Analyzes PDF-extracted text using OpenAI to get all Invoice fields
+    /// <summary>
+    /// Analyzes extracted text using GPT-4 to extract Invoice data
+    /// </summary>
+    private async Task<InvoiceData> AnalyzeInvoiceTextAsync(string extractedText, CancellationToken cancellationToken)
+    {
+        var chatCompletionsOptions = new ChatCompletionsOptions
+        {
+            DeploymentName = _deploymentName,
+            Messages =
+            {
+                new ChatRequestSystemMessage(@"You are an Invoice data extraction expert specializing in invoices.
+Analyze the provided text extracted from an invoice document and extract ALL structured information with maximum accuracy.
+
+REQUIRED FIELDS TO EXTRACT:
+1. Invoice Number - Look for: 'Invoice No', 'Invoice Number', 'Bill No', 'Inv No', 'Document No'
+2. Invoice Date - Date of invoice (format: YYYY-MM-DD)
+3. Agency Name - Name of the agency/customer/recipient receiving the invoice
+4. Agency Address - Full address of the agency/recipient
+5. Agency Code - Agency identifier code (alphanumeric, 4-10 characters)
+6. Billing Name - Bill to party name (may be same as agency)
+7. Billing Address - Bill to address
+8. Vendor Name - Supplier/vendor company name (look near 'Supplier', 'From', 'M/S')
+9. Vendor Code - Vendor identifier code
+10. State Name - State where service/goods supplied (e.g., 'Maharashtra', 'Bihar', 'Karnataka')
+11. State Code - 2-digit state code (e.g., '27' for Maharashtra, '10' for Bihar)
+12. GST Number - 15-character GSTIN (format: 2 digits state + 10 chars PAN + 1 digit + 1 letter + 1 check)
+13. GST Percentage - GST rate applied (common: 5, 12, 18, 28)
+14. HSN/SAC Code - 4-8 digit code for goods/services classification
+15. PO Number - Reference Purchase Order number
+16. Sub Total - Amount before tax (look for 'Taxable Amount', 'Sub Total')
+17. Tax Amount - Total GST/tax amount (CGST + SGST or IGST)
+18. Total Amount - Final invoice amount (look for 'Tot Inv. Amt', 'Grand Total', 'Total')
+19. Line Items - ALL items with description, quantity, unit price, amount, HSN, GST%
+
+CRITICAL INSTRUCTIONS FOR INDIAN INVOICES:
+- GSTIN: Must be 15 characters. First 2 digits = state code.
+- If both supplier and recipient GSTIN exist, extract SUPPLIER GSTIN as gstNumber.
+- State Code: First 2 digits of GSTIN. Common: 10=Bihar, 27=Maharashtra, 29=Karnataka, 07=Delhi, 33=Tamil Nadu.
+- State Name: Derive from state code or 'Place of Supply' field.
+- HSN/SAC Code: Usually in the line items table header.
+- Total Amount: If multiple totals exist, use the FINAL payable amount.
+- Agency = Recipient/Customer/Bill To party.
+- If a field is not found, use empty string for text, 0 for numbers.
+
+Respond ONLY with a JSON object in this exact format:
+{
+  ""invoiceNumber"": ""string"",
+  ""invoiceDate"": ""YYYY-MM-DD"",
+  ""agencyName"": ""string"",
+  ""agencyAddress"": ""string"",
+  ""agencyCode"": ""string"",
+  ""billingName"": ""string"",
+  ""billingAddress"": ""string"",
+  ""vendorName"": ""string"",
+  ""vendorCode"": ""string"",
+  ""stateName"": ""string"",
+  ""stateCode"": ""string"",
+  ""gstNumber"": ""string"",
+  ""gstPercentage"": 0,
+  ""hsnSacCode"": ""string"",
+  ""poNumber"": ""string"",
+  ""subTotal"": 0.00,
+  ""taxAmount"": 0.00,
+  ""totalAmount"": 0.00,
+  ""lineItems"": [
+    {
+      ""itemCode"": ""string"",
+      ""description"": ""string"",
+      ""quantity"": 0,
+      ""unitPrice"": 0.00,
+      ""lineTotal"": 0.00
+    }
+  ],
+  ""confidence"": 0.0
+}"),
+                new ChatRequestUserMessage($"Extract all invoice data from this text:\n\n{extractedText}")
+            }
+        };
+
+        var response = await _openAIClient.GetChatCompletionsAsync(chatCompletionsOptions, cancellationToken);
+        var content = response.Value.Choices[0].Message.Content;
+        _logger.LogInformation("Received Invoice text analysis response: {Response}", content);
+        
+        return ParseInvoiceResponse(content);
+    }
+
+    // CHANGE: Expanded PO text analysis prompt to extract all fields like Invoice
+    /// <summary>
+    /// Analyzes extracted text using GPT-4 to extract PO data
+    /// </summary>
+    private async Task<POData> AnalyzePOTextAsync(string extractedText, CancellationToken cancellationToken)
+    {
+        var chatCompletionsOptions = new ChatCompletionsOptions
+        {
+            DeploymentName = _deploymentName,
+            Messages =
+            {
+                new ChatRequestSystemMessage(@"You are a Purchase Order data extraction expert specializing in Indian business documents.
+Analyze the provided text extracted from a Purchase Order document and extract ALL structured information with maximum accuracy.
+
+REQUIRED FIELDS TO EXTRACT:
+1. PO Number - Look for: 'PO No', 'PO Number', 'Purchase Order', 'Order No'
+2. PO Type - Look for: 'PO TYPE', 'Order Type' (e.g., 'Marketing PO', 'Standard PO')
+3. Agency Code - Look for: 'Agency Code', 'Customer Code', alphanumeric identifier
+4. Agency Name - Name of the agency/customer
+5. Agency Address - Full address of the agency
+6. Vendor Name - Look for: 'Vendor', 'Supplier', 'M/S'
+7. Vendor Code - Look for: 'Vendor Code', numeric code near vendor name
+8. Vendor Address - Look for: 'Vendor Address', address near vendor name
+9. Buyer Name - Look for: 'Buyer', 'Purchased By'
+10. Purchasing Org - Look for: 'Purchasing Org', 'Purch. Org' (e.g., 'BA01')
+11. State Name - State of supply/delivery
+12. State Code - 2-digit state code
+13. GST Number - 15-character GSTIN if present
+14. GST Percentage - GST rate if present
+15. HSN/SAC Code - Look in line items table header or Tax Code column
+16. Delivery Terms - Look for: 'Delivery Terms'
+17. Payment Terms - Look for: 'Payment Terms'
+18. PO Date - Look for: 'PO Date', 'Order Date' (format: YYYY-MM-DD)
+19. Total Amount - Look for: 'Total PO Price', 'Total Amount', 'Grand Total'
+20. Line Items - ALL items with: Item Code, Description, Quantity, Unit Price, Line Total, Plant, Tax Code, Currency, HSN/SAC Code
+
+CRITICAL INSTRUCTIONS:
+- Extract EXACT values as they appear in the document.
+- For amounts, remove currency symbols (₹, INR, Rs.) and commas.
+- PO Date: Handle formats like 20.03.2025, 20/03/2025, 20-03-2025 → convert to YYYY-MM-DD.
+- If a field is not found, use empty string for text, 0 for numbers.
+
+Respond ONLY with a JSON object in this exact format:
+{
+  ""poNumber"": ""string"",
+  ""poType"": ""string"",
+  ""agencyCode"": ""string"",
+  ""agencyName"": ""string"",
+  ""agencyAddress"": ""string"",
+  ""vendorName"": ""string"",
+  ""vendorCode"": ""string"",
+  ""vendorAddress"": ""string"",
+  ""buyerName"": ""string"",
+  ""purchasingOrg"": ""string"",
+  ""stateName"": ""string"",
+  ""stateCode"": ""string"",
+  ""gstNumber"": ""string"",
+  ""gstPercentage"": 0,
+  ""hsnSacCode"": ""string"",
+  ""deliveryTerms"": ""string"",
+  ""paymentTerms"": ""string"",
+  ""poDate"": ""YYYY-MM-DD"",
+  ""totalAmount"": 0.00,
+  ""lineItems"": [
+    {
+      ""itemCode"": ""string"",
+      ""description"": ""string"",
+      ""quantity"": 0,
+      ""unitPrice"": 0.00,
+      ""lineTotal"": 0.00,
+      ""plant"": ""string"",
+      ""taxCode"": ""string"",
+      ""currency"": ""string"",
+      ""hsnSacCode"": ""string""
+    }
+  ],
+  ""confidence"": 0.0
+}"),
+                new ChatRequestUserMessage($"Extract all purchase order data from this text:\n\n{extractedText}")
+            }
+        };
+
+        var response = await _openAIClient.GetChatCompletionsAsync(chatCompletionsOptions, cancellationToken);
+        var content = response.Value.Choices[0].Message.Content;
+        _logger.LogInformation("Received PO text analysis response: {Response}", content);
+        
+        return ParsePOResponse(content);
+    }
+
+    // CHANGE: Expanded Cost Summary text prompt to extract all required fields
     /// <summary>
     /// Analyzes extracted text using GPT-4 to extract Cost Summary data
     /// </summary>
@@ -1020,25 +1848,63 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
             DeploymentName = _deploymentName,
             Messages =
             {
-                new ChatRequestSystemMessage(@"You are a Cost Summary data extraction expert.
-Analyze the provided text extracted from a cost summary document and extract structured information.
+                new ChatRequestSystemMessage(@"You are a Cost Summary data extraction expert specializing in Indian marketing activity cost sheets.
+Analyze the provided text extracted from a cost summary document and extract ALL structured information with maximum accuracy.
+
+REQUIRED FIELDS TO EXTRACT:
+1. Campaign Name - Activity/campaign title 
+2. State - State name (e.g. 'Maharashtra')
+3. Place of Supply - Look for: 'Place of Supply', 'State' (e.g., 'Bihar')
+4. Campaign Start Date - Start date (format: YYYY-MM-DD). Look for: 'Date of Supply', date ranges like 'Feb.-Mar.2025'
+5. Campaign End Date - End date (format: YYYY-MM-DD)
+6. Number of Days - Look for: 'Days' column values, or text like '90 day', '78 days'. Use the MAXIMUM days value from the table.
+7. Number of Teams - Look for: 'Team', 'No of Teams', text like 'By 2 Team'
+8. Number of Activations - Look for: 'Activations', 'No of Activations'
+9. Total Cost - Final total amount including tax (look for: 'Total Amount after Tax', 'Grand Total', 'Tot Inv. Amt')
+10. Cost Breakdowns - Extract EVERY line item from the table with ALL details
+
+FOR EACH COST BREAKDOWN ITEM, EXTRACT:
+- category: The item name/description (e.g., 'Vehicle Branding', 'Promoter', 'Leaflet')
+- elementName: Same as category (the element/activity name)
+- amount: The 'Total' column value for that row
+- quantity: The 'Qty' column value for that row
+- unit: The unit of measurement (e.g., 'days', 'pieces', 'per person')
+- isFixedCost: true if this is a one-time/fixed cost (items with 'One Time' in Days column)
+- isVariableCost: true if this cost varies by days/quantity (items with numeric Days like 78, 90)
+
+CRITICAL INSTRUCTIONS:
+- 'One Time' in Days column means isFixedCost=true, isVariableCost=false
+- Numeric Days (like 78, 90) means isFixedCost=false, isVariableCost=true
+- DO NOT include tax rows (CGST, SGST, IGST) as cost breakdown items
+- Agency Fees/Cost is a separate line item, include it
+- Total Cost should be the FINAL amount after tax
+- If a field is not found, use empty string for text, 0 for numbers, null for optional fields
 
 Respond ONLY with a JSON object in this exact format:
 {
   ""campaignName"": ""string"",
   ""state"": ""string"",
+  ""placeOfSupply"": ""string"",
   ""campaignStartDate"": ""YYYY-MM-DD"",
   ""campaignEndDate"": ""YYYY-MM-DD"",
+  ""numberOfDays"": 0,
+  ""numberOfTeams"": 0,
+  ""numberOfActivations"": 0,
   ""totalCost"": 0.00,
   ""costBreakdowns"": [
     {
       ""category"": ""string"",
-      ""amount"": 0.00
+      ""elementName"": ""string"",
+      ""amount"": 0.00,
+      ""quantity"": 0,
+      ""unit"": ""string"",
+      ""isFixedCost"": false,
+      ""isVariableCost"": false
     }
   ],
   ""confidence"": 0.0
 }"),
-                new ChatRequestUserMessage($"Extract cost summary data from this text:\n\n{extractedText}")
+                new ChatRequestUserMessage($"Extract all cost summary data from this text:\n\n{extractedText}")
             }
         };
 

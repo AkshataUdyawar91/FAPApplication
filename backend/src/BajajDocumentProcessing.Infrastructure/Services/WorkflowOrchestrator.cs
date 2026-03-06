@@ -262,14 +262,10 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
             if (existingScore == null)
             {
-                // Calculate confidence score
+                // Calculate confidence score (this already saves to DB inside the service)
                 var confidenceScore = await _confidenceScoreService.CalculateConfidenceScoreAsync(
                     package.Id,
                     cancellationToken);
-
-                // Store confidence score
-                _context.ConfidenceScores.Add(confidenceScore);
-                await _context.SaveChangesAsync(cancellationToken);
                 
                 _logger.LogInformation("Scoring step completed for package {PackageId}, Score: {Score}", 
                     package.Id, confidenceScore.OverallConfidence);
