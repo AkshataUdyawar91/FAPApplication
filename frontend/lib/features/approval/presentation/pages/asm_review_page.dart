@@ -201,46 +201,102 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
         bottom: false,
         child: Padding(
           padding: const EdgeInsets.all(16.0),
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.chevron_left, color: Colors.white),
-                onPressed: () => Navigator.pushReplacementNamed(context, '/'),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Back to Login',
-                style: TextStyle(color: Color(0xFFBFDBFE), fontSize: 14),
-              ),
-              const Spacer(),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisSize: MainAxisSize.min,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isMobile = constraints.maxWidth < 600;
+              
+              if (isMobile) {
+                return Column(
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left, color: Colors.white),
+                          onPressed: () => Navigator.pushReplacementNamed(context, '/'),
+                        ),
+                        const Text(
+                          'Back to Login',
+                          style: TextStyle(color: Color(0xFFBFDBFE), fontSize: 14),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Logged in as',
+                              style: TextStyle(color: Color(0xFFBFDBFE), fontSize: 12),
+                            ),
+                            Text(
+                              widget.userName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => Navigator.pushReplacementNamed(context, '/'),
+                          icon: const Icon(Icons.logout, size: 16),
+                          label: const Text('Logout'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: const BorderSide(color: Color(0xFF93C5FD)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              }
+              
+              return Row(
                 children: [
-                  const Text(
-                    'Logged in as',
-                    style: TextStyle(color: Color(0xFFBFDBFE), fontSize: 12),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: Colors.white),
+                    onPressed: () => Navigator.pushReplacementNamed(context, '/'),
                   ),
-                  Text(
-                    widget.userName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Back to Login',
+                    style: TextStyle(color: Color(0xFFBFDBFE), fontSize: 14),
+                  ),
+                  const Spacer(),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Logged in as',
+                        style: TextStyle(color: Color(0xFFBFDBFE), fontSize: 12),
+                      ),
+                      Text(
+                        widget.userName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 16),
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.pushReplacementNamed(context, '/'),
+                    icon: const Icon(Icons.logout, size: 16),
+                    label: const Text('Logout'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Color(0xFF93C5FD)),
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(width: 16),
-              OutlinedButton.icon(
-                onPressed: () => Navigator.pushReplacementNamed(context, '/'),
-                icon: const Icon(Icons.logout, size: 16),
-                label: const Text('Logout'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Color(0xFF93C5FD)),
-                ),
-              ),
-            ],
+              );
+            },
           ),
         ),
       ),
@@ -267,29 +323,62 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   }
 
   Widget _buildStatsCards() {
-    return Row(
-      children: [
-        Expanded(child: _buildStatCard(
-          'Pending Review',
-          _pendingCount.toString(),
-          Icons.schedule,
-          const Color(0xFFF59E0B),
-        )),
-        const SizedBox(width: 16),
-        Expanded(child: _buildStatCard(
-          'Approved',
-          _approvedCount.toString(),
-          Icons.check_circle,
-          const Color(0xFF10B981),
-        )),
-        const SizedBox(width: 16),
-        Expanded(child: _buildStatCard(
-          'Rejected',
-          _rejectedCount.toString(),
-          Icons.cancel,
-          const Color(0xFFEF4444),
-        )),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isMobile = constraints.maxWidth < 600;
+        
+        if (isMobile) {
+          return Column(
+            children: [
+              _buildStatCard(
+                'Pending Review',
+                _pendingCount.toString(),
+                Icons.schedule,
+                const Color(0xFFF59E0B),
+              ),
+              const SizedBox(height: 12),
+              _buildStatCard(
+                'Approved',
+                _approvedCount.toString(),
+                Icons.check_circle,
+                const Color(0xFF10B981),
+              ),
+              const SizedBox(height: 12),
+              _buildStatCard(
+                'Rejected',
+                _rejectedCount.toString(),
+                Icons.cancel,
+                const Color(0xFFEF4444),
+              ),
+            ],
+          );
+        }
+        
+        return Row(
+          children: [
+            Expanded(child: _buildStatCard(
+              'Pending Review',
+              _pendingCount.toString(),
+              Icons.schedule,
+              const Color(0xFFF59E0B),
+            )),
+            const SizedBox(width: 16),
+            Expanded(child: _buildStatCard(
+              'Approved',
+              _approvedCount.toString(),
+              Icons.check_circle,
+              const Color(0xFF10B981),
+            )),
+            const SizedBox(width: 16),
+            Expanded(child: _buildStatCard(
+              'Rejected',
+              _rejectedCount.toString(),
+              Icons.cancel,
+              const Color(0xFFEF4444),
+            )),
+          ],
+        );
+      },
     );
   }
 
@@ -332,55 +421,95 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            TextField(
-              controller: _searchController,
-              decoration: const InputDecoration(
-                hintText: 'Search by agency name or document ID...',
-                prefixIcon: Icon(Icons.search),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 16),
-            Row(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isMobile = constraints.maxWidth < 600;
+            
+            return Column(
               children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _statusFilter,
-                    decoration: const InputDecoration(
-                      labelText: 'Filter by status',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'all', child: Text('All Status')),
-                      DropdownMenuItem(value: 'asm-review', child: Text('Pending Review')),
-                      DropdownMenuItem(value: 'with-hq', child: Text('With HQ')),
-                      DropdownMenuItem(value: 'approved', child: Text('Approved')),
-                      DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
-                    ],
-                    onChanged: (value) => setState(() => _statusFilter = value!),
+                TextField(
+                  controller: _searchController,
+                  decoration: const InputDecoration(
+                    hintText: 'Search by agency name or document ID...',
+                    prefixIcon: Icon(Icons.search),
                   ),
+                  onChanged: (_) => setState(() {}),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _sortBy,
-                    decoration: const InputDecoration(
-                      labelText: 'Sort by',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'date', child: Text('Date')),
-                      DropdownMenuItem(value: 'amount', child: Text('Amount')),
-                      DropdownMenuItem(value: 'confidence', child: Text('Confidence')),
-                    ],
-                    onChanged: (value) => setState(() => _sortBy = value!),
-                  ),
-                ),
+                const SizedBox(height: 16),
+                isMobile
+                    ? Column(
+                        children: [
+                          DropdownButtonFormField<String>(
+                            value: _statusFilter,
+                            decoration: const InputDecoration(
+                              labelText: 'Filter by status',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 'all', child: Text('All Status')),
+                              DropdownMenuItem(value: 'asm-review', child: Text('Pending Review')),
+                              DropdownMenuItem(value: 'with-hq', child: Text('With HQ')),
+                              DropdownMenuItem(value: 'approved', child: Text('Approved')),
+                              DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
+                            ],
+                            onChanged: (value) => setState(() => _statusFilter = value!),
+                          ),
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<String>(
+                            value: _sortBy,
+                            decoration: const InputDecoration(
+                              labelText: 'Sort by',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 'date', child: Text('Date')),
+                              DropdownMenuItem(value: 'amount', child: Text('Amount')),
+                              DropdownMenuItem(value: 'confidence', child: Text('Confidence')),
+                            ],
+                            onChanged: (value) => setState(() => _sortBy = value!),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _statusFilter,
+                              decoration: const InputDecoration(
+                                labelText: 'Filter by status',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 'all', child: Text('All Status')),
+                                DropdownMenuItem(value: 'asm-review', child: Text('Pending Review')),
+                                DropdownMenuItem(value: 'with-hq', child: Text('With HQ')),
+                                DropdownMenuItem(value: 'approved', child: Text('Approved')),
+                                DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
+                              ],
+                              onChanged: (value) => setState(() => _statusFilter = value!),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _sortBy,
+                              decoration: const InputDecoration(
+                                labelText: 'Sort by',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 'date', child: Text('Date')),
+                                DropdownMenuItem(value: 'amount', child: Text('Amount')),
+                                DropdownMenuItem(value: 'confidence', child: Text('Confidence')),
+                              ],
+                              onChanged: (value) => setState(() => _sortBy = value!),
+                            ),
+                          ),
+                        ],
+                      ),
               ],
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -404,113 +533,254 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
       );
     }
 
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isMobile = constraints.maxWidth < 900;
+        
+        if (isMobile) {
+          return Column(
+            children: filtered.map((doc) => _buildMobileDocumentCard(doc)).toList(),
+          );
+        }
+        
+        return _buildDesktopTable(filtered);
+      },
+    );
+  }
+  
+  Widget _buildMobileDocumentCard(Map<String, dynamic> doc) {
+    final status = _normalizeStatus(doc['state']?.toString() ?? '');
+    final fapNumber = 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
+    
+    var poNumber = doc['poNumber']?.toString() ?? '-';
+    var poAmount = doc['poAmount'];
+    var invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
+    var invoiceAmount = doc['invoiceAmount'];
+    
+    final poAmountStr = poAmount != null 
+        ? '₹${double.parse(poAmount.toString()).toStringAsFixed(2)}' 
+        : '-';
+    final invoiceAmountStr = invoiceAmount != null 
+        ? '₹${double.parse(invoiceAmount.toString()).toStringAsFixed(2)}' 
+        : '-';
+    
+    final overallConfidence = doc['overallConfidence'];
+    final aiScore = overallConfidence != null 
+        ? '${(overallConfidence * 100).toStringAsFixed(0)}%' 
+        : '-';
+    
     return Card(
       elevation: 2,
-      child: Column(
-        children: [
-          // Table Header
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(8),
-                topRight: Radius.circular(8),
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: () async {
+          final result = await Navigator.pushNamed(
+            context,
+            '/asm/review-detail',
+            arguments: {
+              'submissionId': doc['id'],
+              'token': widget.token,
+              'userName': widget.userName,
+            },
+          );
+          
+          // Reload documents when returning from detail page
+          if (result == true || result == null) {
+            _loadDocuments();
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    fapNumber,
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  _buildStatusBadge(status),
+                ],
               ),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    'FAP NUMBER',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
+              const SizedBox(height: 12),
+              _buildInfoRow('PO Number', poNumber),
+              _buildInfoRow('PO Amount', poAmountStr),
+              _buildInfoRow('Invoice Number', invoiceNumber),
+              _buildInfoRow('Invoice Amount', invoiceAmountStr),
+              _buildInfoRow('Submitted', _formatDate(doc['createdAt'])),
+              _buildInfoRow('AI Score', aiScore),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    final result = await Navigator.pushNamed(
+                      context,
+                      '/asm/review-detail',
+                      arguments: {
+                        'submissionId': doc['id'],
+                        'token': widget.token,
+                        'userName': widget.userName,
+                      },
+                    );
+                    
+                    // Reload documents when returning from detail page
+                    if (result == true || result == null) {
+                      _loadDocuments();
+                    }
+                  },
+                  icon: const Icon(Icons.visibility_outlined, size: 18),
+                  label: const Text('View Details'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
                   ),
                 ),
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    'PO NO.',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    'PO AMT',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                    textAlign: TextAlign.right,
-                  ),
-                ),
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    'INVOICE NO.',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    'INVOICE AMT',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                    textAlign: TextAlign.right,
-                  ),
-                ),
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    'SUBMITTED DATE',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  flex: 1,
-                  child: Text(
-                    'AI SCORE',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                Expanded(
-                  flex: 1,
-                  child: Text(
-                    'STATUS',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                const SizedBox(width: 80), // Space for View button
-              ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
             ),
           ),
-          // Table Rows
-          ...filtered.map((doc) => _buildDocumentRow(doc)).toList(),
+          Text(
+            value,
+            style: AppTextStyles.bodySmall.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
+      ),
+    );
+  }
+  
+  Widget _buildDesktopTable(List<Map<String, dynamic>> filtered) {
+    return Card(
+      elevation: 2,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 1200),
+          child: Column(
+            children: [
+              // Table Header
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                decoration: const BoxDecoration(
+                  color: AppColors.background,
+                  border: Border(
+                    bottom: BorderSide(color: AppColors.border, width: 1),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 140,
+                      child: Text(
+                        'FAP NUMBER',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 120,
+                      child: Text(
+                        'PO NO.',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 140,
+                      child: Text(
+                        'PO AMT',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 160,
+                      child: Text(
+                        'INVOICE NO.',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 140,
+                      child: Text(
+                        'INVOICE AMT',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 140,
+                      child: Text(
+                        'SUBMITTED DATE',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 100,
+                      child: Text(
+                        'AI SCORE',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 140,
+                      child: Text(
+                        'STATUS',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 80), // Action column
+                  ],
+                ),
+              ),
+              // Table Rows
+              ...filtered.map((doc) => _buildDocumentRow(doc)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -519,15 +789,11 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
     final fapNumber = 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     
-    // Get PO data from API
     var poNumber = doc['poNumber']?.toString() ?? '-';
     var poAmount = doc['poAmount'];
-    
-    // Get invoice data from API
     var invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
     var invoiceAmount = doc['invoiceAmount'];
     
-    // Format amounts
     final poAmountStr = poAmount != null 
         ? '₹${double.parse(poAmount.toString()).toStringAsFixed(2)}' 
         : '-';
@@ -535,23 +801,22 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
         ? '₹${double.parse(invoiceAmount.toString()).toStringAsFixed(2)}' 
         : '-';
     
-    // AI Confidence Score from API
     final overallConfidence = doc['overallConfidence'];
     final aiScore = overallConfidence != null 
         ? '${(overallConfidence * 100).toStringAsFixed(0)}%' 
         : '-';
     
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      decoration: const BoxDecoration(
         border: Border(
-          bottom: BorderSide(color: AppColors.border),
+          bottom: BorderSide(color: AppColors.border, width: 1),
         ),
       ),
       child: Row(
         children: [
-          Expanded(
-            flex: 2,
+          SizedBox(
+            width: 140,
             child: Text(
               fapNumber,
               style: AppTextStyles.bodyMedium.copyWith(
@@ -559,8 +824,8 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
               ),
             ),
           ),
-          Expanded(
-            flex: 2,
+          SizedBox(
+            width: 120,
             child: Text(
               poNumber,
               style: AppTextStyles.bodyMedium.copyWith(
@@ -568,19 +833,18 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
               ),
             ),
           ),
-          Expanded(
-            flex: 2,
+          SizedBox(
+            width: 140,
             child: Text(
               poAmountStr,
               style: AppTextStyles.bodyMedium.copyWith(
                 color: AppColors.textSecondary,
                 fontWeight: FontWeight.w600,
               ),
-              textAlign: TextAlign.right,
             ),
           ),
-          Expanded(
-            flex: 2,
+          SizedBox(
+            width: 160,
             child: Text(
               invoiceNumber,
               style: AppTextStyles.bodyMedium.copyWith(
@@ -588,19 +852,18 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
               ),
             ),
           ),
-          Expanded(
-            flex: 2,
+          SizedBox(
+            width: 140,
             child: Text(
               invoiceAmountStr,
               style: AppTextStyles.bodyMedium.copyWith(
                 color: AppColors.textSecondary,
                 fontWeight: FontWeight.w600,
               ),
-              textAlign: TextAlign.right,
             ),
           ),
-          Expanded(
-            flex: 2,
+          SizedBox(
+            width: 140,
             child: Text(
               _formatDate(doc['createdAt']),
               style: AppTextStyles.bodyMedium.copyWith(
@@ -608,43 +871,42 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
               ),
             ),
           ),
-          Expanded(
-            flex: 1,
-            child: Center(
-              child: Text(
-                aiScore,
-                style: AppTextStyles.bodyMedium.copyWith(
-                  color: AppColors.textSecondary,
-                  fontWeight: FontWeight.w600,
-                ),
+          SizedBox(
+            width: 100,
+            child: Text(
+              aiScore,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w600,
               ),
-            ),
-          ),
-          Expanded(
-            flex: 1,
-            child: Center(
-              child: _buildStatusBadge(status),
             ),
           ),
           SizedBox(
+            width: 140,
+            child: _buildStatusBadge(status),
+          ),
+          SizedBox(
             width: 80,
-            child: Center(
-              child: IconButton(
-                icon: const Icon(Icons.visibility_outlined),
-                color: AppColors.primary,
-                onPressed: () {
-                  Navigator.pushNamed(
-                    context,
-                    '/asm/review-detail',
-                    arguments: {
-                      'submissionId': doc['id'],
-                      'token': widget.token,
-                      'userName': widget.userName,
-                    },
-                  );
-                },
-                tooltip: 'View Details',
-              ),
+            child: IconButton(
+              icon: const Icon(Icons.visibility_outlined, size: 20),
+              color: AppColors.primary,
+              onPressed: () async {
+                final result = await Navigator.pushNamed(
+                  context,
+                  '/asm/review-detail',
+                  arguments: {
+                    'submissionId': doc['id'],
+                    'token': widget.token,
+                    'userName': widget.userName,
+                  },
+                );
+                
+                // Reload documents when returning from detail page
+                if (result == true || result == null) {
+                  _loadDocuments();
+                }
+              },
+              tooltip: 'View Details',
             ),
           ),
         ],
@@ -697,19 +959,6 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
         ),
       ),
     );
-  }
-
-  String _getStatusLabel(String status) {
-    switch (status) {
-      case 'asm-review':
-        return 'Pending Review';
-      case 'approved':
-        return 'Approved';
-      case 'rejected':
-        return 'Rejected';
-      default:
-        return 'Unknown';
-    }
   }
 
   String _formatDate(dynamic date) {

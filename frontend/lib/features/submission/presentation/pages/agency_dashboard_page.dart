@@ -495,6 +495,12 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Widget _buildStatCard(String label, String value, IconData icon, Color color, double cardWidth) {
     // Use column layout when card is too narrow for side-by-side icon+text
     final useColumn = cardWidth < 200;
+    
+    // Determine font size based on card width for better responsiveness
+    final valueFontSize = useColumn 
+        ? (cardWidth < 150 ? 18.0 : 20.0)
+        : (cardWidth < 250 ? 20.0 : 22.0);
+    
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
@@ -511,13 +517,32 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                     child: Icon(icon, color: color, size: 20),
                   ),
                   const SizedBox(height: 10),
-                  Text(value, style: AppTextStyles.h3.copyWith(fontWeight: FontWeight.bold)),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      value, 
+                      style: AppTextStyles.h3.copyWith(
+                        fontWeight: FontWeight.bold,
+                        fontSize: valueFontSize,
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 4),
-                  Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary, fontSize: 11), maxLines: 2, overflow: TextOverflow.ellipsis),
+                  Text(
+                    label, 
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textSecondary, 
+                      fontSize: 11,
+                      height: 1.3,
+                    ), 
+                    maxLines: 2, 
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ],
               )
             : Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -530,9 +555,27 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary), overflow: TextOverflow.ellipsis),
+                        Text(
+                          label, 
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                            height: 1.3,
+                          ), 
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         const SizedBox(height: 4),
-                        Text(value, style: AppTextStyles.h2.copyWith(fontSize: 22, fontWeight: FontWeight.bold)),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            value, 
+                            style: AppTextStyles.h2.copyWith(
+                              fontSize: valueFontSize, 
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),

@@ -166,38 +166,79 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           ? const Center(child: CircularProgressIndicator())
           : _submission == null
               ? const Center(child: Text('Submission not found'))
-              : Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(24),
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isMobile = constraints.maxWidth < 900;
+                    
+                    if (isMobile) {
+                      return SingleChildScrollView(
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _buildHeader(),
-                            const SizedBox(height: 24),
-                            _buildASMReviewSection(),
-                            const SizedBox(height: 24),
-                            _buildAIQuickSummary(),
-                            const SizedBox(height: 24),
-                            _buildDocumentSections(),
+                            // Main content
+                            Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildHeader(),
+                                  const SizedBox(height: 24),
+                                  _buildASMReviewSection(),
+                                  const SizedBox(height: 24),
+                                  _buildAIQuickSummary(),
+                                  const SizedBox(height: 24),
+                                  _buildDocumentSections(),
+                                ],
+                              ),
+                            ),
+                            // Review decision panel
+                            Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                border: Border(
+                                  top: BorderSide(color: AppColors.border),
+                                ),
+                              ),
+                              child: _buildReviewDecisionPanel(),
+                            ),
                           ],
                         ),
-                      ),
-                    ),
-                    Container(
-                      width: 350,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        border: Border(
-                          left: BorderSide(color: AppColors.border),
+                      );
+                    }
+                    
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildHeader(),
+                                const SizedBox(height: 24),
+                                _buildASMReviewSection(),
+                                const SizedBox(height: 24),
+                                _buildAIQuickSummary(),
+                                const SizedBox(height: 24),
+                                _buildDocumentSections(),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                      child: _buildReviewDecisionPanel(),
-                    ),
-                  ],
+                        Container(
+                          width: 350,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            border: Border(
+                              left: BorderSide(color: AppColors.border),
+                            ),
+                          ),
+                          child: _buildReviewDecisionPanel(),
+                        ),
+                      ],
+                    );
+                  },
                 ),
     );
   }
@@ -817,53 +858,124 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(Icons.check_circle, color: const Color(0xFF10B981), size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isMobile = constraints.maxWidth < 600;
+                
+                if (isMobile) {
+                  return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        title,
-                        style: AppTextStyles.h3.copyWith(
+                      Row(
+                        children: [
+                          Icon(Icons.check_circle, color: const Color(0xFF10B981), size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  title,
+                                  style: AppTextStyles.h3.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  subtitle,
+                                  style: AppTextStyles.bodySmall.copyWith(
+                                    color: AppColors.primary,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD1FAE5),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '$confidence%',
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                color: const Color(0xFF10B981),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _downloadDocument(blobUrl, filename),
+                              icon: const Icon(Icons.download, size: 16),
+                              label: const Text('Download'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.primary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                }
+                
+                return Row(
+                  children: [
+                    Icon(Icons.check_circle, color: const Color(0xFF10B981), size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: AppTextStyles.h3.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            subtitle,
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: AppColors.primary,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD1FAE5),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '$confidence%',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          color: const Color(0xFF10B981),
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      Text(
-                        subtitle,
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFD1FAE5),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '$confidence%',
-                    style: AppTextStyles.bodyMedium.copyWith(
-                      color: const Color(0xFF10B981),
-                      fontWeight: FontWeight.bold,
                     ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                OutlinedButton.icon(
-                  onPressed: () => _downloadDocument(blobUrl, filename),
-                  icon: const Icon(Icons.download, size: 16),
-                  label: const Text('Download'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                  ),
-                ),
-              ],
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: () => _downloadDocument(blobUrl, filename),
+                      icon: const Icon(Icons.download, size: 16),
+                      label: const Text('Download'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 16),
             Container(
@@ -877,22 +989,25 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                 children: [
                   Icon(Icons.description, size: 48, color: AppColors.textTertiary),
                   const SizedBox(width: 16),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        filename,
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          filename,
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      Text(
-                        'PDF Document',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textSecondary,
+                        Text(
+                          'PDF Document',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -911,11 +1026,13 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                     children: [
                       Icon(Icons.check_circle, color: const Color(0xFF10B981), size: 16),
                       const SizedBox(width: 8),
-                      Text(
-                        'AI Analysis Summary',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.primary,
+                      Expanded(
+                        child: Text(
+                          'AI Analysis Summary',
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                          ),
                         ),
                       ),
                     ],
