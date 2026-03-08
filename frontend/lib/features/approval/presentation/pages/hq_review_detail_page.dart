@@ -1120,7 +1120,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           ),
           const SizedBox(height: 16),
           Text(
-            'Comments',
+            'Comments (Optional)',
             style: AppTextStyles.bodyMedium.copyWith(
               fontWeight: FontWeight.w600,
             ),

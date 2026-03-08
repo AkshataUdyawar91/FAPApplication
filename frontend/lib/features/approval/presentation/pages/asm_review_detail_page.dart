@@ -1398,7 +1398,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
           ),
           const SizedBox(height: 16),
           Text(
-            'Comments *',
+            'Comments',
             style: AppTextStyles.bodyMedium.copyWith(
               fontWeight: FontWeight.w600,
             ),
