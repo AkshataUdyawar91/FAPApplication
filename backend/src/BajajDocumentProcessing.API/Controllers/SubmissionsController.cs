@@ -136,6 +136,7 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.ValidationResult)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
+                .Include(p => p.SubmittedBy)
                 .AsQueryable();
 
             // Agency users can only see their own submissions
