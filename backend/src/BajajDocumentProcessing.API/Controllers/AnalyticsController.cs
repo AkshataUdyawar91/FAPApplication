@@ -1,4 +1,5 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Application.DTOs.Analytics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -6,7 +7,7 @@ namespace BajajDocumentProcessing.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "HQ")]
+[Authorize]
 public class AnalyticsController : ControllerBase
 {
     private readonly IAnalyticsAgent _analyticsAgent;
@@ -24,6 +25,7 @@ public class AnalyticsController : ControllerBase
     /// Get KPI dashboard data
     /// </summary>
     [HttpGet("kpis")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> GetKPIs(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -49,6 +51,7 @@ public class AnalyticsController : ControllerBase
     /// Get state-level ROI data
     /// </summary>
     [HttpGet("state-roi")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> GetStateROI(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -74,6 +77,7 @@ public class AnalyticsController : ControllerBase
     /// Get campaign breakdown data
     /// </summary>
     [HttpGet("campaign-breakdown")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> GetCampaignBreakdown(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -99,6 +103,7 @@ public class AnalyticsController : ControllerBase
     /// Export analytics to Excel
     /// </summary>
     [HttpPost("export")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> ExportToExcel(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -127,6 +132,7 @@ public class AnalyticsController : ControllerBase
     /// Generate AI narrative for KPIs
     /// </summary>
     [HttpPost("narrative")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> GenerateNarrative(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -146,6 +152,53 @@ public class AnalyticsController : ControllerBase
         {
             _logger.LogError(ex, "Error generating narrative");
             return StatusCode(500, new { error = "An error occurred while generating narrative" });
+        }
+    }
+
+    /// <summary>
+    /// Get quarterly FAP (Final Approved Payment) KPI data
+    /// </summary>
+    [HttpGet("quarterly-fap")]
+    [Authorize(Roles = "ASM,HQ")]
+    public async Task<IActionResult> GetQuarterlyFapKpis(
+        [FromQuery] string quarter = "current",
+        [FromQuery] int? year = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var currentYear = DateTime.UtcNow.Year;
+            var resolvedYear = year ?? currentYear;
+
+            // Resolve "current" to actual quarter
+            if (string.Equals(quarter, "current", StringComparison.OrdinalIgnoreCase))
+            {
+                quarter = $"Q{(DateTime.UtcNow.Month - 1) / 3 + 1}";
+            }
+
+            // Validate quarter
+            var validQuarters = new[] { "Q1", "Q2", "Q3", "Q4", "All" };
+            if (!validQuarters.Contains(quarter, StringComparer.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { error = "Invalid quarter. Use Q1, Q2, Q3, Q4, or All." });
+            }
+
+            // Validate year
+            if (resolvedYear < 2000 || resolvedYear > currentYear + 1)
+            {
+                return BadRequest(new { error = "Invalid year." });
+            }
+
+            // Normalize quarter casing
+            quarter = quarter.ToUpperInvariant() == "ALL" ? "All" : quarter.ToUpperInvariant();
+
+            var result = await _analyticsAgent.GetQuarterlyFapKpisAsync(quarter, resolvedYear, cancellationToken);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving quarterly FAP KPIs");
+            return StatusCode(500, new { error = "An error occurred while retrieving quarterly KPIs" });
         }
     }
 }

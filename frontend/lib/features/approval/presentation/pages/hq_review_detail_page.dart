@@ -469,7 +469,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     if (normalizedState == 'pendinghqapproval') {
       backgroundColor = const Color(0xFFFEF3C7);
       textColor = const Color(0xFFD97706);
-      displayText = 'Pending HQ Review';
+      displayText = 'Pending HQ/RA Review';
     } else if (normalizedState == 'approved') {
       backgroundColor = const Color(0xFFD1FAE5);
       textColor = const Color(0xFF10B981);

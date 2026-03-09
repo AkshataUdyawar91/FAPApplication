@@ -1,4 +1,6 @@
+using System.Text.Json;
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Application.DTOs.Analytics;
 using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -261,5 +263,106 @@ Provide a 2-3 paragraph summary highlighting the most important insights.";
             _logger.LogError(ex, "Error generating AI narrative");
             return "Error generating narrative. Please review the KPI data directly.";
         }
+    }
+
+    /// <summary>
+    /// Get quarterly FAP (Final Approved Payment) KPI data
+    /// </summary>
+    public async Task<QuarterlyFapKpiResponse> GetQuarterlyFapKpisAsync(
+        string quarter,
+        int year,
+        CancellationToken cancellationToken = default)
+    {
+        var cacheKey = $"{CacheKeyPrefix}quarterly_fap_{quarter}_{year}";
+
+        if (_cache.TryGetValue<QuarterlyFapKpiResponse>(cacheKey, out var cached) && cached != null)
+        {
+            _logger.LogDebug("Returning cached quarterly FAP KPIs for {Quarter} {Year}", quarter, year);
+            return cached;
+        }
+
+        _logger.LogInformation("Calculating quarterly FAP KPIs for {Quarter} {Year}", quarter, year);
+
+        var (startDate, endDate) = GetQuarterDateRange(quarter, year);
+
+        var packages = await _context.DocumentPackages
+            .Include(p => p.Documents)
+            .Where(p => p.State == PackageState.Approved)
+            .Where(p => p.CreatedAt >= startDate && p.CreatedAt <= endDate)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        decimal fapAmount = 0;
+        int fapCount = 0;
+
+        foreach (var package in packages)
+        {
+            var invoices = package.Documents
+                .Where(d => d.Type == DocumentType.Invoice)
+                .ToList();
+
+            if (invoices.Count == 0)
+                continue;
+
+            fapCount++;
+
+            foreach (var invoice in invoices)
+            {
+                fapAmount += ExtractTotalAmount(invoice.ExtractedDataJson);
+            }
+        }
+
+        var response = new QuarterlyFapKpiResponse
+        {
+            Quarter = quarter,
+            Year = year,
+            FapAmount = fapAmount,
+            FapCount = fapCount
+        };
+
+        _cache.Set(cacheKey, response, CacheDuration);
+        _logger.LogInformation("Quarterly FAP KPIs calculated: Amount={FapAmount}, Count={FapCount}", fapAmount, fapCount);
+
+        return response;
+    }
+
+    /// <summary>
+    /// Maps a quarter string and year to a date range
+    /// </summary>
+    private static (DateTime Start, DateTime End) GetQuarterDateRange(string quarter, int year)
+    {
+        return quarter.ToUpperInvariant() switch
+        {
+            "Q1" => (new DateTime(year, 1, 1), new DateTime(year, 3, 31, 23, 59, 59)),
+            "Q2" => (new DateTime(year, 4, 1), new DateTime(year, 6, 30, 23, 59, 59)),
+            "Q3" => (new DateTime(year, 7, 1), new DateTime(year, 9, 30, 23, 59, 59)),
+            "Q4" => (new DateTime(year, 10, 1), new DateTime(year, 12, 31, 23, 59, 59)),
+            _ => (new DateTime(year, 1, 1), new DateTime(year, 12, 31, 23, 59, 59)) // "All"
+        };
+    }
+
+    /// <summary>
+    /// Extracts TotalAmount from Invoice ExtractedDataJson. Returns 0 for null or malformed JSON.
+    /// </summary>
+    private decimal ExtractTotalAmount(string? extractedDataJson)
+    {
+        if (string.IsNullOrEmpty(extractedDataJson))
+            return 0;
+
+        try
+        {
+            var jsonDoc = JsonDocument.Parse(extractedDataJson);
+            if (jsonDoc.RootElement.TryGetProperty("TotalAmount", out var totalAmountElement) ||
+                jsonDoc.RootElement.TryGetProperty("totalAmount", out totalAmountElement))
+            {
+                return totalAmountElement.GetDecimal();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to extract TotalAmount from ExtractedDataJson");
+        }
+
+        return 0;
     }
 }

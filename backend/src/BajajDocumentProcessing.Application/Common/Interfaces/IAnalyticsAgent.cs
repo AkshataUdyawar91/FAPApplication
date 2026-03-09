@@ -1,3 +1,5 @@
+using BajajDocumentProcessing.Application.DTOs.Analytics;
+
 namespace BajajDocumentProcessing.Application.Common.Interfaces;
 
 public interface IAnalyticsAgent
@@ -7,6 +9,7 @@ public interface IAnalyticsAgent
     Task<List<CampaignBreakdown>> GetCampaignBreakdownAsync(DateTime startDate, DateTime endDate, CancellationToken cancellationToken = default);
     Task<byte[]> ExportToExcelAsync(DateTime startDate, DateTime endDate, CancellationToken cancellationToken = default);
     Task<string> GenerateNarrativeAsync(KPIDashboard kpis, CancellationToken cancellationToken = default);
+    Task<QuarterlyFapKpiResponse> GetQuarterlyFapKpisAsync(string quarter, int year, CancellationToken cancellationToken = default);
 }
 
 public class KPIDashboard

@@ -24,6 +24,7 @@ class ApiConstants {
   static const String stateRoi = '/analytics/state-roi';
   static const String campaignBreakdown = '/analytics/campaign-breakdown';
   static const String exportAnalytics = '/analytics/export';
+  static const String quarterlyFapKpis = '/analytics/quarterly-fap';
 
   // Chat endpoints
   static const String chatMessage = '/chat/message';

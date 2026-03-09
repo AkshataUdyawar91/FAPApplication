@@ -193,7 +193,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
               const SizedBox(height: 24),
             ],
             if (_submission!['hqReviewNotes'] != null) ...[
-              _buildRejectionCard('HQ', _submission!['hqReviewNotes'], _submission!['hqReviewedAt']),
+              _buildRejectionCard('HQ/RA', _submission!['hqReviewNotes'], _submission!['hqReviewedAt']),
               const SizedBox(height: 24),
             ],
             _buildDocumentsSection(),
@@ -567,7 +567,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       };
     } else if (stateLower.contains('pendinghq')) {
       return {
-        'label': 'Pending HQ Approval',
+        'label': 'Pending HQ/RA Approval',
         'color': const Color(0xFF3B82F6),
         'bgColor': const Color(0xFFDBEAFE),
         'borderColor': const Color(0xFF93C5FD),

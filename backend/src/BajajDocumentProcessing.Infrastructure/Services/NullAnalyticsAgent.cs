@@ -1,4 +1,5 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Application.DTOs.Analytics;
 using Microsoft.Extensions.Logging;
 
 namespace BajajDocumentProcessing.Infrastructure.Services;
@@ -52,5 +53,17 @@ public class NullAnalyticsAgent : IAnalyticsAgent
         return Task.FromResult(
             "Advanced analytics with AI-generated narratives is not available. " +
             "Configure Azure AI Search to enable this feature.");
+    }
+
+    public Task<QuarterlyFapKpiResponse> GetQuarterlyFapKpisAsync(string quarter, int year, CancellationToken cancellationToken = default)
+    {
+        _logger.LogDebug("Quarterly FAP KPI retrieval skipped - Azure AI Search not configured");
+        return Task.FromResult(new QuarterlyFapKpiResponse
+        {
+            Quarter = quarter,
+            Year = year,
+            FapAmount = 0,
+            FapCount = 0
+        });
     }
 }
