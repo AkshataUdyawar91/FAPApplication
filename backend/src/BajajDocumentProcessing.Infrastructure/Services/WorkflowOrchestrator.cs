@@ -127,6 +127,9 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         }
     }
 
+    // CHANGE: Photo batch size for parallel processing — process 5 photos at a time to respect OpenAI rate limits
+    private const int PhotoBatchSize = 5;
+
     private async Task<bool> ExecuteExtractionStepAsync(
         Domain.Entities.DocumentPackage package,
         CancellationToken cancellationToken)
@@ -139,15 +142,15 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Process each document
-            foreach (var document in package.Documents)
+            // CHANGE: Separate photo documents from non-photo documents for batch processing
+            var nonPhotoDocuments = package.Documents.Where(d => d.Type != Domain.Enums.DocumentType.Photo).ToList();
+            var photoDocuments = package.Documents.Where(d => d.Type == Domain.Enums.DocumentType.Photo).ToList();
+
+            // Process non-photo documents sequentially (PO, Invoice, CostSummary, Activity, EnquiryDump — one each)
+            foreach (var document in nonPhotoDocuments)
             {
-                // Only classify if document type is not already set (e.g., AdditionalDocument)
-                // For user-specified types (PO, Invoice, CostSummary), skip classification
-                if (document.Type == Domain.Enums.DocumentType.AdditionalDocument || 
-                    document.Type == Domain.Enums.DocumentType.Photo)
+                if (document.Type == Domain.Enums.DocumentType.AdditionalDocument)
                 {
-                    // Classify document
                     var classification = await _documentAgent.ClassifyAsync(
                         document.BlobUrl,
                         cancellationToken);
@@ -161,8 +164,6 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                     _logger.LogInformation("Document type already set to {Type}, skipping classification", document.Type);
                 }
 
-                // Extract data based on type
-                // CHANGE: Added Activity and EnquiryDump cases — previously they fell through to default "{}" which overwrote good data from upload-time extraction
                 string extractedDataJson = document.Type switch
                 {
                     Domain.Enums.DocumentType.PO => 
@@ -171,8 +172,6 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                         System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractInvoiceAsync(document.BlobUrl, cancellationToken)),
                     Domain.Enums.DocumentType.CostSummary => 
                         System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractCostSummaryAsync(document.BlobUrl, cancellationToken)),
-                    Domain.Enums.DocumentType.Photo => 
-                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractPhotoMetadataAsync(document.BlobUrl, cancellationToken)),
                     Domain.Enums.DocumentType.Activity => 
                         System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractActivityAsync(document.BlobUrl, cancellationToken)),
                     Domain.Enums.DocumentType.EnquiryDump => 
@@ -182,6 +181,48 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 
                 document.ExtractedDataJson = extractedDataJson;
                 document.UpdatedAt = DateTime.UtcNow;
+            }
+
+            // CHANGE: Process photo documents in batches of 5 concurrently for faster processing
+            if (photoDocuments.Any())
+            {
+                _logger.LogInformation("Processing {Count} photos in batches of {BatchSize} for package {PackageId}",
+                    photoDocuments.Count, PhotoBatchSize, package.Id);
+
+                var batches = photoDocuments
+                    .Select((doc, index) => new { doc, index })
+                    .GroupBy(x => x.index / PhotoBatchSize)
+                    .Select(g => g.Select(x => x.doc).ToList())
+                    .ToList();
+
+                for (int batchNum = 0; batchNum < batches.Count; batchNum++)
+                {
+                    var batch = batches[batchNum];
+                    _logger.LogInformation("Processing photo batch {BatchNum}/{TotalBatches} ({Count} photos) for package {PackageId}",
+                        batchNum + 1, batches.Count, batch.Count, package.Id);
+
+                    // Process all photos in this batch concurrently
+                    var tasks = batch.Select(async photoDoc =>
+                    {
+                        try
+                        {
+                            var metadata = await _documentAgent.ExtractPhotoMetadataAsync(photoDoc.BlobUrl, cancellationToken);
+                            photoDoc.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(metadata);
+                            photoDoc.UpdatedAt = DateTime.UtcNow;
+                            _logger.LogInformation("Photo {FileName} extraction completed", photoDoc.FileName);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error extracting photo {FileName}, setting empty metadata", photoDoc.FileName);
+                            photoDoc.ExtractedDataJson = "{}";
+                            photoDoc.UpdatedAt = DateTime.UtcNow;
+                        }
+                    });
+
+                    await Task.WhenAll(tasks);
+                }
+
+                _logger.LogInformation("All {Count} photos processed for package {PackageId}", photoDocuments.Count, package.Id);
             }
 
             await _context.SaveChangesAsync(cancellationToken);

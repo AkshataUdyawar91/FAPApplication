@@ -27,8 +27,9 @@ class SubmitDocumentsUseCase {
       return Left(ValidationFailure('At least one photo is required'));
     }
 
-    if (photoFiles.length > 20) {
-      return Left(ValidationFailure('Maximum 20 photos allowed'));
+    // CHANGE: Increased photo limit from 20 to 50
+    if (photoFiles.length > 50) {
+      return Left(ValidationFailure('Maximum 50 photos allowed'));
     }
 
     return await repository.submitDocuments(
