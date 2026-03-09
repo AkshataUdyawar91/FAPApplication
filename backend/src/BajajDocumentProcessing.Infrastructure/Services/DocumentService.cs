@@ -116,18 +116,18 @@ public class DocumentService : IDocumentService
             _logger.LogInformation("Created new package: {PackageId} for user {UserId}", actualPackageId, userId);
         }
 
-        // Check photo limit (20 photos max per package)
+        // CHANGE: Increased photo limit from 20 to 50 per package
         if (documentType == DocumentType.Photo)
         {
             var photoCount = await _context.Documents
                 .CountAsync(d => d.PackageId == actualPackageId && d.Type == DocumentType.Photo);
             
-            if (photoCount >= 20)
+            if (photoCount >= 50)
             {
                 throw new Domain.Exceptions.ValidationException(
                     new Dictionary<string, string[]>
                     {
-                        { "photos", new[] { "Photo limit exceeded. Maximum 20 photos allowed per submission." } }
+                        { "photos", new[] { "Photo limit exceeded. Maximum 50 photos allowed per submission." } }
                     });
             }
         }

@@ -73,6 +73,8 @@ public class PackageValidationResult
     public EnquiryDumpFieldPresenceResult? EnquiryDumpFieldPresence { get; set; }
     public EnquiryDumpCrossDocumentResult? EnquiryDumpCrossDocument { get; set; }
     public List<ValidationIssue> Issues { get; set; } = new();
+    // CHANGE: Added FileNames to store uploaded filenames for each document type, shown in validation output
+    public Dictionary<string, string> FileNames { get; set; } = new();
     public DateTime ValidatedAt { get; set; }
 }
 

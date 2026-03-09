@@ -1285,8 +1285,9 @@ public class SubmissionsController : ControllerBase
     }
 
     // CHANGE: Added BuildValidationDetails to show all validation checks with meaningful messages
+    // CHANGE: Rewritten BuildValidationDetails to show all 43+ checks individually, line by line
     /// <summary>
-    /// Builds a single string showing all validation checks with descriptive pass/fail messages
+    /// Builds a single string showing ALL individual validation checks (43+) with pass/fail status
     /// </summary>
     private static string BuildValidationDetails(Domain.Entities.ValidationResult vr)
     {
@@ -1304,240 +1305,249 @@ public class SubmissionsController : ControllerBase
             catch { }
         }
 
-        // SAP Verification
-        if (vr.SapVerificationPassed)
-            checks.Add("SAP Verification: Pass - PO verified against SAP records");
-        else
-            checks.Add("SAP Verification: Fail - " + (hasJson ? GetJsonArrayAsString(json, "SAPVerification", "Discrepancies", "PO could not be verified in SAP") : "PO could not be verified in SAP"));
+        // CHANGE: Read FileNames from validation JSON to show which file each check refers to
+        var fileNames = new Dictionary<string, string>();
+        if (hasJson && json.TryGetProperty("FileNames", out var fnEl) && fnEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var prop in fnEl.EnumerateObject())
+            {
+                var val = prop.Value.GetString();
+                if (!string.IsNullOrEmpty(val)) fileNames[prop.Name] = val;
+            }
+        }
+        // CHANGE: Helper to get filename label like " (Invoice_March.pdf)" for a document type
+        string Fn(string docType) => fileNames.TryGetValue(docType, out var name) ? $" ({name})" : "";
 
-        // Amount Consistency
+        // ===== GENERAL CHECKS (6) =====
+        if (vr.SapVerificationPassed)
+            checks.Add($"SAP Verification{Fn("PO")}: Pass - PO verified against SAP records");
+        else
+            checks.Add($"SAP Verification{Fn("PO")}: Fail - " + (hasJson ? SafeGetString(json, "SAPVerification", "Discrepancies") ?? "PO could not be verified in SAP" : "PO could not be verified in SAP"));
+
         checks.Add(vr.AmountConsistencyPassed
             ? "Amount Consistency: Pass - Invoice and Cost Summary amounts are consistent"
             : "Amount Consistency: Fail - Invoice and Cost Summary amounts do not match");
 
-        // Line Item Matching
         if (vr.LineItemMatchingPassed)
             checks.Add("Line Item Matching: Pass - All PO line items found in Invoice");
         else
-            checks.Add("Line Item Matching: Fail - " + (hasJson ? GetLineItemDetail(json) : "Some PO line items missing in Invoice"));
+        {
+            var detail = hasJson ? SafeGetString(json, "LineItemMatching", "MissingItemCodes") : null;
+            checks.Add("Line Item Matching: Fail - " + (detail != null ? $"Missing PO line items in Invoice: {detail}" : "Some PO line items missing in Invoice"));
+        }
 
-        // Completeness Check
         if (vr.CompletenessCheckPassed)
             checks.Add("Completeness Check: Pass - All required documents are present");
         else
-            checks.Add("Completeness Check: Fail - " + (hasJson ? GetJsonArrayAsString(json, "Completeness", "MissingItems", "Some required documents are missing") : "Some required documents are missing"));
+            checks.Add("Completeness Check: Fail - " + (hasJson ? SafeGetString(json, "Completeness", "MissingItems") ?? "Some required documents are missing" : "Some required documents are missing"));
 
-        // Date Validation
         if (vr.DateValidationPassed)
             checks.Add("Date Validation: Pass - All dates are valid and consistent");
         else
-            checks.Add("Date Validation: Fail - " + (hasJson ? GetJsonArrayAsString(json, "DateValidation", "DateIssues", "Date inconsistencies found") : "Date inconsistencies found"));
+            checks.Add("Date Validation: Fail - " + (hasJson ? SafeGetString(json, "DateValidation", "DateIssues") ?? "Date inconsistencies found" : "Date inconsistencies found"));
 
-        // Vendor Matching
         checks.Add(vr.VendorMatchingPassed
             ? "Vendor Matching: Pass - Vendor name matches across PO and Invoice"
             : "Vendor Matching: Fail - Vendor name mismatch between PO and Invoice");
 
         if (hasJson)
         {
-            // Invoice Field Presence
-            checks.Add(GetJsonBool(json, "InvoiceFieldPresence", "AllFieldsPresent")
-                ? "Invoice Field Presence: Pass - All required Invoice fields are present"
-                : "Invoice Field Presence: Fail - " + GetJsonIssueDetail(json, "InvoiceFieldPresence", "MissingFields"));
+            // CHANGE: Use Fn() to prepend filename to each document-specific check
+            var invLabel = $"Invoice{Fn("Invoice")}";
+            var csLabel = $"Cost Summary{Fn("CostSummary")}";
+            var actLabel = $"Activity{Fn("Activity")}";
+            var edLabel = $"Enquiry Dump{Fn("EnquiryDump")}";
+            // CHANGE: For photos, list all photo filenames together
+            var photoFileList = fileNames.Where(kv => kv.Key.StartsWith("Photo_")).Select(kv => kv.Value).ToList();
+            var photoLabel = photoFileList.Any() ? $"Photo ({string.Join(", ", photoFileList)})" : "Photo";
 
-            // Invoice Cross-Document
-            checks.Add(GetJsonBool(json, "InvoiceCrossDocument", "AllChecksPass")
-                ? "Invoice Cross-Document: Pass - Invoice data matches PO data"
-                : "Invoice Cross-Document: Fail - " + GetJsonIssues(json, "InvoiceCrossDocument"));
-
-            // Cost Summary Field Presence
-            checks.Add(GetJsonBool(json, "CostSummaryFieldPresence", "AllFieldsPresent")
-                ? "Cost Summary Field Presence: Pass - All required Cost Summary fields are present"
-                : "Cost Summary Field Presence: Fail - " + GetJsonIssueDetail(json, "CostSummaryFieldPresence", "MissingFields"));
-
-            // Cost Summary Cross-Document
-            checks.Add(GetJsonBool(json, "CostSummaryCrossDocument", "AllChecksPass")
-                ? "Cost Summary Cross-Document: Pass - Cost Summary data matches Invoice data"
-                : "Cost Summary Cross-Document: Fail - " + GetJsonIssues(json, "CostSummaryCrossDocument"));
-
-            // Activity Field Presence
-            checks.Add(GetJsonBool(json, "ActivityFieldPresence", "AllFieldsPresent")
-                ? "Activity Field Presence: Pass - All required Activity Summary fields are present"
-                : "Activity Field Presence: Fail - " + GetJsonIssueDetail(json, "ActivityFieldPresence", "MissingFields"));
-
-            // Activity Cross-Document
-            checks.Add(GetJsonBool(json, "ActivityCrossDocument", "AllChecksPass")
-                ? "Activity Cross-Document: Pass - Activity Summary data matches Cost Summary data"
-                : "Activity Cross-Document: Fail - " + GetJsonIssues(json, "ActivityCrossDocument"));
-
-            // Photo Field Presence
-            checks.Add(GetJsonBool(json, "PhotoFieldPresence", "AllFieldsPresent")
-                ? "Photo Field Presence: Pass - Photo proofs validated successfully"
-                : "Photo Field Presence: Fail - " + GetJsonIssueDetail(json, "PhotoFieldPresence", "MissingFields"));
-
-            // Photo Cross-Document
-            checks.Add(GetJsonBool(json, "PhotoCrossDocument", "AllChecksPass")
-                ? "Photo Cross-Document: Pass - Photo count matches Activity Summary"
-                : "Photo Cross-Document: Fail - " + GetJsonIssues(json, "PhotoCrossDocument"));
-
-            // Enquiry Dump Field Presence (optional doc)
-            if (JsonSectionExists(json, "EnquiryDumpFieldPresence"))
+            // ===== INVOICE FIELD PRESENCE — 13 individual checks =====
+            if (SafeSectionExists(json, "InvoiceFieldPresence"))
             {
-                checks.Add(GetJsonBool(json, "EnquiryDumpFieldPresence", "AllFieldsPresent")
-                    ? "Enquiry Dump Field Presence: Pass - All required Enquiry Dump fields are present"
-                    : "Enquiry Dump Field Presence: Fail - " + GetJsonIssueDetail(json, "EnquiryDumpFieldPresence", "MissingFields"));
+                var mf = SafeGetStringList(json, "InvoiceFieldPresence", "MissingFields");
+                checks.Add(mf.Contains("Agency Name") ? $"{invLabel} - Agency Name: Fail - Missing" : $"{invLabel} - Agency Name: Pass - Present");
+                checks.Add(mf.Contains("Agency Address") ? $"{invLabel} - Agency Address: Fail - Missing" : $"{invLabel} - Agency Address: Pass - Present");
+                checks.Add(mf.Contains("Billing Name") ? $"{invLabel} - Billing Name: Fail - Missing" : $"{invLabel} - Billing Name: Pass - Present");
+                checks.Add(mf.Contains("Billing Address") ? $"{invLabel} - Billing Address: Fail - Missing" : $"{invLabel} - Billing Address: Pass - Present");
+                checks.Add(mf.Contains("State Name/Code") ? $"{invLabel} - State Name/Code: Fail - Missing" : $"{invLabel} - State Name/Code: Pass - Present");
+                checks.Add(mf.Contains("Invoice Number") ? $"{invLabel} - Invoice Number: Fail - Missing" : $"{invLabel} - Invoice Number: Pass - Present");
+                checks.Add(mf.Contains("Invoice Date") ? $"{invLabel} - Invoice Date: Fail - Missing" : $"{invLabel} - Invoice Date: Pass - Present");
+                checks.Add(mf.Contains("Vendor Code") ? $"{invLabel} - Vendor Code: Fail - Missing" : $"{invLabel} - Vendor Code: Pass - Present");
+                checks.Add(mf.Contains("PO Number") ? $"{invLabel} - PO Number: Fail - Missing" : $"{invLabel} - PO Number: Pass - Present");
+                checks.Add(mf.Contains("GST Number") ? $"{invLabel} - GST Number: Fail - Missing" : $"{invLabel} - GST Number: Pass - Present");
+                checks.Add(mf.Contains("GST Percentage") ? $"{invLabel} - GST Percentage: Fail - Missing" : $"{invLabel} - GST Percentage: Pass - Present");
+                checks.Add(mf.Contains("HSN/SAC Code") ? $"{invLabel} - HSN/SAC Code: Fail - Missing" : $"{invLabel} - HSN/SAC Code: Pass - Present");
+                checks.Add(mf.Contains("Invoice Amount") ? $"{invLabel} - Invoice Amount: Fail - Missing" : $"{invLabel} - Invoice Amount: Pass - Present");
             }
 
-            // Enquiry Dump Cross-Document (optional doc)
-            if (JsonSectionExists(json, "EnquiryDumpCrossDocument"))
+            // ===== INVOICE CROSS-DOCUMENT — 6 individual checks =====
+            if (SafeSectionExists(json, "InvoiceCrossDocument"))
             {
-                checks.Add(GetJsonBool(json, "EnquiryDumpCrossDocument", "AllChecksPass")
-                    ? "Enquiry Dump Cross-Document: Pass - Enquiry Dump dealers match Activity Summary"
-                    : "Enquiry Dump Cross-Document: Fail - " + GetJsonIssues(json, "EnquiryDumpCrossDocument"));
+                var issues = SafeGetStringList(json, "InvoiceCrossDocument", "Issues");
+                var sec = SafeGetSection(json, "InvoiceCrossDocument");
+
+                var agencyCodeMatch = SafeGetBoolProp(sec, "AgencyCodeMatches");
+                checks.Add(agencyCodeMatch == true ? $"{invLabel} - Agency Code match with PO: Pass - Matches"
+                    : agencyCodeMatch == false ? $"{invLabel} - Agency Code match with PO: Fail - " + (FindIssue(issues, "Agency Code") ?? "Mismatch")
+                    : $"{invLabel} - Agency Code match with PO: Pass - Not applicable (field empty)");
+
+                var poMatch = SafeGetBoolProp(sec, "PONumberMatches");
+                checks.Add(poMatch == true ? $"{invLabel} - PO Number match with PO: Pass - Matches"
+                    : poMatch == false ? $"{invLabel} - PO Number match with PO: Fail - " + (FindIssue(issues, "PO Number") ?? "Mismatch")
+                    : $"{invLabel} - PO Number match with PO: Pass - Not applicable (field empty)");
+
+                var gstMatch = SafeGetBoolProp(sec, "GSTStateMatches");
+                checks.Add(gstMatch == true ? $"{invLabel} - GST Number match with State: Pass - GST matches state code"
+                    : gstMatch == false ? $"{invLabel} - GST Number match with State: Fail - " + (FindIssue(issues, "GST") ?? "GST-State mismatch")
+                    : $"{invLabel} - GST Number match with State: Pass - Not applicable (field empty)");
+
+                var hsnValid = SafeGetBoolProp(sec, "HSNSACCodeValid");
+                checks.Add(hsnValid == true ? $"{invLabel} - HSN/SAC Code valid: Pass - Valid code"
+                    : hsnValid == false ? $"{invLabel} - HSN/SAC Code valid: Fail - " + (FindIssue(issues, "HSN") ?? "Invalid code")
+                    : $"{invLabel} - HSN/SAC Code valid: Pass - Not applicable (field empty)");
+
+                var amtValid = SafeGetBoolProp(sec, "InvoiceAmountValid");
+                checks.Add(amtValid == true ? $"{invLabel} - Amount <= PO Amount: Pass - Invoice amount within PO limit"
+                    : $"{invLabel} - Amount <= PO Amount: Fail - " + (FindIssue(issues, "Invoice amount") ?? "Invoice exceeds PO amount"));
+
+                var gstPctValid = SafeGetBoolProp(sec, "GSTPercentageValid");
+                checks.Add(gstPctValid == true ? $"{invLabel} - GST% match with State: Pass - GST percentage matches state rate"
+                    : gstPctValid == false ? $"{invLabel} - GST% match with State: Fail - " + (FindIssue(issues, "GST Percentage") ?? "GST% mismatch")
+                    : $"{invLabel} - GST% match with State: Pass - Not applicable");
+            }
+
+            // ===== COST SUMMARY FIELD PRESENCE — 6 individual checks =====
+            if (SafeSectionExists(json, "CostSummaryFieldPresence"))
+            {
+                var mf = SafeGetStringList(json, "CostSummaryFieldPresence", "MissingFields");
+                checks.Add(mf.Any(f => f.Contains("Place of Supply") || f.Contains("State")) ? $"{csLabel} - State/Place of Supply: Fail - Missing" : $"{csLabel} - State/Place of Supply: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Element wise Cost")) ? $"{csLabel} - Element wise Cost: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Element wise Cost")) ?? "Missing") : $"{csLabel} - Element wise Cost: Pass - Present");
+                checks.Add(mf.Contains("Number of Days") ? $"{csLabel} - No of Days: Fail - Missing" : $"{csLabel} - No of Days: Pass - Present");
+                checks.Add(mf.Contains("Number of Activations") ? $"{csLabel} - No of Activations: Fail - Missing" : $"{csLabel} - No of Activations: Pass - Present");
+                checks.Add(mf.Contains("Number of Teams") ? $"{csLabel} - No of Teams: Fail - Missing" : $"{csLabel} - No of Teams: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Element wise Quantity")) ? $"{csLabel} - Element wise Quantity: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Element wise Quantity")) ?? "Missing") : $"{csLabel} - Element wise Quantity: Pass - Present");
+            }
+
+            // ===== COST SUMMARY CROSS-DOCUMENT — 4 individual checks =====
+            if (SafeSectionExists(json, "CostSummaryCrossDocument"))
+            {
+                var sec = SafeGetSection(json, "CostSummaryCrossDocument");
+                var issues = SafeGetStringList(json, "CostSummaryCrossDocument", "Issues");
+                checks.Add(SafeGetBoolProp(sec, "TotalCostValid") == true ? $"{csLabel} - Total Cost <= Invoice Amount: Pass - Within limit" : $"{csLabel} - Total Cost <= Invoice Amount: Fail - " + (FindIssue(issues, "total") ?? "Exceeds Invoice amount"));
+                checks.Add(SafeGetBoolProp(sec, "ElementCostsValid") == true ? $"{csLabel} - Element wise Cost match State rates: Pass - Matches" : $"{csLabel} - Element wise Cost match State rates: Fail - " + (FindIssue(issues, "Element") ?? "Does not match state rates"));
+                checks.Add(SafeGetBoolProp(sec, "FixedCostsValid") == true ? $"{csLabel} - Fixed Cost Limits: Pass - Within state limits" : $"{csLabel} - Fixed Cost Limits: Fail - " + (FindIssue(issues, "Fixed") ?? "Exceeds state limits"));
+                checks.Add(SafeGetBoolProp(sec, "VariableCostsValid") == true ? $"{csLabel} - Variable Cost Limits: Pass - Within state limits" : $"{csLabel} - Variable Cost Limits: Fail - " + (FindIssue(issues, "Variable") ?? "Exceeds state limits"));
+            }
+
+            // ===== ACTIVITY FIELD PRESENCE — 2 individual checks =====
+            if (SafeSectionExists(json, "ActivityFieldPresence"))
+            {
+                var mf = SafeGetStringList(json, "ActivityFieldPresence", "MissingFields");
+                checks.Add(mf.Any(f => f.Contains("Dealer") || f.Contains("Location")) ? $"{actLabel} - Dealer and Location details: Fail - " + string.Join(", ", mf.Where(f => f.Contains("Dealer") || f.Contains("Location"))) : $"{actLabel} - Dealer and Location details: Pass - Present");
+                checks.Add(mf.Any(f => f.Contains("days") || f.Contains("Day")) ? $"{actLabel} - No of days in each Location: Fail - Missing" : $"{actLabel} - No of days in each Location: Pass - Present");
+            }
+
+            // ===== ACTIVITY CROSS-DOCUMENT — 1 check =====
+            if (SafeSectionExists(json, "ActivityCrossDocument"))
+            {
+                var issues = SafeGetStringList(json, "ActivityCrossDocument", "Issues");
+                var sec = SafeGetSection(json, "ActivityCrossDocument");
+                checks.Add(SafeGetBoolProp(sec, "NumberOfDaysMatches") == true ? $"{actLabel} - No of days match with Cost Summary: Pass - Days match" : $"{actLabel} - No of days match with Cost Summary: Fail - " + (issues.FirstOrDefault() ?? "Days mismatch"));
+            }
+
+            // ===== PHOTO FIELD PRESENCE — 4 individual checks =====
+            if (SafeSectionExists(json, "PhotoFieldPresence"))
+            {
+                var mf = SafeGetStringList(json, "PhotoFieldPresence", "MissingFields");
+                checks.Add(mf.Any(f => f.Contains("Date")) ? $"{photoLabel} - Date: Fail - " + (mf.FirstOrDefault(f => f.Contains("Date")) ?? "Missing") : $"{photoLabel} - Date: Pass - Present");
+                checks.Add(mf.Any(f => f.Contains("Location") || f.Contains("coordinates")) ? $"{photoLabel} - Lat Long: Fail - " + (mf.FirstOrDefault(f => f.Contains("Location") || f.Contains("coordinates")) ?? "Missing") : $"{photoLabel} - Lat Long: Pass - Present");
+                checks.Add(mf.Any(f => f.Contains("blue t-shirt")) ? $"{photoLabel} - Person with Blue T-shirt: Fail - Not detected" : $"{photoLabel} - Person with Blue T-shirt: Pass - Detected");
+                checks.Add(mf.Any(f => f.Contains("Bajaj vehicle") || f.Contains("3W")) ? $"{photoLabel} - 3W Vehicle: Fail - Not detected" : $"{photoLabel} - 3W Vehicle: Pass - Detected");
+            }
+
+            // ===== PHOTO CROSS-DOCUMENT — 1 check =====
+            if (SafeSectionExists(json, "PhotoCrossDocument"))
+            {
+                var issues = SafeGetStringList(json, "PhotoCrossDocument", "Issues");
+                checks.Add(SafeGetBoolProp(SafeGetSection(json, "PhotoCrossDocument"), "PhotoCountMatchesManDays") == true ? $"{photoLabel} - No of days match with Cost Summary: Pass - Photo count matches" : $"{photoLabel} - No of days match with Cost Summary: Fail - " + (issues.FirstOrDefault() ?? "Photo count mismatch"));
+            }
+
+            // ===== ENQUIRY DUMP FIELD PRESENCE — 9 individual checks =====
+            if (SafeSectionExists(json, "EnquiryDumpFieldPresence"))
+            {
+                var mf = SafeGetStringList(json, "EnquiryDumpFieldPresence", "MissingFields");
+                checks.Add(mf.Any(f => f.StartsWith("State")) ? $"{edLabel} - State: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("State")) ?? "Missing") : $"{edLabel} - State: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Date")) ? $"{edLabel} - Date: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Date")) ?? "Missing") : $"{edLabel} - Date: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Dealer Code")) ? $"{edLabel} - Dealer Code: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Dealer Code")) ?? "Missing") : $"{edLabel} - Dealer Code: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Dealer Name")) ? $"{edLabel} - Dealer Name: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Dealer Name")) ?? "Missing") : $"{edLabel} - Dealer Name: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("District")) ? $"{edLabel} - District: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("District")) ?? "Missing") : $"{edLabel} - District: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Pincode")) ? $"{edLabel} - Pincode: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Pincode")) ?? "Missing") : $"{edLabel} - Pincode: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Customer Name")) ? $"{edLabel} - Customer Name: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Customer Name")) ?? "Missing") : $"{edLabel} - Customer Name: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Customer Number")) ? $"{edLabel} - Customer Number: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Customer Number")) ?? "Missing") : $"{edLabel} - Customer Number: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Test Ride")) ? $"{edLabel} - Test Ride Taken: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Test Ride")) ?? "Missing") : $"{edLabel} - Test Ride Taken: Pass - Present");
             }
         }
 
         return string.Join("; ", checks);
     }
 
-    // CHANGE: Helper to safely read a nested boolean from JsonElement
-    private static bool GetJsonBool(System.Text.Json.JsonElement root, string section, string property)
-    {
-        if (root.TryGetProperty(section, out var sectionEl) && 
-            sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null &&
-            sectionEl.TryGetProperty(property, out var propEl) &&
-            propEl.ValueKind == System.Text.Json.JsonValueKind.True)
-        {
-            return true;
-        }
-        return false;
-    }
-
-    // CHANGE: Helper to check if a JSON section exists and is not null
-    private static bool JsonSectionExists(System.Text.Json.JsonElement root, string section)
+    private static bool SafeSectionExists(System.Text.Json.JsonElement root, string section)
     {
         return root.TryGetProperty(section, out var el) && el.ValueKind != System.Text.Json.JsonValueKind.Null;
     }
 
-    // CHANGE: Helper to read a string array from a nested JSON section
-    private static string GetJsonArrayAsString(System.Text.Json.JsonElement root, string section, string arrayProp, string fallback)
+    private static System.Text.Json.JsonElement? SafeGetSection(System.Text.Json.JsonElement root, string section)
     {
-        try
-        {
-            if (root.TryGetProperty(section, out var sectionEl) &&
-                sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
-            {
-                System.Text.Json.JsonElement arrEl;
-                if (sectionEl.TryGetProperty(arrayProp, out arrEl) &&
-                    arrEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    var items = new List<string>();
-                    foreach (var item in arrEl.EnumerateArray())
-                    {
-                        var val = item.GetString();
-                        if (!string.IsNullOrEmpty(val)) items.Add(val);
-                    }
-                    if (items.Any()) return string.Join(", ", items);
-                }
-            }
-        }
-        catch { }
-        return fallback;
+        if (root.TryGetProperty(section, out var el) && el.ValueKind != System.Text.Json.JsonValueKind.Null)
+            return el;
+        return null;
     }
 
-    // CHANGE: Helper to get line item matching detail from JSON
-    private static string GetLineItemDetail(System.Text.Json.JsonElement root)
+    private static bool? SafeGetBoolProp(System.Text.Json.JsonElement? section, string property)
     {
-        try
+        if (section == null) return null;
+        if (section.Value.TryGetProperty(property, out var prop))
         {
-            if (root.TryGetProperty("LineItemMatching", out var sectionEl) &&
-                sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
-            {
-                System.Text.Json.JsonElement arrEl;
-                if (sectionEl.TryGetProperty("MissingItemCodes", out arrEl) &&
-                    arrEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    var items = new List<string>();
-                    foreach (var item in arrEl.EnumerateArray())
-                    {
-                        var val = item.GetString();
-                        if (!string.IsNullOrEmpty(val)) items.Add(val);
-                    }
-                    if (items.Any()) return $"Missing {items.Count} PO line items in Invoice: {string.Join(", ", items)}";
-                }
-            }
+            if (prop.ValueKind == System.Text.Json.JsonValueKind.True) return true;
+            if (prop.ValueKind == System.Text.Json.JsonValueKind.False) return false;
         }
-        catch { }
-        return "Some PO line items missing in Invoice";
+        return null;
     }
 
-    // CHANGE: Helper to extract Issues array from a validation section as a joined string
-    private static string GetJsonIssues(System.Text.Json.JsonElement root, string section)
+    private static List<string> SafeGetStringList(System.Text.Json.JsonElement root, string section, string arrayProp)
     {
+        var result = new List<string>();
         try
         {
-            if (root.TryGetProperty(section, out var sectionEl) &&
-                sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
+            if (root.TryGetProperty(section, out var sectionEl) && sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
             {
-                // Try both PascalCase and camelCase for Issues property
-                System.Text.Json.JsonElement issuesEl;
-                if ((sectionEl.TryGetProperty("Issues", out issuesEl) || sectionEl.TryGetProperty("issues", out issuesEl)) &&
-                    issuesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                System.Text.Json.JsonElement arrEl;
+                if (sectionEl.TryGetProperty(arrayProp, out arrEl) || sectionEl.TryGetProperty(char.ToLower(arrayProp[0]) + arrayProp.Substring(1), out arrEl))
                 {
-                    var issues = new List<string>();
-                    foreach (var item in issuesEl.EnumerateArray())
+                    if (arrEl.ValueKind == System.Text.Json.JsonValueKind.Array)
                     {
-                        var val = item.GetString();
-                        if (!string.IsNullOrEmpty(val)) issues.Add(val);
+                        foreach (var item in arrEl.EnumerateArray())
+                        {
+                            var val = item.GetString();
+                            if (!string.IsNullOrEmpty(val)) result.Add(val);
+                        }
                     }
-                    if (issues.Any()) return string.Join(", ", issues);
                 }
             }
         }
         catch { }
-        return "Validation checks failed";
+        return result;
     }
 
-    // CHANGE: Helper to extract MissingFields array from a validation section
-    private static string GetJsonIssueDetail(System.Text.Json.JsonElement root, string section, string arrayProp)
+    private static string? SafeGetString(System.Text.Json.JsonElement root, string section, string arrayProp)
     {
-        try
-        {
-            if (root.TryGetProperty(section, out var sectionEl) &&
-                sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
-            {
-                // Try both PascalCase and camelCase
-                System.Text.Json.JsonElement arrEl;
-                if ((sectionEl.TryGetProperty(arrayProp, out arrEl) || 
-                     sectionEl.TryGetProperty(char.ToLower(arrayProp[0]) + arrayProp.Substring(1), out arrEl)) &&
-                    arrEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    var items = new List<string>();
-                    foreach (var item in arrEl.EnumerateArray())
-                    {
-                        var val = item.GetString();
-                        if (!string.IsNullOrEmpty(val)) items.Add(val);
-                    }
-                    if (items.Any()) return "Missing: " + string.Join(", ", items);
-                }
+        var list = SafeGetStringList(root, section, arrayProp);
+        return list.Any() ? string.Join(", ", list) : null;
+    }
 
-                // Also try reading Issues as fallback (some sections store errors in Issues not MissingFields)
-                System.Text.Json.JsonElement issuesEl;
-                if ((sectionEl.TryGetProperty("Issues", out issuesEl) || sectionEl.TryGetProperty("issues", out issuesEl)) &&
-                    issuesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    var issues = new List<string>();
-                    foreach (var item in issuesEl.EnumerateArray())
-                    {
-                        var val = item.GetString();
-                        if (!string.IsNullOrEmpty(val)) issues.Add(val);
-                    }
-                    if (issues.Any()) return string.Join(", ", issues);
-                }
-            }
-        }
-        catch { }
-        return "Some required fields are missing";
+    private static string? FindIssue(List<string> issues, string keyword)
+    {
+        return issues.FirstOrDefault(i => i.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     }
 }
 

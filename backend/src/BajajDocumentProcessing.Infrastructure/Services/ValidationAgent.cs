@@ -135,6 +135,20 @@ public class ValidationAgent : IValidationAgent
             // CHANGE: Added EnquiryDump document loading
             var enquiryDumpDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.EnquiryDump);
 
+            // CHANGE: Populate FileNames dictionary so validation output shows which file each check refers to
+            result.FileNames = new Dictionary<string, string>();
+            if (poDoc != null) result.FileNames["PO"] = poDoc.FileName ?? "PO document";
+            if (invoiceDoc != null) result.FileNames["Invoice"] = invoiceDoc.FileName ?? "Invoice document";
+            if (costSummaryDoc != null) result.FileNames["CostSummary"] = costSummaryDoc.FileName ?? "Cost Summary document";
+            if (activityDoc != null) result.FileNames["Activity"] = activityDoc.FileName ?? "Activity document";
+            if (enquiryDumpDoc != null) result.FileNames["EnquiryDump"] = enquiryDumpDoc.FileName ?? "Enquiry Dump document";
+            // CHANGE: Add each photo filename individually (Photo_0, Photo_1, etc.)
+            var photoDocsList = package.Documents.Where(d => d.Type == DocumentType.Photo).ToList();
+            for (int i = 0; i < photoDocsList.Count; i++)
+            {
+                result.FileNames[$"Photo_{i}"] = photoDocsList[i].FileName ?? $"Photo {i + 1}";
+            }
+
             POData? poData = null;
             InvoiceData? invoiceData = null;
             CostSummaryData? costSummaryData = null;
@@ -401,23 +415,7 @@ public class ValidationAgent : IValidationAgent
                 }
             }
 
-            // CHANGE: 16. Enquiry Dump Cross-Document Validation (match with Activity Summary)
-            if (enquiryDumpData != null && activityData != null)
-            {
-                result.EnquiryDumpCrossDocument = ValidateEnquiryDumpCrossDocument(enquiryDumpData, activityData);
-                if (!result.EnquiryDumpCrossDocument.AllChecksPass)
-                {
-                    foreach (var issue in result.EnquiryDumpCrossDocument.Issues)
-                    {
-                        result.Issues.Add(new ValidationIssue
-                        {
-                            Field = "Enquiry Dump Cross-Validation",
-                            Issue = issue,
-                            Severity = "Error"
-                        });
-                    }
-                }
-            }
+            // CHANGE: Removed Enquiry Dump Cross-Document validation per spec — Enquiry Dump only needs field presence checks, no cross-document checks
 
             // Determine overall result
             result.AllPassed = result.Issues.Count == 0 &&
@@ -432,9 +430,8 @@ public class ValidationAgent : IValidationAgent
                               (result.ActivityFieldPresence == null || result.ActivityFieldPresence.AllFieldsPresent) &&
                               (result.ActivityCrossDocument == null || result.ActivityCrossDocument.AllChecksPass) &&
                               (result.PhotoCrossDocument == null || result.PhotoCrossDocument.AllChecksPass) &&
-                              // CHANGE: Added EnquiryDump validation to overall result
+                              // CHANGE: Added EnquiryDump field presence validation to overall result (no cross-document per spec)
                               (result.EnquiryDumpFieldPresence == null || result.EnquiryDumpFieldPresence.AllFieldsPresent) &&
-                              (result.EnquiryDumpCrossDocument == null || result.EnquiryDumpCrossDocument.AllChecksPass) &&
                               (result.DateValidation == null || result.DateValidation.IsValid);
             
             // Note: AmountConsistency, LineItemMatching, and VendorMatching are informational only
@@ -1047,7 +1044,21 @@ public class ValidationAgent : IValidationAgent
             }
         }
 
-        // 5. Total Cost - Required
+        // CHANGE: Added No of Activation field presence check per spec
+        // 5. No of Activation - Required
+        if (!costSummaryData.NumberOfActivations.HasValue || costSummaryData.NumberOfActivations.Value <= 0)
+        {
+            missingFields.Add("Number of Activations");
+        }
+
+        // CHANGE: Added No of Teams field presence check per spec
+        // 6. No of Teams - Required
+        if (!costSummaryData.NumberOfTeams.HasValue || costSummaryData.NumberOfTeams.Value <= 0)
+        {
+            missingFields.Add("Number of Teams");
+        }
+
+        // 7. Total Cost - Required
         if (costSummaryData.TotalCost <= 0)
         {
             missingFields.Add("Total Cost");
@@ -1401,34 +1412,17 @@ public class ValidationAgent : IValidationAgent
             PhotoCount = photoCount
         };
 
-        // Calculate man-days from activity data
-        int manDays = 0;
-        // CHANGE: Updated for new ActivityData DTO — use Rows instead of LocationActivities
-        if (activityData?.Rows != null && activityData.Rows.Any())
-        {
-            manDays = activityData.Rows.Sum(r => r.Day);
-        }
-
-        result.ManDays = manDays;
-
         // Get cost summary days
         int costSummaryDays = costSummaryData?.NumberOfDays ?? 0;
         result.CostSummaryDays = costSummaryDays;
 
-        // Validation 1: Number of photos should match number of man-days in Activity Summary
-        result.PhotoCountMatchesManDays = photoCount == manDays;
-        if (!result.PhotoCountMatchesManDays && manDays > 0)
+        // CHANGE: Per spec, photo count should match Cost Summary days (not Activity man-days)
+        // Validation: Number of photos should match number of days in Cost Summary
+        result.PhotoCountMatchesManDays = photoCount == costSummaryDays;
+        if (!result.PhotoCountMatchesManDays && costSummaryDays > 0)
         {
             result.AllChecksPass = false;
-            result.Issues.Add($"Photo count ({photoCount}) does not match man-days in Activity Summary ({manDays})");
-        }
-
-        // Validation 2: Man-days in Activity Summary should be ≤ days in Cost Summary
-        result.ManDaysWithinCostSummaryDays = manDays <= costSummaryDays;
-        if (!result.ManDaysWithinCostSummaryDays && costSummaryDays > 0)
-        {
-            result.AllChecksPass = false;
-            result.Issues.Add($"Man-days in Activity Summary ({manDays}) exceeds days in Cost Summary ({costSummaryDays})");
+            result.Issues.Add($"Photo count ({photoCount}) does not match days in Cost Summary ({costSummaryDays})");
         }
 
         _logger.LogInformation(
@@ -1578,9 +1572,12 @@ public class ValidationAgent : IValidationAgent
             validationEntity.VendorMatchingPassed = result.VendorMatching?.IsMatched ?? false;
             validationEntity.AllValidationsPassed = result.AllPassed;
 
+            // CHANGE: Added FileNames section to validation JSON so API response can show which file each check refers to
             // Store detailed validation results as JSON
             validationEntity.ValidationDetailsJson = JsonSerializer.Serialize(new
             {
+                // CHANGE: FileNames maps document type to uploaded filename for display in validation output
+                FileNames = result.FileNames,
                 SAPVerification = result.SAPVerification,
                 AmountConsistency = result.AmountConsistency,
                 LineItemMatching = result.LineItemMatching,
@@ -1595,9 +1592,8 @@ public class ValidationAgent : IValidationAgent
                 ActivityCrossDocument = result.ActivityCrossDocument,
                 PhotoFieldPresence = result.PhotoFieldPresence,
                 PhotoCrossDocument = result.PhotoCrossDocument,
-                // CHANGE: Added EnquiryDump validation results to saved JSON
+                // CHANGE: Removed EnquiryDumpCrossDocument from saved JSON per spec — only field presence needed
                 EnquiryDumpFieldPresence = result.EnquiryDumpFieldPresence,
-                EnquiryDumpCrossDocument = result.EnquiryDumpCrossDocument,
                 Issues = result.Issues
             });
 
