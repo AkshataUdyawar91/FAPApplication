@@ -77,9 +77,9 @@ public class AuthService : IAuthService
         return new LoginResponse
         {
             Token = token,
+            UserId = user.Id,
             Email = user.Email,
-            FullName = user.FullName,
-            Role = user.Role,
+            Role = roleName,
             ExpiresAt = expiresAt
         };
     }
@@ -149,9 +149,9 @@ public class AuthService : IAuthService
             return new LoginResponse
             {
                 Token = newToken,
+                UserId = user.Id,
                 Email = user.Email,
-                FullName = user.FullName,
-                Role = user.Role,
+                Role = roleName,
                 ExpiresAt = expiresAt
             };
         }

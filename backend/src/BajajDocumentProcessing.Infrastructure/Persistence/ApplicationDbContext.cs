@@ -24,6 +24,11 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
+    
+    // Hierarchical structure: FAP -> PO -> Invoices -> Campaigns -> Photos
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<Campaign> Campaigns => Set<Campaign>();
+    public DbSet<CampaignPhoto> CampaignPhotos => Set<CampaignPhoto>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -43,6 +48,11 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<AuditLog>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Conversation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ConversationMessage>().HasQueryFilter(e => !e.IsDeleted);
+        
+        // Hierarchical entities
+        modelBuilder.Entity<Invoice>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Campaign>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CampaignPhoto>().HasQueryFilter(e => !e.IsDeleted);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

@@ -58,11 +58,14 @@ public class ValidationAgentTests : IDisposable
         var httpClient = new HttpClient(mockHttpMessageHandler.Object);
         _mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        
         _validationAgent = new ValidationAgent(
             _mockContext.Object,
             _mockLogger.Object,
             _mockHttpClientFactory.Object,
-            _mockReferenceDataService.Object);
+            _mockReferenceDataService.Object,
+            mockCorrelationIdService.Object);
     }
 
     public void Dispose()

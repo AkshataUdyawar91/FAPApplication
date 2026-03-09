@@ -250,7 +250,8 @@ public class EmailAgentProperties
         mockConfiguration.Setup(c => c["AzureCommunicationServices:ConnectionString"])
             .Returns("mock-connection-string");
 
-        var agent = new EmailAgent(mockContext.Object, mockConfiguration.Object, mockLogger.Object);
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        var agent = new EmailAgent(mockContext.Object, mockConfiguration.Object, mockLogger.Object, mockCorrelationIdService.Object);
 
         return (agent, mockContext);
     }

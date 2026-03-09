@@ -11,7 +11,9 @@ using System.Text.Json;
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
 /// <summary>
-/// Validation Agent implementation with SAP integration
+/// Validation Agent implementation with SAP integration.
+/// Performs comprehensive validation of document packages including SAP verification,
+/// cross-document validation, and field presence checks.
 /// </summary>
 public class ValidationAgent : IValidationAgent
 {
@@ -19,19 +21,30 @@ public class ValidationAgent : IValidationAgent
     private readonly ILogger<ValidationAgent> _logger;
     private readonly HttpClient _sapHttpClient;
     private readonly IReferenceDataService _referenceDataService;
+    private readonly ICorrelationIdService _correlationIdService;
     private readonly AsyncCircuitBreakerPolicy _circuitBreakerPolicy;
     private readonly IAsyncPolicy _retryPolicy;
 
+    /// <summary>
+    /// Initializes a new instance of the ValidationAgent class.
+    /// Configures circuit breaker and retry policies for SAP integration.
+    /// </summary>
+    /// <param name="context">Database context for accessing document packages and validation results</param>
+    /// <param name="logger">Logger for diagnostic information</param>
+    /// <param name="httpClientFactory">Factory for creating HTTP clients for SAP integration</param>
+    /// <param name="referenceDataService">Service for validating reference data (GST, HSN codes, state rates)</param>
     public ValidationAgent(
         IApplicationDbContext context,
         ILogger<ValidationAgent> logger,
         IHttpClientFactory httpClientFactory,
-        IReferenceDataService referenceDataService)
+        IReferenceDataService referenceDataService,
+        ICorrelationIdService correlationIdService)
     {
         _context = context;
         _logger = logger;
         _sapHttpClient = httpClientFactory.CreateClient("SAP");
         _referenceDataService = referenceDataService;
+        _correlationIdService = correlationIdService;
 
         // Circuit breaker: Open after 5 failures, stay open for 60 seconds, close after 2 successes
         _circuitBreakerPolicy = Policy
@@ -73,9 +86,20 @@ public class ValidationAgent : IValidationAgent
                 });
     }
 
+    /// <summary>
+    /// Validates a complete document package by performing all validation checks.
+    /// Includes SAP verification, cross-document validation, field presence checks, and date validation.
+    /// </summary>
+    /// <param name="packageId">The unique identifier of the package to validate</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>A PackageValidationResult containing all validation results and issues</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the package is not found</exception>
     public async Task<PackageValidationResult> ValidatePackageAsync(Guid packageId, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting validation for package {PackageId}", packageId);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting validation for package {PackageId}. CorrelationId: {CorrelationId}",
+            packageId, correlationId);
 
         var result = new PackageValidationResult
         {
@@ -370,10 +394,11 @@ public class ValidationAgent : IValidationAgent
             // Note: AmountConsistency, LineItemMatching, and VendorMatching are informational only
 
             _logger.LogInformation(
-                "Validation completed for package {PackageId}. Result: {Result}, Issues: {IssueCount}",
+                "Validation completed for package {PackageId}. Result: {Result}, Issues: {IssueCount}. CorrelationId: {CorrelationId}",
                 packageId,
                 result.AllPassed ? "PASSED" : "FAILED",
-                result.Issues.Count);
+                result.Issues.Count,
+                correlationId);
 
             // Persist validation result to database
             await SaveValidationResultAsync(result, cancellationToken);
@@ -394,7 +419,10 @@ public class ValidationAgent : IValidationAgent
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error validating package {PackageId}", packageId);
+            _logger.LogError(
+                ex,
+                "Error validating package {PackageId}. CorrelationId: {CorrelationId}",
+                packageId, correlationId);
             result.AllPassed = false;
             result.Issues.Add(new ValidationIssue
             {
@@ -406,9 +434,19 @@ public class ValidationAgent : IValidationAgent
         }
     }
 
+    /// <summary>
+    /// Verifies a Purchase Order number against SAP system.
+    /// Uses circuit breaker and retry policies for resilience.
+    /// </summary>
+    /// <param name="poNumber">The PO number to verify</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>A SAPVerificationResult containing verification status and SAP data</returns>
     public async Task<SAPVerificationResult> VerifySAPPOAsync(string poNumber, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Verifying PO {PONumber} with SAP", poNumber);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Verifying PO {PONumber} with SAP. CorrelationId: {CorrelationId}",
+            poNumber, correlationId);
 
         var result = new SAPVerificationResult
         {
@@ -439,40 +477,63 @@ public class ValidationAgent : IValidationAgent
                 result.DateFromSAP = sapResponse.PurchaseOrderDate;
 
                 _logger.LogInformation(
-                    "SAP verification successful for PO {PONumber}. Vendor: {Vendor}, Amount: {Amount}",
+                    "SAP verification successful for PO {PONumber}. Vendor: {Vendor}, Amount: {Amount}. CorrelationId: {CorrelationId}",
                     poNumber,
                     sapResponse.Supplier,
-                    sapResponse.TotalNetAmount);
+                    sapResponse.TotalNetAmount,
+                    correlationId);
             }
             else
             {
                 result.IsVerified = false;
                 result.Discrepancies.Add($"PO {poNumber} not found in SAP");
-                _logger.LogWarning("PO {PONumber} not found in SAP", poNumber);
+                _logger.LogWarning(
+                    "PO {PONumber} not found in SAP. CorrelationId: {CorrelationId}",
+                    poNumber, correlationId);
             }
         }
         catch (BrokenCircuitException ex)
         {
-            _logger.LogWarning(ex, "SAP circuit breaker is open, marking validation as pending");
+            _logger.LogWarning(
+                ex,
+                "SAP circuit breaker is open, marking validation as pending. CorrelationId: {CorrelationId}",
+                correlationId);
             result.SAPConnectionFailed = true;
             result.IsVerified = false;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "SAP connection failed for PO {PONumber}", poNumber);
+            _logger.LogError(
+                ex,
+                "SAP connection failed for PO {PONumber}. CorrelationId: {CorrelationId}",
+                poNumber, correlationId);
             result.SAPConnectionFailed = true;
             result.IsVerified = false;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error verifying PO {PONumber} with SAP", poNumber);
+            _logger.LogError(
+                ex,
+                "Error verifying PO {PONumber} with SAP. CorrelationId: {CorrelationId}",
+                poNumber, correlationId);
             result.SAPConnectionFailed = true;
             result.IsVerified = false;
         }
 
+        _logger.LogInformation(
+            "SAP verification completed for PO {PONumber}. IsVerified: {IsVerified}. CorrelationId: {CorrelationId}",
+            poNumber, result.IsVerified, correlationId);
+
         return result;
     }
 
+    /// <summary>
+    /// Validates amount consistency between invoice and cost summary totals.
+    /// Allows up to 2% difference to account for rounding and real-world variations.
+    /// </summary>
+    /// <param name="invoiceTotal">Total amount from invoice</param>
+    /// <param name="costSummaryTotal">Total cost from cost summary</param>
+    /// <returns>True if amounts are consistent within tolerance; otherwise, false</returns>
     public bool ValidateAmountConsistency(decimal invoiceTotal, decimal costSummaryTotal)
     {
         var result = ValidateAmountConsistencyDetailed(invoiceTotal, costSummaryTotal);
@@ -481,10 +542,15 @@ public class ValidationAgent : IValidationAgent
 
     private AmountConsistencyResult ValidateAmountConsistencyDetailed(decimal invoiceTotal, decimal costSummaryTotal)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogDebug(
+            "Validating amount consistency. InvoiceTotal: {InvoiceTotal}, CostSummaryTotal: {CostSummaryTotal}. CorrelationId: {CorrelationId}",
+            invoiceTotal, costSummaryTotal, correlationId);
+
         var difference = Math.Abs(invoiceTotal - costSummaryTotal);
         var percentageDifference = invoiceTotal > 0 ? (difference / invoiceTotal) * 100 : 0;
 
-        return new AmountConsistencyResult
+        var result = new AmountConsistencyResult
         {
             IsConsistent = percentageDifference <= 2.0m,
             InvoiceTotal = invoiceTotal,
@@ -493,8 +559,21 @@ public class ValidationAgent : IValidationAgent
             PercentageDifference = percentageDifference,
             TolerancePercentage = 2.0m
         };
+
+        _logger.LogDebug(
+            "Amount consistency validation completed. IsConsistent: {IsConsistent}, Difference: {Difference}, PercentageDifference: {PercentageDifference}%. CorrelationId: {CorrelationId}",
+            result.IsConsistent, result.Difference, result.PercentageDifference, correlationId);
+
+        return result;
     }
 
+    /// <summary>
+    /// Validates that all line items from the PO are present in the invoice.
+    /// Performs case-insensitive matching on item codes.
+    /// </summary>
+    /// <param name="poItems">List of line items from the Purchase Order</param>
+    /// <param name="invoiceItems">List of line items from the Invoice</param>
+    /// <returns>True if all PO items are found in the invoice; otherwise, false</returns>
     public bool ValidateLineItems(List<POLineItem> poItems, List<InvoiceLineItem> invoiceItems)
     {
         var result = ValidateLineItemsDetailed(poItems, invoiceItems);
@@ -503,6 +582,11 @@ public class ValidationAgent : IValidationAgent
 
     private LineItemMatchingResult ValidateLineItemsDetailed(List<POLineItem> poItems, List<InvoiceLineItem> invoiceItems)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogDebug(
+            "Validating line items. POItemCount: {POItemCount}, InvoiceItemCount: {InvoiceItemCount}. CorrelationId: {CorrelationId}",
+            poItems.Count, invoiceItems.Count, correlationId);
+
         var invoiceItemCodes = invoiceItems.Select(i => i.ItemCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var missingItemCodes = new List<string>();
         var matchedCount = 0;
@@ -519,7 +603,7 @@ public class ValidationAgent : IValidationAgent
             }
         }
 
-        return new LineItemMatchingResult
+        var result = new LineItemMatchingResult
         {
             AllItemsMatched = missingItemCodes.Count == 0,
             MissingItemCodes = missingItemCodes,
@@ -527,8 +611,21 @@ public class ValidationAgent : IValidationAgent
             InvoiceItemCount = invoiceItems.Count,
             MatchedItemCount = matchedCount
         };
+
+        _logger.LogDebug(
+            "Line item validation completed. AllItemsMatched: {AllItemsMatched}, MatchedCount: {MatchedCount}, MissingCount: {MissingCount}. CorrelationId: {CorrelationId}",
+            result.AllItemsMatched, matchedCount, missingItemCodes.Count, correlationId);
+
+        return result;
     }
 
+    /// <summary>
+    /// Validates that all required documents are present in the package.
+    /// Checks for PO, Invoice, Cost Summary, and at least one photo.
+    /// </summary>
+    /// <param name="packageId">The unique identifier of the package to check</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>A CompletenessResult indicating which documents are present and which are missing</returns>
     public async Task<CompletenessResult> ValidateCompletenessAsync(Guid packageId, CancellationToken cancellationToken = default)
     {
         var package = await _context.DocumentPackages
@@ -585,8 +682,21 @@ public class ValidationAgent : IValidationAgent
         };
     }
 
+    /// <summary>
+    /// Validates date relationships between PO, invoice, and submission dates.
+    /// Ensures invoice date is between PO date and submission date.
+    /// </summary>
+    /// <param name="poDate">Purchase Order date</param>
+    /// <param name="invoiceDate">Invoice date</param>
+    /// <param name="submissionDate">Package submission date</param>
+    /// <returns>A DateValidationResult containing validation status and any date issues</returns>
     private DateValidationResult ValidateDates(DateTime poDate, DateTime invoiceDate, DateTime submissionDate)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogDebug(
+            "Validating dates. PODate: {PODate}, InvoiceDate: {InvoiceDate}, SubmissionDate: {SubmissionDate}. CorrelationId: {CorrelationId}",
+            poDate, invoiceDate, submissionDate, correlationId);
+
         var result = new DateValidationResult
         {
             PODate = poDate,
@@ -609,11 +719,28 @@ public class ValidationAgent : IValidationAgent
             result.DateIssues.Add($"Invoice date ({invoiceDate:yyyy-MM-dd}) is after submission date ({submissionDate:yyyy-MM-dd})");
         }
 
+        _logger.LogDebug(
+            "Date validation completed. IsValid: {IsValid}, IssueCount: {IssueCount}. CorrelationId: {CorrelationId}",
+            result.IsValid, result.DateIssues.Count, correlationId);
+
         return result;
     }
 
+    /// <summary>
+    /// Validates vendor name consistency across PO, Invoice, and SAP data.
+    /// Performs case-insensitive comparison with whitespace normalization.
+    /// </summary>
+    /// <param name="poVendor">Vendor name from Purchase Order</param>
+    /// <param name="invoiceVendor">Vendor name from Invoice</param>
+    /// <param name="sapVendor">Vendor name from SAP system (optional)</param>
+    /// <returns>A VendorMatchingResult indicating whether vendor names match</returns>
     private VendorMatchingResult ValidateVendorMatching(string poVendor, string invoiceVendor, string? sapVendor)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogDebug(
+            "Validating vendor matching. POVendor: {POVendor}, InvoiceVendor: {InvoiceVendor}, SAPVendor: {SAPVendor}. CorrelationId: {CorrelationId}",
+            poVendor, invoiceVendor, sapVendor, correlationId);
+
         var result = new VendorMatchingResult
         {
             POVendor = poVendor,
@@ -636,14 +763,26 @@ public class ValidationAgent : IValidationAgent
                               (normalizedPOVendor == normalizedSAPVendor || normalizedInvoiceVendor == normalizedSAPVendor);
         }
 
+        _logger.LogDebug(
+            "Vendor matching validation completed. IsMatched: {IsMatched}. CorrelationId: {CorrelationId}",
+            result.IsMatched, correlationId);
+
         return result;
     }
 
     /// <summary>
-    /// Validates invoice field presence (all required fields must exist)
+    /// Validates that all required invoice fields are present.
+    /// Checks for agency details, billing information, GST data, and amounts.
     /// </summary>
+    /// <param name="invoiceData">The invoice data to validate</param>
+    /// <returns>An InvoiceFieldPresenceResult listing any missing required fields</returns>
     private InvoiceFieldPresenceResult ValidateInvoiceFieldPresence(InvoiceData invoiceData)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting invoice field presence validation. CorrelationId: {CorrelationId}",
+            correlationId);
+
         var result = new InvoiceFieldPresenceResult { AllFieldsPresent = true };
         var missingFields = new List<string>();
 
@@ -691,14 +830,27 @@ public class ValidationAgent : IValidationAgent
         result.MissingFields = missingFields;
         result.AllFieldsPresent = missingFields.Count == 0;
 
+        _logger.LogInformation(
+            "Invoice field presence validation completed. AllFieldsPresent: {AllFieldsPresent}, MissingFieldCount: {MissingFieldCount}. CorrelationId: {CorrelationId}",
+            result.AllFieldsPresent, missingFields.Count, correlationId);
+
         return result;
     }
 
     /// <summary>
-    /// Validates invoice cross-document fields against PO
+    /// Validates invoice cross-document fields against PO data.
+    /// Checks agency code, PO number, GST-state mapping, HSN/SAC code, invoice amount, and GST percentage.
     /// </summary>
+    /// <param name="invoiceData">The invoice data to validate</param>
+    /// <param name="poData">The PO data to validate against</param>
+    /// <returns>An InvoiceCrossDocumentResult containing validation status and any issues</returns>
     private InvoiceCrossDocumentResult ValidateInvoiceCrossDocument(InvoiceData invoiceData, POData poData)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting invoice cross-document validation. InvoiceNumber: {InvoiceNumber}, PONumber: {PONumber}. CorrelationId: {CorrelationId}",
+            invoiceData.InvoiceNumber, poData.PONumber, correlationId);
+
         var result = new InvoiceCrossDocumentResult { AllChecksPass = true };
 
         // 1. Agency Code match
@@ -769,11 +921,26 @@ public class ValidationAgent : IValidationAgent
             result.Issues.Add($"GST Percentage mismatch: Invoice has {invoiceData.GSTPercentage}%, expected {expectedGSTPercentage}%");
         }
 
+        _logger.LogInformation(
+            "Invoice cross-document validation completed. AllChecksPass: {AllChecksPass}, IssueCount: {IssueCount}. CorrelationId: {CorrelationId}",
+            result.AllChecksPass, result.Issues.Count, correlationId);
+
         return result;
     }
 
+    /// <summary>
+    /// Validates that all required cost summary fields are present.
+    /// Checks for place of supply, element-wise costs, number of days, element-wise quantities, and total cost.
+    /// </summary>
+    /// <param name="costSummaryData">The cost summary data to validate</param>
+    /// <returns>A CostSummaryFieldPresenceResult listing any missing required fields</returns>
     private CostSummaryFieldPresenceResult ValidateCostSummaryFieldPresence(CostSummaryData costSummaryData)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting cost summary field presence validation. CorrelationId: {CorrelationId}",
+            correlationId);
+
         var result = new CostSummaryFieldPresenceResult { AllFieldsPresent = true };
         var missingFields = new List<string>();
 
@@ -843,13 +1010,29 @@ public class ValidationAgent : IValidationAgent
         result.MissingFields = missingFields;
         result.AllFieldsPresent = missingFields.Count == 0;
 
+        _logger.LogInformation(
+            "Cost summary field presence validation completed. AllFieldsPresent: {AllFieldsPresent}, MissingFieldCount: {MissingFieldCount}. CorrelationId: {CorrelationId}",
+            result.AllFieldsPresent, missingFields.Count, correlationId);
+
         return result;
     }
 
+    /// <summary>
+    /// Validates cost summary cross-document fields against invoice data.
+    /// Checks total cost, element-wise costs against state rates, fixed cost limits, and variable cost limits.
+    /// </summary>
+    /// <param name="costSummaryData">The cost summary data to validate</param>
+    /// <param name="invoiceData">The invoice data to validate against</param>
+    /// <returns>A CostSummaryCrossDocumentResult containing validation status and any issues</returns>
     private CostSummaryCrossDocumentResult ValidateCostSummaryCrossDocument(
         CostSummaryData costSummaryData, 
         InvoiceData invoiceData)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting cost summary cross-document validation. TotalCost: {TotalCost}, InvoiceAmount: {InvoiceAmount}. CorrelationId: {CorrelationId}",
+            costSummaryData.TotalCost, invoiceData.TotalAmount, correlationId);
+
         var result = new CostSummaryCrossDocumentResult { AllChecksPass = true };
 
         // Get state code for validation
@@ -931,11 +1114,26 @@ public class ValidationAgent : IValidationAgent
             }
         }
 
+        _logger.LogInformation(
+            "Cost summary cross-document validation completed. AllChecksPass: {AllChecksPass}, IssueCount: {IssueCount}. CorrelationId: {CorrelationId}",
+            result.AllChecksPass, result.Issues.Count, correlationId);
+
         return result;
     }
 
+    /// <summary>
+    /// Validates that all required activity summary fields are present.
+    /// Checks for dealer information, location activities, and number of days per location.
+    /// </summary>
+    /// <param name="activityData">The activity data to validate</param>
+    /// <returns>An ActivityFieldPresenceResult listing any missing required fields</returns>
     private ActivityFieldPresenceResult ValidateActivityFieldPresence(ActivityData activityData)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting activity field presence validation. DealerName: {DealerName}. CorrelationId: {CorrelationId}",
+            activityData.DealerName, correlationId);
+
         var result = new ActivityFieldPresenceResult { AllFieldsPresent = true };
         var missingFields = new List<string>();
 
@@ -981,13 +1179,29 @@ public class ValidationAgent : IValidationAgent
         result.MissingFields = missingFields;
         result.AllFieldsPresent = missingFields.Count == 0;
 
+        _logger.LogInformation(
+            "Activity field presence validation completed. AllFieldsPresent: {AllFieldsPresent}, MissingFieldCount: {MissingFieldCount}. CorrelationId: {CorrelationId}",
+            result.AllFieldsPresent, missingFields.Count, correlationId);
+
         return result;
     }
 
+    /// <summary>
+    /// Validates activity summary cross-document fields against cost summary data.
+    /// Ensures number of days matches between activity summary and cost summary.
+    /// </summary>
+    /// <param name="activityData">The activity data to validate</param>
+    /// <param name="costSummaryData">The cost summary data to validate against</param>
+    /// <returns>An ActivityCrossDocumentResult containing validation status and any issues</returns>
     private ActivityCrossDocumentResult ValidateActivityCrossDocument(
         ActivityData activityData,
         CostSummaryData costSummaryData)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting activity cross-document validation. CorrelationId: {CorrelationId}",
+            correlationId);
+
         var result = new ActivityCrossDocumentResult { AllChecksPass = true };
 
         // Calculate total days from activity data
@@ -1005,11 +1219,26 @@ public class ValidationAgent : IValidationAgent
             result.Issues.Add($"Number of days mismatch: Activity Summary has {activityTotalDays} days, Cost Summary has {costSummaryDays} days");
         }
 
+        _logger.LogInformation(
+            "Activity cross-document validation completed. AllChecksPass: {AllChecksPass}, ActivityDays: {ActivityDays}, CostSummaryDays: {CostSummaryDays}. CorrelationId: {CorrelationId}",
+            result.AllChecksPass, activityTotalDays, costSummaryDays, correlationId);
+
         return result;
     }
 
+    /// <summary>
+    /// Validates photo field presence including date, location, and AI-detected content.
+    /// Checks for EXIF metadata (date, GPS) and AI-detected features (blue t-shirt, Bajaj vehicle).
+    /// </summary>
+    /// <param name="photoDocuments">List of photo documents to validate</param>
+    /// <returns>A PhotoFieldPresenceResult with counts of photos meeting each requirement</returns>
     private PhotoFieldPresenceResult ValidatePhotoFieldPresence(List<Domain.Entities.Document> photoDocuments)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting photo field presence validation. PhotoCount: {PhotoCount}. CorrelationId: {CorrelationId}",
+            photoDocuments.Count, correlationId);
+
         var result = new PhotoFieldPresenceResult 
         { 
             AllFieldsPresent = true,
@@ -1097,14 +1326,31 @@ public class ValidationAgent : IValidationAgent
         result.MissingFields = missingFields;
         result.AllFieldsPresent = missingFields.Count == 0;
 
+        _logger.LogInformation(
+            "Photo field presence validation completed. AllFieldsPresent: {AllFieldsPresent}, PhotosWithDate: {PhotosWithDate}, PhotosWithLocation: {PhotosWithLocation}. CorrelationId: {CorrelationId}",
+            result.AllFieldsPresent, result.PhotosWithDate, result.PhotosWithLocation, correlationId);
+
         return result;
     }
 
+    /// <summary>
+    /// Validates photo cross-document consistency with activity and cost summary data.
+    /// Performs 3-way validation: photo count vs man-days vs cost summary days.
+    /// </summary>
+    /// <param name="photoCount">Number of photos in the package</param>
+    /// <param name="activityData">Activity summary data (optional)</param>
+    /// <param name="costSummaryData">Cost summary data (optional)</param>
+    /// <returns>A PhotoCrossDocumentResult containing validation status and any issues</returns>
     private PhotoCrossDocumentResult ValidatePhotoCrossDocument(
         int photoCount,
         ActivityData? activityData,
         CostSummaryData? costSummaryData)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting photo cross-document validation. PhotoCount: {PhotoCount}. CorrelationId: {CorrelationId}",
+            photoCount, correlationId);
+
         var result = new PhotoCrossDocumentResult 
         { 
             AllChecksPass = true,
@@ -1144,16 +1390,29 @@ public class ValidationAgent : IValidationAgent
             result.Issues.Add($"Man-days in Activity Summary ({manDays}) exceeds days in Cost Summary ({costSummaryDays})");
         }
 
+        _logger.LogInformation(
+            "Photo cross-document validation completed. AllChecksPass: {AllChecksPass}, PhotoCount: {PhotoCount}, ManDays: {ManDays}, CostSummaryDays: {CostSummaryDays}. CorrelationId: {CorrelationId}",
+            result.AllChecksPass, photoCount, manDays, costSummaryDays, correlationId);
+
         return result;
     }
 
     /// <summary>
-    /// Saves validation result to database
+    /// Saves validation result to the database.
+    /// Creates a new ValidationResult entity or updates an existing one.
     /// </summary>
+    /// <param name="result">The validation result to save</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
     private async Task SaveValidationResultAsync(PackageValidationResult result, CancellationToken cancellationToken)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        
         try
         {
+            _logger.LogInformation(
+                "Saving validation result for package {PackageId}. CorrelationId: {CorrelationId}",
+                result.PackageId, correlationId);
+
             // Check if validation result already exists
             var existingResult = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.PackageId == result.PackageId, cancellationToken);
@@ -1210,12 +1469,15 @@ public class ValidationAgent : IValidationAgent
             await _context.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation(
-                "Validation result saved for package {PackageId}",
-                result.PackageId);
+                "Validation result saved for package {PackageId}. CorrelationId: {CorrelationId}",
+                result.PackageId, correlationId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error saving validation result for package {PackageId}", result.PackageId);
+            _logger.LogError(
+                ex,
+                "Error saving validation result for package {PackageId}. CorrelationId: {CorrelationId}",
+                result.PackageId, correlationId);
             // Don't throw - validation result saving failure shouldn't break the validation process
         }
     }

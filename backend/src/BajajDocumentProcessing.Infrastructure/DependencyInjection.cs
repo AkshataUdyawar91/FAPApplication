@@ -62,6 +62,9 @@ public static class DependencyInjection
         // Recommendation Agent
         services.AddScoped<IRecommendationAgent, RecommendationAgent>();
 
+        // Enhanced Validation Report Service
+        services.AddScoped<IEnhancedValidationReportService, EnhancedValidationReportService>();
+
         // Email Agent
         services.AddScoped<IEmailAgent, EmailAgent>();
 
@@ -114,6 +117,9 @@ public static class DependencyInjection
 
         // Request Queue Service
         services.AddScoped<IRequestQueueService, RequestQueueService>();
+
+        // Correlation ID Service
+        services.AddScoped<ICorrelationIdService, CorrelationIdService>();
 
         // Azure services configuration will be added in subsequent tasks
         

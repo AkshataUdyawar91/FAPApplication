@@ -19,6 +19,7 @@ public class RecommendationAgent : IRecommendationAgent
     private readonly IApplicationDbContext _context;
     private readonly ILogger<RecommendationAgent> _logger;
     private readonly Kernel _kernel;
+    private readonly ICorrelationIdService _correlationIdService;
 
     // Recommendation thresholds
     private const double APPROVE_THRESHOLD = 85.0;
@@ -27,10 +28,12 @@ public class RecommendationAgent : IRecommendationAgent
     public RecommendationAgent(
         IApplicationDbContext context,
         IConfiguration configuration,
-        ILogger<RecommendationAgent> logger)
+        ILogger<RecommendationAgent> logger,
+        ICorrelationIdService correlationIdService)
     {
         _context = context;
         _logger = logger;
+        _correlationIdService = correlationIdService;
 
         // Build Semantic Kernel for evidence generation
         var endpoint = configuration["AzureOpenAI:Endpoint"] ?? throw new InvalidOperationException("AzureOpenAI:Endpoint not configured");
@@ -42,11 +45,29 @@ public class RecommendationAgent : IRecommendationAgent
         _kernel = builder.Build();
     }
 
+    /// <summary>
+    /// Generates an AI-powered approval recommendation with evidence for a document package.
+    /// </summary>
+    /// <param name="packageId">The unique identifier of the document package to analyze.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>A recommendation entity containing the recommendation type, confidence score, and AI-generated evidence.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the package or confidence score is not found.</exception>
+    /// <remarks>
+    /// This method:
+    /// - Loads the package with documents and validation results
+    /// - Retrieves the confidence score
+    /// - Determines recommendation type based on thresholds (Approve >= 85%, Review 70-85%, Reject &lt; 70%)
+    /// - Generates AI-powered evidence summary using Azure OpenAI
+    /// - Creates or updates the recommendation in the database
+    /// </remarks>
     public async Task<Recommendation> GenerateRecommendationAsync(
         Guid packageId,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Generating recommendation for package {PackageId}", packageId);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Generating recommendation for package {PackageId}. CorrelationId: {CorrelationId}",
+            packageId, correlationId);
 
         try
         {
@@ -59,7 +80,7 @@ public class RecommendationAgent : IRecommendationAgent
             if (package == null)
             {
                 _logger.LogError("Package {PackageId} not found", packageId);
-                throw new InvalidOperationException($"Package {packageId} not found");
+                throw new Domain.Exceptions.NotFoundException($"Package {packageId} not found");
             }
             _logger.LogInformation("Package {PackageId} loaded successfully with {DocumentCount} documents", packageId, package.Documents.Count);
 
@@ -77,7 +98,7 @@ public class RecommendationAgent : IRecommendationAgent
             if (confidenceScore == null)
             {
                 _logger.LogError("Confidence score not found for package {PackageId}", packageId);
-                throw new InvalidOperationException($"Confidence score not found for package {packageId}");
+                throw new Domain.Exceptions.NotFoundException($"Confidence score not found for package {packageId}");
             }
             _logger.LogInformation("Confidence score loaded: {OverallConfidence:F2}%", confidenceScore.OverallConfidence);
 
@@ -165,23 +186,34 @@ public class RecommendationAgent : IRecommendationAgent
             _logger.LogInformation("Recommendation saved successfully for package {PackageId}", packageId);
 
             _logger.LogInformation(
-                "Recommendation generated for package {PackageId}: {Type} (Confidence: {Confidence:F2})",
+                "Recommendation generated for package {PackageId}: {Type} (Confidence: {Confidence:F2}). CorrelationId: {CorrelationId}",
                 packageId,
                 recommendationType,
-                confidenceScore.OverallConfidence);
+                confidenceScore.OverallConfidence,
+                correlationId);
 
             return recommendation;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error generating recommendation for package {PackageId}", packageId);
+            _logger.LogError(
+                ex,
+                "Error generating recommendation for package {PackageId}. CorrelationId: {CorrelationId}",
+                packageId, correlationId);
             throw;
         }
     }
 
     /// <summary>
-    /// Determines the recommendation type based on confidence score and validation results
+    /// Determines the recommendation type based on confidence score and validation results.
     /// </summary>
+    /// <param name="confidenceScore">The overall confidence score (0-100).</param>
+    /// <param name="validationPassed">Whether all validation checks passed.</param>
+    /// <returns>
+    /// - <see cref="RecommendationType.Reject"/> if validation failed or confidence &lt; 70%
+    /// - <see cref="RecommendationType.Approve"/> if validation passed and confidence >= 85%
+    /// - <see cref="RecommendationType.Review"/> if validation passed and confidence between 70-85%
+    /// </returns>
     private RecommendationType DetermineRecommendationType(double confidenceScore, bool validationPassed)
     {
         // REJECT if validation failed or confidence < 70
@@ -201,8 +233,20 @@ public class RecommendationAgent : IRecommendationAgent
     }
 
     /// <summary>
-    /// Generates plain-English evidence summary with specific citations
+    /// Generates a plain-English evidence summary with specific citations from validation and confidence data.
     /// </summary>
+    /// <param name="package">The document package being analyzed.</param>
+    /// <param name="validationResult">The validation results, or null if validation has not been performed.</param>
+    /// <param name="confidenceScore">The confidence score breakdown for all document types.</param>
+    /// <param name="recommendationType">The determined recommendation type.</param>
+    /// <returns>A formatted string containing the evidence summary with confidence breakdown, validation results, and rationale.</returns>
+    /// <remarks>
+    /// This method serves as a fallback when AI-powered evidence generation fails.
+    /// It creates a structured summary including:
+    /// - Overall and per-document confidence scores
+    /// - Validation check results (SAP, amounts, line items, completeness, dates, vendor)
+    /// - Recommendation rationale based on the recommendation type
+    /// </remarks>
     private string GenerateEvidence(
         DocumentPackage package,
         ValidationResult? validationResult,
@@ -273,8 +317,21 @@ public class RecommendationAgent : IRecommendationAgent
     }
 
     /// <summary>
-    /// Generates AI-powered evidence summary using Semantic Kernel
+    /// Generates an AI-powered evidence summary using Azure OpenAI via Semantic Kernel.
     /// </summary>
+    /// <param name="package">The document package being analyzed.</param>
+    /// <param name="validationResult">The validation results, or null if validation has not been performed.</param>
+    /// <param name="confidenceScore">The confidence score breakdown for all document types.</param>
+    /// <param name="recommendationType">The determined recommendation type.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>An AI-generated evidence summary in plain English, or a template-based summary if AI generation fails.</returns>
+    /// <remarks>
+    /// This method:
+    /// - Constructs a structured data summary with all relevant metrics
+    /// - Sends a prompt to Azure OpenAI requesting a professional evidence summary
+    /// - Falls back to template-based evidence generation if AI call fails
+    /// - Generates 2-3 paragraph summaries with specific citations and professional tone
+    /// </remarks>
     private async Task<string> GenerateEvidenceWithAIAsync(
         DocumentPackage package,
         ValidationResult? validationResult,

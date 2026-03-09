@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/widgets/chat_fab.dart';
+import '../widgets/view_validation_report_button.dart';
 
 class HQReviewPage extends StatefulWidget {
   final String token;
@@ -600,32 +601,42 @@ class _HQReviewPageState extends State<HQReviewPage> {
               _buildInfoRow('Submitted', _formatDate(doc['createdAt'])),
               _buildInfoRow('AI Score', aiScore),
               const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    final result = await Navigator.pushNamed(
-                      context,
-                      '/hq/review-detail',
-                      arguments: {
-                        'submissionId': doc['id'],
-                        'token': widget.token,
-                        'userName': widget.userName,
-                      },
-                    );
-                    
-                    // Reload documents when returning from detail page
-                    if (result == true || result == null) {
-                      _loadDocuments();
-                    }
-                  },
-                  icon: const Icon(Icons.visibility_outlined, size: 18),
-                  label: const Text('View Details'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
+              Row(
+                children: [
+                  Expanded(
+                    child: ViewValidationReportButton(
+                      packageId: doc['id'],
+                      isCompact: false,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        final result = await Navigator.pushNamed(
+                          context,
+                          '/hq/review-detail',
+                          arguments: {
+                            'submissionId': doc['id'],
+                            'token': widget.token,
+                            'userName': widget.userName,
+                          },
+                        );
+                        
+                        // Reload documents when returning from detail page
+                        if (result == true || result == null) {
+                          _loadDocuments();
+                        }
+                      },
+                      icon: const Icon(Icons.visibility_outlined, size: 18),
+                      label: const Text('View Details'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -757,7 +768,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 80), // Action column
+                    const SizedBox(width: 120), // Action column
                   ],
                 ),
               ),
@@ -871,27 +882,36 @@ class _HQReviewPageState extends State<HQReviewPage> {
             child: _buildStatusBadge(status),
           ),
           SizedBox(
-            width: 80,
-            child: IconButton(
-              icon: const Icon(Icons.visibility_outlined, size: 20),
-              color: AppColors.primary,
-              onPressed: () async {
-                final result = await Navigator.pushNamed(
-                  context,
-                  '/hq/review-detail',
-                  arguments: {
-                    'submissionId': doc['id'],
-                    'token': widget.token,
-                    'userName': widget.userName,
+            width: 120,
+            child: Row(
+              children: [
+                ViewValidationReportButton(
+                  packageId: doc['id'],
+                  isCompact: true,
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(Icons.visibility_outlined, size: 20),
+                  color: AppColors.primary,
+                  onPressed: () async {
+                    final result = await Navigator.pushNamed(
+                      context,
+                      '/hq/review-detail',
+                      arguments: {
+                        'submissionId': doc['id'],
+                        'token': widget.token,
+                        'userName': widget.userName,
+                      },
+                    );
+                    
+                    // Reload documents when returning from detail page
+                    if (result == true || result == null) {
+                      _loadDocuments();
+                    }
                   },
-                );
-                
-                // Reload documents when returning from detail page
-                if (result == true || result == null) {
-                  _loadDocuments();
-                }
-              },
-              tooltip: 'View Details',
+                  tooltip: 'View Details',
+                ),
+              ],
             ),
           ),
         ],

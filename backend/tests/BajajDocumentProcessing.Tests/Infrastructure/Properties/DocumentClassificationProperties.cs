@@ -23,12 +23,14 @@ public class DocumentClassificationProperties
     private readonly Mock<ILogger<DocumentAgent>> _mockLogger;
     private readonly Mock<IFileStorageService> _mockFileStorage;
     private readonly Mock<ILogger<AzureDocumentIntelligenceService>> _mockDocIntelLogger;
+    private readonly Mock<ICorrelationIdService> _mockCorrelationIdService;
 
     public DocumentClassificationProperties()
     {
         _mockLogger = new Mock<ILogger<DocumentAgent>>();
         _mockFileStorage = new Mock<IFileStorageService>();
         _mockDocIntelLogger = new Mock<ILogger<AzureDocumentIntelligenceService>>();
+        _mockCorrelationIdService = new Mock<ICorrelationIdService>();
         
         // Create configuration with Azure OpenAI and Document Intelligence settings
         var configurationBuilder = new ConfigurationBuilder();
@@ -194,7 +196,7 @@ public class DocumentClassificationProperties
         var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
 
         // Act
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object);
 
         // Assert
         Assert.NotNull(documentAgent);

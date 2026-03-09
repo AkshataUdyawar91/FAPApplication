@@ -12,7 +12,8 @@ using MetadataExtractor.Formats.Exif;
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
 /// <summary>
-/// Document Agent service for document classification and field extraction using Azure OpenAI
+/// Document Agent service for document classification and field extraction using Azure OpenAI.
+/// Supports both image files (via GPT-4 Vision) and document files (via Azure Document Intelligence + GPT-4).
 /// </summary>
 public class DocumentAgent : IDocumentAgent
 {
@@ -22,20 +23,34 @@ public class DocumentAgent : IDocumentAgent
     private readonly HttpClient _httpClient;
     private readonly IFileStorageService _fileStorageService;
     private readonly AzureDocumentIntelligenceService _documentIntelligenceService;
+    private readonly ICorrelationIdService _correlationIdService;
     private const double CONFIDENCE_THRESHOLD = 0.70;
     private const double FIELD_CONFIDENCE_THRESHOLD = 0.60;
 
+    /// <summary>
+    /// Initializes a new instance of the DocumentAgent class.
+    /// Configures Azure OpenAI client for document processing.
+    /// </summary>
+    /// <param name="configuration">Application configuration containing Azure OpenAI settings</param>
+    /// <param name="logger">Logger for diagnostic information</param>
+    /// <param name="httpClient">HTTP client for external requests</param>
+    /// <param name="fileStorageService">Service for accessing blob storage</param>
+    /// <param name="documentIntelligenceService">Service for Azure Document Intelligence operations</param>
+    /// <param name="correlationIdService">Service for accessing correlation ID</param>
+    /// <exception cref="InvalidOperationException">Thrown when Azure OpenAI configuration is missing</exception>
     public DocumentAgent(
         IConfiguration configuration,
         ILogger<DocumentAgent> logger,
         HttpClient httpClient,
         IFileStorageService fileStorageService,
-        AzureDocumentIntelligenceService documentIntelligenceService)
+        AzureDocumentIntelligenceService documentIntelligenceService,
+        ICorrelationIdService correlationIdService)
     {
         _logger = logger;
         _httpClient = httpClient;
         _fileStorageService = fileStorageService;
         _documentIntelligenceService = documentIntelligenceService;
+        _correlationIdService = correlationIdService;
 
         var endpoint = configuration["AzureOpenAI:Endpoint"] 
             ?? throw new InvalidOperationException("Azure OpenAI endpoint not configured");
@@ -47,8 +62,11 @@ public class DocumentAgent : IDocumentAgent
     }
 
     /// <summary>
-    /// Checks if the file is a document type that requires Azure Document Intelligence
+    /// Checks if the file is a document type that requires Azure Document Intelligence.
+    /// Supports PDF and Word document formats.
     /// </summary>
+    /// <param name="blobUrl">The blob URL to check</param>
+    /// <returns>True if the file is a PDF or Word document; otherwise, false</returns>
     private bool IsDocumentFile(string blobUrl)
     {
         var lowerUrl = blobUrl.ToLowerInvariant();
@@ -58,8 +76,11 @@ public class DocumentAgent : IDocumentAgent
     }
 
     /// <summary>
-    /// Checks if the file is an image that can be processed by Vision API
+    /// Checks if the file is an image that can be processed by Vision API.
+    /// Supports common image formats including JPG, PNG, GIF, BMP, TIFF, and WebP.
     /// </summary>
+    /// <param name="blobUrl">The blob URL to check</param>
+    /// <returns>True if the file is a supported image format; otherwise, false</returns>
     private bool IsImageFile(string blobUrl)
     {
         var lowerUrl = blobUrl.ToLowerInvariant();
@@ -74,10 +95,13 @@ public class DocumentAgent : IDocumentAgent
     }
 
     /// <summary>
-    /// Prepares image data for Azure OpenAI Vision API
-    /// For files larger than 100KB, uses SAS URL instead of data URI to avoid URI length limits
-    /// Returns null for non-image files (PDFs, Word docs)
+    /// Prepares image data for Azure OpenAI Vision API.
+    /// For files larger than 100KB, uses SAS URL instead of data URI to avoid URI length limits.
+    /// Returns null for non-image files (PDFs, Word docs).
     /// </summary>
+    /// <param name="blobUrl">The blob URL of the image to prepare</param>
+    /// <returns>A data URI or SAS URL for the image, or null if not an image file</returns>
+    /// <exception cref="Exception">Thrown when image preparation fails</exception>
     private async Task<string?> PrepareImageDataAsync(string blobUrl)
     {
         try
@@ -131,8 +155,11 @@ public class DocumentAgent : IDocumentAgent
     }
 
     /// <summary>
-    /// Creates a ChatMessageImageContentItem from a URL (either data URI or HTTPS URL with SAS)
+    /// Creates a ChatMessageImageContentItem from a URL (either data URI or HTTPS URL with SAS).
+    /// Configures the image with high detail level for optimal extraction quality.
     /// </summary>
+    /// <param name="imageUrl">The image URL (data URI or HTTPS URL)</param>
+    /// <returns>A ChatMessageImageContentItem configured for GPT-4 Vision</returns>
     private ChatMessageImageContentItem CreateImageContentItem(string imageUrl)
     {
         // Azure OpenAI expects a URI (either HTTP/HTTPS URL or data URI)
@@ -147,16 +174,24 @@ public class DocumentAgent : IDocumentAgent
     }
 
     /// <summary>
-    /// Classifies a document using Azure OpenAI GPT-4 Vision for images
-    /// For PDFs/Word docs, returns classification based on user's document type selection
+    /// Classifies a document using Azure OpenAI GPT-4 Vision for images.
+    /// For PDFs/Word docs, returns classification based on user's document type selection.
     /// </summary>
+    /// <param name="blobUrl">The blob URL of the document to classify</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>A DocumentClassification containing the document type and confidence score</returns>
+    /// <exception cref="Exception">Thrown when classification fails</exception>
     public async Task<DocumentClassification> ClassifyAsync(
         string blobUrl, 
         CancellationToken cancellationToken = default)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        
         try
         {
-            _logger.LogInformation("Starting document classification for URL: {BlobUrl}", blobUrl);
+            _logger.LogInformation(
+                "Starting document classification for URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
 
             // For document files (PDF, Word), we trust the user's document type selection
             // Classification will be based on extraction results
@@ -238,14 +273,17 @@ Be precise and confident in your classification."),
             };
 
             _logger.LogInformation(
-                "Document classified as {Type} with confidence {Confidence}. Flagged for review: {Flagged}",
-                result.Type, result.Confidence, result.IsFlaggedForReview);
+                "Document classified as {Type} with confidence {Confidence}. Flagged for review: {Flagged}. CorrelationId: {CorrelationId}",
+                result.Type, result.Confidence, result.IsFlaggedForReview, correlationId);
 
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error classifying document from URL: {BlobUrl}", blobUrl);
+            _logger.LogError(
+                ex,
+                "Error classifying document from URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
             throw;
         }
     }
@@ -326,14 +364,23 @@ Be precise and confident in your classification."),
     }
 
     /// <summary>
-    /// Extracts structured data from a Purchase Order document
-    /// Uses Azure Document Intelligence for PDFs/Word docs, GPT-4 Vision for images
+    /// Extracts structured data from a Purchase Order document.
+    /// Uses Azure Document Intelligence for PDFs/Word docs, GPT-4 Vision for images.
+    /// Extracts all PO fields including line items, vendor details, and amounts.
     /// </summary>
+    /// <param name="blobUrl">The blob URL of the PO document</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>POData containing all extracted purchase order information</returns>
+    /// <exception cref="Exception">Thrown when extraction fails</exception>
     public async Task<POData> ExtractPOAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        
         try
         {
-            _logger.LogInformation("Starting PO extraction for URL: {BlobUrl}", blobUrl);
+            _logger.LogInformation(
+                "Starting PO extraction for URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
 
             // CHANGE: Switched from direct Document Intelligence to hybrid approach (Doc Intelligence extracts text → OpenAI analyzes text)
             // For document files (PDF, Word), use Azure Document Intelligence to extract text, then OpenAI to analyze
@@ -469,14 +516,17 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
             var poData = ParsePOResponse(content);
 
             _logger.LogInformation(
-                "PO extraction completed. PO Number: {PONumber}, Total Amount: {TotalAmount}, Line Items: {ItemCount}, Flagged: {Flagged}",
-                poData.PONumber, poData.TotalAmount, poData.LineItems.Count, poData.IsFlaggedForReview);
+                "PO extraction completed. PO Number: {PONumber}, Total Amount: {TotalAmount}, Line Items: {ItemCount}, Flagged: {Flagged}. CorrelationId: {CorrelationId}",
+                poData.PONumber, poData.TotalAmount, poData.LineItems.Count, poData.IsFlaggedForReview, correlationId);
 
             return poData;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error extracting PO data from URL: {BlobUrl}", blobUrl);
+            _logger.LogError(
+                ex,
+                "Error extracting PO data from URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
             throw;
         }
     }
@@ -594,14 +644,23 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
     }
 
     /// <summary>
-    /// Extracts structured data from an Invoice document
-    /// Uses Azure Document Intelligence for PDFs/Word docs, GPT-4 Vision for images
+    /// Extracts structured data from an Invoice document.
+    /// Uses Azure Document Intelligence for PDFs/Word docs, GPT-4 Vision for images.
+    /// Extracts all invoice fields including line items, GST details, and amounts.
     /// </summary>
+    /// <param name="blobUrl">The blob URL of the invoice document</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>InvoiceData containing all extracted invoice information</returns>
+    /// <exception cref="Exception">Thrown when extraction fails</exception>
     public async Task<InvoiceData> ExtractInvoiceAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        
         try
         {
-            _logger.LogInformation("Starting Invoice extraction for URL: {BlobUrl}", blobUrl);
+            _logger.LogInformation(
+                "Starting Invoice extraction for URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
 
             // CHANGE: Switched from direct Document Intelligence to hybrid approach (Doc Intelligence extracts text → OpenAI analyzes text)
             // For document files (PDF, Word), use Azure Document Intelligence to extract text, then OpenAI to analyze
@@ -1030,14 +1089,17 @@ Ensure the JSON strictly follows the schema above."),
             var invoiceData = ParseInvoiceResponse(content);
 
             _logger.LogInformation(
-                "Invoice extraction completed. Invoice Number: {InvoiceNumber}, Total Amount: {TotalAmount}, Line Items: {ItemCount}, Flagged: {Flagged}",
-                invoiceData.InvoiceNumber, invoiceData.TotalAmount, invoiceData.LineItems.Count, invoiceData.IsFlaggedForReview);
+                "Invoice extraction completed. Invoice Number: {InvoiceNumber}, Total Amount: {TotalAmount}, Line Items: {ItemCount}, Flagged: {Flagged}. CorrelationId: {CorrelationId}",
+                invoiceData.InvoiceNumber, invoiceData.TotalAmount, invoiceData.LineItems.Count, invoiceData.IsFlaggedForReview, correlationId);
 
             return invoiceData;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error extracting Invoice data from URL: {BlobUrl}", blobUrl);
+            _logger.LogError(
+                ex,
+                "Error extracting Invoice data from URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
             throw;
         }
     }
@@ -1143,14 +1205,23 @@ Ensure the JSON strictly follows the schema above."),
     }
 
     /// <summary>
-    /// Extracts structured data from a Cost Summary document
-    /// Uses Azure Document Intelligence for PDFs/Word docs, GPT-4 Vision for images
+    /// Extracts structured data from a Cost Summary document.
+    /// Uses Azure Document Intelligence for PDFs/Word docs, GPT-4 Vision for images.
+    /// Extracts campaign details, cost breakdowns, and totals.
     /// </summary>
+    /// <param name="blobUrl">The blob URL of the cost summary document</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>CostSummaryData containing all extracted cost summary information</returns>
+    /// <exception cref="Exception">Thrown when extraction fails</exception>
     public async Task<CostSummaryData> ExtractCostSummaryAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        
         try
         {
-            _logger.LogInformation("Starting Cost Summary extraction for URL: {BlobUrl}", blobUrl);
+            _logger.LogInformation(
+                "Starting Cost Summary extraction for URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
 
             // For document files (PDF, Word), use Azure Document Intelligence with generic document model
             if (IsDocumentFile(blobUrl))
@@ -1264,14 +1335,17 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
             var costSummaryData = ParseCostSummaryResponse(content);
 
             _logger.LogInformation(
-                "Cost Summary extraction completed. Campaign: {Campaign}, Total Cost: {TotalCost}, Cost Breakdowns: {BreakdownCount}, Flagged: {Flagged}",
-                costSummaryData.CampaignName, costSummaryData.TotalCost, costSummaryData.CostBreakdowns.Count, costSummaryData.IsFlaggedForReview);
+                "Cost Summary extraction completed. Campaign: {Campaign}, Total Cost: {TotalCost}, Cost Breakdowns: {BreakdownCount}, Flagged: {Flagged}. CorrelationId: {CorrelationId}",
+                costSummaryData.CampaignName, costSummaryData.TotalCost, costSummaryData.CostBreakdowns.Count, costSummaryData.IsFlaggedForReview, correlationId);
 
             return costSummaryData;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error extracting Cost Summary data from URL: {BlobUrl}", blobUrl);
+            _logger.LogError(
+                ex,
+                "Error extracting Cost Summary data from URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
             throw;
         }
     }
@@ -1364,13 +1438,21 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
     }
 
     /// <summary>
-    /// Extracts EXIF metadata from a photo
+    /// Extracts EXIF metadata from a photo including timestamp, GPS location, and device information.
+    /// Also performs AI-based content analysis to detect blue t-shirt persons and Bajaj vehicles.
     /// </summary>
+    /// <param name="blobUrl">The blob URL of the photo</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>PhotoMetadata containing EXIF data and AI-detected content features</returns>
     public async Task<PhotoMetadata> ExtractPhotoMetadataAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        
         try
         {
-            _logger.LogInformation("Starting photo metadata extraction for URL: {BlobUrl}", blobUrl);
+            _logger.LogInformation(
+                "Starting photo metadata extraction for URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
 
             // Download the image using file storage service (handles authentication)
             var imageBytes = await _fileStorageService.GetFileBytesAsync(blobUrl);
@@ -1491,14 +1573,17 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
             metadata.IsFlaggedForReview = documentConfidence < CONFIDENCE_THRESHOLD;
 
             _logger.LogInformation(
-                "Photo metadata extraction completed. Timestamp: {Timestamp}, Location: {HasLocation}, Confidence: {Confidence}, Flagged: {Flagged}",
-                metadata.Timestamp, metadata.Latitude.HasValue && metadata.Longitude.HasValue, documentConfidence, metadata.IsFlaggedForReview);
+                "Photo metadata extraction completed. Timestamp: {Timestamp}, Location: {HasLocation}, Confidence: {Confidence}, Flagged: {Flagged}. CorrelationId: {CorrelationId}",
+                metadata.Timestamp, metadata.Latitude.HasValue && metadata.Longitude.HasValue, documentConfidence, metadata.IsFlaggedForReview, correlationId);
 
             return metadata;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error extracting photo metadata from URL: {BlobUrl}", blobUrl);
+            _logger.LogError(
+                ex,
+                "Error extracting photo metadata from URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                blobUrl, correlationId);
             
             // Return empty metadata with low confidence and flagged for review on error
             return new PhotoMetadata
@@ -1509,10 +1594,13 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
         }
     }
 
-    // CHANGE: Added new method - Analyzes photo using OpenAI Vision to detect blue tshirt, 3W vehicle, and read GPS overlay
     /// <summary>
-    /// Analyzes photo content using GPT-4 Vision
+    /// Analyzes photo content using GPT-4 Vision to detect campaign verification elements.
+    /// Detects people wearing blue t-shirts, 3-wheel vehicles, and reads GPS overlay text.
     /// </summary>
+    /// <param name="imageData">Base64-encoded image data</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>PhotoVisionResponse containing detected features and confidence scores</returns>
     private async Task<PhotoVisionResponse> AnalyzePhotoContentAsync(string imageData, CancellationToken cancellationToken)
     {
         var chatCompletionsOptions = new ChatCompletionsOptions
@@ -1624,8 +1712,11 @@ If GPS overlay is not visible, set photoDateFromOverlay to empty string and lat/
     }
 
     /// <summary>
-    /// Cleans JSON response by removing markdown code blocks
+    /// Cleans JSON response by removing markdown code blocks and extra formatting.
+    /// Handles responses wrapped in ```json or ``` blocks.
     /// </summary>
+    /// <param name="content">The raw JSON content to clean</param>
+    /// <returns>Cleaned JSON string ready for deserialization</returns>
     private string CleanJsonResponse(string content)
     {
         var jsonContent = content.Trim();
@@ -1645,8 +1736,13 @@ If GPS overlay is not visible, set photoDateFromOverlay to empty string and lat/
     }
 
     /// <summary>
-    /// Extracts text from PDF using Azure Document Intelligence
+    /// Extracts text from PDF using Azure Document Intelligence.
+    /// Uses the prebuilt-read model to extract all text content.
     /// </summary>
+    /// <param name="documentUri">The URI of the document to extract text from</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Extracted text content from the document</returns>
+    /// <exception cref="Exception">Thrown when text extraction fails</exception>
     private async Task<string> ExtractTextFromPdfAsync(Uri documentUri, CancellationToken cancellationToken)
     {
         try
@@ -1661,10 +1757,13 @@ If GPS overlay is not visible, set photoDateFromOverlay to empty string and lat/
         }
     }
 
-    // CHANGE: Added new method - Analyzes PDF-extracted text using OpenAI to get all Invoice fields
     /// <summary>
-    /// Analyzes extracted text using GPT-4 to extract Invoice data
+    /// Analyzes extracted text using GPT-4 to extract Invoice data.
+    /// Performs detailed field extraction from Document Intelligence text output.
     /// </summary>
+    /// <param name="extractedText">The text extracted from the invoice document</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>InvoiceData containing all extracted invoice information</returns>
     private async Task<InvoiceData> AnalyzeInvoiceTextAsync(string extractedText, CancellationToken cancellationToken)
     {
         var chatCompletionsOptions = new ChatCompletionsOptions
@@ -1748,10 +1847,13 @@ Respond ONLY with a JSON object in this exact format:
         return ParseInvoiceResponse(content);
     }
 
-    // CHANGE: Expanded PO text analysis prompt to extract all fields like Invoice
     /// <summary>
-    /// Analyzes extracted text using GPT-4 to extract PO data
+    /// Analyzes extracted text using GPT-4 to extract PO data.
+    /// Performs detailed field extraction from Document Intelligence text output.
     /// </summary>
+    /// <param name="extractedText">The text extracted from the PO document</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>POData containing all extracted purchase order information</returns>
     private async Task<POData> AnalyzePOTextAsync(string extractedText, CancellationToken cancellationToken)
     {
         var chatCompletionsOptions = new ChatCompletionsOptions

@@ -14,6 +14,7 @@ public class EmailAgent : IEmailAgent
     private readonly IApplicationDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly ILogger<EmailAgent> _logger;
+    private readonly ICorrelationIdService _correlationIdService;
 
     // Retry configuration
     private const int MAX_RETRY_ATTEMPTS = 3;
@@ -22,19 +23,38 @@ public class EmailAgent : IEmailAgent
     public EmailAgent(
         IApplicationDbContext context,
         IConfiguration configuration,
-        ILogger<EmailAgent> logger)
+        ILogger<EmailAgent> logger,
+        ICorrelationIdService correlationIdService)
     {
         _context = context;
         _configuration = configuration;
         _logger = logger;
+        _correlationIdService = correlationIdService;
     }
 
+    /// <summary>
+    /// Sends a data failure notification email to the agency user when document validation fails.
+    /// </summary>
+    /// <param name="packageId">The unique identifier of the failed document package.</param>
+    /// <param name="issues">List of validation issues that caused the failure.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>An <see cref="EmailResult"/> indicating success or failure, including retry attempt count.</returns>
+    /// <remarks>
+    /// This method:
+    /// - Loads the package and submitting user information
+    /// - Generates an HTML email body listing all validation issues
+    /// - Sends the email with exponential backoff retry logic (up to 3 attempts)
+    /// - Returns detailed result including message ID on success or error message on failure
+    /// </remarks>
     public async Task<EmailResult> SendDataFailureEmailAsync(
         Guid packageId,
         List<ValidationIssue> issues,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Sending data failure email for package {PackageId}", packageId);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Sending data failure email for package {PackageId}. CorrelationId: {CorrelationId}",
+            packageId, correlationId);
 
         try
         {
@@ -63,7 +83,10 @@ public class EmailAgent : IEmailAgent
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending data failure email for package {PackageId}", packageId);
+            _logger.LogError(
+                ex,
+                "Error sending data failure email for package {PackageId}. CorrelationId: {CorrelationId}",
+                packageId, correlationId);
             return new EmailResult
             {
                 Success = false,
@@ -73,12 +96,29 @@ public class EmailAgent : IEmailAgent
         }
     }
 
+    /// <summary>
+    /// Sends a notification email to the ASM when a document package passes validation and is ready for review.
+    /// </summary>
+    /// <param name="packageId">The unique identifier of the validated document package.</param>
+    /// <param name="asmEmail">The email address of the Area Sales Manager.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>An <see cref="EmailResult"/> indicating success or failure, including retry attempt count.</returns>
+    /// <remarks>
+    /// This method:
+    /// - Loads the package, confidence score, and AI recommendation
+    /// - Generates an HTML email body with package details and AI recommendation
+    /// - Sends the email with exponential backoff retry logic (up to 3 attempts)
+    /// - Notifies the ASM to log in and review the submission
+    /// </remarks>
     public async Task<EmailResult> SendDataPassEmailAsync(
         Guid packageId,
         string asmEmail,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Sending data pass email for package {PackageId} to ASM {Email}", packageId, asmEmail);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Sending data pass email for package {PackageId} to ASM {Email}. CorrelationId: {CorrelationId}",
+            packageId, asmEmail, correlationId);
 
         try
         {
@@ -117,7 +157,10 @@ public class EmailAgent : IEmailAgent
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending data pass email for package {PackageId}", packageId);
+            _logger.LogError(
+                ex,
+                "Error sending data pass email for package {PackageId}. CorrelationId: {CorrelationId}",
+                packageId, correlationId);
             return new EmailResult
             {
                 Success = false,
@@ -127,12 +170,29 @@ public class EmailAgent : IEmailAgent
         }
     }
 
+    /// <summary>
+    /// Sends an approval notification email to the agency user when their document package is approved.
+    /// </summary>
+    /// <param name="packageId">The unique identifier of the approved document package.</param>
+    /// <param name="agencyEmail">The email address of the agency user.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>An <see cref="EmailResult"/> indicating success or failure, including retry attempt count.</returns>
+    /// <remarks>
+    /// This method:
+    /// - Loads the package information
+    /// - Generates a congratulatory HTML email body
+    /// - Sends the email with exponential backoff retry logic (up to 3 attempts)
+    /// - Confirms successful processing of the documents
+    /// </remarks>
     public async Task<EmailResult> SendApprovedEmailAsync(
         Guid packageId,
         string agencyEmail,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Sending approved email for package {PackageId} to {Email}", packageId, agencyEmail);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Sending approved email for package {PackageId} to {Email}. CorrelationId: {CorrelationId}",
+            packageId, agencyEmail, correlationId);
 
         try
         {
@@ -161,7 +221,10 @@ public class EmailAgent : IEmailAgent
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending approved email for package {PackageId}", packageId);
+            _logger.LogError(
+                ex,
+                "Error sending approved email for package {PackageId}. CorrelationId: {CorrelationId}",
+                packageId, correlationId);
             return new EmailResult
             {
                 Success = false,
@@ -171,13 +234,31 @@ public class EmailAgent : IEmailAgent
         }
     }
 
+    /// <summary>
+    /// Sends a rejection notification email to the agency user when their document package is rejected.
+    /// </summary>
+    /// <param name="packageId">The unique identifier of the rejected document package.</param>
+    /// <param name="agencyEmail">The email address of the agency user.</param>
+    /// <param name="reason">The reason for rejection provided by the reviewer.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>An <see cref="EmailResult"/> indicating success or failure, including retry attempt count.</returns>
+    /// <remarks>
+    /// This method:
+    /// - Loads the package information
+    /// - Generates an HTML email body with the rejection reason
+    /// - Sends the email with exponential backoff retry logic (up to 3 attempts)
+    /// - Instructs the user to review feedback and resubmit corrected documents
+    /// </remarks>
     public async Task<EmailResult> SendRejectedEmailAsync(
         Guid packageId,
         string agencyEmail,
         string reason,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Sending rejected email for package {PackageId} to {Email}", packageId, agencyEmail);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Sending rejected email for package {PackageId} to {Email}. CorrelationId: {CorrelationId}",
+            packageId, agencyEmail, correlationId);
 
         try
         {
@@ -206,7 +287,10 @@ public class EmailAgent : IEmailAgent
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending rejected email for package {PackageId}", packageId);
+            _logger.LogError(
+                ex,
+                "Error sending rejected email for package {PackageId}. CorrelationId: {CorrelationId}",
+                packageId, correlationId);
             return new EmailResult
             {
                 Success = false,
@@ -217,8 +301,20 @@ public class EmailAgent : IEmailAgent
     }
 
     /// <summary>
-    /// Sends email with exponential backoff retry logic
+    /// Sends an email with exponential backoff retry logic to handle transient failures.
     /// </summary>
+    /// <param name="recipientEmail">The recipient's email address.</param>
+    /// <param name="subject">The email subject line.</param>
+    /// <param name="body">The HTML email body content.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>An <see cref="EmailResult"/> with success status, message ID (on success), error message (on failure), and attempt count.</returns>
+    /// <remarks>
+    /// Retry strategy:
+    /// - Maximum 3 attempts
+    /// - Exponential backoff delays: 1s, 2s, 4s
+    /// - Logs warnings on retry, errors on final failure
+    /// - Returns detailed result including number of attempts made
+    /// </remarks>
     private async Task<EmailResult> SendEmailWithRetryAsync(
         string recipientEmail,
         string subject,
@@ -283,26 +379,64 @@ public class EmailAgent : IEmailAgent
     }
 
     /// <summary>
-    /// Sends email via Azure Communication Services
-    /// NOTE: This is a placeholder implementation. Replace with actual ACS SDK calls.
+    /// Sends an email via Azure Communication Services.
     /// </summary>
+    /// <param name="recipientEmail">The recipient's email address.</param>
+    /// <param name="subject">The email subject line.</param>
+    /// <param name="body">The HTML email body content.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>A unique message identifier for tracking the email delivery.</returns>
+    /// <remarks>
+    /// <para><strong>NOTE: This is a placeholder implementation.</strong></para>
+    /// <para>
+    /// FUTURE ENHANCEMENT: Azure Communication Services Integration
+    /// This method currently uses a mock implementation for email sending.
+    /// To integrate with Azure Communication Services:
+    /// </para>
+    /// <list type="number">
+    /// <item><description>Add Azure.Communication.Email NuGet package</description></item>
+    /// <item><description>Configure ACS connection string in appsettings.json</description></item>
+    /// <item><description>Replace mock implementation with actual EmailClient SDK calls</description></item>
+    /// <item><description>Handle ACS-specific exceptions and retry policies</description></item>
+    /// </list>
+    /// <para>
+    /// Example implementation:
+    /// <code>
+    /// var emailClient = new EmailClient(connectionString);
+    /// var emailSendOperation = await emailClient.SendAsync(
+    ///     Azure.WaitUntil.Completed,
+    ///     senderAddress: "noreply@bajaj.com",
+    ///     recipientAddress: recipientEmail,
+    ///     subject: subject,
+    ///     htmlContent: body,
+    ///     cancellationToken: cancellationToken);
+    /// return emailSendOperation.Id;
+    /// </code>
+    /// </para>
+    /// </remarks>
     private async Task<string> SendEmailViaACSAsync(
         string recipientEmail,
         string subject,
         string body,
         CancellationToken cancellationToken)
     {
-        // TODO: Replace with actual Azure Communication Services implementation
-        // Example:
-        // var emailClient = new EmailClient(connectionString);
-        // var emailSendOperation = await emailClient.SendAsync(
-        //     Azure.WaitUntil.Completed,
-        //     senderAddress: "noreply@bajaj.com",
-        //     recipientAddress: recipientEmail,
-        //     subject: subject,
-        //     htmlContent: body,
-        //     cancellationToken: cancellationToken);
-        // return emailSendOperation.Id;
+        // FUTURE ENHANCEMENT: Azure Communication Services Integration
+        // This method currently uses a mock implementation for email sending.
+        // To integrate with Azure Communication Services:
+        // 1. Add Azure.Communication.Email NuGet package
+        // 2. Configure ACS connection string in appsettings.json
+        // 3. Replace mock implementation with actual EmailClient SDK calls
+        // 4. Handle ACS-specific exceptions and retry policies
+        // Example implementation:
+        //   var emailClient = new EmailClient(connectionString);
+        //   var emailSendOperation = await emailClient.SendAsync(
+        //       Azure.WaitUntil.Completed,
+        //       senderAddress: "noreply@bajaj.com",
+        //       recipientAddress: recipientEmail,
+        //       subject: subject,
+        //       htmlContent: body,
+        //       cancellationToken: cancellationToken);
+        //   return emailSendOperation.Id;
 
         // Simulate async operation
         await Task.Delay(100, cancellationToken);
@@ -312,8 +446,18 @@ public class EmailAgent : IEmailAgent
     }
 
     /// <summary>
-    /// Generates email body for data failure scenario
+    /// Generates an HTML email body for data failure notifications.
     /// </summary>
+    /// <param name="userName">The name of the agency user who submitted the documents.</param>
+    /// <param name="issues">List of validation issues to include in the email.</param>
+    /// <returns>An HTML-formatted email body listing all validation issues with expected vs. actual values.</returns>
+    /// <remarks>
+    /// The email includes:
+    /// - Personalized greeting
+    /// - List of validation issues with field names and descriptions
+    /// - Expected vs. actual values where applicable
+    /// - Instructions to correct and resubmit
+    /// </remarks>
     private string GenerateDataFailureEmailBody(string userName, List<ValidationIssue> issues)
     {
         var body = new StringBuilder();
@@ -341,8 +485,21 @@ public class EmailAgent : IEmailAgent
     }
 
     /// <summary>
-    /// Generates email body for data pass scenario
+    /// Generates an HTML email body for data pass notifications to ASM.
     /// </summary>
+    /// <param name="agencyName">The name of the agency that submitted the documents.</param>
+    /// <param name="packageId">The unique identifier of the document package.</param>
+    /// <param name="confidence">The overall confidence score (0-100).</param>
+    /// <param name="recommendation">The AI recommendation type (APPROVE, REVIEW, or REJECT).</param>
+    /// <returns>An HTML-formatted email body with package details and AI recommendation.</returns>
+    /// <remarks>
+    /// The email includes:
+    /// - Notification that a package passed validation
+    /// - Package ID for reference
+    /// - Confidence score percentage
+    /// - AI recommendation
+    /// - Instructions to log in and review
+    /// </remarks>
     private string GenerateDataPassEmailBody(string agencyName, Guid packageId, double confidence, string recommendation)
     {
         var body = new StringBuilder();
@@ -363,8 +520,18 @@ public class EmailAgent : IEmailAgent
     }
 
     /// <summary>
-    /// Generates email body for approved scenario
+    /// Generates an HTML email body for approval notifications.
     /// </summary>
+    /// <param name="userName">The name of the agency user who submitted the documents.</param>
+    /// <param name="packageId">The unique identifier of the approved document package.</param>
+    /// <returns>An HTML-formatted congratulatory email body confirming approval.</returns>
+    /// <remarks>
+    /// The email includes:
+    /// - Congratulatory message
+    /// - Package ID for reference
+    /// - Confirmation that documents are in the system
+    /// - Thank you message
+    /// </remarks>
     private string GenerateApprovedEmailBody(string userName, Guid packageId)
     {
         var body = new StringBuilder();
@@ -380,8 +547,19 @@ public class EmailAgent : IEmailAgent
     }
 
     /// <summary>
-    /// Generates email body for rejected scenario
+    /// Generates an HTML email body for rejection notifications.
     /// </summary>
+    /// <param name="userName">The name of the agency user who submitted the documents.</param>
+    /// <param name="packageId">The unique identifier of the rejected document package.</param>
+    /// <param name="reason">The reason for rejection provided by the reviewer.</param>
+    /// <returns>An HTML-formatted email body with rejection reason and instructions to resubmit.</returns>
+    /// <remarks>
+    /// The email includes:
+    /// - Notification of rejection
+    /// - Package ID for reference
+    /// - Detailed reason for rejection
+    /// - Instructions to review feedback, make corrections, and resubmit
+    /// </remarks>
     private string GenerateRejectedEmailBody(string userName, Guid packageId, string reason)
     {
         var body = new StringBuilder();

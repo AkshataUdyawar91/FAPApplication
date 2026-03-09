@@ -925,9 +925,21 @@ public async Task ProcessSubmissionAsync(Guid packageId)
 
 ## Data Models
 
+### Hierarchical Structure
+
+The database follows a hierarchical structure for document organization:
+
+```
+FAP (DocumentPackage)
+  └── 1 PO (Document where Type=PO)
+        └── Multiple Invoices
+              └── Multiple Campaigns (per Invoice)
+                    └── Multiple Photos (per Campaign)
+```
+
 ### Core Entities
 
-**DocumentPackage**:
+**DocumentPackage** (FAP - Field Activity Package):
 
 ```csharp
 public class DocumentPackage
@@ -941,7 +953,10 @@ public class DocumentPackage
     public DateTime? DecisionAt { get; set; }
     
     // Navigation properties
-    public List<Document> Documents { get; set; }
+    public List<Document> Documents { get; set; }  // Contains the single PO document
+    public List<Invoice> Invoices { get; set; }    // Multiple invoices linked to PO
+    public List<Campaign> Campaigns { get; set; }  // All campaigns (for easier querying)
+    public List<CampaignPhoto> CampaignPhotos { get; set; }  // All photos (for easier querying)
     public ValidationResult ValidationResult { get; set; }
     public ConfidenceScore ConfidenceScore { get; set; }
     public Recommendation Recommendation { get; set; }
@@ -962,7 +977,7 @@ public enum PackageState
 }
 ```
 
-**Document**:
+**Document** (PO Document):
 
 ```csharp
 public class Document
@@ -978,6 +993,9 @@ public class Document
     // Extracted data (JSON columns)
     public string ExtractedDataJson { get; set; }
     public double? ExtractionConfidence { get; set; }
+    
+    // Navigation for linked invoices (only for PO documents)
+    public List<Invoice> LinkedInvoices { get; set; }
 }
 
 public enum DocumentType
@@ -988,6 +1006,107 @@ public enum DocumentType
     Photo,
     AdditionalDocument,
     ActivityRecord
+}
+```
+
+**Invoice** (linked to PO):
+
+```csharp
+public class Invoice
+{
+    public Guid Id { get; set; }
+    public Guid PackageId { get; set; }
+    public Guid PODocumentId { get; set; }
+    
+    // Invoice data
+    public string InvoiceNumber { get; set; }
+    public DateTime? InvoiceDate { get; set; }
+    public string VendorName { get; set; }
+    public string GSTNumber { get; set; }
+    public decimal? SubTotal { get; set; }
+    public decimal? TaxAmount { get; set; }
+    public decimal? TotalAmount { get; set; }
+    
+    // File info
+    public string FileName { get; set; }
+    public string BlobUrl { get; set; }
+    public long FileSizeBytes { get; set; }
+    public string ContentType { get; set; }
+    public string ExtractedDataJson { get; set; }
+    public double? ExtractionConfidence { get; set; }
+    public bool IsFlaggedForReview { get; set; }
+    
+    // Navigation
+    public DocumentPackage Package { get; set; }
+    public Document PODocument { get; set; }
+    public List<Campaign> Campaigns { get; set; }
+}
+```
+
+**Campaign** (linked to Invoice):
+
+```csharp
+public class Campaign
+{
+    public Guid Id { get; set; }
+    public Guid InvoiceId { get; set; }
+    public Guid PackageId { get; set; }
+    
+    // Campaign details
+    public string CampaignName { get; set; }
+    public DateTime? StartDate { get; set; }
+    public DateTime? EndDate { get; set; }
+    public int? WorkingDays { get; set; }
+    public string DealershipName { get; set; }
+    public string DealershipAddress { get; set; }
+    public string GPSLocation { get; set; }
+    public string State { get; set; }
+    public decimal? TotalCost { get; set; }
+    public string CostBreakdownJson { get; set; }
+    public string TeamsJson { get; set; }
+    
+    // Cost Summary document (optional)
+    public string CostSummaryFileName { get; set; }
+    public string CostSummaryBlobUrl { get; set; }
+    public string CostSummaryExtractedDataJson { get; set; }
+    public double? CostSummaryExtractionConfidence { get; set; }
+    
+    // Navigation
+    public Invoice Invoice { get; set; }
+    public DocumentPackage Package { get; set; }
+    public List<CampaignPhoto> Photos { get; set; }
+}
+```
+
+**CampaignPhoto** (linked to Campaign):
+
+```csharp
+public class CampaignPhoto
+{
+    public Guid Id { get; set; }
+    public Guid CampaignId { get; set; }
+    public Guid PackageId { get; set; }
+    
+    // File info
+    public string FileName { get; set; }
+    public string BlobUrl { get; set; }
+    public long FileSizeBytes { get; set; }
+    public string ContentType { get; set; }
+    public string Caption { get; set; }
+    
+    // EXIF metadata
+    public DateTime? PhotoTimestamp { get; set; }
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+    public string DeviceModel { get; set; }
+    public string ExtractedMetadataJson { get; set; }
+    public double? ExtractionConfidence { get; set; }
+    public bool IsFlaggedForReview { get; set; }
+    public int DisplayOrder { get; set; }
+    
+    // Navigation
+    public Campaign Campaign { get; set; }
+    public DocumentPackage Package { get; set; }
 }
 ```
 
@@ -1295,6 +1414,102 @@ CREATE INDEX IX_Documents_PackageId ON Documents(PackageId);
 CREATE INDEX IX_Notifications_UserId_IsRead ON Notifications(UserId, IsRead);
 CREATE INDEX IX_AuditLog_UserId ON AuditLog(UserId);
 CREATE INDEX IX_AuditLog_Timestamp ON AuditLog(Timestamp);
+
+-- =============================================
+-- Hierarchical Structure Tables
+-- FAP -> PO -> Invoices -> Campaigns -> Photos
+-- =============================================
+
+-- Invoices table (linked to PO document)
+CREATE TABLE Invoices (
+    Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    PackageId UNIQUEIDENTIFIER NOT NULL,
+    PODocumentId UNIQUEIDENTIFIER NOT NULL,
+    InvoiceNumber NVARCHAR(100),
+    InvoiceDate DATETIME2,
+    VendorName NVARCHAR(500),
+    GSTNumber NVARCHAR(50),
+    SubTotal DECIMAL(18,2),
+    TaxAmount DECIMAL(18,2),
+    TotalAmount DECIMAL(18,2),
+    FileName NVARCHAR(512) NOT NULL,
+    BlobUrl NVARCHAR(2048) NOT NULL,
+    FileSizeBytes BIGINT NOT NULL,
+    ContentType NVARCHAR(128) NOT NULL,
+    ExtractedDataJson NVARCHAR(MAX),
+    ExtractionConfidence FLOAT,
+    IsFlaggedForReview BIT NOT NULL DEFAULT 0,
+    CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    IsDeleted BIT NOT NULL DEFAULT 0,
+    FOREIGN KEY (PackageId) REFERENCES DocumentPackages(Id) ON DELETE CASCADE,
+    FOREIGN KEY (PODocumentId) REFERENCES Documents(Id) ON DELETE NO ACTION
+);
+
+CREATE INDEX IX_Invoices_PackageId ON Invoices(PackageId);
+CREATE INDEX IX_Invoices_PODocumentId ON Invoices(PODocumentId);
+CREATE INDEX IX_Invoices_InvoiceNumber ON Invoices(InvoiceNumber);
+
+-- Campaigns table (linked to Invoice)
+CREATE TABLE Campaigns (
+    Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    InvoiceId UNIQUEIDENTIFIER NOT NULL,
+    PackageId UNIQUEIDENTIFIER NOT NULL,
+    CampaignName NVARCHAR(500),
+    StartDate DATETIME2,
+    EndDate DATETIME2,
+    WorkingDays INT,
+    DealershipName NVARCHAR(500),
+    DealershipAddress NVARCHAR(1000),
+    GPSLocation NVARCHAR(100),
+    State NVARCHAR(100),
+    TotalCost DECIMAL(18,2),
+    CostBreakdownJson NVARCHAR(MAX),
+    TeamsJson NVARCHAR(MAX),
+    CostSummaryFileName NVARCHAR(512),
+    CostSummaryBlobUrl NVARCHAR(2048),
+    CostSummaryExtractedDataJson NVARCHAR(MAX),
+    CostSummaryExtractionConfidence FLOAT,
+    CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    IsDeleted BIT NOT NULL DEFAULT 0,
+    FOREIGN KEY (InvoiceId) REFERENCES Invoices(Id) ON DELETE CASCADE,
+    FOREIGN KEY (PackageId) REFERENCES DocumentPackages(Id) ON DELETE NO ACTION
+);
+
+CREATE INDEX IX_Campaigns_InvoiceId ON Campaigns(InvoiceId);
+CREATE INDEX IX_Campaigns_PackageId ON Campaigns(PackageId);
+CREATE INDEX IX_Campaigns_State ON Campaigns(State);
+CREATE INDEX IX_Campaigns_CampaignName ON Campaigns(CampaignName);
+
+-- CampaignPhotos table (linked to Campaign)
+CREATE TABLE CampaignPhotos (
+    Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    CampaignId UNIQUEIDENTIFIER NOT NULL,
+    PackageId UNIQUEIDENTIFIER NOT NULL,
+    FileName NVARCHAR(512) NOT NULL,
+    BlobUrl NVARCHAR(2048) NOT NULL,
+    FileSizeBytes BIGINT NOT NULL,
+    ContentType NVARCHAR(128) NOT NULL,
+    Caption NVARCHAR(1000),
+    PhotoTimestamp DATETIME2,
+    Latitude FLOAT,
+    Longitude FLOAT,
+    DeviceModel NVARCHAR(200),
+    ExtractedMetadataJson NVARCHAR(MAX),
+    ExtractionConfidence FLOAT,
+    IsFlaggedForReview BIT NOT NULL DEFAULT 0,
+    DisplayOrder INT NOT NULL DEFAULT 0,
+    CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    IsDeleted BIT NOT NULL DEFAULT 0,
+    FOREIGN KEY (CampaignId) REFERENCES Campaigns(Id) ON DELETE CASCADE,
+    FOREIGN KEY (PackageId) REFERENCES DocumentPackages(Id) ON DELETE NO ACTION
+);
+
+CREATE INDEX IX_CampaignPhotos_CampaignId ON CampaignPhotos(CampaignId);
+CREATE INDEX IX_CampaignPhotos_PackageId ON CampaignPhotos(PackageId);
+CREATE INDEX IX_CampaignPhotos_PhotoTimestamp ON CampaignPhotos(PhotoTimestamp);
 ```
 
 ## Correctness Properties
@@ -3099,3 +3314,857 @@ dev_dependencies:
 ```
 
 This comprehensive Flutter implementation will ensure a maintainable, performant, and accessible mobile application that follows industry best practices.
+
+
+## UI Design: PO Field Display and Auto-Population
+
+### Overview
+
+The Agency submission form will display four dedicated input fields for PO data that automatically populate after the PO document is uploaded and processed by the DocumentAgent. This provides immediate visual feedback to users and allows them to verify or correct extracted data before submission.
+
+### Component Design
+
+**Component Name**: POFieldsSection
+
+**Location**: Agency submission form (agency_dashboard_page.dart), displayed after PO document upload card
+
+**Layout**: 2x2 grid on desktop/tablet, vertical stack on mobile
+
+### Field Specifications
+
+1. **PO Number Field**
+   - Type: Text input
+   - Placeholder: "Enter PO number"
+   - Position: Top-left (grid) / First (mobile)
+   - Validation: Required, alphanumeric
+   - Auto-population source: `POData.PONumber` from extracted JSON
+
+2. **PO Amount Field**
+   - Type: Currency input
+   - Placeholder: "Enter amount"
+   - Position: Top-right (grid) / Second (mobile)
+   - Format: ₹ symbol prefix, comma-separated thousands, 2 decimal places (e.g., "₹ 10,500.00")
+   - Validation: Required, positive number
+   - Auto-population source: `POData.TotalAmount` from extracted JSON
+
+3. **PO Date Field**
+   - Type: Date picker input
+   - Placeholder: "dd-mm-yyyy"
+   - Position: Bottom-left (grid) / Third (mobile)
+   - Format: dd-mm-yyyy (e.g., "15-03-2024")
+   - Validation: Required, valid date, not in future
+   - Auto-population source: `POData.Date` from extracted JSON
+
+4. **Vendor Name Field**
+   - Type: Text input
+   - Placeholder: "Enter vendor name"
+   - Position: Bottom-right (grid) / Fourth (mobile)
+   - Validation: Required, max 100 characters
+   - Auto-population source: `POData.VendorName` from extracted JSON
+
+### Visual Design
+
+**Grid Layout (Desktop/Tablet ≥600px)**:
+```
+┌─────────────────────────────┬─────────────────────────────┐
+│  PO Number                  │  PO Amount (₹)              │
+│  [Enter PO number]          │  [Enter amount]             │
+└─────────────────────────────┴─────────────────────────────┘
+┌─────────────────────────────┬─────────────────────────────┐
+│  PO Date                    │  Vendor Name                │
+│  [dd-mm-yyyy]               │  [Enter vendor name]        │
+└─────────────────────────────┴─────────────────────────────┘
+```
+
+**Stack Layout (Mobile <600px)**:
+```
+┌───────────────────────────────────────────────────────────┐
+│  PO Number                                                │
+│  [Enter PO number]                                        │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  PO Amount (₹)                                            │
+│  [Enter amount]                                           │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  PO Date                                                  │
+│  [dd-mm-yyyy]                                             │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  Vendor Name                                              │
+│  [Enter vendor name]                                      │
+└───────────────────────────────────────────────────────────┘
+```
+
+### Styling
+
+- **Field Container**: Card with elevation 1, 8px border radius, 16px padding
+- **Label**: Dark Blue (#003087), 14px font size, medium weight
+- **Input**: 16px font size, regular weight, Light Blue (#00A3E0) focus border
+- **Placeholder**: Gray (#9E9E9E), 16px font size, regular weight
+- **Spacing**: 16px between fields (grid), 12px between fields (mobile)
+- **Section Margin**: 24px top margin from PO upload card
+
+### Behavior
+
+**Initial State (No PO Uploaded)**:
+- All four fields displayed with empty values
+- Placeholders visible
+- Fields are editable
+- No visual indication of auto-population
+
+**After PO Upload and Extraction**:
+1. DocumentAgent processes PO document
+2. Extracted POData is stored in Document.ExtractedDataJson
+3. Frontend receives extraction complete event (via polling or state update)
+4. POFieldsSection reads POData from submission state
+5. Fields auto-populate with formatted values:
+   - PO Number: Direct string value
+   - PO Amount: Formatted as "₹ 10,500.00"
+   - PO Date: Formatted as "15-03-2024"
+   - Vendor Name: Direct string value
+6. Fields remain editable for manual corrections
+
+**Manual Edit Behavior**:
+- User can click/tap any field to edit
+- Edited values are preserved in local state
+- If PO document is re-uploaded, edited fields are NOT overwritten
+- Track "manually edited" flag per field to prevent overwriting
+
+**Incomplete Extraction**:
+- If POData field is null/empty, leave corresponding input field empty
+- Show placeholder text
+- User can manually enter value
+
+### Data Flow
+
+```
+1. User uploads PO document
+   ↓
+2. DocumentAgent.ExtractPOAsync() processes document
+   ↓
+3. POData stored in Document.ExtractedDataJson
+   ↓
+4. Frontend polls/watches submission state
+   ↓
+5. SubmissionNotifier updates with extracted POData
+   ↓
+6. POFieldsSection widget rebuilds with new data
+   ↓
+7. TextEditingController values updated (if not manually edited)
+   ↓
+8. User sees auto-populated fields
+   ↓
+9. User can edit any field
+   ↓
+10. On submit, current field values (auto or manual) sent to API
+```
+
+### Implementation Notes
+
+**State Management**:
+- Use Riverpod StateNotifier to manage PO field values
+- Track "manually edited" flags for each field
+- Separate state for extracted data vs. current field values
+
+**Widget Structure**:
+```dart
+class POFieldsSection extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final poData = ref.watch(submissionProvider).poData;
+    final isDesktop = MediaQuery.of(context).size.width >= 600;
+    
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: isDesktop
+            ? _buildGridLayout(poData)
+            : _buildStackLayout(poData),
+      ),
+    );
+  }
+  
+  Widget _buildGridLayout(POData? poData) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: PONumberField(initialValue: poData?.poNumber)),
+            const SizedBox(width: 16),
+            Expanded(child: POAmountField(initialValue: poData?.totalAmount)),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: PODateField(initialValue: poData?.date)),
+            const SizedBox(width: 16),
+            Expanded(child: VendorNameField(initialValue: poData?.vendorName)),
+          ],
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildStackLayout(POData? poData) {
+    return Column(
+      children: [
+        PONumberField(initialValue: poData?.poNumber),
+        const SizedBox(height: 12),
+        POAmountField(initialValue: poData?.totalAmount),
+        const SizedBox(height: 12),
+        PODateField(initialValue: poData?.date),
+        const SizedBox(height: 12),
+        VendorNameField(initialValue: poData?.vendorName),
+      ],
+    );
+  }
+}
+```
+
+**Field Widgets**:
+- Each field is a separate widget (PONumberField, POAmountField, etc.)
+- Use TextEditingController to manage field values
+- Implement formatters for currency and date fields
+- Add validation logic per field
+
+**Currency Formatting**:
+```dart
+class CurrencyInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    // Format as ₹ 10,500.00
+    final number = double.tryParse(newValue.text.replaceAll(RegExp(r'[^\d.]'), ''));
+    if (number == null) return oldValue;
+    
+    final formatted = NumberFormat.currency(
+      symbol: '₹ ',
+      decimalDigits: 2,
+      locale: 'en_IN',
+    ).format(number);
+    
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+```
+
+**Date Formatting**:
+```dart
+String formatDateToDDMMYYYY(DateTime date) {
+  return DateFormat('dd-MM-yyyy').format(date);
+}
+
+DateTime? parseDDMMYYYY(String dateStr) {
+  try {
+    return DateFormat('dd-MM-yyyy').parse(dateStr);
+  } catch (e) {
+    return null;
+  }
+}
+```
+
+### Accessibility
+
+- Add semantic labels to all fields: "PO Number input", "PO Amount input", etc.
+- Ensure 48x48 minimum touch targets
+- Provide clear error messages for validation failures
+- Support keyboard navigation (tab order: PO Number → PO Amount → PO Date → Vendor Name)
+- Announce auto-population to screen readers: "PO fields auto-populated from document"
+
+### Testing
+
+**Widget Tests**:
+1. Test initial empty state renders correctly
+2. Test grid layout on desktop breakpoint
+3. Test stack layout on mobile breakpoint
+4. Test auto-population when POData is provided
+5. Test manual edit preserves user input
+6. Test currency formatting for PO Amount
+7. Test date formatting for PO Date
+8. Test validation errors display correctly
+
+**Integration Tests**:
+1. Upload PO document → verify fields auto-populate
+2. Edit auto-populated field → re-upload PO → verify edit is preserved
+3. Submit form with auto-populated values → verify values sent to API
+4. Submit form with manually edited values → verify edited values sent to API
+
+### Validation Rules
+
+**PO Number**:
+- Required: "PO Number is required"
+- Pattern: Alphanumeric, max 50 characters
+- Error: "Invalid PO Number format"
+
+**PO Amount**:
+- Required: "PO Amount is required"
+- Positive number: "Amount must be greater than zero"
+- Max: 10,000,000 (₹ 1 crore)
+- Error: "Invalid amount"
+
+**PO Date**:
+- Required: "PO Date is required"
+- Valid date format: dd-mm-yyyy
+- Not in future: "PO Date cannot be in the future"
+- Error: "Invalid date format"
+
+**Vendor Name**:
+- Required: "Vendor Name is required"
+- Max length: 100 characters
+- Error: "Vendor Name is too long"
+
+### Error Handling
+
+**Extraction Failure**:
+- If DocumentAgent fails to extract PO data, fields remain empty
+- Show info message: "Unable to extract PO data automatically. Please enter manually."
+- User can manually fill all fields
+
+**Partial Extraction**:
+- If some fields extracted, others empty, populate available fields
+- Show info message: "Some PO data extracted. Please verify and complete missing fields."
+
+**Network Failure**:
+- If extraction status cannot be fetched, show loading state
+- Retry button to fetch extraction results
+- Fallback to manual entry if retry fails
+
+This design ensures a smooth user experience with automatic data population while maintaining full user control and data accuracy.
+
+
+## UI Design: Invoice Field Display and Auto-Population
+
+### Overview
+
+The Agency submission form will display five dedicated input fields for Invoice data that automatically populate after the Invoice document is uploaded and processed by the DocumentAgent. Additionally, a cross-validation section will display PO numbers from both Invoice and PO documents to help users verify consistency.
+
+### Component Design
+
+**Component Name**: InvoiceFieldsSection
+
+**Location**: Agency submission form (agency_dashboard_page.dart), displayed after Invoice document upload card
+
+**Layout**: 2-column grid on desktop/tablet, vertical stack on mobile
+
+### Field Specifications
+
+1. **Invoice No Field**
+   - Type: Text input
+   - Placeholder: "Enter invoice number"
+   - Position: Row 1, Left column
+   - Validation: Required, alphanumeric, max 50 characters
+   - Auto-population source: `InvoiceData.InvoiceNumber` from extracted JSON
+
+2. **Invoice Date Field**
+   - Type: Date picker input
+   - Placeholder: "dd-mm-yyyy"
+   - Position: Row 1, Right column
+   - Format: dd-mm-yyyy (e.g., "15-03-2024")
+   - Validation: Required, valid date, not in future
+   - Auto-population source: `InvoiceData.Date` from extracted JSON
+
+3. **Invoice Amount Field**
+   - Type: Currency input
+   - Placeholder: "Enter amount"
+   - Position: Row 2, Left column
+   - Format: ₹ symbol prefix, comma-separated thousands, 2 decimal places (e.g., "₹ 10,500.00")
+   - Validation: Required, positive number
+   - Auto-population source: `InvoiceData.TotalAmount` from extracted JSON
+
+4. **GSTIN Field**
+   - Type: Text input
+   - Placeholder: "Enter GSTIN"
+   - Position: Row 2, Right column
+   - Validation: Required, GSTIN format (15 characters alphanumeric)
+   - Auto-population source: `InvoiceData.GSTIN` from extracted JSON
+
+5. **Vendor Name Field**
+   - Type: Text input
+   - Placeholder: "Enter vendor name"
+   - Position: Row 3, Full width
+   - Validation: Required, max 100 characters
+   - Auto-population source: `InvoiceData.VendorName` from extracted JSON
+
+### Cross-Validation Section
+
+**Component Name**: POCrossValidationSection
+
+**Purpose**: Display PO numbers from both Invoice and PO documents for visual verification
+
+**Fields**:
+
+1. **PO Number (from Invoice)**
+   - Type: Read-only text field
+   - Placeholder: "-"
+   - Position: Left column
+   - Auto-population source: `InvoiceData.POReference` from extracted JSON
+   - Style: Gray background, non-editable
+
+2. **PO Number (from PO Document)**
+   - Type: Read-only text field
+   - Placeholder: "-"
+   - Position: Right column
+   - Auto-population source: `POData.PONumber` from PO fields section
+   - Style: Gray background, non-editable
+
+**Validation Indicator**:
+- Green checkmark icon + "PO numbers match" when values are equal
+- Red warning icon + "PO numbers do not match. Please verify." when values differ
+- No indicator when either field is empty
+
+### Visual Design
+
+**Grid Layout (Desktop/Tablet ≥600px)**:
+```
+┌─────────────────────────────┬─────────────────────────────┐
+│  Invoice No                 │  Invoice Date               │
+│  [Enter invoice number]     │  [dd-mm-yyyy]          📅   │
+└─────────────────────────────┴─────────────────────────────┘
+┌─────────────────────────────┬─────────────────────────────┐
+│  Invoice Amount (₹)         │  GSTIN                      │
+│  [Enter amount]             │  [Enter GSTIN]              │
+└─────────────────────────────┴─────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  Vendor Name                                              │
+│  [Enter vendor name]                                      │
+└───────────────────────────────────────────────────────────┘
+
+Cross-Validation with PO Document
+┌─────────────────────────────┬─────────────────────────────┐
+│  PO Number (from Invoice)   │  PO Number (from PO Doc)    │
+│  [Read-only value]          │  [Read-only value]          │
+└─────────────────────────────┴─────────────────────────────┘
+✓ PO numbers match  OR  ⚠ PO numbers do not match. Please verify.
+```
+
+**Stack Layout (Mobile <600px)**:
+```
+┌───────────────────────────────────────────────────────────┐
+│  Invoice No                                               │
+│  [Enter invoice number]                                   │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  Invoice Date                                        📅   │
+│  [dd-mm-yyyy]                                             │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  Invoice Amount (₹)                                       │
+│  [Enter amount]                                           │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  GSTIN                                                    │
+│  [Enter GSTIN]                                            │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  Vendor Name                                              │
+│  [Enter vendor name]                                      │
+└───────────────────────────────────────────────────────────┘
+
+Cross-Validation with PO Document
+┌───────────────────────────────────────────────────────────┐
+│  PO Number (from Invoice)                                 │
+│  [Read-only value]                                        │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  PO Number (from PO Document)                             │
+│  [Read-only value]                                        │
+└───────────────────────────────────────────────────────────┘
+✓ PO numbers match  OR  ⚠ PO numbers do not match. Please verify.
+```
+
+### Styling
+
+**Invoice Fields Section**:
+- **Field Container**: Card with elevation 1, 8px border radius, 16px padding
+- **Label**: Dark Blue (#003087), 14px font size, medium weight
+- **Input**: 16px font size, regular weight, Light Blue (#00A3E0) focus border
+- **Placeholder**: Gray (#9E9E9E), 16px font size, regular weight
+- **Spacing**: 16px between fields (grid), 12px between fields (mobile)
+- **Section Margin**: 24px top margin from Invoice upload card
+
+**Cross-Validation Section**:
+- **Section Header**: "Cross-Validation with PO Document", Dark Blue (#003087), 16px font size, medium weight
+- **Field Container**: Card with gray background (#F5F5F5), 8px border radius, 12px padding
+- **Read-only Fields**: Gray background (#EEEEEE), non-editable appearance
+- **Match Indicator**: Green (#4CAF50) checkmark icon + text
+- **Mismatch Indicator**: Red (#F44336) warning icon + text
+- **Section Margin**: 16px top margin from Vendor Name field
+
+### Behavior
+
+**Initial State (No Invoice Uploaded)**:
+- All five fields displayed with empty values
+- Placeholders visible
+- Fields are editable
+- Cross-validation section hidden (only shown when both PO and Invoice uploaded)
+
+**After Invoice Upload and Extraction**:
+1. DocumentAgent processes Invoice document
+2. Extracted InvoiceData is stored in Document.ExtractedDataJson
+3. Frontend receives extraction complete event
+4. InvoiceFieldsSection reads InvoiceData from submission state
+5. Fields auto-populate with formatted values:
+   - Invoice No: Direct string value
+   - Invoice Date: Formatted as "15-03-2024"
+   - Invoice Amount: Formatted as "₹ 10,500.00"
+   - GSTIN: Direct string value
+   - Vendor Name: Direct string value
+6. Fields remain editable for manual corrections
+
+**Cross-Validation Behavior**:
+1. Cross-validation section appears only when BOTH PO and Invoice documents are uploaded
+2. "PO Number (from Invoice)" auto-populates from InvoiceData.POReference
+3. "PO Number (from PO Document)" auto-populates from POData.PONumber
+4. System compares the two values:
+   - If equal: Show green checkmark + "PO numbers match"
+   - If different: Show red warning + "PO numbers do not match. Please verify."
+   - If either is empty: Show no indicator
+5. Both fields are read-only (user cannot edit)
+6. If user edits PO Number in PO fields section, cross-validation updates in real-time
+
+**Manual Edit Behavior**:
+- User can click/tap any editable field to modify
+- Edited values are preserved in local state
+- If Invoice document is re-uploaded, edited fields are NOT overwritten
+- Track "manually edited" flag per field to prevent overwriting
+
+**Incomplete Extraction**:
+- If InvoiceData field is null/empty, leave corresponding input field empty
+- Show placeholder text
+- User can manually enter value
+
+### Data Flow
+
+```
+1. User uploads Invoice document
+   ↓
+2. DocumentAgent.ExtractInvoiceAsync() processes document
+   ↓
+3. InvoiceData stored in Document.ExtractedDataJson
+   ↓
+4. Frontend polls/watches submission state
+   ↓
+5. SubmissionNotifier updates with extracted InvoiceData
+   ↓
+6. InvoiceFieldsSection widget rebuilds with new data
+   ↓
+7. TextEditingController values updated (if not manually edited)
+   ↓
+8. User sees auto-populated fields
+   ↓
+9. If PO also uploaded, POCrossValidationSection appears
+   ↓
+10. Cross-validation compares PO numbers and shows indicator
+   ↓
+11. User can edit any field
+   ↓
+12. On submit, current field values (auto or manual) sent to API
+```
+
+### Implementation Notes
+
+**State Management**:
+- Use Riverpod StateNotifier to manage Invoice field values
+- Track "manually edited" flags for each field
+- Separate state for extracted data vs. current field values
+- Watch both POData and InvoiceData for cross-validation
+
+**Widget Structure**:
+```dart
+class InvoiceFieldsSection extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final invoiceData = ref.watch(submissionProvider).invoiceData;
+    final poData = ref.watch(submissionProvider).poData;
+    final isDesktop = MediaQuery.of(context).size.width >= 600;
+    
+    return Column(
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: isDesktop
+                ? _buildGridLayout(invoiceData)
+                : _buildStackLayout(invoiceData),
+          ),
+        ),
+        if (invoiceData != null && poData != null)
+          const SizedBox(height: 16),
+        if (invoiceData != null && poData != null)
+          POCrossValidationSection(
+            poFromInvoice: invoiceData.poReference,
+            poFromPODoc: poData.poNumber,
+          ),
+      ],
+    );
+  }
+  
+  Widget _buildGridLayout(InvoiceData? invoiceData) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: InvoiceNoField(initialValue: invoiceData?.invoiceNumber)),
+            const SizedBox(width: 16),
+            Expanded(child: InvoiceDateField(initialValue: invoiceData?.date)),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: InvoiceAmountField(initialValue: invoiceData?.totalAmount)),
+            const SizedBox(width: 16),
+            Expanded(child: GSTINField(initialValue: invoiceData?.gstin)),
+          ],
+        ),
+        const SizedBox(height: 16),
+        VendorNameField(initialValue: invoiceData?.vendorName),
+      ],
+    );
+  }
+  
+  Widget _buildStackLayout(InvoiceData? invoiceData) {
+    return Column(
+      children: [
+        InvoiceNoField(initialValue: invoiceData?.invoiceNumber),
+        const SizedBox(height: 12),
+        InvoiceDateField(initialValue: invoiceData?.date),
+        const SizedBox(height: 12),
+        InvoiceAmountField(initialValue: invoiceData?.totalAmount),
+        const SizedBox(height: 12),
+        GSTINField(initialValue: invoiceData?.gstin),
+        const SizedBox(height: 12),
+        VendorNameField(initialValue: invoiceData?.vendorName),
+      ],
+    );
+  }
+}
+```
+
+**Cross-Validation Widget**:
+```dart
+class POCrossValidationSection extends StatelessWidget {
+  final String? poFromInvoice;
+  final String? poFromPODoc;
+  
+  const POCrossValidationSection({
+    Key? key,
+    this.poFromInvoice,
+    this.poFromPODoc,
+  }) : super(key: key);
+  
+  bool get isMatch => 
+    poFromInvoice != null && 
+    poFromPODoc != null && 
+    poFromInvoice == poFromPODoc;
+  
+  bool get hasMismatch => 
+    poFromInvoice != null && 
+    poFromPODoc != null && 
+    poFromInvoice != poFromPODoc;
+  
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Cross-Validation with PO Document',
+              style: TextStyle(
+                color: BajajColors.darkBlue,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildReadOnlyField(
+                    'PO Number (from Invoice)',
+                    poFromInvoice ?? '-',
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildReadOnlyField(
+                    'PO Number (from PO Document)',
+                    poFromPODoc ?? '-',
+                  ),
+                ),
+              ],
+            ),
+            if (isMatch || hasMismatch) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(
+                    isMatch ? Icons.check_circle : Icons.warning,
+                    color: isMatch ? Colors.green : Colors.red,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    isMatch 
+                      ? 'PO numbers match' 
+                      : 'PO numbers do not match. Please verify.',
+                    style: TextStyle(
+                      color: isMatch ? Colors.green : Colors.red,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildReadOnlyField(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: BajajColors.darkBlue,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 16,
+              color: Colors.black87,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+```
+
+**GSTIN Validation**:
+```dart
+String? validateGSTIN(String? value) {
+  if (value == null || value.isEmpty) {
+    return 'GSTIN is required';
+  }
+  
+  // GSTIN format: 15 characters alphanumeric
+  final gstinRegex = RegExp(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$');
+  
+  if (!gstinRegex.hasMatch(value)) {
+    return 'Invalid GSTIN format';
+  }
+  
+  return null;
+}
+```
+
+### Accessibility
+
+- Add semantic labels to all fields: "Invoice Number input", "Invoice Date input", etc.
+- Add semantic label to cross-validation section: "PO number cross-validation"
+- Ensure 48x48 minimum touch targets
+- Provide clear error messages for validation failures
+- Support keyboard navigation (tab order: Invoice No → Invoice Date → Invoice Amount → GSTIN → Vendor Name)
+- Announce auto-population to screen readers: "Invoice fields auto-populated from document"
+- Announce cross-validation result to screen readers: "PO numbers match" or "PO numbers do not match"
+
+### Testing
+
+**Widget Tests**:
+1. Test initial empty state renders correctly
+2. Test grid layout on desktop breakpoint
+3. Test stack layout on mobile breakpoint
+4. Test auto-population when InvoiceData is provided
+5. Test manual edit preserves user input
+6. Test currency formatting for Invoice Amount
+7. Test date formatting for Invoice Date
+8. Test GSTIN validation
+9. Test cross-validation section appears when both PO and Invoice uploaded
+10. Test cross-validation shows match indicator when PO numbers equal
+11. Test cross-validation shows mismatch indicator when PO numbers differ
+12. Test cross-validation hidden when only one document uploaded
+
+**Integration Tests**:
+1. Upload Invoice document → verify fields auto-populate
+2. Edit auto-populated field → re-upload Invoice → verify edit is preserved
+3. Upload PO then Invoice → verify cross-validation section appears
+4. Upload Invoice with matching PO reference → verify green checkmark
+5. Upload Invoice with non-matching PO reference → verify red warning
+6. Submit form with auto-populated values → verify values sent to API
+
+### Validation Rules
+
+**Invoice No**:
+- Required: "Invoice Number is required"
+- Pattern: Alphanumeric, max 50 characters
+- Error: "Invalid Invoice Number format"
+
+**Invoice Date**:
+- Required: "Invoice Date is required"
+- Valid date format: dd-mm-yyyy
+- Not in future: "Invoice Date cannot be in the future"
+- Error: "Invalid date format"
+
+**Invoice Amount**:
+- Required: "Invoice Amount is required"
+- Positive number: "Amount must be greater than zero"
+- Max: 10,000,000 (₹ 1 crore)
+- Error: "Invalid amount"
+
+**GSTIN**:
+- Required: "GSTIN is required"
+- Format: 15 characters, specific pattern (2 digits + 5 letters + 4 digits + 1 letter + 1 alphanumeric + Z + 1 alphanumeric)
+- Error: "Invalid GSTIN format"
+
+**Vendor Name**:
+- Required: "Vendor Name is required"
+- Max length: 100 characters
+- Error: "Vendor Name is too long"
+
+### Error Handling
+
+**Extraction Failure**:
+- If DocumentAgent fails to extract Invoice data, fields remain empty
+- Show info message: "Unable to extract Invoice data automatically. Please enter manually."
+- User can manually fill all fields
+
+**Partial Extraction**:
+- If some fields extracted, others empty, populate available fields
+- Show info message: "Some Invoice data extracted. Please verify and complete missing fields."
+
+**Cross-Validation Unavailable**:
+- If PO reference not extracted from Invoice, show "-" in cross-validation field
+- If PO document not uploaded, hide cross-validation section entirely
+
+**Network Failure**:
+- If extraction status cannot be fetched, show loading state
+- Retry button to fetch extraction results
+- Fallback to manual entry if retry fails
+
+This design ensures a smooth user experience with automatic data population, real-time cross-validation, and full user control over data accuracy.

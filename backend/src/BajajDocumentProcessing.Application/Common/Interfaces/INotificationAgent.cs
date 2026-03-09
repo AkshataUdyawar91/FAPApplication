@@ -34,6 +34,11 @@ public interface INotificationAgent
     Task MarkAsReadAsync(Guid notificationId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Gets a notification by ID
+    /// </summary>
+    Task<Notification?> GetNotificationByIdAsync(Guid notificationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets the count of unread notifications for a user
     /// </summary>
     Task<int> GetUnreadCountAsync(Guid userId, CancellationToken cancellationToken = default);

@@ -28,6 +28,12 @@ public class NullChatService : IChatService
         return Task.FromResult(new List<ChatMessage>());
     }
 
+    public Task<Domain.Entities.Conversation?> GetConversationAsync(Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        _logger.LogDebug("Get conversation skipped - Azure OpenAI not configured");
+        return Task.FromResult<Domain.Entities.Conversation?>(null);
+    }
+
     public Task ClearConversationAsync(Guid conversationId, CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("Clear conversation skipped - Azure OpenAI not configured");

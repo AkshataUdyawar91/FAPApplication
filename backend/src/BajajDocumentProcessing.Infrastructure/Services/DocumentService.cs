@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.Documents;
+using BajajDocumentProcessing.Application.Utilities;
 using BajajDocumentProcessing.Domain.Entities;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Persistence;
@@ -61,7 +62,11 @@ public class DocumentService : IDocumentService
         // Validate file
         if (!await ValidateFileAsync(file, documentType))
         {
-            throw new InvalidOperationException("File validation failed");
+            throw new Domain.Exceptions.ValidationException(
+                new Dictionary<string, string[]>
+                {
+                    { "file", new[] { "File validation failed. Check file type and size." } }
+                });
         }
 
         // Create or get package
@@ -77,7 +82,7 @@ public class DocumentService : IDocumentService
             
             if (existingPackage == null)
             {
-                throw new InvalidOperationException("Package not found");
+                throw new Domain.Exceptions.NotFoundException("Package not found");
             }
             
             // Log if user mismatch (for debugging)
@@ -115,7 +120,11 @@ public class DocumentService : IDocumentService
             
             if (photoCount >= 20)
             {
-                throw new InvalidOperationException("Photo limit exceeded. Maximum 20 photos allowed per submission.");
+                throw new Domain.Exceptions.ValidationException(
+                    new Dictionary<string, string[]>
+                    {
+                        { "photos", new[] { "Photo limit exceeded. Maximum 20 photos allowed per submission." } }
+                    });
             }
         }
 
@@ -278,6 +287,15 @@ public class DocumentService : IDocumentService
             _logger.LogWarning(
                 "File extension {Extension} not allowed for {DocumentType}",
                 fileExtension, documentType);
+            return false;
+        }
+
+        // Validate file type by magic bytes (prevents file type spoofing)
+        if (!await FileUploadValidator.ValidateFileTypeByMagicBytesAsync(file))
+        {
+            _logger.LogWarning(
+                "File {FileName} failed magic byte validation. Extension: {Extension}",
+                file.FileName, fileExtension);
             return false;
         }
 
