@@ -8,6 +8,8 @@ using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
+// CHANGE: Added ClosedXML for reading Excel files (Enquiry Dump)
+using ClosedXML.Excel;
 
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
@@ -67,12 +69,16 @@ public class DocumentAgent : IDocumentAgent
     /// </summary>
     /// <param name="blobUrl">The blob URL to check</param>
     /// <returns>True if the file is a PDF or Word document; otherwise, false</returns>
+    // CHANGE: Added .xls, .xlsx, .csv to recognized document file extensions for Enquiry Dump and Activity Summary
     private bool IsDocumentFile(string blobUrl)
     {
         var lowerUrl = blobUrl.ToLowerInvariant();
         return lowerUrl.EndsWith(".pdf") || 
                lowerUrl.EndsWith(".doc") || 
-               lowerUrl.EndsWith(".docx");
+               lowerUrl.EndsWith(".docx") ||
+               lowerUrl.EndsWith(".xls") ||
+               lowerUrl.EndsWith(".xlsx") ||
+               lowerUrl.EndsWith(".csv");
     }
 
     /// <summary>
@@ -434,24 +440,15 @@ Carefully analyze the provided PO document image and extract ALL visible informa
 REQUIRED FIELDS TO EXTRACT:
 1. PO Number - Look for: 'PO No', 'PO Number', 'Purchase Order'
 2. PO Type - Look for: 'PO TYPE', 'Order Type' (e.g., 'Marketing PO')
-3. Agency Code - Agency/customer identifier
-4. Agency Name - Name of the agency/customer
-5. Agency Address - Full address of the agency
-6. Vendor Name - Look for: 'Vendor', 'Supplier'
-7. Vendor Code - Look for: 'Vendor Code'
-8. Vendor Address - Look for: 'Vendor Address'
-9. Buyer Name - Look for: 'Buyer'
-10. Purchasing Org - Look for: 'Purchasing Org'
-11. State Name - State of supply/delivery
-12. State Code - 2-digit state code
-13. GST Number - 15-character GSTIN if visible
-14. GST Percentage - GST rate if visible
-15. HSN/SAC Code - In line items or tax section
-16. Delivery Terms - Look for: 'Delivery Terms'
-17. Payment Terms - Look for: 'Payment Terms'
-18. PO Date - Look for: 'PO Date' (format: YYYY-MM-DD)
-19. Total Amount - Look for: 'Total PO Price', 'Total Amount'
-20. Line Items - ALL items with Item Code, Description, Qty, Rate, Amount, Plant, Tax Code, Currency
+3. Vendor Name - Look for: 'Vendor', 'Supplier'
+4. Vendor Code - Look for: 'Vendor Code'
+5. Vendor Address - Look for: 'Vendor Address'
+6. Buyer Name - Look for: 'Buyer'
+7. Delivery Terms - Look for: 'Delivery Terms'
+8. Payment Terms - Look for: 'Payment Terms'
+9. PO Date - Look for: 'PO Date' (format: YYYY-MM-DD)
+10. Total Amount - Look for: 'Total PO Price', 'Total Amount'
+11. Line Items - ALL items with Item Code, Description, Qty, Rate, Amount, Plant, Tax Code, Currency
 
 CRITICAL INSTRUCTIONS:
 - Extract EXACT values visible in the image.
@@ -462,19 +459,10 @@ Respond ONLY with a JSON object in this exact format:
 {
   ""poNumber"": ""string"",
   ""poType"": ""string"",
-  ""agencyCode"": ""string"",
-  ""agencyName"": ""string"",
-  ""agencyAddress"": ""string"",
   ""vendorName"": ""string"",
   ""vendorCode"": ""string"",
   ""vendorAddress"": ""string"",
   ""buyerName"": ""string"",
-  ""purchasingOrg"": ""string"",
-  ""stateName"": ""string"",
-  ""stateCode"": ""string"",
-  ""gstNumber"": ""string"",
-  ""gstPercentage"": 0,
-  ""hsnSacCode"": ""string"",
   ""deliveryTerms"": ""string"",
   ""paymentTerms"": ""string"",
   ""poDate"": ""YYYY-MM-DD"",
@@ -489,7 +477,6 @@ Respond ONLY with a JSON object in this exact format:
       ""plant"": ""string"",
       ""taxCode"": ""string"",
       ""currency"": ""string"",
-      ""hsnSacCode"": ""string""
     }
   ],
   ""confidence"": 0.0
@@ -1522,46 +1509,50 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
 
             metadata.FieldConfidences = fieldConfidences;
 
-            // CHANGE: Added OpenAI Vision analysis to detect blue tshirt persons, 3W vehicles, and read GPS overlay text
+            // CHANGE: Fixed photo Vision analysis - was passing raw base64 instead of proper data URI/SAS URL
+            // Must use PrepareImageDataAsync (like Invoice/PO/CostSummary do) to create proper URL for OpenAI
             try
             {
-                var imageData = Convert.ToBase64String(imageBytes);
-                var visionAnalysis = await AnalyzePhotoContentAsync(imageData, cancellationToken);
-                
-                metadata.HasBlueTshirtPerson = visionAnalysis.HasBlueTshirtPerson;
-                metadata.BlueTshirtPersonCount = visionAnalysis.BlueTshirtPersonCount;
-                metadata.HasBajajVehicle = visionAnalysis.HasBajajVehicle;
-                metadata.Has3WVehicle = visionAnalysis.Has3WVehicle;
-                metadata.BlueTshirtConfidence = visionAnalysis.BlueTshirtConfidence;
-                metadata.VehicleConfidence = visionAnalysis.VehicleConfidence;
-                metadata.PhotoDateFromOverlay = visionAnalysis.PhotoDateFromOverlay;
-                metadata.LocationText = visionAnalysis.LocationText;
-                
-                // Use overlay date if EXIF timestamp is missing
-                if (!metadata.Timestamp.HasValue && !string.IsNullOrEmpty(visionAnalysis.PhotoDateFromOverlay))
+                var imageUrl = await PrepareImageDataAsync(blobUrl);
+                if (imageUrl != null)
                 {
-                    if (DateTime.TryParse(visionAnalysis.PhotoDateFromOverlay, out var overlayDate))
+                    var visionAnalysis = await AnalyzePhotoContentAsync(imageUrl, cancellationToken);
+                
+                    metadata.HasBlueTshirtPerson = visionAnalysis.HasBlueTshirtPerson;
+                    metadata.BlueTshirtPersonCount = visionAnalysis.BlueTshirtPersonCount;
+                    metadata.HasBajajVehicle = visionAnalysis.HasBajajVehicle;
+                    metadata.Has3WVehicle = visionAnalysis.Has3WVehicle;
+                    metadata.BlueTshirtConfidence = visionAnalysis.BlueTshirtConfidence;
+                    metadata.VehicleConfidence = visionAnalysis.VehicleConfidence;
+                    metadata.PhotoDateFromOverlay = visionAnalysis.PhotoDateFromOverlay;
+                    metadata.LocationText = visionAnalysis.LocationText;
+                
+                    // Use overlay date if EXIF timestamp is missing
+                    if (!metadata.Timestamp.HasValue && !string.IsNullOrEmpty(visionAnalysis.PhotoDateFromOverlay))
                     {
-                        metadata.Timestamp = overlayDate;
-                        fieldConfidences["Timestamp"] = 0.85;
+                        if (DateTime.TryParse(visionAnalysis.PhotoDateFromOverlay, out var overlayDate))
+                        {
+                            metadata.Timestamp = overlayDate;
+                            fieldConfidences["Timestamp"] = 0.85;
+                        }
                     }
+                
+                    // Use overlay lat/long if EXIF GPS is missing
+                    if (!metadata.Latitude.HasValue && visionAnalysis.OverlayLatitude.HasValue)
+                    {
+                        metadata.Latitude = visionAnalysis.OverlayLatitude;
+                        metadata.Longitude = visionAnalysis.OverlayLongitude;
+                        fieldConfidences["Location"] = 0.85;
+                    }
+                
+                    fieldConfidences["BlueTshirt"] = visionAnalysis.BlueTshirtConfidence;
+                    fieldConfidences["Vehicle"] = visionAnalysis.VehicleConfidence;
+                    metadata.FieldConfidences = fieldConfidences;
+                
+                    _logger.LogInformation(
+                        "Photo Vision analysis completed. BlueTshirt: {HasBlue} (count: {Count}), 3W Vehicle: {Has3W}, OverlayDate: {Date}",
+                        metadata.HasBlueTshirtPerson, metadata.BlueTshirtPersonCount, metadata.Has3WVehicle, metadata.PhotoDateFromOverlay);
                 }
-                
-                // Use overlay lat/long if EXIF GPS is missing
-                if (!metadata.Latitude.HasValue && visionAnalysis.OverlayLatitude.HasValue)
-                {
-                    metadata.Latitude = visionAnalysis.OverlayLatitude;
-                    metadata.Longitude = visionAnalysis.OverlayLongitude;
-                    fieldConfidences["Location"] = 0.85;
-                }
-                
-                fieldConfidences["BlueTshirt"] = visionAnalysis.BlueTshirtConfidence;
-                fieldConfidences["Vehicle"] = visionAnalysis.VehicleConfidence;
-                metadata.FieldConfidences = fieldConfidences;
-                
-                _logger.LogInformation(
-                    "Photo Vision analysis completed. BlueTshirt: {HasBlue} (count: {Count}), 3W Vehicle: {Has3W}, OverlayDate: {Date}",
-                    metadata.HasBlueTshirtPerson, metadata.BlueTshirtPersonCount, metadata.Has3WVehicle, metadata.PhotoDateFromOverlay);
             }
             catch (Exception visionEx)
             {
@@ -1757,6 +1748,67 @@ If GPS overlay is not visible, set photoDateFromOverlay to empty string and lat/
         }
     }
 
+    // CHANGE: Added ExtractTextFromExcelAsync to read Excel files using ClosedXML and convert to text for OpenAI
+    /// <summary>
+    /// Downloads and reads an Excel file, converting all cell data to text format for OpenAI analysis
+    /// </summary>
+    private async Task<string> ExtractTextFromExcelAsync(string sasUrl, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation("Starting Excel text extraction");
+
+            using var httpClient = new HttpClient();
+            var fileBytes = await httpClient.GetByteArrayAsync(sasUrl, cancellationToken);
+
+            using var stream = new MemoryStream(fileBytes);
+            using var workbook = new XLWorkbook(stream);
+
+            var textBuilder = new System.Text.StringBuilder();
+
+            foreach (var worksheet in workbook.Worksheets)
+            {
+                textBuilder.AppendLine($"--- Sheet: {worksheet.Name} ---");
+
+                var usedRange = worksheet.RangeUsed();
+                if (usedRange == null) continue;
+
+                // Read header row
+                var firstRow = usedRange.FirstRow();
+                var headers = new List<string>();
+                foreach (var cell in firstRow.Cells())
+                {
+                    headers.Add(cell.GetString());
+                }
+                textBuilder.AppendLine(string.Join(" | ", headers));
+                textBuilder.AppendLine(new string('-', 80));
+
+                // Read data rows
+                foreach (var row in usedRange.Rows().Skip(1))
+                {
+                    var values = new List<string>();
+                    foreach (var cell in row.Cells())
+                    {
+                        values.Add(cell.GetString());
+                    }
+                    textBuilder.AppendLine(string.Join(" | ", values));
+                }
+            }
+
+            var extractedText = textBuilder.ToString();
+            _logger.LogInformation("Excel text extraction completed. Extracted {Length} characters from {Sheets} sheets",
+                extractedText.Length, workbook.Worksheets.Count);
+
+            return extractedText;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting text from Excel file");
+            throw;
+        }
+    }
+
+    // CHANGE: Added new method - Analyzes PDF-extracted text using OpenAI to get all Invoice fields
     /// <summary>
     /// Analyzes extracted text using GPT-4 to extract Invoice data.
     /// Performs detailed field extraction from Document Intelligence text output.
@@ -1865,26 +1917,17 @@ Respond ONLY with a JSON object in this exact format:
 Analyze the provided text extracted from a Purchase Order document and extract ALL structured information with maximum accuracy.
 
 REQUIRED FIELDS TO EXTRACT:
-1. PO Number - Look for: 'PO No', 'PO Number', 'Purchase Order', 'Order No'
-2. PO Type - Look for: 'PO TYPE', 'Order Type' (e.g., 'Marketing PO', 'Standard PO')
-3. Agency Code - Look for: 'Agency Code', 'Customer Code', alphanumeric identifier
-4. Agency Name - Name of the agency/customer
-5. Agency Address - Full address of the agency
-6. Vendor Name - Look for: 'Vendor', 'Supplier', 'M/S'
-7. Vendor Code - Look for: 'Vendor Code', numeric code near vendor name
-8. Vendor Address - Look for: 'Vendor Address', address near vendor name
-9. Buyer Name - Look for: 'Buyer', 'Purchased By'
-10. Purchasing Org - Look for: 'Purchasing Org', 'Purch. Org' (e.g., 'BA01')
-11. State Name - State of supply/delivery
-12. State Code - 2-digit state code
-13. GST Number - 15-character GSTIN if present
-14. GST Percentage - GST rate if present
-15. HSN/SAC Code - Look in line items table header or Tax Code column
-16. Delivery Terms - Look for: 'Delivery Terms'
-17. Payment Terms - Look for: 'Payment Terms'
-18. PO Date - Look for: 'PO Date', 'Order Date' (format: YYYY-MM-DD)
-19. Total Amount - Look for: 'Total PO Price', 'Total Amount', 'Grand Total'
-20. Line Items - ALL items with: Item Code, Description, Quantity, Unit Price, Line Total, Plant, Tax Code, Currency, HSN/SAC Code
+1. PO Number - Look for: 'PO No', 'PO Number', 'Purchase Order'
+2. PO Type - Look for: 'PO TYPE', 'Order Type' (e.g., 'Marketing PO')
+3. Vendor Name - Look for: 'Vendor', 'Supplier'
+4. Vendor Code - Look for: 'Vendor Code'
+5. Vendor Address - Look for: 'Vendor Address'
+6. Buyer Name - Look for: 'Buyer'
+7. Delivery Terms - Look for: 'Delivery Terms'
+8. Payment Terms - Look for: 'Payment Terms'
+9. PO Date - Look for: 'PO Date' (format: YYYY-MM-DD)
+10. Total Amount - Look for: 'Total PO Price', 'Total Amount'
+11. Line Items - ALL items with Item Code, Description, Qty, Rate, Amount, Plant, Tax Code, Currency
 
 CRITICAL INSTRUCTIONS:
 - Extract EXACT values as they appear in the document.
@@ -1896,19 +1939,10 @@ Respond ONLY with a JSON object in this exact format:
 {
   ""poNumber"": ""string"",
   ""poType"": ""string"",
-  ""agencyCode"": ""string"",
-  ""agencyName"": ""string"",
-  ""agencyAddress"": ""string"",
   ""vendorName"": ""string"",
   ""vendorCode"": ""string"",
   ""vendorAddress"": ""string"",
   ""buyerName"": ""string"",
-  ""purchasingOrg"": ""string"",
-  ""stateName"": ""string"",
-  ""stateCode"": ""string"",
-  ""gstNumber"": ""string"",
-  ""gstPercentage"": 0,
-  ""hsnSacCode"": ""string"",
   ""deliveryTerms"": ""string"",
   ""paymentTerms"": ""string"",
   ""poDate"": ""YYYY-MM-DD"",
@@ -1923,7 +1957,6 @@ Respond ONLY with a JSON object in this exact format:
       ""plant"": ""string"",
       ""taxCode"": ""string"",
       ""currency"": ""string"",
-      ""hsnSacCode"": ""string""
     }
   ],
   ""confidence"": 0.0
@@ -2037,5 +2070,466 @@ Respond ONLY with a JSON object in this exact format:
             },
             IsFlaggedForReview = false
         };
+    }
+
+    // CHANGE: Added ExtractActivityAsync for Activity Summary document extraction (same hybrid pattern as PO/Invoice)
+    /// <summary>
+    /// Extracts structured data from an Activity Summary document
+    /// Uses Azure Document Intelligence for PDFs → OpenAI analyzes text
+    /// </summary>
+    // CHANGE: Helper to write debug logs to file since terminal has space constraints
+    private static void DebugLog(string message)
+    {
+        try
+        {
+            var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
+            File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] {message}\n");
+        }
+        catch { }
+    }
+
+    public async Task<ActivityData> ExtractActivityAsync(string blobUrl, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            DebugLog($"[ACTIVITY] Starting extraction for: {blobUrl}");
+            DebugLog($"[ACTIVITY] IsDocumentFile: {IsDocumentFile(blobUrl)}");
+            _logger.LogInformation("Starting Activity Summary extraction for URL: {BlobUrl}", blobUrl);
+
+            // For document files (PDF, Word, Excel), use hybrid extraction
+            if (IsDocumentFile(blobUrl))
+            {
+                _logger.LogInformation("Document file detected - using hybrid extraction (Document Intelligence + OpenAI)");
+                var sasUrl = await _fileStorageService.GetPublicUrlWithSasAsync(blobUrl, TimeSpan.FromHours(1));
+                DebugLog($"[ACTIVITY] SAS URL obtained, length: {sasUrl?.Length}");
+
+                try
+                {
+                    // CHANGE: Use ClosedXML for Excel files, Document Intelligence for PDF
+                    string extractedText;
+                    if (blobUrl.ToLowerInvariant().EndsWith(".xlsx") || blobUrl.ToLowerInvariant().EndsWith(".xls"))
+                    {
+                        DebugLog("[ACTIVITY] Using Excel extraction...");
+                        extractedText = await ExtractTextFromExcelAsync(sasUrl, cancellationToken);
+                    }
+                    else
+                    {
+                        DebugLog("[ACTIVITY] Using PDF extraction (Document Intelligence)...");
+                        extractedText = await ExtractTextFromPdfAsync(new Uri(sasUrl), cancellationToken);
+                    }
+
+                    DebugLog($"[ACTIVITY] Extracted text length: {extractedText?.Length ?? 0}");
+                    DebugLog($"[ACTIVITY] Text preview: {extractedText?.Substring(0, Math.Min(500, extractedText?.Length ?? 0))}");
+
+                    var result = await AnalyzeActivityTextAsync(extractedText, cancellationToken);
+                    DebugLog($"[ACTIVITY] Result - Rows: {result.Rows.Count}");
+
+                    var debugJson = System.Text.Json.JsonSerializer.Serialize(result);
+                    DebugLog($"[ACTIVITY] JSON length: {debugJson.Length}, preview: {debugJson.Substring(0, Math.Min(500, debugJson.Length))}");
+
+                    _logger.LogInformation(
+                        "Activity hybrid extraction completed. Rows: {Rows}",
+                        result.Rows.Count);
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"[ACTIVITY] ERROR: {ex.GetType().Name}: {ex.Message}");
+                    DebugLog($"[ACTIVITY] Stack: {ex.StackTrace}");
+                    if (ex.InnerException != null)
+                        DebugLog($"[ACTIVITY] Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                    _logger.LogError(ex, "Error in hybrid Activity extraction, returning empty result");
+                    return new ActivityData
+                    {
+                        FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
+                        IsFlaggedForReview = true
+                    };
+                }
+            }
+
+            // For images, use GPT Vision
+            var imageData = await PrepareImageDataAsync(blobUrl);
+
+            if (imageData == null)
+            {
+                _logger.LogWarning("Could not prepare image data for Activity extraction");
+                return new ActivityData
+                {
+                    FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
+                    IsFlaggedForReview = true
+                };
+            }
+
+            var chatCompletionsOptions = new ChatCompletionsOptions
+            {
+                DeploymentName = _deploymentName,
+                Messages =
+                {
+                    new ChatRequestSystemMessage(@"You are an Activity Summary data extraction expert specializing in Indian marketing activity documents.
+Analyze the provided Activity Summary image and extract ALL structured information with maximum accuracy.
+
+REQUIRED FIELDS TO EXTRACT:
+1. Dealer and Location Details - For EACH location extract:
+   - locationName: City/town name
+   - dealerName: Dealer name
+   - district: District name
+   - state/city: State/City name
+   - numberOfDays: Number of days at this location
+   - startDate: Start date at this location (YYYY-MM-DD)
+   - endDate: End date at this location (YYYY-MM-DD)
+
+CRITICAL INSTRUCTIONS:
+- Extract EXACT values visible in the image.
+- If a field is not found, use empty string for text, 0 for numbers, null for dates.
+- Total Days should be the sum of all location days if not explicitly stated.
+
+Respond ONLY with a JSON object in this exact format:
+{
+  ""locationActivities"": [
+    {
+      ""locationName"": ""string"",
+      ""dealerName"": ""string"",
+      ""state"": ""string"",
+      ""numberOfDays"": 0,
+      ""startDate"": ""YYYY-MM-DD"",
+      ""endDate"": ""YYYY-MM-DD""
+    }
+  ],
+  ""confidence"": 0.0
+}"),
+                    new ChatRequestUserMessage(
+                        new ChatMessageContentItem[]
+                        {
+                            new ChatMessageTextContentItem("Please extract ALL data from this Activity Summary image. Be thorough and accurate."),
+                            CreateImageContentItem(imageData)
+                        })
+                }
+            };
+
+            var response = await _openAIClient.GetChatCompletionsAsync(chatCompletionsOptions, cancellationToken);
+            var content = response.Value.Choices[0].Message.Content;
+            _logger.LogInformation("Received Activity extraction response: {Response}", content);
+
+            var activityData = ParseActivityResponse(content);
+            _logger.LogInformation(
+                "Activity extraction completed. Rows: {Rows}",
+                activityData.Rows.Count);
+
+            return activityData;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting Activity data from URL: {BlobUrl}", blobUrl);
+            throw;
+        }
+    }
+
+    // CHANGE: Simplified AnalyzeActivityTextAsync to extract only: Dealer, Location, To, From, Day, Working Day
+    /// <summary>
+    /// Analyzes extracted text using OpenAI to extract Activity Summary data
+    /// </summary>
+    private async Task<ActivityData> AnalyzeActivityTextAsync(string extractedText, CancellationToken cancellationToken)
+    {
+        var chatCompletionsOptions = new ChatCompletionsOptions
+        {
+            DeploymentName = _deploymentName,
+            Messages =
+            {
+                new ChatRequestSystemMessage(@"You are an Activity Summary data extraction expert.
+Analyze the provided text extracted from an Activity Summary document.
+
+The document is a table with these columns:
+1. Dealer - Dealer name (e.g., 'Magadh Auto Agency')
+2. Location - City/town name (e.g., 'Patna')
+3. To - End date (convert to YYYY-MM-DD)
+4. From - Start date (convert to YYYY-MM-DD)
+5. Day - Total number of days
+6. Working Day - Number of working days
+
+CRITICAL INSTRUCTIONS:
+- Extract EVERY row from the table.
+- Handle date formats like 2/14/2025, 01.02.2025, 01-Feb-2025 → convert to YYYY-MM-DD.
+- If a field is not found, use empty string for text, 0 for numbers, null for dates.
+
+Respond ONLY with a JSON object in this exact format:
+{
+  ""rows"": [
+    {
+      ""dealerName"": ""string"",
+      ""location"": ""string"",
+      ""toDate"": ""YYYY-MM-DD"",
+      ""fromDate"": ""YYYY-MM-DD"",
+      ""day"": 0,
+      ""workingDay"": 0
+    }
+  ],
+  ""confidence"": 0.0
+}"),
+                new ChatRequestUserMessage($"Extract all activity summary rows from this text:\n\n{extractedText}")
+            }
+        };
+
+        var response = await _openAIClient.GetChatCompletionsAsync(chatCompletionsOptions, cancellationToken);
+        var content = response.Value.Choices[0].Message.Content;
+        _logger.LogInformation("Received Activity text analysis response: {Response}", content);
+
+        return ParseActivityResponse(content);
+    }
+
+    // CHANGE: Simplified ParseActivityResponse to match new ActivityData DTO (Dealer, Location, To, From, Day, WorkingDay)
+    private ActivityData ParseActivityResponse(string content)
+    {
+        try
+        {
+            var jsonContent = CleanJsonResponse(content);
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var parsed = JsonSerializer.Deserialize<ActivityDataResponse>(jsonContent, options);
+
+            if (parsed == null)
+            {
+                throw new InvalidOperationException("Failed to parse Activity response");
+            }
+
+            var activityData = new ActivityData
+            {
+                Rows = parsed.Rows?.Select(r => new ActivityRow
+                {
+                    DealerName = r.DealerName ?? string.Empty,
+                    Location = r.Location ?? string.Empty,
+                    ToDate = r.ToDate,
+                    FromDate = r.FromDate,
+                    Day = r.Day,
+                    WorkingDay = r.WorkingDay
+                }).ToList() ?? new List<ActivityRow>(),
+                FieldConfidences = new Dictionary<string, double>
+                {
+                    ["Overall"] = parsed.Confidence
+                },
+                IsFlaggedForReview = parsed.Confidence < CONFIDENCE_THRESHOLD
+            };
+
+            return activityData;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to parse Activity response: {Content}", content);
+            return new ActivityData
+            {
+                FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
+                IsFlaggedForReview = true
+            };
+        }
+    }
+
+    // CHANGE: Simplified ActivityDataResponse to match table columns
+    private class ActivityDataResponse
+    {
+        public List<ActivityRowResponse>? Rows { get; set; }
+        public double Confidence { get; set; }
+    }
+
+    // CHANGE: Simplified ActivityRowResponse to match table columns: Dealer, Location, To, From, Day, Working Day
+    private class ActivityRowResponse
+    {
+        public string? DealerName { get; set; }
+        public string? Location { get; set; }
+        public DateTime? ToDate { get; set; }
+        public DateTime? FromDate { get; set; }
+        public int Day { get; set; }
+        public int WorkingDay { get; set; }
+    }
+
+    // CHANGE: Added ExtractEnquiryDumpAsync for Enquiry Dump Excel extraction (same hybrid pattern as PO/Invoice)
+    /// <summary>
+    /// Extracts structured data from an Enquiry Dump Excel file
+    /// Uses ClosedXML to read Excel → OpenAI analyzes text
+    /// </summary>
+    public async Task<EnquiryDumpData> ExtractEnquiryDumpAsync(string blobUrl, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            DebugLog($"[ENQUIRY] Starting extraction for: {blobUrl}");
+            _logger.LogInformation("Starting Enquiry Dump extraction for URL: {BlobUrl}", blobUrl);
+
+            var sasUrl = await _fileStorageService.GetPublicUrlWithSasAsync(blobUrl, TimeSpan.FromHours(1));
+            DebugLog($"[ENQUIRY] SAS URL obtained, length: {sasUrl?.Length}");
+
+            try
+            {
+                // CHANGE: Use ClosedXML to read Excel files instead of Document Intelligence (which doesn't support .xlsx)
+                string extractedText;
+                if (blobUrl.ToLowerInvariant().EndsWith(".xlsx") || blobUrl.ToLowerInvariant().EndsWith(".xls"))
+                {
+                    DebugLog("[ENQUIRY] Using Excel extraction...");
+                    extractedText = await ExtractTextFromExcelAsync(sasUrl, cancellationToken);
+                }
+                else
+                {
+                    DebugLog("[ENQUIRY] Using PDF extraction...");
+                    extractedText = await ExtractTextFromPdfAsync(new Uri(sasUrl), cancellationToken);
+                }
+
+                DebugLog($"[ENQUIRY] Extracted text length: {extractedText?.Length ?? 0}");
+                DebugLog($"[ENQUIRY] Text preview: {extractedText?.Substring(0, Math.Min(500, extractedText?.Length ?? 0))}");
+
+                var result = await AnalyzeEnquiryDumpTextAsync(extractedText, cancellationToken);
+                DebugLog($"[ENQUIRY] Result - State: {result.State}, Records: {result.Records?.Count}, Total: {result.TotalRecords}");
+
+                var debugJson = System.Text.Json.JsonSerializer.Serialize(result);
+                DebugLog($"[ENQUIRY] JSON length: {debugJson.Length}, preview: {debugJson.Substring(0, Math.Min(500, debugJson.Length))}");
+
+                _logger.LogInformation(
+                    "Enquiry Dump extraction completed. State: {State}, Records: {Records}",
+                    result.State, result.TotalRecords);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"[ENQUIRY] ERROR: {ex.GetType().Name}: {ex.Message}");
+                DebugLog($"[ENQUIRY] Stack: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                    DebugLog($"[ENQUIRY] Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                _logger.LogError(ex, "Error in Enquiry Dump extraction, returning empty result");
+                return new EnquiryDumpData
+                {
+                    FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
+                    IsFlaggedForReview = true
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting Enquiry Dump data from URL: {BlobUrl}", blobUrl);
+            throw;
+        }
+    }
+
+    // CHANGE: Added AnalyzeEnquiryDumpTextAsync for hybrid text analysis of Excel data
+    /// <summary>
+    /// Analyzes extracted text using OpenAI to extract Enquiry Dump data
+    /// </summary>
+    // CHANGE: Simple single-call approach for EnquiryDump extraction via OpenAI, prompt updated to match actual Excel columns
+    private async Task<EnquiryDumpData> AnalyzeEnquiryDumpTextAsync(string extractedText, CancellationToken cancellationToken)
+    {
+        // CHANGE: Truncate text if too large to avoid token limits — send first 30000 chars
+        var textToSend = extractedText.Length > 30000 ? extractedText.Substring(0, 30000) : extractedText;
+        DebugLog($"[ENQUIRY] Sending text length: {textToSend.Length} (original: {extractedText.Length})");
+
+        var chatCompletionsOptions = new ChatCompletionsOptions
+        {
+            DeploymentName = _deploymentName,
+            Messages =
+            {
+                new ChatRequestSystemMessage(@"You are a data extraction expert. Extract structured records from the tabular text below.
+
+The text is from an Excel file with enquiry records. The columns may include:
+Sr No, Date, Dealership Name, District, Segment, Company Name, Brand, Address, Principal Name, Contact, Secondary Name, Contact, 3W, EV, 4W, Total Van, Category, Remark, Age, Test Drive, Visit, and possibly others.
+
+For EACH row, extract these fields (map from whatever columns exist):
+- state: State name from document context (e.g. Bihar)
+- date: Date value, convert to YYYY-MM-DD format
+- dealerCode: Dealer code if present, otherwise empty string
+- dealerName: Dealership Name or Dealer Name
+- district: District
+- pincode: Pincode if present, otherwise empty string
+- customerName: Principal Name or Company Name or Customer Name
+- customerNumber: Contact number (first contact column)
+- testRideTaken: Test Drive value, normalize to Yes or No
+
+CRITICAL: Extract EVERY row. Do NOT skip any rows. Do NOT summarize.
+If a field is missing, use empty string.
+
+Return ONLY valid JSON:
+{
+  ""state"": ""overall state"",
+  ""totalRecords"": number,
+  ""records"": [{""state"":"""",""date"":"""",""dealerCode"":"""",""dealerName"":"""",""district"":"""",""pincode"":"""",""customerName"":"""",""customerNumber"":"""",""testRideTaken"":""""}],
+  ""confidence"": 0.8
+}"),
+                new ChatRequestUserMessage($"Extract ALL records from this data:\n\n{textToSend}")
+            }
+        };
+
+        var response = await _openAIClient.GetChatCompletionsAsync(chatCompletionsOptions, cancellationToken);
+        var content = response.Value.Choices[0].Message.Content;
+        // CHANGE: Log raw OpenAI response for debugging
+        DebugLog($"[ENQUIRY] OpenAI response length: {content?.Length}, finish reason: {response.Value.Choices[0].FinishReason}");
+        DebugLog($"[ENQUIRY] OpenAI response preview: {content?.Substring(0, Math.Min(1000, content?.Length ?? 0))}");
+        _logger.LogInformation("Received Enquiry Dump text analysis response length: {Length}", content?.Length);
+
+        return ParseEnquiryDumpResponse(content);
+    }
+
+    // CHANGE: Added ParseEnquiryDumpResponse to parse OpenAI response into EnquiryDumpData
+    private EnquiryDumpData ParseEnquiryDumpResponse(string content)
+    {
+        try
+        {
+            var jsonContent = CleanJsonResponse(content);
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var parsed = JsonSerializer.Deserialize<EnquiryDumpDataResponse>(jsonContent, options);
+
+            if (parsed == null)
+            {
+                throw new InvalidOperationException("Failed to parse Enquiry Dump response");
+            }
+
+            var enquiryData = new EnquiryDumpData
+            {
+                State = parsed.State ?? string.Empty,
+                TotalRecords = parsed.TotalRecords > 0 ? parsed.TotalRecords : (parsed.Records?.Count ?? 0),
+                Records = parsed.Records?.Select(r => new EnquiryRecord
+                {
+                    State = r.State ?? string.Empty,
+                    Date = r.Date,
+                    DealerCode = r.DealerCode ?? string.Empty,
+                    DealerName = r.DealerName ?? string.Empty,
+                    District = r.District ?? string.Empty,
+                    Pincode = r.Pincode ?? string.Empty,
+                    CustomerName = r.CustomerName ?? string.Empty,
+                    CustomerNumber = r.CustomerNumber ?? string.Empty,
+                    TestRideTaken = r.TestRideTaken ?? string.Empty
+                }).ToList() ?? new List<EnquiryRecord>(),
+                FieldConfidences = new Dictionary<string, double>
+                {
+                    ["Overall"] = parsed.Confidence
+                },
+                IsFlaggedForReview = parsed.Confidence < CONFIDENCE_THRESHOLD
+            };
+
+            return enquiryData;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to parse Enquiry Dump response: {Content}", content);
+            return new EnquiryDumpData
+            {
+                FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
+                IsFlaggedForReview = true
+            };
+        }
+    }
+
+    // CHANGE: Added EnquiryDumpDataResponse for JSON deserialization
+    private class EnquiryDumpDataResponse
+    {
+        public string? State { get; set; }
+        public int TotalRecords { get; set; }
+        public List<EnquiryRecordResponse>? Records { get; set; }
+        public double Confidence { get; set; }
+    }
+
+    // CHANGE: Added EnquiryRecordResponse for JSON deserialization
+    private class EnquiryRecordResponse
+    {
+        public string? State { get; set; }
+        public DateTime? Date { get; set; }
+        public string? DealerCode { get; set; }
+        public string? DealerName { get; set; }
+        public string? District { get; set; }
+        public string? Pincode { get; set; }
+        public string? CustomerName { get; set; }
+        public string? CustomerNumber { get; set; }
+        public string? TestRideTaken { get; set; }
     }
 }

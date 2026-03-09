@@ -189,6 +189,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 }
 
                 // Extract data based on type
+                // CHANGE: Added Activity and EnquiryDump cases — previously they fell through to default "{}" which overwrote good data from upload-time extraction
                 string extractedDataJson = document.Type switch
                 {
                     Domain.Enums.DocumentType.PO => 
@@ -199,6 +200,10 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                         System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractCostSummaryAsync(document.BlobUrl, cancellationToken)),
                     Domain.Enums.DocumentType.Photo => 
                         System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractPhotoMetadataAsync(document.BlobUrl, cancellationToken)),
+                    Domain.Enums.DocumentType.Activity => 
+                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractActivityAsync(document.BlobUrl, cancellationToken)),
+                    Domain.Enums.DocumentType.EnquiryDump => 
+                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractEnquiryDumpAsync(document.BlobUrl, cancellationToken)),
                     _ => "{}"
                 };
                 

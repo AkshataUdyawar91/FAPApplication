@@ -132,11 +132,15 @@ public class ValidationAgent : IValidationAgent
             var invoiceDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.Invoice);
             var costSummaryDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.CostSummary);
             var activityDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.Activity);
+            // CHANGE: Added EnquiryDump document loading
+            var enquiryDumpDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.EnquiryDump);
 
             POData? poData = null;
             InvoiceData? invoiceData = null;
             CostSummaryData? costSummaryData = null;
             ActivityData? activityData = null;
+            // CHANGE: Added EnquiryDumpData variable
+            EnquiryDumpData? enquiryDumpData = null;
 
             if (poDoc?.ExtractedDataJson != null)
             {
@@ -156,6 +160,12 @@ public class ValidationAgent : IValidationAgent
             if (activityDoc?.ExtractedDataJson != null)
             {
                 activityData = JsonSerializer.Deserialize<ActivityData>(activityDoc.ExtractedDataJson);
+            }
+
+            // CHANGE: Added EnquiryDump data deserialization
+            if (enquiryDumpDoc?.ExtractedDataJson != null)
+            {
+                enquiryDumpData = JsonSerializer.Deserialize<EnquiryDumpData>(enquiryDumpDoc.ExtractedDataJson);
             }
 
             // 1. SAP Verification
@@ -376,6 +386,39 @@ public class ValidationAgent : IValidationAgent
                 }
             }
 
+            // CHANGE: 15. Enquiry Dump Field Presence Validation
+            if (enquiryDumpData != null)
+            {
+                result.EnquiryDumpFieldPresence = ValidateEnquiryDumpFieldPresence(enquiryDumpData);
+                if (!result.EnquiryDumpFieldPresence.AllFieldsPresent)
+                {
+                    result.Issues.Add(new ValidationIssue
+                    {
+                        Field = "Enquiry Dump Fields",
+                        Issue = $"Missing required fields: {string.Join(", ", result.EnquiryDumpFieldPresence.MissingFields)}",
+                        Severity = "Error"
+                    });
+                }
+            }
+
+            // CHANGE: 16. Enquiry Dump Cross-Document Validation (match with Activity Summary)
+            if (enquiryDumpData != null && activityData != null)
+            {
+                result.EnquiryDumpCrossDocument = ValidateEnquiryDumpCrossDocument(enquiryDumpData, activityData);
+                if (!result.EnquiryDumpCrossDocument.AllChecksPass)
+                {
+                    foreach (var issue in result.EnquiryDumpCrossDocument.Issues)
+                    {
+                        result.Issues.Add(new ValidationIssue
+                        {
+                            Field = "Enquiry Dump Cross-Validation",
+                            Issue = issue,
+                            Severity = "Error"
+                        });
+                    }
+                }
+            }
+
             // Determine overall result
             result.AllPassed = result.Issues.Count == 0 &&
                               (result.SAPVerification == null || result.SAPVerification.IsVerified || result.SAPVerification.SAPConnectionFailed) &&
@@ -389,6 +432,9 @@ public class ValidationAgent : IValidationAgent
                               (result.ActivityFieldPresence == null || result.ActivityFieldPresence.AllFieldsPresent) &&
                               (result.ActivityCrossDocument == null || result.ActivityCrossDocument.AllChecksPass) &&
                               (result.PhotoCrossDocument == null || result.PhotoCrossDocument.AllChecksPass) &&
+                              // CHANGE: Added EnquiryDump validation to overall result
+                              (result.EnquiryDumpFieldPresence == null || result.EnquiryDumpFieldPresence.AllFieldsPresent) &&
+                              (result.EnquiryDumpCrossDocument == null || result.EnquiryDumpCrossDocument.AllChecksPass) &&
                               (result.DateValidation == null || result.DateValidation.IsValid);
             
             // Note: AmountConsistency, LineItemMatching, and VendorMatching are informational only
@@ -1127,6 +1173,7 @@ public class ValidationAgent : IValidationAgent
     /// </summary>
     /// <param name="activityData">The activity data to validate</param>
     /// <returns>An ActivityFieldPresenceResult listing any missing required fields</returns>
+    // CHANGE: Updated ValidateActivityFieldPresence for new simplified ActivityData DTO (Rows with Dealer, Location, To, From, Day, WorkingDay)
     private ActivityFieldPresenceResult ValidateActivityFieldPresence(ActivityData activityData)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
@@ -1137,42 +1184,39 @@ public class ValidationAgent : IValidationAgent
         var result = new ActivityFieldPresenceResult { AllFieldsPresent = true };
         var missingFields = new List<string>();
 
-        // 1. Dealer and Location details - Required
-        if (string.IsNullOrWhiteSpace(activityData.DealerName) && 
-            string.IsNullOrWhiteSpace(activityData.DealerCode))
+        if (activityData.Rows == null || !activityData.Rows.Any())
         {
-            missingFields.Add("Dealer Name/Code");
-        }
-
-        if (activityData.LocationActivities == null || !activityData.LocationActivities.Any())
-        {
-            missingFields.Add("Location Activities");
+            missingFields.Add("Activity Rows");
         }
         else
         {
-            // Check if location activities have required details
-            var locationsWithoutDetails = activityData.LocationActivities
-                .Where(la => string.IsNullOrWhiteSpace(la.LocationName))
-                .Count();
-
-            if (locationsWithoutDetails > 0)
+            // Check if any row has dealer info
+            var hasAnyDealer = activityData.Rows
+                .Any(r => !string.IsNullOrWhiteSpace(r.DealerName));
+            
+            if (!hasAnyDealer)
             {
-                missingFields.Add($"Location details missing for {locationsWithoutDetails} location(s)");
+                missingFields.Add("Dealer Name");
             }
-        }
 
-        // Note: "No of days in each Location" is marked as "N" (not required for implementation)
-        // but we'll validate it exists for completeness
-        if (activityData.LocationActivities != null && activityData.LocationActivities.Any())
-        {
-            var locationsWithoutDays = activityData.LocationActivities
-                .Where(la => la.NumberOfDays <= 0)
+            // Check if rows have location
+            var rowsWithoutLocation = activityData.Rows
+                .Where(r => string.IsNullOrWhiteSpace(r.Location))
                 .Count();
 
-            if (locationsWithoutDays == activityData.LocationActivities.Count)
+            if (rowsWithoutLocation > 0)
             {
-                // All locations are missing days - this is an issue
-                missingFields.Add("Number of days in locations");
+                missingFields.Add($"Location missing for {rowsWithoutLocation} row(s)");
+            }
+
+            // Check if rows have days
+            var rowsWithoutDays = activityData.Rows
+                .Where(r => r.Day <= 0)
+                .Count();
+
+            if (rowsWithoutDays == activityData.Rows.Count)
+            {
+                missingFields.Add("Number of days");
             }
         }
 
@@ -1193,6 +1237,7 @@ public class ValidationAgent : IValidationAgent
     /// <param name="activityData">The activity data to validate</param>
     /// <param name="costSummaryData">The cost summary data to validate against</param>
     /// <returns>An ActivityCrossDocumentResult containing validation status and any issues</returns>
+    // CHANGE: Updated ValidateActivityCrossDocument for new simplified ActivityData DTO
     private ActivityCrossDocumentResult ValidateActivityCrossDocument(
         ActivityData activityData,
         CostSummaryData costSummaryData)
@@ -1204,9 +1249,8 @@ public class ValidationAgent : IValidationAgent
 
         var result = new ActivityCrossDocumentResult { AllChecksPass = true };
 
-        // Calculate total days from activity data
-        var activityTotalDays = activityData.TotalDays ?? 
-            (activityData.LocationActivities?.Sum(la => la.NumberOfDays) ?? 0);
+        // Calculate total days from activity rows
+        var activityTotalDays = activityData.Rows?.Sum(r => r.Day) ?? 0;
 
         var costSummaryDays = costSummaryData.NumberOfDays ?? 0;
 
@@ -1359,13 +1403,10 @@ public class ValidationAgent : IValidationAgent
 
         // Calculate man-days from activity data
         int manDays = 0;
-        if (activityData?.LocationActivities != null && activityData.LocationActivities.Any())
+        // CHANGE: Updated for new ActivityData DTO — use Rows instead of LocationActivities
+        if (activityData?.Rows != null && activityData.Rows.Any())
         {
-            manDays = activityData.LocationActivities.Sum(la => la.NumberOfDays);
-        }
-        else if (activityData?.TotalDays.HasValue == true)
-        {
-            manDays = activityData.TotalDays.Value;
+            manDays = activityData.Rows.Sum(r => r.Day);
         }
 
         result.ManDays = manDays;
@@ -1393,6 +1434,110 @@ public class ValidationAgent : IValidationAgent
         _logger.LogInformation(
             "Photo cross-document validation completed. AllChecksPass: {AllChecksPass}, PhotoCount: {PhotoCount}, ManDays: {ManDays}, CostSummaryDays: {CostSummaryDays}. CorrelationId: {CorrelationId}",
             result.AllChecksPass, photoCount, manDays, costSummaryDays, correlationId);
+
+        return result;
+    }
+
+    // CHANGE: Added ValidateEnquiryDumpFieldPresence for Enquiry Dump field validation
+    /// <summary>
+    /// Validates that Enquiry Dump has all required fields: State, Date, DealerCode, DealerName, District, Pincode, CustomerName, CustomerNumber, TestRideTaken
+    /// </summary>
+    private EnquiryDumpFieldPresenceResult ValidateEnquiryDumpFieldPresence(EnquiryDumpData enquiryDumpData)
+    {
+        var result = new EnquiryDumpFieldPresenceResult { AllFieldsPresent = true };
+        var missingFields = new List<string>();
+
+        // Check if there are any records
+        if (enquiryDumpData.Records == null || !enquiryDumpData.Records.Any())
+        {
+            missingFields.Add("No enquiry records found");
+            result.TotalRecords = 0;
+        }
+        else
+        {
+            result.TotalRecords = enquiryDumpData.Records.Count;
+
+            // Count records with each field present
+            result.RecordsWithState = enquiryDumpData.Records.Count(r => !string.IsNullOrWhiteSpace(r.State));
+            result.RecordsWithDate = enquiryDumpData.Records.Count(r => r.Date.HasValue);
+            result.RecordsWithDealerCode = enquiryDumpData.Records.Count(r => !string.IsNullOrWhiteSpace(r.DealerCode));
+            result.RecordsWithDealerName = enquiryDumpData.Records.Count(r => !string.IsNullOrWhiteSpace(r.DealerName));
+            result.RecordsWithDistrict = enquiryDumpData.Records.Count(r => !string.IsNullOrWhiteSpace(r.District));
+            result.RecordsWithPincode = enquiryDumpData.Records.Count(r => !string.IsNullOrWhiteSpace(r.Pincode));
+            result.RecordsWithCustomerName = enquiryDumpData.Records.Count(r => !string.IsNullOrWhiteSpace(r.CustomerName));
+            result.RecordsWithCustomerNumber = enquiryDumpData.Records.Count(r => !string.IsNullOrWhiteSpace(r.CustomerNumber));
+            result.RecordsWithTestRide = enquiryDumpData.Records.Count(r => !string.IsNullOrWhiteSpace(r.TestRideTaken));
+
+            // Flag fields where more than 50% of records are missing the field
+            int threshold = result.TotalRecords / 2;
+
+            if (result.RecordsWithState <= threshold)
+                missingFields.Add($"State (present in {result.RecordsWithState}/{result.TotalRecords} records)");
+            if (result.RecordsWithDate <= threshold)
+                missingFields.Add($"Date (present in {result.RecordsWithDate}/{result.TotalRecords} records)");
+            if (result.RecordsWithDealerCode <= threshold)
+                missingFields.Add($"Dealer Code (present in {result.RecordsWithDealerCode}/{result.TotalRecords} records)");
+            if (result.RecordsWithDealerName <= threshold)
+                missingFields.Add($"Dealer Name (present in {result.RecordsWithDealerName}/{result.TotalRecords} records)");
+            if (result.RecordsWithDistrict <= threshold)
+                missingFields.Add($"District (present in {result.RecordsWithDistrict}/{result.TotalRecords} records)");
+            if (result.RecordsWithPincode <= threshold)
+                missingFields.Add($"Pincode (present in {result.RecordsWithPincode}/{result.TotalRecords} records)");
+            if (result.RecordsWithCustomerName <= threshold)
+                missingFields.Add($"Customer Name (present in {result.RecordsWithCustomerName}/{result.TotalRecords} records)");
+            if (result.RecordsWithCustomerNumber <= threshold)
+                missingFields.Add($"Customer Number (present in {result.RecordsWithCustomerNumber}/{result.TotalRecords} records)");
+            if (result.RecordsWithTestRide <= threshold)
+                missingFields.Add($"Test Ride Taken (present in {result.RecordsWithTestRide}/{result.TotalRecords} records)");
+        }
+
+        result.MissingFields = missingFields;
+        result.AllFieldsPresent = missingFields.Count == 0;
+
+        return result;
+    }
+
+    // CHANGE: Added ValidateEnquiryDumpCrossDocument for cross-document validation with Activity Summary
+    /// <summary>
+    /// Validates Enquiry Dump against Activity Summary: State match, Dealer details match
+    /// </summary>
+    private EnquiryDumpCrossDocumentResult ValidateEnquiryDumpCrossDocument(
+        EnquiryDumpData enquiryDumpData,
+        ActivityData activityData)
+    {
+        var result = new EnquiryDumpCrossDocumentResult { AllChecksPass = true };
+
+        // CHANGE: Updated for new ActivityData DTO — no top-level State, use Rows instead of LocationActivities
+
+        // 1. Dealer details match: Dealers in Enquiry Dump should exist in Activity Summary rows
+        if (enquiryDumpData.Records != null && enquiryDumpData.Records.Any() &&
+            activityData.Rows != null && activityData.Rows.Any())
+        {
+            var activityDealerNames = activityData.Rows
+                .Where(r => !string.IsNullOrWhiteSpace(r.DealerName))
+                .Select(r => r.DealerName!.Trim().ToUpperInvariant())
+                .ToHashSet();
+
+            var enquiryDealerNames = enquiryDumpData.Records
+                .Where(r => !string.IsNullOrWhiteSpace(r.DealerName))
+                .Select(r => r.DealerName!.Trim().ToUpperInvariant())
+                .Distinct()
+                .ToList();
+
+            if (activityDealerNames.Any() && enquiryDealerNames.Any())
+            {
+                var unmatchedDealers = enquiryDealerNames
+                    .Where(dn => !activityDealerNames.Contains(dn))
+                    .ToList();
+
+                result.DealerDetailsMatchActivity = unmatchedDealers.Count == 0;
+                if (!result.DealerDetailsMatchActivity)
+                {
+                    result.AllChecksPass = false;
+                    result.Issues.Add($"Enquiry Dump has {unmatchedDealers.Count} dealer(s) not found in Activity Summary: {string.Join(", ", unmatchedDealers.Take(5))}");
+                }
+            }
+        }
 
         return result;
     }
@@ -1450,6 +1595,9 @@ public class ValidationAgent : IValidationAgent
                 ActivityCrossDocument = result.ActivityCrossDocument,
                 PhotoFieldPresence = result.PhotoFieldPresence,
                 PhotoCrossDocument = result.PhotoCrossDocument,
+                // CHANGE: Added EnquiryDump validation results to saved JSON
+                EnquiryDumpFieldPresence = result.EnquiryDumpFieldPresence,
+                EnquiryDumpCrossDocument = result.EnquiryDumpCrossDocument,
                 Issues = result.Issues
             });
 

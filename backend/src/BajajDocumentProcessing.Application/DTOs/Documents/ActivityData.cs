@@ -1,7 +1,7 @@
 namespace BajajDocumentProcessing.Application.DTOs.Documents;
 
 /// <summary>
-/// Activity Summary (Enquiry & Docs) extracted data
+/// Activity Summary extracted data
 /// </summary>
 public class ActivityData
 {
@@ -33,6 +33,8 @@ public class ActivityData
     /// <summary>
     /// AI confidence scores for each extracted field (0-100)
     /// </summary>
+    // CHANGE: Simplified to match actual Activity Summary table columns: Dealer, Location, To, From, Day, Working Day
+    public List<ActivityRow> Rows { get; set; } = new();
     public Dictionary<string, double> FieldConfidences { get; set; } = new();
     
     /// <summary>
@@ -42,9 +44,9 @@ public class ActivityData
 }
 
 /// <summary>
-/// Activity at a specific location
+/// Single row from Activity Summary table
 /// </summary>
-public class LocationActivity
+public class ActivityRow
 {
     /// <summary>
     /// Name of the location where activity took place
@@ -90,4 +92,10 @@ public class LocationActivity
     /// Description of the activity
     /// </summary>
     public string? Description { get; set; }
+    public string DealerName { get; set; } = string.Empty;
+    public string Location { get; set; } = string.Empty;
+    public DateTime? ToDate { get; set; }
+    public DateTime? FromDate { get; set; }
+    public int Day { get; set; }
+    public int WorkingDay { get; set; }
 }

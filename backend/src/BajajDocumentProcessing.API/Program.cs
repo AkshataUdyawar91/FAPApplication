@@ -107,6 +107,8 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var context = services.GetRequiredService<ApplicationDbContext>();
+        // CHANGE: Auto-create database if it doesn't exist (creates all tables from current entity definitions)
+        await context.Database.EnsureCreatedAsync();
         await ApplicationDbContextSeed.SeedAsync(context);
     }
     catch (Exception ex)

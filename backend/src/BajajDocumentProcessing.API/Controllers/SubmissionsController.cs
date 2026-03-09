@@ -1236,6 +1236,262 @@ public class SubmissionsController : ControllerBase
             return StatusCode(500, new { error = "An error occurred while processing the package" });
         }
     }
+
+    // CHANGE: Added BuildValidationDetails to show all validation checks with meaningful messages
+    /// <summary>
+    /// Builds a single string showing all validation checks with descriptive pass/fail messages
+    /// </summary>
+    private static string BuildValidationDetails(Domain.Entities.ValidationResult vr)
+    {
+        var checks = new List<string>();
+        System.Text.Json.JsonElement json = default;
+        bool hasJson = false;
+
+        if (!string.IsNullOrEmpty(vr.ValidationDetailsJson))
+        {
+            try
+            {
+                json = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(vr.ValidationDetailsJson);
+                hasJson = true;
+            }
+            catch { }
+        }
+
+        // SAP Verification
+        if (vr.SapVerificationPassed)
+            checks.Add("SAP Verification: Pass - PO verified against SAP records");
+        else
+            checks.Add("SAP Verification: Fail - " + (hasJson ? GetJsonArrayAsString(json, "SAPVerification", "Discrepancies", "PO could not be verified in SAP") : "PO could not be verified in SAP"));
+
+        // Amount Consistency
+        checks.Add(vr.AmountConsistencyPassed
+            ? "Amount Consistency: Pass - Invoice and Cost Summary amounts are consistent"
+            : "Amount Consistency: Fail - Invoice and Cost Summary amounts do not match");
+
+        // Line Item Matching
+        if (vr.LineItemMatchingPassed)
+            checks.Add("Line Item Matching: Pass - All PO line items found in Invoice");
+        else
+            checks.Add("Line Item Matching: Fail - " + (hasJson ? GetLineItemDetail(json) : "Some PO line items missing in Invoice"));
+
+        // Completeness Check
+        if (vr.CompletenessCheckPassed)
+            checks.Add("Completeness Check: Pass - All required documents are present");
+        else
+            checks.Add("Completeness Check: Fail - " + (hasJson ? GetJsonArrayAsString(json, "Completeness", "MissingItems", "Some required documents are missing") : "Some required documents are missing"));
+
+        // Date Validation
+        if (vr.DateValidationPassed)
+            checks.Add("Date Validation: Pass - All dates are valid and consistent");
+        else
+            checks.Add("Date Validation: Fail - " + (hasJson ? GetJsonArrayAsString(json, "DateValidation", "DateIssues", "Date inconsistencies found") : "Date inconsistencies found"));
+
+        // Vendor Matching
+        checks.Add(vr.VendorMatchingPassed
+            ? "Vendor Matching: Pass - Vendor name matches across PO and Invoice"
+            : "Vendor Matching: Fail - Vendor name mismatch between PO and Invoice");
+
+        if (hasJson)
+        {
+            // Invoice Field Presence
+            checks.Add(GetJsonBool(json, "InvoiceFieldPresence", "AllFieldsPresent")
+                ? "Invoice Field Presence: Pass - All required Invoice fields are present"
+                : "Invoice Field Presence: Fail - " + GetJsonIssueDetail(json, "InvoiceFieldPresence", "MissingFields"));
+
+            // Invoice Cross-Document
+            checks.Add(GetJsonBool(json, "InvoiceCrossDocument", "AllChecksPass")
+                ? "Invoice Cross-Document: Pass - Invoice data matches PO data"
+                : "Invoice Cross-Document: Fail - " + GetJsonIssues(json, "InvoiceCrossDocument"));
+
+            // Cost Summary Field Presence
+            checks.Add(GetJsonBool(json, "CostSummaryFieldPresence", "AllFieldsPresent")
+                ? "Cost Summary Field Presence: Pass - All required Cost Summary fields are present"
+                : "Cost Summary Field Presence: Fail - " + GetJsonIssueDetail(json, "CostSummaryFieldPresence", "MissingFields"));
+
+            // Cost Summary Cross-Document
+            checks.Add(GetJsonBool(json, "CostSummaryCrossDocument", "AllChecksPass")
+                ? "Cost Summary Cross-Document: Pass - Cost Summary data matches Invoice data"
+                : "Cost Summary Cross-Document: Fail - " + GetJsonIssues(json, "CostSummaryCrossDocument"));
+
+            // Activity Field Presence
+            checks.Add(GetJsonBool(json, "ActivityFieldPresence", "AllFieldsPresent")
+                ? "Activity Field Presence: Pass - All required Activity Summary fields are present"
+                : "Activity Field Presence: Fail - " + GetJsonIssueDetail(json, "ActivityFieldPresence", "MissingFields"));
+
+            // Activity Cross-Document
+            checks.Add(GetJsonBool(json, "ActivityCrossDocument", "AllChecksPass")
+                ? "Activity Cross-Document: Pass - Activity Summary data matches Cost Summary data"
+                : "Activity Cross-Document: Fail - " + GetJsonIssues(json, "ActivityCrossDocument"));
+
+            // Photo Field Presence
+            checks.Add(GetJsonBool(json, "PhotoFieldPresence", "AllFieldsPresent")
+                ? "Photo Field Presence: Pass - Photo proofs validated successfully"
+                : "Photo Field Presence: Fail - " + GetJsonIssueDetail(json, "PhotoFieldPresence", "MissingFields"));
+
+            // Photo Cross-Document
+            checks.Add(GetJsonBool(json, "PhotoCrossDocument", "AllChecksPass")
+                ? "Photo Cross-Document: Pass - Photo count matches Activity Summary"
+                : "Photo Cross-Document: Fail - " + GetJsonIssues(json, "PhotoCrossDocument"));
+
+            // Enquiry Dump Field Presence (optional doc)
+            if (JsonSectionExists(json, "EnquiryDumpFieldPresence"))
+            {
+                checks.Add(GetJsonBool(json, "EnquiryDumpFieldPresence", "AllFieldsPresent")
+                    ? "Enquiry Dump Field Presence: Pass - All required Enquiry Dump fields are present"
+                    : "Enquiry Dump Field Presence: Fail - " + GetJsonIssueDetail(json, "EnquiryDumpFieldPresence", "MissingFields"));
+            }
+
+            // Enquiry Dump Cross-Document (optional doc)
+            if (JsonSectionExists(json, "EnquiryDumpCrossDocument"))
+            {
+                checks.Add(GetJsonBool(json, "EnquiryDumpCrossDocument", "AllChecksPass")
+                    ? "Enquiry Dump Cross-Document: Pass - Enquiry Dump dealers match Activity Summary"
+                    : "Enquiry Dump Cross-Document: Fail - " + GetJsonIssues(json, "EnquiryDumpCrossDocument"));
+            }
+        }
+
+        return string.Join("; ", checks);
+    }
+
+    // CHANGE: Helper to safely read a nested boolean from JsonElement
+    private static bool GetJsonBool(System.Text.Json.JsonElement root, string section, string property)
+    {
+        if (root.TryGetProperty(section, out var sectionEl) && 
+            sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null &&
+            sectionEl.TryGetProperty(property, out var propEl) &&
+            propEl.ValueKind == System.Text.Json.JsonValueKind.True)
+        {
+            return true;
+        }
+        return false;
+    }
+
+    // CHANGE: Helper to check if a JSON section exists and is not null
+    private static bool JsonSectionExists(System.Text.Json.JsonElement root, string section)
+    {
+        return root.TryGetProperty(section, out var el) && el.ValueKind != System.Text.Json.JsonValueKind.Null;
+    }
+
+    // CHANGE: Helper to read a string array from a nested JSON section
+    private static string GetJsonArrayAsString(System.Text.Json.JsonElement root, string section, string arrayProp, string fallback)
+    {
+        try
+        {
+            if (root.TryGetProperty(section, out var sectionEl) &&
+                sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
+            {
+                System.Text.Json.JsonElement arrEl;
+                if (sectionEl.TryGetProperty(arrayProp, out arrEl) &&
+                    arrEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var items = new List<string>();
+                    foreach (var item in arrEl.EnumerateArray())
+                    {
+                        var val = item.GetString();
+                        if (!string.IsNullOrEmpty(val)) items.Add(val);
+                    }
+                    if (items.Any()) return string.Join(", ", items);
+                }
+            }
+        }
+        catch { }
+        return fallback;
+    }
+
+    // CHANGE: Helper to get line item matching detail from JSON
+    private static string GetLineItemDetail(System.Text.Json.JsonElement root)
+    {
+        try
+        {
+            if (root.TryGetProperty("LineItemMatching", out var sectionEl) &&
+                sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
+            {
+                System.Text.Json.JsonElement arrEl;
+                if (sectionEl.TryGetProperty("MissingItemCodes", out arrEl) &&
+                    arrEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var items = new List<string>();
+                    foreach (var item in arrEl.EnumerateArray())
+                    {
+                        var val = item.GetString();
+                        if (!string.IsNullOrEmpty(val)) items.Add(val);
+                    }
+                    if (items.Any()) return $"Missing {items.Count} PO line items in Invoice: {string.Join(", ", items)}";
+                }
+            }
+        }
+        catch { }
+        return "Some PO line items missing in Invoice";
+    }
+
+    // CHANGE: Helper to extract Issues array from a validation section as a joined string
+    private static string GetJsonIssues(System.Text.Json.JsonElement root, string section)
+    {
+        try
+        {
+            if (root.TryGetProperty(section, out var sectionEl) &&
+                sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
+            {
+                // Try both PascalCase and camelCase for Issues property
+                System.Text.Json.JsonElement issuesEl;
+                if ((sectionEl.TryGetProperty("Issues", out issuesEl) || sectionEl.TryGetProperty("issues", out issuesEl)) &&
+                    issuesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var issues = new List<string>();
+                    foreach (var item in issuesEl.EnumerateArray())
+                    {
+                        var val = item.GetString();
+                        if (!string.IsNullOrEmpty(val)) issues.Add(val);
+                    }
+                    if (issues.Any()) return string.Join(", ", issues);
+                }
+            }
+        }
+        catch { }
+        return "Validation checks failed";
+    }
+
+    // CHANGE: Helper to extract MissingFields array from a validation section
+    private static string GetJsonIssueDetail(System.Text.Json.JsonElement root, string section, string arrayProp)
+    {
+        try
+        {
+            if (root.TryGetProperty(section, out var sectionEl) &&
+                sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
+            {
+                // Try both PascalCase and camelCase
+                System.Text.Json.JsonElement arrEl;
+                if ((sectionEl.TryGetProperty(arrayProp, out arrEl) || 
+                     sectionEl.TryGetProperty(char.ToLower(arrayProp[0]) + arrayProp.Substring(1), out arrEl)) &&
+                    arrEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var items = new List<string>();
+                    foreach (var item in arrEl.EnumerateArray())
+                    {
+                        var val = item.GetString();
+                        if (!string.IsNullOrEmpty(val)) items.Add(val);
+                    }
+                    if (items.Any()) return "Missing: " + string.Join(", ", items);
+                }
+
+                // Also try reading Issues as fallback (some sections store errors in Issues not MissingFields)
+                System.Text.Json.JsonElement issuesEl;
+                if ((sectionEl.TryGetProperty("Issues", out issuesEl) || sectionEl.TryGetProperty("issues", out issuesEl)) &&
+                    issuesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var issues = new List<string>();
+                    foreach (var item in issuesEl.EnumerateArray())
+                    {
+                        var val = item.GetString();
+                        if (!string.IsNullOrEmpty(val)) issues.Add(val);
+                    }
+                    if (issues.Any()) return string.Join(", ", issues);
+                }
+            }
+        }
+        catch { }
+        return "Some required fields are missing";
+    }
 }
 
 /// <summary>
