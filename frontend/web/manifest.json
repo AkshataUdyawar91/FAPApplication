@@ -1,11 +1,11 @@
 {
-    "name": "bajaj_document_processing",
-    "short_name": "bajaj_document_processing",
+    "name": "Bajaj Document Processing",
+    "short_name": "Bajaj",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#003087",
+    "theme_color": "#003087",
+    "description": "Bajaj Document Processing System",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

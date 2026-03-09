@@ -8,10 +8,7 @@ import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
-import '../../../../core/widgets/nav_item.dart';
-
-
-class AgencyDashboardPage extends StatefulWidget {
+import '../../../../core/widgets/nav_item.dart';class AgencyDashboardPage extends StatefulWidget {
   final String token;
   final String userName;
 
@@ -32,7 +29,8 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   String _statusFilter = 'all';
   List<Map<String, dynamic>> _requests = [];
   bool _isLoading = true;
-  bool _isChatOpen = true;
+  bool _isChatOpen = false;
+  bool _isSidebarCollapsed = true;
 
   @override
   void initState() {
@@ -125,7 +123,6 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         final width = constraints.maxWidth;
         final device = getDeviceType(width);
         final isMobile = device == DeviceType.mobile;
-        final isTablet = device == DeviceType.tablet;
 
         return Scaffold(
           appBar: isMobile
@@ -144,31 +141,39 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
             navItems: _getNavItems(context),
             onLogout: () => Navigator.pushReplacementNamed(context, '/'),
           ) : null,
-          body: Row(
+          body: Column(
             children: [
-              if (!isMobile) AppSidebar(
-                userName: widget.userName,
-                userRole: 'Agency',
-                navItems: _getNavItems(context),
-                onLogout: () => Navigator.pushReplacementNamed(context, '/'),
-                isCollapsed: isTablet,
-              ),
+              if (!isMobile) _buildTopBar(),
               Expanded(
-                child: Column(
+                child: Row(
                   children: [
-                    if (!isMobile) _buildHeader(device),
+                    if (!isMobile) AppSidebar(
+                      userName: widget.userName,
+                      userRole: 'Agency',
+                      navItems: _getNavItems(context),
+                      onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                      isCollapsed: _isSidebarCollapsed,
+                      onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                    ),
                     Expanded(
-                      child: _isLoading
-                          ? const Center(child: CircularProgressIndicator())
-                          : _buildContent(device),
+                      child: Column(
+                        children: [
+                          if (!isMobile) _buildHeader(device),
+                          Expanded(
+                            child: _isLoading
+                                ? const Center(child: CircularProgressIndicator())
+                                : _buildContent(device),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_isChatOpen && !isMobile) ChatSidePanel(
+                      token: widget.token,
+                      deviceType: device,
+                      onClose: () => setState(() => _isChatOpen = false),
                     ),
                   ],
                 ),
-              ),
-              if (_isChatOpen && !isMobile) ChatSidePanel(
-                token: widget.token,
-                deviceType: device,
-                onClose: () => setState(() => _isChatOpen = false),
               ),
             ],
           ),
@@ -216,6 +221,30 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
       }),
     ];
+  }
+
+  /// Full-width top bar with Bajaj branding — spans sidebar + content.
+  Widget _buildTopBar() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: const Color(0xFF003087),
+      child: Row(
+        children: [
+          const Icon(Icons.business, color: Colors.white, size: 22),
+          const SizedBox(width: 8),
+          const Text(
+            'Bajaj',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ─── HEADER (tablet/desktop) ──────────────────────────────────────────
@@ -284,64 +313,62 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Widget _buildStatsCards(DeviceType device) {
     final stats = _stats;
     final cards = [
-      _StatData('Pending Requests', stats['pending']!.toString(), Icons.schedule, const Color(0xFF3B82F6)),
-      _StatData('Approved This Month', stats['approved']!.toString(), Icons.check_circle, const Color(0xFF10B981)),
-      _StatData('Total Reimbursed', '₹${_calculateTotalAmount()}', Icons.account_balance_wallet, const Color(0xFF8B5CF6)),
-      _StatData('Drafts', stats['rejected']!.toString(), Icons.drafts, const Color(0xFFF59E0B)),
+      _StatData('Pending Requests', stats['pending']!.toString(), Icons.schedule, const Color(0xFF3B82F6), 'pending'),
+      _StatData('Approved This Month', stats['approved']!.toString(), Icons.check_circle, const Color(0xFF10B981), 'approved'),
     ];
 
     // Use LayoutBuilder so cards respond to actual available width, not screen width
     return LayoutBuilder(
       builder: (context, constraints) {
         final w = constraints.maxWidth;
-        // 4-col when wide enough, 2-col otherwise
+        // Wide layout: single row
         if (w >= 600) {
           return Row(
             children: cards.map((c) => Expanded(
               child: Padding(
                 padding: EdgeInsets.only(right: c == cards.last ? 0 : 12),
-                child: _buildStatCard(c.label, c.value, c.icon, c.color, w / 4),
+                child: _buildStatCard(c.label, c.value, c.icon, c.color, w / 4, filterKey: c.filterKey),
               ),
             )).toList(),
           );
         }
-        return Column(
+        // Mobile: single row with 2 cards
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: _buildStatCard(cards[0].label, cards[0].value, cards[0].icon, cards[0].color, w / 2)),
-                const SizedBox(width: 12),
-                Expanded(child: _buildStatCard(cards[1].label, cards[1].value, cards[1].icon, cards[1].color, w / 2)),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: _buildStatCard(cards[2].label, cards[2].value, cards[2].icon, cards[2].color, w / 2)),
-                const SizedBox(width: 12),
-                Expanded(child: _buildStatCard(cards[3].label, cards[3].value, cards[3].icon, cards[3].color, w / 2)),
-              ],
-            ),
+            Expanded(child: _buildStatCard(cards[0].label, cards[0].value, cards[0].icon, cards[0].color, w / 2, filterKey: cards[0].filterKey)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildStatCard(cards[1].label, cards[1].value, cards[1].icon, cards[1].color, w / 2, filterKey: cards[1].filterKey)),
           ],
         );
       },
     );
   }
 
-  Widget _buildStatCard(String label, String value, IconData icon, Color color, double cardWidth) {
+  Widget _buildStatCard(String label, String value, IconData icon, Color color, double cardWidth, {String? filterKey}) {
     // Use column layout when card is too narrow for side-by-side icon+text
     final useColumn = cardWidth < 200;
+    final isActive = filterKey != null && _statusFilter == filterKey;
     
     // Determine font size based on card width for better responsiveness
     final valueFontSize = useColumn 
         ? (cardWidth < 150 ? 18.0 : 20.0)
         : (cardWidth < 250 ? 20.0 : 22.0);
     
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+    return InkWell(
+      onTap: filterKey == null ? null : () {
+        setState(() {
+          // Toggle: tap again to reset to 'all'
+          _statusFilter = _statusFilter == filterKey ? 'all' : filterKey;
+        });
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Card(
+      elevation: isActive ? 2 : 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: isActive ? color : AppColors.border, width: isActive ? 2 : 1),
+      ),
       child: Padding(
         padding: EdgeInsets.all(useColumn ? 14 : 20),
         child: useColumn
@@ -419,6 +446,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   ),
                 ],
               ),
+      ),
       ),
     );
   }
@@ -531,11 +559,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                 columns: const [
                   DataColumn(label: Text('FAP NUMBER')),
                   DataColumn(label: Text('PO NO.')),
-                  DataColumn(label: Text('PO AMT')),
                   DataColumn(label: Text('INVOICE NO.')),
                   DataColumn(label: Text('INVOICE AMT')),
                   DataColumn(label: Text('SUBMITTED DATE')),
-                  DataColumn(label: Text('AI SCORE')),
                   DataColumn(label: Text('STATUS')),
                   DataColumn(label: SizedBox.shrink()),
                 ],
@@ -546,28 +572,17 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   final fapNumber = 'FAP-${id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase()}';
                   final poNumber = r['poNumber']?.toString() ?? r['poNo']?.toString() ?? '—';
                   final invoiceNumber = r['invoiceNumber']?.toString() ?? r['invoiceNo']?.toString() ?? '—';
-                  final poAmount = r['poAmount'];
                   final invoiceAmount = r['invoiceAmount'];
-                  final poAmountStr = poAmount != null
-                      ? '₹${double.tryParse(poAmount.toString())?.toStringAsFixed(2) ?? '—'}'
-                      : '—';
                   final invoiceAmountStr = invoiceAmount != null
                       ? '₹${double.tryParse(invoiceAmount.toString())?.toStringAsFixed(2) ?? '—'}'
-                      : '—';
-                  final overallConfidence = r['overallConfidence'];
-                  final aiScore = overallConfidence != null
-                      ? '${(overallConfidence * 100).toStringAsFixed(0)}%'
                       : '—';
                   return DataRow(cells: [
                     DataCell(Text(fapNumber,
                         style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Color(0xFF111827)))),
                     DataCell(Text(poNumber, style: const TextStyle(fontSize: 12))),
-                    DataCell(Text(poAmountStr, style: const TextStyle(fontSize: 12))),
                     DataCell(Text(invoiceNumber, style: const TextStyle(fontSize: 12))),
                     DataCell(Text(invoiceAmountStr, style: const TextStyle(fontSize: 12))),
                     DataCell(Text(_formatDate(r['createdAt']), style: const TextStyle(fontSize: 12))),
-                    DataCell(Text(aiScore,
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500))),
                     DataCell(_buildStatusBadge(status, rawState)),
                     DataCell(
                          SizedBox(
@@ -948,5 +963,6 @@ class _StatData {
   final String value;
   final IconData icon;
   final Color color;
-  const _StatData(this.label, this.value, this.icon, this.color);
+  final String filterKey;
+  const _StatData(this.label, this.value, this.icon, this.color, this.filterKey);
 }

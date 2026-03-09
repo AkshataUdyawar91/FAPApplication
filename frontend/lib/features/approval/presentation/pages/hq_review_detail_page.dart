@@ -5,6 +5,12 @@ import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/responsive/responsive.dart';
+import '../../../../core/widgets/app_sidebar.dart';
+import '../../../../core/widgets/app_drawer.dart';
+import '../../../../core/widgets/chat_side_panel.dart';
+import '../../../../core/widgets/chat_end_drawer.dart';
+import '../../../../core/widgets/nav_item.dart';
 import '../../data/models/invoice_summary_data.dart';
 import '../../data/models/invoice_document_row.dart';
 import '../../data/models/campaign_detail_row.dart';
@@ -44,6 +50,8 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
   bool _isLoading = true;
   Map<String, dynamic>? _submission;
   bool _isProcessing = false;
+  bool _isChatOpen = false;
+  bool _isSidebarCollapsed = true;
 
   // Transformed data for layout
   InvoiceSummaryData? _invoiceSummary;
@@ -231,62 +239,150 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     );
   }
 
+  List<NavItem> _getNavItems(BuildContext context) {
+    return [
+      NavItem(icon: Icons.dashboard, label: 'Dashboard', onTap: () => Navigator.pop(context)),
+      NavItem(icon: Icons.rate_review, label: 'Review', isActive: true, onTap: () {}),
+      NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
+      }),
+      NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
+      }),
+    ];
+  }
+
+  Widget _buildTopBar() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: const Color(0xFF003087),
+      child: const Row(
+        children: [
+          Icon(Icons.business, color: Colors.white, size: 22),
+          SizedBox(width: 8),
+          Text(
+            'Bajaj',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _submission == null
-              ? const Center(child: Text('Submission not found'))
-              : Column(
-                  children: [
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildHeaderSection(),
-                            const SizedBox(height: 24),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final device = getDeviceType(width);
+        final isMobile = device == DeviceType.mobile;
 
-                            // Invoice Summary Section
-                            if (_invoiceSummary != null)
-                              InvoiceSummarySection(data: _invoiceSummary!),
-                            const SizedBox(height: 24),
-
-                            // ASM Review Section (HQ-specific)
-                            _buildASMReviewSection(),
-                            const SizedBox(height: 24),
-
-                            // Collapsible AI Analysis Section
-                            AiAnalysisSection(submission: _submission!),
-                            const SizedBox(height: 24),
-
-                            // Invoice Documents Table
-                            InvoiceDocumentsTable(
-                              documents: _invoiceDocuments,
-                              onDocumentTap: (doc) => _downloadDocument(
-                                doc.documentId,
-                                doc.documentName,
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-
-                            // Campaign Details Table
-                            CampaignDetailsTable(
-                              campaignDetails: _campaignDetails,
-                              onPhotoTap: (detail) => _downloadDocument(
-                                detail.documentId,
-                                detail.documentName,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+        return Scaffold(
+          backgroundColor: AppColors.background,
+          appBar: isMobile
+              ? AppBar(
+                  backgroundColor: const Color(0xFF1E3A8A),
+                  title: const Text('Bajaj', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  iconTheme: const IconThemeData(color: Colors.white),
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      onPressed: () => Navigator.pop(context),
+                      tooltip: 'Back',
                     ),
                   ],
+                )
+              : null,
+          drawer: isMobile
+              ? AppDrawer(
+                  userName: widget.userName,
+                  userRole: 'HQ/RA',
+                  navItems: _getNavItems(context),
+                  onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                )
+              : null,
+          body: Column(
+            children: [
+              if (!isMobile) _buildTopBar(),
+              Expanded(
+                child: Row(
+                  children: [
+                    if (!isMobile)
+                      AppSidebar(
+                        userName: widget.userName,
+                        userRole: 'HQ/RA',
+                        navItems: _getNavItems(context),
+                        onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                        isCollapsed: _isSidebarCollapsed,
+                        onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                      ),
+                    Expanded(
+                      child: _isLoading
+                          ? const Center(child: CircularProgressIndicator())
+                          : _submission == null
+                              ? const Center(child: Text('Submission not found'))
+                              : SingleChildScrollView(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      _buildHeaderSection(),
+                                      const SizedBox(height: 24),
+                                      if (_invoiceSummary != null)
+                                        InvoiceSummarySection(data: _invoiceSummary!),
+                                      const SizedBox(height: 24),
+                                      _buildASMReviewSection(),
+                                      const SizedBox(height: 24),
+                                      AiAnalysisSection(submission: _submission!),
+                                      const SizedBox(height: 24),
+                                      InvoiceDocumentsTable(
+                                        documents: _invoiceDocuments,
+                                        onDocumentTap: (doc) => _downloadDocument(doc.documentId, doc.documentName),
+                                      ),
+                                      const SizedBox(height: 24),
+                                      CampaignDetailsTable(
+                                        campaignDetails: _campaignDetails,
+                                        onPhotoTap: (detail) => _downloadDocument(detail.documentId, detail.documentName),
+                                      ),
+                                      const SizedBox(height: 80),
+                                    ],
+                                  ),
+                                ),
+                    ),
+                    if (_isChatOpen && !isMobile)
+                      ChatSidePanel(
+                        token: widget.token,
+                        deviceType: device,
+                        onClose: () => setState(() => _isChatOpen = false),
+                      ),
+                  ],
                 ),
+              ),
+            ],
+          ),
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          floatingActionButton: (_isChatOpen && !isMobile)
+              ? null
+              : Builder(
+                  builder: (scaffoldContext) => Padding(
+                    padding: const EdgeInsets.only(bottom: 16, right: 4),
+                    child: FloatingActionButton(
+                      onPressed: () {
+                        if (isMobile) {
+                          Scaffold.of(scaffoldContext).openEndDrawer();
+                        } else {
+                          setState(() => _isChatOpen = !_isChatOpen);
+                        }
+                      },
+                      backgroundColor: AppColors.primary,
+                      child: const Icon(Icons.smart_toy, color: Colors.white),
+                    ),
+                  ),
+                ),
+          floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+        );
+      },
     );
   }
 

@@ -35,7 +35,8 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   String _statusFilter = 'all';
   String _sortBy = 'date';
   bool _isLoading = true;
-  bool _isChatOpen = true;
+  bool _isChatOpen = false;
+  bool _isSidebarCollapsed = true;
   List<Map<String, dynamic>> _documents = [];
 
   // KPI state
@@ -172,7 +173,6 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
         final width = constraints.maxWidth;
         final device = getDeviceType(width);
         final isMobile = device == DeviceType.mobile;
-        final isTablet = device == DeviceType.tablet;
 
         return Scaffold(
           appBar: isMobile
@@ -188,31 +188,39 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
             navItems: _getNavItems(context),
             onLogout: () => Navigator.pushReplacementNamed(context, '/'),
           ) : null,
-          body: Row(
+          body: Column(
             children: [
-              if (!isMobile) AppSidebar(
-                userName: widget.userName,
-                userRole: 'ASM',
-                navItems: _getNavItems(context),
-                onLogout: () => Navigator.pushReplacementNamed(context, '/'),
-                isCollapsed: isTablet,
-              ),
+              if (!isMobile) _buildTopBar(),
               Expanded(
-                child: Column(
+                child: Row(
                   children: [
-                    if (!isMobile) _buildHeader(device),
+                    if (!isMobile) AppSidebar(
+                      userName: widget.userName,
+                      userRole: 'ASM',
+                      navItems: _getNavItems(context),
+                      onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                      isCollapsed: _isSidebarCollapsed,
+                      onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                    ),
                     Expanded(
-                      child: _isLoading
-                          ? const Center(child: CircularProgressIndicator())
-                          : _buildContent(device),
+                      child: Column(
+                        children: [
+                          if (!isMobile) _buildHeader(device),
+                          Expanded(
+                            child: _isLoading
+                                ? const Center(child: CircularProgressIndicator())
+                                : _buildContent(device),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_isChatOpen && !isMobile) ChatSidePanel(
+                      token: widget.token,
+                      deviceType: device,
+                      onClose: () => setState(() => _isChatOpen = false),
                     ),
                   ],
                 ),
-              ),
-              if (_isChatOpen && !isMobile) ChatSidePanel(
-                token: widget.token,
-                deviceType: device,
-                onClose: () => setState(() => _isChatOpen = false),
               ),
             ],
           ),
@@ -236,6 +244,30 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
           floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         );
       },
+    );
+  }
+
+  /// Full-width top bar with Bajaj branding — spans sidebar + content.
+  Widget _buildTopBar() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: const Color(0xFF003087),
+      child: Row(
+        children: [
+          const Icon(Icons.business, color: Colors.white, size: 22),
+          const SizedBox(width: 8),
+          const Text(
+            'Bajaj',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -617,46 +649,42 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 1200),
-          child: Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                decoration: const BoxDecoration(
-                  color: AppColors.background,
-                  border: Border(bottom: BorderSide(color: AppColors.border, width: 1)),
-                ),
-                child: Row(children: [
-                  _headerCell('FAP NUMBER', 140),
-                  _headerCell('PO NO.', 120),
-                  _headerCell('PO AMT', 140),
-                  _headerCell('INVOICE NO.', 160),
-                  _headerCell('INVOICE AMT', 140),
-                  _headerCell('SUBMITTED DATE', 140),
-                  _headerCell('AI SCORE', 100),
-                  _headerCell('STATUS', 140),
-                  const SizedBox(width: 120),
-                ]),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: DataTable(
+                headingRowColor: WidgetStateProperty.all(AppColors.background),
+                headingTextStyle: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, letterSpacing: 0.3),
+                dataTextStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
+                columnSpacing: 16,
+                horizontalMargin: 24,
+                dataRowMinHeight: 56,
+                dataRowMaxHeight: 72,
+                dividerThickness: 1,
+                columns: const [
+                  DataColumn(label: Text('FAP NUMBER')),
+                  DataColumn(label: Text('PO NO.')),
+                  DataColumn(label: Text('PO AMT')),
+                  DataColumn(label: Text('INVOICE NO.')),
+                  DataColumn(label: Text('INVOICE AMT')),
+                  DataColumn(label: Text('SUBMITTED DATE')),
+                  DataColumn(label: Text('AI SCORE')),
+                  DataColumn(label: Text('STATUS')),
+                  DataColumn(label: SizedBox.shrink()),
+                ],
+                rows: filtered.map((doc) => _buildDocumentDataRow(doc)).toList(),
               ),
-              ...filtered.map((doc) => _buildDocumentRow(doc)),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _headerCell(String text, double width) {
-    return SizedBox(
-      width: width,
-      child: Text(text, style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
-    );
-  }
-
-  Widget _buildDocumentRow(Map<String, dynamic> doc) {
+  DataRow _buildDocumentDataRow(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
     final fapNumber = 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
@@ -668,35 +696,29 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     final overallConfidence = doc['overallConfidence'];
     final aiScore = overallConfidence != null ? '${(overallConfidence * 100).toStringAsFixed(0)}%' : '-';
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.border, width: 1))),
-      child: Row(children: [
-        SizedBox(width: 140, child: Text(fapNumber, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500))),
-        SizedBox(width: 120, child: Text(poNumber, style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary))),
-        SizedBox(width: 140, child: Text(poAmountStr, style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary, fontWeight: FontWeight.w600))),
-        SizedBox(width: 160, child: Text(invoiceNumber, style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary))),
-        SizedBox(width: 140, child: Text(invoiceAmountStr, style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary, fontWeight: FontWeight.w600))),
-        SizedBox(width: 140, child: Text(_formatDate(doc['createdAt']), style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary))),
-        SizedBox(width: 100, child: Text(aiScore, style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary, fontWeight: FontWeight.w600))),
-        SizedBox(width: 140, child: _buildStatusBadge(status)),
-        SizedBox(
-          width: 120,
-          child: Row(
-            children: [
-              ViewValidationReportButton(packageId: doc['id'], isCompact: true),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: const Icon(Icons.visibility_outlined, size: 20),
-                color: AppColors.primary,
-                onPressed: () => _navigateToDetail(doc['id']),
-                tooltip: 'View Details',
-              ),
-            ],
+    return DataRow(cells: [
+      DataCell(Text(fapNumber, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600, color: const Color(0xFF111827)))),
+      DataCell(Text(poNumber)),
+      DataCell(Text(poAmountStr, style: const TextStyle(fontWeight: FontWeight.w600))),
+      DataCell(Text(invoiceNumber)),
+      DataCell(Text(invoiceAmountStr, style: const TextStyle(fontWeight: FontWeight.w600))),
+      DataCell(Text(_formatDate(doc['createdAt']))),
+      DataCell(Text(aiScore, style: const TextStyle(fontWeight: FontWeight.w500))),
+      DataCell(_buildStatusBadge(status)),
+      DataCell(Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ViewValidationReportButton(packageId: doc['id'], isCompact: true),
+          const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.visibility_outlined, size: 20),
+            color: AppColors.primary,
+            onPressed: () => _navigateToDetail(doc['id']),
+            tooltip: 'View Details',
           ),
-        ),
-      ]),
-    );
+        ],
+      )),
+    ]);
   }
 
   Widget _buildStatusBadge(String? status) {
