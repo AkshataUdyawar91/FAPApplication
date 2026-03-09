@@ -175,7 +175,8 @@ class CampaignDetailsTable extends StatelessWidget {
   }
 
   Widget _buildDocumentNameCell(CampaignDetailRow detail) {
-    final hasUrl = detail.blobUrl != null && detail.blobUrl!.isNotEmpty;
+    final hasUrl = (detail.documentId != null && detail.documentId!.isNotEmpty) ||
+        (detail.blobUrl != null && detail.blobUrl!.isNotEmpty);
     
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

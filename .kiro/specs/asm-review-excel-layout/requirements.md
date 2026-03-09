@@ -138,23 +138,47 @@ Redesign the ASM/FAP review page to adopt an Excel-based layout structure that p
 
 1. THE ASM_Review_Page SHALL NOT contain any hardcoded dummy data in the implementation
 2. THE ASM_Review_Page SHALL NOT contain any placeholder data that is not derived from the API response
-3. ALL document names SHALL be extracted from the API response (filename field)
-4. ALL dealer names SHALL be extracted from photo metadata or extractedData fields from the API response
-5. IF dealer name is not available in the API response, THE ASM_Review_Page SHALL display whitespace (empty string)
-6. ALL dates SHALL be extracted from the API response (createdAt, updatedAt, or document-specific date fields)
-7. ALL campaign dates SHALL be formatted as DD MMM YYYY (e.g., "01 Jan 1999") to match the header date format
-8. ALL validation statuses SHALL be extracted from the API response (validationResult field)
-9. IF validation status is not available in the API response, THE ASM_Review_Page SHALL display whitespace (empty cell with no icon or text)
-10. ALL validation remarks SHALL be extracted from the API response (validation messages)
-11. IF validation remarks are not available in the API response, THE ASM_Review_Page SHALL display whitespace (empty string)
-12. ALL invoice amounts SHALL be extracted from the invoice document's extractedData field
-13. IF invoice amount is not available, THE ASM_Review_Page SHALL display whitespace (empty string)
-14. ALL agency names SHALL be extracted from the submission's agencyName or agency field
-15. IF agency name is not available, THE ASM_Review_Page SHALL display whitespace (empty string)
-16. ALL submission dates SHALL be extracted from the API response and formatted as DD MMM YYYY
-17. IF submission date is not available, THE ASM_Review_Page SHALL display whitespace (empty string)
-18. THE data transformation logic SHALL NOT generate fake or placeholder values (no "D1"/"D2" defaults, no "N/A" text, no "Document processed" text)
-19. ALL displayed data MUST be traceable back to the API response structure
-20. Fallback values for ALL fields SHALL be whitespace (empty strings), not descriptive placeholder text or generated values
+3. THE ASM_Review_Page SHALL fetch fresh data from the API on every page load (no client-side caching)
+4. THE ASM_Review_Page SHALL NOT cache API responses in browser storage
+5. ALL document names SHALL be extracted from the API response (filename field)
+6. ALL dealer names SHALL be extracted from photo metadata or extractedData fields from the API response
+7. IF dealer name is not available in the API response, THE ASM_Review_Page SHALL display whitespace (empty string)
+8. ALL dates SHALL be extracted from the API response (createdAt, updatedAt, or document-specific date fields)
+9. ALL campaign dates SHALL be formatted as DD MMM YYYY (e.g., "01 Jan 1999") to match the header date format
+10. ALL validation statuses SHALL be extracted from the API response (validationResult.allValidationsPassed and validationResult.failureReason fields)
+11. IF validation status is not available in the API response, THE ASM_Review_Page SHALL display whitespace (empty cell with no icon or text)
+12. ALL validation remarks SHALL be extracted from the API response (validationResult.failureReason field, parsed for document-specific errors)
+13. IF validation remarks are not available in the API response, THE ASM_Review_Page SHALL display whitespace (empty string)
+14. ALL invoice amounts SHALL be extracted from the invoice document's extractedData field
+15. IF invoice amount is not available, THE ASM_Review_Page SHALL display whitespace (empty string)
+16. ALL agency names SHALL be extracted from the submission's agencyName field (populated from SubmittedBy.FullName in the backend)
+17. IF agency name is not available, THE ASM_Review_Page SHALL display whitespace (empty string)
+18. ALL submission dates SHALL be extracted from the API response and formatted as DD MMM YYYY
+19. IF submission date is not available, THE ASM_Review_Page SHALL display whitespace (empty string)
+20. THE data transformation logic SHALL NOT generate fake or placeholder values (no "D1"/"D2" defaults, no "N/A" text, no "Document processed" text)
+21. ALL displayed data MUST be traceable back to the API response structure
+22. Fallback values for ALL fields SHALL be whitespace (empty strings), not descriptive placeholder text or generated values
+23. THE ASM_Review_Page SHALL display the most recent data from the API without browser caching interference
+24. THE backend API SHALL include the SubmittedBy user information (FullName as agencyName) in the submission response
+25. THE backend API SHALL eager-load the SubmittedBy navigation property to populate agency information
 
-**Note**: This requirement ensures data integrity and prevents confusion between test data and production data. Whitespace is preferred over "N/A" or placeholder text to clearly indicate missing data.
+**Note**: This requirement ensures data integrity and prevents confusion between test data and production data. Whitespace is preferred over "N/A" or placeholder text to clearly indicate missing data. The backend API has been updated to include agency information in the response.
+
+### Requirement 9: Document Download Functionality
+
+**User Story:** As an ASM, I want to download documents and photos by clicking on their names, so that I can review them offline or save them for records.
+
+#### Acceptance Criteria
+
+1. THE ASM_Review_Page SHALL make document names clickable links in both Invoice Documents and Campaign Details tables
+2. WHEN a document name link is clicked, THE ASM_Review_Page SHALL trigger a download of the document to the user's device
+3. THE download SHALL use the document's blobUrl from the API response
+4. IF blobUrl is not available or empty, THE ASM_Review_Page SHALL display an error message "Document URL not available"
+5. THE download SHALL use the actual filename from the API response
+6. THE download SHALL open in a new browser tab with target="_blank" attribute
+7. THE ASM_Review_Page SHALL display a success message "Downloading [filename]..." when download is triggered
+8. IF download fails, THE ASM_Review_Page SHALL display an error message "Failed to download document: [error]"
+9. THE document download SHALL work for all document types (Invoice, PO, Cost Summary, Photos)
+10. THE download functionality SHALL be tested with actual API data to ensure blobUrl is correctly extracted and used
+
+**Note**: This requirement ensures users can access and download all documents for offline review.

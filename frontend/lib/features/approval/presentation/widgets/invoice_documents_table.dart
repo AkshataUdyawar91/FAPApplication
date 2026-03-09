@@ -148,7 +148,8 @@ class InvoiceDocumentsTable extends StatelessWidget {
   }
 
   Widget _buildDocumentNameCell(InvoiceDocumentRow doc) {
-    final hasUrl = doc.blobUrl != null && doc.blobUrl!.isNotEmpty;
+    final hasUrl = (doc.documentId != null && doc.documentId!.isNotEmpty) ||
+        (doc.blobUrl != null && doc.blobUrl!.isNotEmpty);
     
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

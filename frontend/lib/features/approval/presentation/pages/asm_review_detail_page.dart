@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
 import 'package:web/web.dart' as web;
+import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/models/invoice_summary_data.dart';
 import '../../data/models/invoice_document_row.dart';
@@ -11,6 +12,7 @@ import '../widgets/invoice_summary_section.dart';
 import '../widgets/invoice_documents_table.dart';
 import '../widgets/campaign_details_table.dart';
 import '../widgets/hq_rejection_section.dart';
+import '../widgets/ai_analysis_section.dart';
 
 class ASMReviewDetailPage extends StatefulWidget {
   final String submissionId;
@@ -29,7 +31,15 @@ class ASMReviewDetailPage extends StatefulWidget {
 }
 
 class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(
+    baseUrl: 'http://localhost:5000/api',
+    // Disable caching
+    headers: {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    },
+  ));
   final _commentsController = TextEditingController();
 
   bool _isLoading = true;
@@ -57,9 +67,16 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     setState(() => _isLoading = true);
 
     try {
+      // Add timestamp to prevent caching
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
       final response = await _dio.get(
-        '/submissions/${widget.submissionId}',
-        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        '/submissions/${widget.submissionId}?_t=$timestamp',
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer ${widget.token}',
+            'Cache-Control': 'no-cache',
+          },
+        ),
       );
 
       if (response.statusCode == 200 && mounted) {
@@ -241,6 +258,10 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                             if (_invoiceSummary != null)
                               InvoiceSummarySection(data: _invoiceSummary!),
                             const SizedBox(height: 24),
+
+                            // Collapsible AI Analysis Section
+                            AiAnalysisSection(submission: _submission!),
+                            const SizedBox(height: 24),
                             
                             // HQ Rejection Section (conditional)
                             HQRejectionSection(
@@ -254,14 +275,14 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                             // Invoice Documents Table
                             InvoiceDocumentsTable(
                               documents: _invoiceDocuments,
-                              onDocumentTap: (doc) => _downloadDocument(doc.blobUrl, doc.documentName),
+                              onDocumentTap: (doc) => _downloadDocument(doc.documentId, doc.documentName),
                             ),
                             const SizedBox(height: 24),
                             
                             // Campaign Details Table
                             CampaignDetailsTable(
                               campaignDetails: _campaignDetails,
-                              onPhotoTap: (detail) => _downloadDocument(detail.blobUrl, detail.documentName),
+                              onPhotoTap: (detail) => _downloadDocument(detail.documentId, detail.documentName),
                             ),
                           ],
                         ),
@@ -274,7 +295,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
   Widget _buildHeaderSection() {
     final documents = _submission!['documents'] as List? ?? [];
-    String invoiceNumber = 'N/A';
+    String invoiceNumber = '';
     String reqNumber = 'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
     
     // Extract invoice number from invoice document
@@ -289,33 +310,18 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
             data = Map<String, dynamic>.from(extractedData);
           }
           if (data != null) {
-            invoiceNumber = data['InvoiceNumber'] ?? data['invoiceNumber'] ?? 'N/A';
+            invoiceNumber = data['InvoiceNumber'] ?? data['invoiceNumber'] ?? '';
             break;
           }
         } catch (e) {
-          // Keep default N/A
+          // Keep default empty string
         }
       }
     }
     
-    final agencyName = _invoiceSummary?.agencyName ?? 'N/A';
+    final agencyName = _invoiceSummary?.agencyName ?? '';
     final submittedDate = _submission!['createdAt'];
     final state = _submission!['state']?.toString() ?? 'Unknown';
-    
-    // Extract location from submission data
-    String location = '';
-    final agencyLocation = _submission!['agencyLocation'];
-    final dealerLocation = _submission!['dealerLocation'];
-    final submissionLocation = _submission!['location'];
-    
-    if (agencyLocation != null && agencyLocation.toString().isNotEmpty) {
-      location = agencyLocation.toString();
-    } else if (dealerLocation != null && dealerLocation.toString().isNotEmpty) {
-      location = dealerLocation.toString();
-    } else if (submissionLocation != null && submissionLocation.toString().isNotEmpty) {
-      location = submissionLocation.toString();
-    }
-    // If no location data, leave as empty string (will show whitespace)
     
     return Card(
       elevation: 0,
@@ -342,7 +348,13 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '$invoiceNumber - $agencyName',
+                        invoiceNumber.isNotEmpty && agencyName.isNotEmpty
+                            ? '$invoiceNumber - $agencyName'
+                            : invoiceNumber.isNotEmpty
+                                ? invoiceNumber
+                                : agencyName.isNotEmpty
+                                    ? agencyName
+                                    : 'Submission Details',
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -368,18 +380,6 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                               color: Colors.grey[600],
                             ),
                           ),
-                          if (location.isNotEmpty) ...[
-                            const SizedBox(width: 16),
-                            Icon(Icons.location_on, size: 14, color: Colors.grey[600]),
-                            const SizedBox(width: 4),
-                            Text(
-                              location,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ],
                         ],
                       ),
                     ],
@@ -516,13 +516,13 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
   }
 
   String _formatDisplayDate(dynamic date) {
-    if (date == null) return 'N/A';
+    if (date == null) return '';
     try {
       final dt = DateTime.parse(date.toString());
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       return '${dt.day.toString().padLeft(2, '0')} ${months[dt.month - 1]} ${dt.year}';
     } catch (e) {
-      return 'N/A';
+      return '';
     }
   }
 
@@ -621,11 +621,11 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     }
   }
 
-  void _downloadDocument(String? blobUrl, String? filename) {
-    if (blobUrl == null || blobUrl.isEmpty) {
+  Future<void> _downloadDocument(String? documentId, String? filename) async {
+    if (documentId == null || documentId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Document URL not available'),
+          content: Text('Document not available for download'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -633,27 +633,63 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     }
 
     try {
-      // Create an anchor element to trigger download
-      final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
-      anchor.href = blobUrl;
-      anchor.download = filename ?? 'document';
-      anchor.target = '_blank';
-      anchor.click();
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+      );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Downloading ${filename ?? 'document'}...'),
-            backgroundColor: AppColors.approvedText,
-            duration: const Duration(seconds: 2),
-          ),
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType =
+            response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = filename ??
+            response.data['filename']?.toString() ??
+            'document';
+
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('File content not available'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+          return;
+        }
+
+        final bytes = base64.decode(base64Content);
+        
+        final blob = web.Blob(
+          [bytes.toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
         );
+        final url = web.URL.createObjectURL(blob);
+        
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+        
+        web.URL.revokeObjectURL(url);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Downloading $name...'),
+              backgroundColor: AppColors.approvedText,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to download document: $e'),
+            content: Text('Failed to download: $e'),
             backgroundColor: Colors.red,
           ),
         );

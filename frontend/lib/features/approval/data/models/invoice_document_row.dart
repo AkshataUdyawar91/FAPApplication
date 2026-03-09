@@ -58,6 +58,9 @@ class InvoiceDocumentRow {
   /// Optional blob URL for viewing or downloading the document.
   final String? blobUrl;
 
+  /// Document ID from the API for authenticated download.
+  final String? documentId;
+
   /// Creates an InvoiceDocumentRow instance.
   const InvoiceDocumentRow({
     required this.serialNumber,
@@ -66,6 +69,7 @@ class InvoiceDocumentRow {
     required this.status,
     required this.remarks,
     this.blobUrl,
+    this.documentId,
   });
 
   /// Creates a copy of this row with the given fields replaced.
@@ -76,6 +80,7 @@ class InvoiceDocumentRow {
     ValidationStatus? status,
     String? remarks,
     String? blobUrl,
+    String? documentId,
   }) {
     return InvoiceDocumentRow(
       serialNumber: serialNumber ?? this.serialNumber,
@@ -84,6 +89,7 @@ class InvoiceDocumentRow {
       status: status ?? this.status,
       remarks: remarks ?? this.remarks,
       blobUrl: blobUrl ?? this.blobUrl,
+      documentId: documentId ?? this.documentId,
     );
   }
 
@@ -96,29 +102,19 @@ class InvoiceDocumentRow {
         other.documentName == documentName &&
         other.status == status &&
         other.remarks == remarks &&
-        other.blobUrl == blobUrl;
+        other.blobUrl == blobUrl &&
+        other.documentId == documentId;
   }
 
   @override
   int get hashCode {
-    return Object.hash(
-      serialNumber,
-      category,
-      documentName,
-      status,
-      remarks,
-      blobUrl,
-    );
+    return Object.hash(serialNumber, category, documentName, status, remarks, blobUrl, documentId);
   }
 
   @override
   String toString() {
-    return 'InvoiceDocumentRow('
-        'serialNumber: $serialNumber, '
-        'category: $category, '
-        'documentName: $documentName, '
-        'status: $status, '
-        'remarks: $remarks, '
-        'blobUrl: $blobUrl)';
+    return 'InvoiceDocumentRow(serialNumber: $serialNumber, category: $category, '
+        'documentName: $documentName, status: $status, remarks: $remarks, '
+        'blobUrl: $blobUrl, documentId: $documentId)';
   }
 }

@@ -104,6 +104,7 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.ValidationResult)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
+                .Include(p => p.SubmittedBy)
                 .AsQueryable();
 
             // Agency users can only see their own submissions
@@ -125,6 +126,8 @@ public class SubmissionsController : ControllerBase
                 state = package.State.ToString(),
                 createdAt = package.CreatedAt,
                 updatedAt = package.UpdatedAt,
+                agencyName = package.SubmittedBy?.FullName ?? string.Empty,
+                agencyEmail = package.SubmittedBy?.Email ?? string.Empty,
                 // ASM Approval info
                 asmReviewedAt = package.ASMReviewedAt,
                 asmReviewNotes = package.ASMReviewNotes,

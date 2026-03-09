@@ -29,9 +29,11 @@ class CampaignDetailRow {
   
   /// Optional blob URL for viewing the photo.
   final String? blobUrl;
+
+  /// Document ID from the API for authenticated download.
+  final String? documentId;
   
   /// Indicates if this is the first row in a dealer group.
-  /// Used for visual grouping in the table.
   final bool isFirstInGroup;
 
   /// Creates a CampaignDetailRow instance.
@@ -43,6 +45,7 @@ class CampaignDetailRow {
     required this.status,
     required this.remarks,
     this.blobUrl,
+    this.documentId,
     this.isFirstInGroup = false,
   });
 
@@ -55,6 +58,7 @@ class CampaignDetailRow {
     ValidationStatus? status,
     String? remarks,
     String? blobUrl,
+    String? documentId,
     bool? isFirstInGroup,
   }) {
     return CampaignDetailRow(
@@ -65,6 +69,7 @@ class CampaignDetailRow {
       status: status ?? this.status,
       remarks: remarks ?? this.remarks,
       blobUrl: blobUrl ?? this.blobUrl,
+      documentId: documentId ?? this.documentId,
       isFirstInGroup: isFirstInGroup ?? this.isFirstInGroup,
     );
   }
@@ -80,33 +85,21 @@ class CampaignDetailRow {
         other.status == status &&
         other.remarks == remarks &&
         other.blobUrl == blobUrl &&
+        other.documentId == documentId &&
         other.isFirstInGroup == isFirstInGroup;
   }
 
   @override
   int get hashCode {
-    return Object.hash(
-      serialNumber,
-      dealerName,
-      campaignDate,
-      documentName,
-      status,
-      remarks,
-      blobUrl,
-      isFirstInGroup,
-    );
+    return Object.hash(serialNumber, dealerName, campaignDate, documentName,
+        status, remarks, blobUrl, documentId, isFirstInGroup);
   }
 
   @override
   String toString() {
-    return 'CampaignDetailRow('
-        'serialNumber: $serialNumber, '
-        'dealerName: $dealerName, '
-        'campaignDate: $campaignDate, '
-        'documentName: $documentName, '
-        'status: $status, '
-        'remarks: $remarks, '
-        'blobUrl: $blobUrl, '
+    return 'CampaignDetailRow(serialNumber: $serialNumber, dealerName: $dealerName, '
+        'campaignDate: $campaignDate, documentName: $documentName, status: $status, '
+        'remarks: $remarks, blobUrl: $blobUrl, documentId: $documentId, '
         'isFirstInGroup: $isFirstInGroup)';
   }
 }
