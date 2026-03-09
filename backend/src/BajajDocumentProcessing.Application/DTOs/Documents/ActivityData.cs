@@ -1,31 +1,25 @@
 namespace BajajDocumentProcessing.Application.DTOs.Documents;
 
 /// <summary>
-/// Activity Summary (Enquiry & Docs) extracted data
+/// Activity Summary extracted data
 /// </summary>
 public class ActivityData
 {
-    public string? DealerName { get; set; }
-    public string? DealerCode { get; set; }
-    public string? DealerAddress { get; set; }
-    public List<LocationActivity> LocationActivities { get; set; } = new();
-    public int? TotalDays { get; set; }
+    // CHANGE: Simplified to match actual Activity Summary table columns: Dealer, Location, To, From, Day, Working Day
+    public List<ActivityRow> Rows { get; set; } = new();
     public Dictionary<string, double> FieldConfidences { get; set; } = new();
     public bool IsFlaggedForReview { get; set; }
 }
 
 /// <summary>
-/// Activity at a specific location
+/// Single row from Activity Summary table
 /// </summary>
-public class LocationActivity
+public class ActivityRow
 {
-    public string LocationName { get; set; } = string.Empty;
-    public string? LocationAddress { get; set; }
-    public string? City { get; set; }
-    public string? State { get; set; }
-    public int NumberOfDays { get; set; }
-    public DateTime? StartDate { get; set; }
-    public DateTime? EndDate { get; set; }
-    public string? ActivityType { get; set; }
-    public string? Description { get; set; }
+    public string DealerName { get; set; } = string.Empty;
+    public string Location { get; set; } = string.Empty;
+    public DateTime? ToDate { get; set; }
+    public DateTime? FromDate { get; set; }
+    public int Day { get; set; }
+    public int WorkingDay { get; set; }
 }

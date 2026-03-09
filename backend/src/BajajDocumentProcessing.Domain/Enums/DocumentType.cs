@@ -10,5 +10,7 @@ public enum DocumentType
     CostSummary = 3,
     Activity = 4,
     Photo = 5,
-    AdditionalDocument = 6
+    AdditionalDocument = 6,
+    // CHANGE: Added EnquiryDump document type for Enquiry Dump Excel files
+    EnquiryDump = 7
 }
