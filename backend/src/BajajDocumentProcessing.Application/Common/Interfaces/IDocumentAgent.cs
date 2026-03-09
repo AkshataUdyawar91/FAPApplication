@@ -47,6 +47,24 @@ public interface IDocumentAgent
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Extracted photo metadata including timestamp and location</returns>
     Task<PhotoMetadata> ExtractPhotoMetadataAsync(string blobUrl, CancellationToken cancellationToken = default);
+
+    // CHANGE: Added ExtractActivityAsync for Activity Summary extraction
+    /// <summary>
+    /// Extracts structured data from an Activity Summary document
+    /// </summary>
+    /// <param name="blobUrl">URL of the Activity Summary document in blob storage</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Extracted Activity data with dealer/location details and number of days</returns>
+    Task<ActivityData> ExtractActivityAsync(string blobUrl, CancellationToken cancellationToken = default);
+
+    // CHANGE: Added ExtractEnquiryDumpAsync for Enquiry Dump Excel extraction
+    /// <summary>
+    /// Extracts structured data from an Enquiry Dump Excel file
+    /// </summary>
+    /// <param name="blobUrl">URL of the Enquiry Dump Excel file in blob storage</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Extracted Enquiry Dump data with customer records</returns>
+    Task<EnquiryDumpData> ExtractEnquiryDumpAsync(string blobUrl, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

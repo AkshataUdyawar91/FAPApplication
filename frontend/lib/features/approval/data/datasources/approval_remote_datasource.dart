@@ -1,8 +1,10 @@
 import 'package:dio/dio.dart';
 import '../../../submission/data/models/document_package_model.dart';
+import '../models/enhanced_validation_report_model.dart';
 
 abstract class ApprovalRemoteDataSource {
   Future<DocumentPackageModel> getPackageDetails(String packageId);
+  Future<EnhancedValidationReportModel> getValidationReport(String packageId);
   Future<void> approvePackage(String packageId);
   Future<void> rejectPackage(String packageId, String reason);
   Future<void> requestReupload(
@@ -22,6 +24,15 @@ class ApprovalRemoteDataSourceImpl implements ApprovalRemoteDataSource {
   Future<DocumentPackageModel> getPackageDetails(String packageId) async {
     final response = await dio.get('/api/submissions/$packageId');
     return DocumentPackageModel.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<EnhancedValidationReportModel> getValidationReport(
+      String packageId) async {
+    final response =
+        await dio.get('/api/submissions/$packageId/validation-report');
+    return EnhancedValidationReportModel.fromJson(
+        response.data as Map<String, dynamic>);
   }
 
   @override

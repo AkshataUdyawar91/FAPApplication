@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
 using BajajDocumentProcessing.Infrastructure.Persistence;
@@ -48,10 +49,10 @@ public class DocumentUploadValidationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
@@ -71,9 +72,9 @@ public class DocumentUploadValidationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var fileStorageMock = new Mock<IFileStorageService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         var loggerMock = new Mock<ILogger<DocumentService>>();
         var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
@@ -92,10 +93,10 @@ public class DocumentUploadValidationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
@@ -115,10 +116,10 @@ public class DocumentUploadValidationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
@@ -138,9 +139,9 @@ public class DocumentUploadValidationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var fileStorageMock = new Mock<IFileStorageService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         var loggerMock = new Mock<ILogger<DocumentService>>();
         var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
@@ -159,9 +160,9 @@ public class DocumentUploadValidationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var fileStorageMock = new Mock<IFileStorageService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         var loggerMock = new Mock<ILogger<DocumentService>>();
         var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
@@ -180,9 +181,9 @@ public class DocumentUploadValidationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var fileStorageMock = new Mock<IFileStorageService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         var loggerMock = new Mock<ILogger<DocumentService>>();
         var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
@@ -199,9 +200,9 @@ public class DocumentUploadValidationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var fileStorageMock = new Mock<IFileStorageService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         var loggerMock = new Mock<ILogger<DocumentService>>();
         var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
@@ -215,3 +216,4 @@ public class DocumentUploadValidationProperties
         Assert.False(result, "Empty file should fail validation");
     }
 }
+

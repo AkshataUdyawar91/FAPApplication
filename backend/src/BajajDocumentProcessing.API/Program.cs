@@ -40,10 +40,18 @@ builder.Services.AddSwaggerGen(options =>
     
     // Enable file upload support in Swagger
     options.OperationFilter<FileUploadOperationFilter>();
+    
+    // Include XML comments for API documentation
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    options.IncludeXmlComments(xmlPath);
 });
 
 // Add Infrastructure layer
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// Add HttpContextAccessor for CorrelationIdService
+builder.Services.AddHttpContextAccessor();
 
 // Configure JWT Authentication
 var jwtSecret = builder.Configuration["Jwt:SecretKey"] ?? throw new InvalidOperationException("JWT Secret not configured");
@@ -99,6 +107,8 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var context = services.GetRequiredService<ApplicationDbContext>();
+        // CHANGE: Auto-create database if it doesn't exist (creates all tables from current entity definitions)
+        await context.Database.EnsureCreatedAsync();
         await ApplicationDbContextSeed.SeedAsync(context);
     }
     catch (Exception ex)
@@ -117,6 +127,13 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 
 app.UseHttpsRedirection();
 app.UseCors("AllowFlutterApp");
+
+// Correlation ID middleware - must be early in pipeline
+app.UseMiddleware<CorrelationIdMiddleware>();
+
+// Global exception handling - must be early in pipeline
+app.UseMiddleware<GlobalExceptionMiddleware>();
+
 app.UseAuthentication();
 app.UseAuditLogging();
 app.UseAuthorization();

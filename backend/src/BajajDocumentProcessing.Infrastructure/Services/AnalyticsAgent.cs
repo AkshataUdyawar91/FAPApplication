@@ -11,12 +11,25 @@ using Microsoft.SemanticKernel.ChatCompletion;
 
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
+/// <summary>
+/// Service for calculating analytics KPIs and generating AI-powered insights for the dashboard.
+/// </summary>
+/// <remarks>
+/// This service:
+/// - Calculates key performance indicators (submission counts, approval rates, processing times)
+/// - Provides state-level ROI analysis
+/// - Generates campaign breakdowns
+/// - Exports analytics data to Excel
+/// - Uses Azure OpenAI to generate executive summaries
+/// - Implements caching with 5-minute TTL to optimize performance
+/// </remarks>
 public class AnalyticsAgent : IAnalyticsAgent
 {
     private readonly IApplicationDbContext _context;
     private readonly IMemoryCache _cache;
     private readonly ILogger<AnalyticsAgent> _logger;
     private readonly Kernel _kernel;
+    private readonly ICorrelationIdService _correlationIdService;
     private const string CacheKeyPrefix = "analytics_";
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
@@ -24,11 +37,13 @@ public class AnalyticsAgent : IAnalyticsAgent
         IApplicationDbContext context,
         IMemoryCache cache,
         IConfiguration configuration,
-        ILogger<AnalyticsAgent> logger)
+        ILogger<AnalyticsAgent> logger,
+        ICorrelationIdService correlationIdService)
     {
         _context = context;
         _cache = cache;
         _logger = logger;
+        _correlationIdService = correlationIdService;
 
         // Build Semantic Kernel for narrative generation
         var endpoint = configuration["AzureOpenAI:Endpoint"] ?? throw new InvalidOperationException("AzureOpenAI:Endpoint not configured");
@@ -40,6 +55,24 @@ public class AnalyticsAgent : IAnalyticsAgent
         _kernel = builder.Build();
     }
 
+    /// <summary>
+    /// Retrieves key performance indicators for the specified date range.
+    /// </summary>
+    /// <param name="startDate">The start date of the reporting period (inclusive).</param>
+    /// <param name="endDate">The end date of the reporting period (inclusive).</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>A <see cref="KPIDashboard"/> containing all calculated metrics and distributions.</returns>
+    /// <remarks>
+    /// Calculated metrics include:
+    /// - Total submissions, approved, rejected, and pending counts
+    /// - Approval rate percentage
+    /// - Average processing time in hours
+    /// - Auto-approval count and rate
+    /// - Average confidence score
+    /// - Confidence distribution across ranges (0-50%, 50-70%, 70-85%, 85-100%)
+    /// 
+    /// Results are cached for 5 minutes to optimize performance.
+    /// </remarks>
     public async Task<KPIDashboard> GetKPIsAsync(
         DateTime startDate,
         DateTime endDate,
@@ -53,7 +86,10 @@ public class AnalyticsAgent : IAnalyticsAgent
             return cachedKpis;
         }
 
-        _logger.LogInformation("Calculating KPIs for period {StartDate} to {EndDate}", startDate, endDate);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Calculating KPIs for period {StartDate} to {EndDate}. CorrelationId: {CorrelationId}",
+            startDate, endDate, correlationId);
 
         var packages = await _context.DocumentPackages
             .Include(p => p.ConfidenceScore)
@@ -117,11 +153,32 @@ public class AnalyticsAgent : IAnalyticsAgent
         };
 
         _cache.Set(cacheKey, kpis, CacheDuration);
-        _logger.LogInformation("KPIs calculated and cached");
+        
+        _logger.LogInformation(
+            "KPIs calculated and cached. CorrelationId: {CorrelationId}",
+            correlationId);
 
         return kpis;
     }
 
+    /// <summary>
+    /// Retrieves state-level return on investment analysis for the specified date range.
+    /// </summary>
+    /// <param name="startDate">The start date of the reporting period (inclusive).</param>
+    /// <param name="endDate">The end date of the reporting period (inclusive).</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>A list of <see cref="StateROI"/> objects containing state-level metrics.</returns>
+    /// <remarks>
+    /// <para><strong>NOTE: This is a placeholder implementation.</strong></para>
+    /// <para>
+    /// Currently returns aggregated data for "All States". In production, this would:
+    /// - Group submissions by state/location
+    /// - Calculate per-state submission and approval counts
+    /// - Compute approval rates and average confidence scores per state
+    /// - Calculate ROI based on approved submission value
+    /// </para>
+    /// <para>Results are cached for 5 minutes to optimize performance.</para>
+    /// </remarks>
     public async Task<List<StateROI>> GetStateROIAsync(
         DateTime startDate,
         DateTime endDate,
@@ -164,6 +221,24 @@ public class AnalyticsAgent : IAnalyticsAgent
         return stateRoi;
     }
 
+    /// <summary>
+    /// Retrieves campaign-level breakdown of submissions and approvals for the specified date range.
+    /// </summary>
+    /// <param name="startDate">The start date of the reporting period (inclusive).</param>
+    /// <param name="endDate">The end date of the reporting period (inclusive).</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>A list of <see cref="CampaignBreakdown"/> objects containing campaign-level metrics.</returns>
+    /// <remarks>
+    /// <para><strong>NOTE: This is a placeholder implementation.</strong></para>
+    /// <para>
+    /// Currently returns aggregated data for "All Campaigns". In production, this would:
+    /// - Group submissions by campaign identifier
+    /// - Calculate per-campaign submission and approval counts
+    /// - Compute approval rates and average confidence scores per campaign
+    /// - Enable campaign performance comparison
+    /// </para>
+    /// <para>Results are cached for 5 minutes to optimize performance.</para>
+    /// </remarks>
     public async Task<List<CampaignBreakdown>> GetCampaignBreakdownAsync(
         DateTime startDate,
         DateTime endDate,
@@ -204,6 +279,24 @@ public class AnalyticsAgent : IAnalyticsAgent
         return campaigns;
     }
 
+    /// <summary>
+    /// Exports analytics data to an Excel file for the specified date range.
+    /// </summary>
+    /// <param name="startDate">The start date of the reporting period (inclusive).</param>
+    /// <param name="endDate">The end date of the reporting period (inclusive).</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>A byte array containing the Excel file data.</returns>
+    /// <remarks>
+    /// <para><strong>NOTE: This is a placeholder implementation.</strong></para>
+    /// <para>
+    /// Currently returns an empty byte array. In production, this would:
+    /// - Retrieve KPIs, state ROI, and campaign breakdown data
+    /// - Use EPPlus library to generate Excel workbook
+    /// - Create separate worksheets for each data category
+    /// - Include charts and formatting for executive reporting
+    /// - Return the Excel file as a byte array for download
+    /// </para>
+    /// </remarks>
     public async Task<byte[]> ExportToExcelAsync(
         DateTime startDate,
         DateTime endDate,
@@ -222,6 +315,20 @@ public class AnalyticsAgent : IAnalyticsAgent
         return Array.Empty<byte>();
     }
 
+    /// <summary>
+    /// Generates an AI-powered executive summary narrative from KPI data using Azure OpenAI.
+    /// </summary>
+    /// <param name="kpis">The KPI dashboard data to analyze and summarize.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>A 2-3 paragraph executive summary highlighting key insights, trends, and actionable recommendations.</returns>
+    /// <remarks>
+    /// This method:
+    /// - Constructs a detailed prompt with all KPI metrics and distributions
+    /// - Sends the prompt to Azure OpenAI via Semantic Kernel
+    /// - Requests a concise executive summary focusing on insights and recommendations
+    /// - Returns a fallback message if AI generation fails
+    /// - Generates narratives suitable for executive dashboards and reports
+    /// </remarks>
     public async Task<string> GenerateNarrativeAsync(
         KPIDashboard kpis,
         CancellationToken cancellationToken = default)

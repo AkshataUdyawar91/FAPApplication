@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
 using BajajDocumentProcessing.Infrastructure.Persistence;
@@ -48,14 +49,14 @@ public class UploadConfirmationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/test.pdf");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
@@ -83,14 +84,14 @@ public class UploadConfirmationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/test.pdf");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
@@ -111,14 +112,14 @@ public class UploadConfirmationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/unique-id.pdf");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
@@ -139,14 +140,14 @@ public class UploadConfirmationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/test.jpg");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
-        var documentAgentMock = new Mock<Application.Common.Interfaces.IDocumentAgent>();
+        var documentAgentMock = new Mock<IDocumentAgent>();
         var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
@@ -161,3 +162,4 @@ public class UploadConfirmationProperties
         Assert.Equal(DocumentType.Photo, response.DocumentType);
     }
 }
+

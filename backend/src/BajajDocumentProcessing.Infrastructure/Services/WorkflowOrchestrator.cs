@@ -17,6 +17,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
     private readonly IRecommendationAgent _recommendationAgent;
     private readonly INotificationAgent _notificationAgent;
     private readonly ILogger<WorkflowOrchestrator> _logger;
+    private readonly ICorrelationIdService _correlationIdService;
 
     public WorkflowOrchestrator(
         IApplicationDbContext context,
@@ -25,7 +26,8 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         IConfidenceScoreService confidenceScoreService,
         IRecommendationAgent recommendationAgent,
         INotificationAgent notificationAgent,
-        ILogger<WorkflowOrchestrator> logger)
+        ILogger<WorkflowOrchestrator> logger,
+        ICorrelationIdService correlationIdService)
     {
         _context = context;
         _documentAgent = documentAgent;
@@ -34,11 +36,30 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         _recommendationAgent = recommendationAgent;
         _notificationAgent = notificationAgent;
         _logger = logger;
+        _correlationIdService = correlationIdService;
     }
 
+    /// <summary>
+    /// Processes a document submission through the complete workflow pipeline
+    /// </summary>
+    /// <param name="packageId">The ID of the package to process</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if processing succeeded, false if it failed</returns>
+    /// <remarks>
+    /// Orchestrates the following steps:
+    /// 1. Document classification and data extraction
+    /// 2. Cross-document validation
+    /// 3. Confidence score calculation
+    /// 4. AI recommendation generation
+    /// 5. State transition to PendingASMApproval
+    /// If any step fails, compensation logic is triggered to notify the user
+    /// </remarks>
     public async Task<bool> ProcessSubmissionAsync(Guid packageId, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting workflow orchestration for package {PackageId}", packageId);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Starting workflow orchestration for package {PackageId}. CorrelationId: {CorrelationId}",
+            packageId, correlationId);
 
         try
         {
@@ -127,6 +148,12 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         }
     }
 
+    /// <summary>
+    /// Executes the document extraction step: classifies documents and extracts structured data
+    /// </summary>
+    /// <param name="package">The document package to process</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if extraction succeeded, false otherwise</returns>
     private async Task<bool> ExecuteExtractionStepAsync(
         Domain.Entities.DocumentPackage package,
         CancellationToken cancellationToken)
@@ -162,6 +189,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 }
 
                 // Extract data based on type
+                // CHANGE: Added Activity and EnquiryDump cases — previously they fell through to default "{}" which overwrote good data from upload-time extraction
                 string extractedDataJson = document.Type switch
                 {
                     Domain.Enums.DocumentType.PO => 
@@ -172,6 +200,10 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                         System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractCostSummaryAsync(document.BlobUrl, cancellationToken)),
                     Domain.Enums.DocumentType.Photo => 
                         System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractPhotoMetadataAsync(document.BlobUrl, cancellationToken)),
+                    Domain.Enums.DocumentType.Activity => 
+                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractActivityAsync(document.BlobUrl, cancellationToken)),
+                    Domain.Enums.DocumentType.EnquiryDump => 
+                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractEnquiryDumpAsync(document.BlobUrl, cancellationToken)),
                     _ => "{}"
                 };
                 
@@ -191,6 +223,12 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         }
     }
 
+    /// <summary>
+    /// Executes the validation step: validates package completeness, SAP verification, and cross-document consistency
+    /// </summary>
+    /// <param name="package">The document package to validate</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if validation succeeded, false otherwise</returns>
     private async Task<bool> ExecuteValidationStepAsync(
         Domain.Entities.DocumentPackage package,
         CancellationToken cancellationToken)
@@ -267,6 +305,12 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         }
     }
 
+    /// <summary>
+    /// Executes the scoring step: calculates weighted confidence scores for the package
+    /// </summary>
+    /// <param name="package">The document package to score</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if scoring succeeded, false otherwise</returns>
     private async Task<bool> ExecuteScoringStepAsync(
         Domain.Entities.DocumentPackage package,
         CancellationToken cancellationToken)
@@ -312,6 +356,12 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         }
     }
 
+    /// <summary>
+    /// Executes the recommendation step: generates AI-powered approval/rejection recommendation with evidence
+    /// </summary>
+    /// <param name="package">The document package to generate recommendation for</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if recommendation generation succeeded, false otherwise</returns>
     private async Task<bool> ExecuteRecommendationStepAsync(
         Domain.Entities.DocumentPackage package,
         CancellationToken cancellationToken)
@@ -340,6 +390,13 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         }
     }
 
+    /// <summary>
+    /// Compensates for workflow failure by setting package to rejected state and notifying the user
+    /// </summary>
+    /// <param name="package">The document package that failed processing</param>
+    /// <param name="reason">The reason for failure</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
     private async Task CompensateAsync(
         Domain.Entities.DocumentPackage package,
         string reason,

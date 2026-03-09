@@ -27,10 +27,12 @@ public class ConfidenceScoreProperties
     {
         var mockContext = new Mock<IApplicationDbContext>();
         var mockLogger = new Mock<ILogger<ConfidenceScoreService>>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
 
         _confidenceScoreService = new ConfidenceScoreService(
             mockContext.Object,
-            mockLogger.Object);
+            mockLogger.Object,
+            mockCorrelationIdService.Object);
     }
 
     /// <summary>

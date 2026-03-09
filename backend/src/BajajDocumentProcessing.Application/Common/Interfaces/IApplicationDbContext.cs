@@ -18,6 +18,11 @@ public interface IApplicationDbContext
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<Conversation> Conversations { get; }
     DbSet<ConversationMessage> ConversationMessages { get; }
+    
+    // Hierarchical structure: FAP -> PO -> Invoices -> Campaigns -> Photos
+    DbSet<Invoice> Invoices { get; }
+    DbSet<Campaign> Campaigns { get; }
+    DbSet<CampaignPhoto> CampaignPhotos { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

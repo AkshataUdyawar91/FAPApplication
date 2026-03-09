@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../widgets/po_fields_section.dart';
+import '../widgets/invoice_list_section.dart';
 
 class AgencyUploadPage extends StatefulWidget {
   final String token;
@@ -24,47 +27,175 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
 
   int _currentStep = 1;
   bool _isUploading = false;
+  
+  // Loading states for extraction
+  bool _isExtractingPO = false;
+  
+  // Package ID for the current submission
+  String? _currentPackageId;
 
   PlatformFile? _purchaseOrder;
-  PlatformFile? _invoice;
-  PlatformFile? _costSummary;
-  List<PlatformFile> _photos = [];
   List<PlatformFile> _additionalDocs = [];
+  
+  // PO extracted data
+  Map<String, dynamic>? _poData;
+  
+  // User-entered field values
+  Map<String, String> _poFields = {};
+  
+  // Hierarchical invoice data (multiple invoices with campaigns and photos)
+  List<InvoiceData> _invoices = [];
 
   final List<Map<String, dynamic>> _steps = [
     {'number': 1, 'title': 'Purchase Order', 'icon': Icons.description},
-    {'number': 2, 'title': 'Invoice', 'icon': Icons.receipt},
-    {'number': 3, 'title': 'Photos & Cost Summary', 'icon': Icons.photo_library},
-    {'number': 4, 'title': 'Additional Documents', 'icon': Icons.upload_file},
+    {'number': 2, 'title': 'Invoices & Campaigns', 'icon': Icons.receipt},
+    {'number': 3, 'title': 'Additional Documents', 'icon': Icons.upload_file},
   ];
 
-  double get _progressPercentage => (_currentStep / 4) * 100;
+  double get _progressPercentage => (_currentStep / 3) * 100;
 
   // ─── FILE PICKERS ────────────────────────────────────────────────────
-  Future<void> _pickFile(Function(PlatformFile?) setter) async {
+  Future<void> _pickFile(Function(PlatformFile?) setter, {bool isPO = false}) async {
     try {
       final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
 
       if (result != null && result.files.isNotEmpty) {
         setter(result.files.first);
         setState(() {});
+        
+        // After file is selected, upload it and fetch extracted data
+        if (isPO) {
+          await _uploadAndExtractPO(result.files.first);
+        }
       }
     } catch (e) {
       _showError('Failed to pick file');
     }
   }
-
-  Future<void> _pickPhotos() async {
+  
+  // ─── UPLOAD AND EXTRACT PO ───────────────────────────────────────────
+  Future<void> _uploadAndExtractPO(PlatformFile file) async {
+    if (file.bytes == null) return;
+    
+    setState(() => _isExtractingPO = true);
+    
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.image, allowMultiple: true);
-      if (result != null && result.files.isNotEmpty) {
-        setState(() => _photos.addAll(result.files));
+      // Upload PO document
+      final uploadResponse = await _dio.post(
+        '/documents/upload',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
+          'documentType': 'PO',
+        }),
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      
+      if (uploadResponse.statusCode == 200) {
+        final packageId = uploadResponse.data['packageId']?.toString();
+        final documentId = uploadResponse.data['documentId']?.toString();
+        
+        if (packageId != null) {
+          _currentPackageId = packageId;
+          
+          if (documentId != null) {
+            // Poll for extraction results (up to 15 seconds)
+            await _pollForPOExtraction(packageId, documentId);
+          }
+        }
       }
     } catch (e) {
-      _showError('Failed to pick photos');
+      print('Error uploading/extracting PO: $e');
+      _showError('Failed to extract PO data. You can enter details manually.');
+    } finally {
+      if (mounted) setState(() => _isExtractingPO = false);
     }
   }
-
+  
+  // ─── POLL FOR PO EXTRACTION ──────────────────────────────────────────
+  Future<void> _pollForPOExtraction(String packageId, String documentId) async {
+    const maxAttempts = 15;
+    const delayBetweenAttempts = Duration(seconds: 2);
+    
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      await Future.delayed(delayBetweenAttempts);
+      
+      try {
+        final response = await _dio.get(
+          '/submissions/$packageId',
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+        
+        if (response.statusCode == 200 && response.data != null) {
+          final documents = response.data['documents'] as List?;
+          if (documents != null) {
+            final poDoc = documents.firstWhere(
+              (doc) => doc['type']?.toString().toLowerCase() == 'po',
+              orElse: () => null,
+            );
+            
+            if (poDoc != null) {
+              // ExtractedData is returned as a JSON string, need to parse it
+              var extractedData = poDoc['extractedData'];
+              if (extractedData != null) {
+                // If it's a string, parse it as JSON
+                if (extractedData is String && extractedData.isNotEmpty) {
+                  extractedData = _parseJsonString(extractedData);
+                }
+                
+                if (extractedData is Map) {
+                  print('PO extractedData keys: ${extractedData.keys.toList()}');
+                  print('PO extractedData: $extractedData');
+                  
+                  // Check if we have meaningful data - try PascalCase first (backend format)
+                  final poNumber = extractedData['PONumber'] ?? extractedData['poNumber'];
+                  final totalAmount = extractedData['TotalAmount'] ?? extractedData['totalAmount'];
+                  final vendorName = extractedData['VendorName'] ?? extractedData['vendorName'];
+                  // Backend uses PODate, not Date
+                  final date = extractedData['PODate'] ?? extractedData['poDate'] ?? extractedData['Date'] ?? extractedData['date'];
+                  
+                  // Accept data even if only some fields are present
+                  if (poNumber != null || totalAmount != null || vendorName != null || date != null) {
+                    setState(() {
+                      _poData = {
+                        'poNumber': poNumber,
+                        'totalAmount': totalAmount,
+                        'date': date,
+                        'vendorName': vendorName,
+                      };
+                    });
+                    print('PO extraction successful: $_poData');
+                    return; // Success - exit polling
+                  } else {
+                    print('PO extraction: No meaningful data found in extractedData');
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        print('Polling attempt $attempt failed: $e');
+      }
+    }
+    
+    print('PO extraction polling timed out after $maxAttempts attempts');
+  }
+  
+  // Helper to parse JSON string
+  Map<String, dynamic> _parseJsonString(String jsonString) {
+    try {
+      if (jsonString.isEmpty) return {};
+      final decoded = jsonDecode(jsonString);
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return {};
+    } catch (e) {
+      print('JSON parse error: $e');
+      return {};
+    }
+  }
+  
   Future<void> _pickAdditionalDocs() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -83,9 +214,16 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   // ─── NAVIGATION ──────────────────────────────────────────────────────
   void _handleNext() {
     if (_currentStep == 1 && _purchaseOrder == null) { _showError('Please upload Purchase Order'); return; }
-    if (_currentStep == 2 && _invoice == null) { _showError('Please upload Invoice'); return; }
-    if (_currentStep == 3 && (_photos.isEmpty || _costSummary == null)) { _showError('Please upload event photos and cost summary'); return; }
-    if (_currentStep < 4) setState(() => _currentStep++);
+    if (_currentStep == 2) {
+      // Validate invoices - at least one invoice with file and one campaign with photos
+      if (_invoices.isEmpty) { _showError('Please add at least one invoice'); return; }
+      final hasValidInvoice = _invoices.any((inv) => inv.file != null);
+      if (!hasValidInvoice) { _showError('Please upload at least one invoice file'); return; }
+      final hasValidCampaign = _invoices.any((inv) => 
+        inv.campaigns.any((camp) => camp.photos.isNotEmpty && camp.costSummaryFile != null));
+      if (!hasValidCampaign) { _showError('Please add at least one campaign with photos and cost summary'); return; }
+    }
+    if (_currentStep < 3) setState(() => _currentStep++);
   }
 
   void _handleBack() {
@@ -101,47 +239,150 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
 
 
   Future<void> _handleSubmit() async {
-    if (_purchaseOrder == null || _invoice == null || _costSummary == null || _photos.isEmpty) {
-      _showError('Please complete all required steps');
+    // Validate
+    if (_purchaseOrder == null) {
+      _showError('Please upload Purchase Order');
       return;
     }
+    if (_invoices.isEmpty || !_invoices.any((inv) => inv.file != null)) {
+      _showError('Please add at least one invoice with file');
+      return;
+    }
+    
     setState(() => _isUploading = true);
     try {
-      String? packageId;
-      if (_purchaseOrder?.bytes != null) {
+      String? packageId = _currentPackageId;
+      
+      // Step 1: Create package with PO if not exists
+      if (packageId == null && _purchaseOrder?.bytes != null) {
         final poResponse = await _dio.post('/documents/upload',
             data: FormData.fromMap({
               'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!, filename: _purchaseOrder!.name),
               'documentType': 'PO',
             }),
             options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
-        if (poResponse.statusCode == 200) packageId = poResponse.data['packageId']?.toString();
-      }
-      if (packageId != null) {
-        Future<void> upload(PlatformFile? f, String type) async {
-          if (f?.bytes == null) return;
-          await _dio.post('/documents/upload',
-              data: FormData.fromMap({'file': MultipartFile.fromBytes(f!.bytes!, filename: f.name), 'documentType': type, 'packageId': packageId}),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
-        }
-        await upload(_invoice, 'Invoice');
-        await upload(_costSummary, 'CostSummary');
-        for (final p in _photos) await upload(p, 'Photo');
-        for (final d in _additionalDocs) await upload(d, 'AdditionalDocument');
-        _showSuccess('Documents uploaded. Starting AI processing...');
-        final submitResponse = await _dio.post('/submissions/$packageId/process-now',
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
-        if (submitResponse.statusCode == 200 && submitResponse.data['success'] == true) {
-          _showSuccess('Documents processed successfully! Package is ready for review.');
-        } else {
-          _showError('Processing completed with issues. Check package status.');
+        if (poResponse.statusCode == 200) {
+          packageId = poResponse.data['packageId']?.toString();
         }
       }
+      
+      if (packageId == null) {
+        _showError('Failed to create package');
+        return;
+      }
+      
+      // Step 2: Upload all files in parallel for speed
+      final uploadFutures = <Future>[];
+      
+      // Upload invoices
+      for (final invoice in _invoices) {
+        if (invoice.file?.bytes != null) {
+          uploadFutures.add(_dio.post('/documents/upload',
+              data: FormData.fromMap({
+                'file': MultipartFile.fromBytes(invoice.file!.bytes!, filename: invoice.file!.name),
+                'documentType': 'Invoice',
+                'packageId': packageId,
+              }),
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'})));
+        }
+        
+        // Upload campaign files
+        for (final campaign in invoice.campaigns) {
+          // Upload photos
+          for (final photo in campaign.photos) {
+            if (photo.bytes != null) {
+              uploadFutures.add(_dio.post('/documents/upload',
+                  data: FormData.fromMap({
+                    'file': MultipartFile.fromBytes(photo.bytes!, filename: photo.name),
+                    'documentType': 'Photo',
+                    'packageId': packageId,
+                  }),
+                  options: Options(headers: {'Authorization': 'Bearer ${widget.token}'})));
+            }
+          }
+          
+          // Upload cost summary
+          if (campaign.costSummaryFile?.bytes != null) {
+            uploadFutures.add(_dio.post('/documents/upload',
+                data: FormData.fromMap({
+                  'file': MultipartFile.fromBytes(campaign.costSummaryFile!.bytes!, filename: campaign.costSummaryFile!.name),
+                  'documentType': 'CostSummary',
+                  'packageId': packageId,
+                }),
+                options: Options(headers: {'Authorization': 'Bearer ${widget.token}'})));
+          }
+        }
+      }
+      
+      // Upload additional documents
+      for (final doc in _additionalDocs) {
+        if (doc.bytes != null) {
+          uploadFutures.add(_dio.post('/documents/upload',
+              data: FormData.fromMap({
+                'file': MultipartFile.fromBytes(doc.bytes!, filename: doc.name),
+                'documentType': 'AdditionalDocument',
+                'packageId': packageId,
+              }),
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'})));
+        }
+      }
+      
+      // Wait for all uploads to complete in parallel
+      if (uploadFutures.isNotEmpty) {
+        _showSuccess('Uploading ${uploadFutures.length} files...');
+        await Future.wait(uploadFutures);
+      }
+      
+      // Step 3: Update package with campaign data from first campaign
+      if (_invoices.isNotEmpty && _invoices.first.campaigns.isNotEmpty) {
+        final firstCampaign = _invoices.first.campaigns.first;
+        try {
+          await _dio.patch(
+            '/submissions/$packageId/campaign-data',
+            data: {
+              'campaignStartDate': firstCampaign.startDate.isNotEmpty ? _parseDate(firstCampaign.startDate)?.toIso8601String() : null,
+              'campaignEndDate': firstCampaign.endDate.isNotEmpty ? _parseDate(firstCampaign.endDate)?.toIso8601String() : null,
+              'campaignWorkingDays': firstCampaign.workingDays.isNotEmpty ? int.tryParse(firstCampaign.workingDays) : null,
+              'dealershipName': firstCampaign.dealershipName,
+              'dealershipAddress': firstCampaign.dealershipAddress,
+              'gpsLocation': firstCampaign.gpsLocation,
+            },
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+        } catch (e) {
+          debugPrint('Campaign data update failed: $e');
+        }
+      }
+      
+      // Step 4: Trigger processing
+      _showSuccess('Processing documents...');
+      final submitResponse = await _dio.post('/submissions/$packageId/process-now',
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+      
+      if (submitResponse.statusCode == 200 && submitResponse.data['success'] == true) {
+        _showSuccess('Submission complete! Package is ready for review.');
+      } else {
+        _showSuccess('Submission complete. Check package status.');
+      }
+      
       if (mounted) _navigateToDashboard();
     } catch (e) {
-      _showError('Failed to submit documents: $e');
+      _showError('Failed to submit: $e');
     } finally {
       if (mounted) setState(() => _isUploading = false);
+    }
+  }
+  
+  DateTime? _parseDate(String dateStr) {
+    try {
+      if (dateStr.isEmpty) return null;
+      final parts = dateStr.split('-');
+      if (parts.length == 3) {
+        return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+      }
+      return null;
+    } catch (e) {
+      return null;
     }
   }
 
@@ -437,7 +678,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Step $_currentStep of 4',
+                'Step $_currentStep of 3',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -627,17 +868,44 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
     Widget content;
     switch (_currentStep) {
       case 1:
-        content = _buildFileUploadCard('Upload Purchase Order', 'Upload the official Purchase Order document (PDF only)',
-            Icons.description, _purchaseOrder, () => _pickFile((f) => _purchaseOrder = f), () => setState(() => _purchaseOrder = null), device);
+        content = Column(
+          children: [
+            _buildFileUploadCard(
+              'Upload Purchase Order',
+              'Upload the official Purchase Order document (PDF only)',
+              Icons.description,
+              _purchaseOrder,
+              () => _pickFile((f) => _purchaseOrder = f, isPO: true),
+              () => setState(() {
+                _purchaseOrder = null;
+                _poData = null;
+                _poFields = {};
+              }),
+              device,
+            ),
+            const SizedBox(height: 16),
+            if (_isExtractingPO)
+              _buildExtractionLoadingCard('Extracting PO details...', 'AI is analyzing your Purchase Order document')
+            else
+              POFieldsSection(
+                poData: _poData,
+                onFieldsChanged: (fields) {
+                  setState(() => _poFields = fields);
+                },
+              ),
+          ],
+        );
         break;
       case 2:
-        content = _buildFileUploadCard('Upload Invoice', 'Upload the invoice for reimbursement (PDF only)',
-            Icons.receipt, _invoice, () => _pickFile((f) => _invoice = f), () => setState(() => _invoice = null), device);
+        // Hierarchical: Multiple Invoices → Multiple Campaigns → Multiple Photos
+        content = InvoiceListSection(
+          invoices: _invoices,
+          onInvoicesChanged: (invoices) {
+            setState(() => _invoices = invoices);
+          },
+        );
         break;
       case 3:
-        content = _buildPhotosAndCostSummaryStep(device);
-        break;
-      case 4:
         content = _buildAdditionalDocsStep(device);
         break;
       default:
@@ -646,6 +914,60 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
     
     return SingleChildScrollView(
       child: content,
+    );
+  }
+
+  // ─── EXTRACTION LOADING CARD ─────────────────────────────────────────
+  Widget _buildExtractionLoadingCard(String title, String subtitle) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 48,
+              height: 48,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 14,
+                color: AppColors.textSecondary,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Fields will auto-populate when extraction completes.\nYou can also enter details manually.',
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary.withOpacity(0.8),
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -757,71 +1079,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
     );
   }
 
-  Widget _buildPhotosAndCostSummaryStep(DeviceType device) {
-    final pad = device == DeviceType.mobile ? 10.0 : 14.0;
-    return Column(
-      children: [
-        Container(
-          width: double.infinity,
-          padding: EdgeInsets.all(pad),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: AppColors.border)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
-                    child: const Icon(Icons.photo_library, color: AppColors.primary, size: 18),
-                  ),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Upload Event Photos', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.primary)),
-                        Text('Upload photos from the marketing event', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              ElevatedButton.icon(
-                onPressed: _pickPhotos,
-                icon: const Icon(Icons.add_photo_alternate, size: 16),
-                label: Text(_photos.isEmpty ? 'Select Photos' : 'Add More Photos', style: const TextStyle(fontSize: 12)),
-                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-              ),
-              if (_photos.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text('${_photos.length} photo${_photos.length > 1 ? 's' : ''} selected', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 4,
-                  runSpacing: 4,
-                  children: _photos.asMap().entries.map((e) => Chip(
-                    label: Text(e.value.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10)),
-                    onDeleted: () => setState(() => _photos.removeAt(e.key)),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                  )).toList(),
-                ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        _buildFileUploadCard('Upload Cost Summary', 'Upload the cost summary document (PDF only)',
-            Icons.receipt_long, _costSummary, () => _pickFile((f) => _costSummary = f), () => setState(() => _costSummary = null), device),
-      ],
-    );
-  }
-
-
   Widget _buildAdditionalDocsStep(DeviceType device) {
     final pad = device == DeviceType.mobile ? 10.0 : 14.0;
     return Container(
@@ -919,7 +1176,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w600)),
     );
 
-    final nextBtn = _currentStep < 4
+    final nextBtn = _currentStep < 3
         ? ElevatedButton.icon(
             onPressed: _handleNext,
             icon: const Icon(Icons.arrow_forward_rounded, size: 18),

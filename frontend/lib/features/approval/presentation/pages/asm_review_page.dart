@@ -12,6 +12,7 @@ import '../../../../core/widgets/kpi_card.dart';
 import '../../../../core/widgets/quarter_year_filter.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../analytics/data/models/quarterly_fap_kpi_model.dart';
+import '../widgets/view_validation_report_button.dart';
 
 class ASMReviewPage extends StatefulWidget {
   final String token;
@@ -567,14 +568,24 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
               _buildInfoRow('Submitted', _formatDate(doc['createdAt'])),
               _buildInfoRow('AI Score', aiScore),
               const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _navigateToDetail(doc['id']),
-                  icon: const Icon(Icons.visibility_outlined, size: 18),
-                  label: const Text('View Details'),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: ViewValidationReportButton(
+                      packageId: doc['id'],
+                      isCompact: false,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _navigateToDetail(doc['id']),
+                      icon: const Icon(Icons.visibility_outlined, size: 18),
+                      label: const Text('View Details'),
+                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -627,7 +638,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                   _headerCell('SUBMITTED DATE', 140),
                   _headerCell('AI SCORE', 100),
                   _headerCell('STATUS', 140),
-                  const SizedBox(width: 80),
+                  const SizedBox(width: 120),
                 ]),
               ),
               ...filtered.map((doc) => _buildDocumentRow(doc)),
@@ -669,12 +680,21 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
         SizedBox(width: 140, child: Text(_formatDate(doc['createdAt']), style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary))),
         SizedBox(width: 100, child: Text(aiScore, style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary, fontWeight: FontWeight.w600))),
         SizedBox(width: 140, child: _buildStatusBadge(status)),
-        SizedBox(width: 80, child: IconButton(
-          icon: const Icon(Icons.visibility_outlined, size: 20),
-          color: AppColors.primary,
-          onPressed: () => _navigateToDetail(doc['id']),
-          tooltip: 'View Details',
-        )),
+        SizedBox(
+          width: 120,
+          child: Row(
+            children: [
+              ViewValidationReportButton(packageId: doc['id'], isCompact: true),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.visibility_outlined, size: 20),
+                color: AppColors.primary,
+                onPressed: () => _navigateToDetail(doc['id']),
+                tooltip: 'View Details',
+              ),
+            ],
+          ),
+        ),
       ]),
     );
   }

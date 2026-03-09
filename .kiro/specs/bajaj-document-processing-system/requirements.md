@@ -387,3 +387,104 @@ This document specifies the requirements for the Bajaj Document Processing Syste
 18. WHEN the ASM clicks "Approve FAP", THE System SHALL update the FAP state to Approved and notify the Agency user
 19. WHEN the ASM clicks "Reject FAP", THE System SHALL prompt for rejection comments and update the FAP state to Rejected
 20. WHEN displaying the FAP header, THE System SHALL show the campaign name, FAP ID, submission date, and total amount prominently
+
+### Requirement 20: PO Field Display and Auto-Population on Agency Submission Form
+
+**User Story:** As an Agency user, I want to see extracted PO data displayed in dedicated input fields on the submission form after uploading my PO document, so that I can verify the extracted information is correct and make manual corrections if needed before submitting.
+
+#### Acceptance Criteria
+
+1. WHEN an Agency user accesses the submission form, THE System SHALL display four PO data input fields: PO Number, PO Amount (₹), PO Date, and Vendor Name
+2. WHEN the submission form initially loads with no PO document uploaded, THE System SHALL display empty input fields with placeholder text: "Enter PO number", "Enter amount", "dd-mm-yyyy", "Enter vendor name"
+3. WHEN an Agency user uploads a PO document, THE System SHALL automatically populate the four PO fields with extracted data from the DocumentAgent
+4. WHEN displaying the PO Amount field, THE System SHALL format the value as currency with the ₹ symbol (e.g., "₹ 10,500.00")
+5. WHEN displaying the PO Date field, THE System SHALL format the date in dd-mm-yyyy format (e.g., "15-03-2024")
+6. WHEN the PO fields are auto-populated with extracted data, THE System SHALL allow the user to manually edit any field value
+7. WHEN a user manually edits an auto-populated field, THE System SHALL preserve the edited value and not overwrite it if the PO document is re-uploaded
+8. WHEN the extracted PO data is incomplete or unavailable, THE System SHALL leave the corresponding fields empty with placeholder text
+9. WHEN displaying the PO fields, THE System SHALL arrange them in a 2x2 grid layout: PO Number (top-left), PO Amount (top-right), PO Date (bottom-left), Vendor Name (bottom-right)
+10. WHEN the submission form is viewed on mobile devices, THE System SHALL stack the PO fields vertically in a single column
+11. WHEN the user submits the form, THE System SHALL include the PO field values (whether auto-populated or manually entered) in the submission data
+
+### Requirement 21: Invoice Field Display and Auto-Population on Agency Submission Form
+
+**User Story:** As an Agency user, I want to see extracted Invoice data displayed in dedicated input fields on the submission form after uploading my Invoice document, so that I can verify the extracted information is correct and make manual corrections if needed before submitting.
+
+#### Acceptance Criteria
+
+1. WHEN an Agency user accesses the submission form, THE System SHALL display five Invoice data input fields: Invoice No, Invoice Date, Invoice Amount (₹), GSTIN, and Vendor Name
+2. WHEN the submission form initially loads with no Invoice document uploaded, THE System SHALL display empty input fields with placeholder text: "Enter invoice number", "dd-mm-yyyy", "Enter amount", "Enter GSTIN", "Enter vendor name"
+3. WHEN an Agency user uploads an Invoice document, THE System SHALL automatically populate the five Invoice fields with extracted data from the DocumentAgent
+4. WHEN displaying the Invoice Amount field, THE System SHALL format the value as currency with the ₹ symbol (e.g., "₹ 10,500.00")
+5. WHEN displaying the Invoice Date field, THE System SHALL format the date in dd-mm-yyyy format (e.g., "15-03-2024")
+6. WHEN the Invoice fields are auto-populated with extracted data, THE System SHALL allow the user to manually edit any field value
+7. WHEN a user manually edits an auto-populated field, THE System SHALL preserve the edited value and not overwrite it if the Invoice document is re-uploaded
+8. WHEN the extracted Invoice data is incomplete or unavailable, THE System SHALL leave the corresponding fields empty with placeholder text
+9. WHEN displaying the Invoice fields, THE System SHALL arrange them in a 2-column grid layout: Invoice No (row 1 left), Invoice Date (row 1 right), Invoice Amount (row 2 left), GSTIN (row 2 right), Vendor Name (row 3 full width)
+10. WHEN the submission form is viewed on mobile devices, THE System SHALL stack the Invoice fields vertically in a single column
+11. WHEN both PO and Invoice documents are uploaded, THE System SHALL display a "Cross-Validation with PO Document" section showing two read-only fields: "PO Number (from Invoice)" and "PO Number (from PO Document)"
+12. WHEN displaying the cross-validation section, THE System SHALL auto-populate "PO Number (from Invoice)" with the PO reference extracted from the Invoice document
+13. WHEN displaying the cross-validation section, THE System SHALL auto-populate "PO Number (from PO Document)" with the PO Number from the PO fields section
+14. WHEN the two PO numbers in the cross-validation section match, THE System SHALL display a green checkmark indicator
+15. WHEN the two PO numbers in the cross-validation section do not match, THE System SHALL display a red warning indicator and message: "PO numbers do not match. Please verify."
+16. WHEN the user submits the form, THE System SHALL include the Invoice field values (whether auto-populated or manually entered) in the submission data
+
+
+### Requirement 22: Hierarchical Document Structure (FAP → PO → Invoices → Campaigns → Photos)
+
+**User Story:** As an Agency user, I want to submit a FAP with one PO that can have multiple invoices, where each invoice can have multiple campaigns, and each campaign can have multiple photos, so that I can accurately represent complex field activities with multiple billing components.
+
+#### Acceptance Criteria
+
+##### AC1: FAP to PO Relationship (1:1)
+
+1. WHEN an Agency user creates a new FAP submission, THE System SHALL require exactly one PO document to be uploaded
+2. WHEN a PO document is uploaded, THE System SHALL extract and store PO data (PO Number, Amount, Date, Vendor) linked to the FAP
+3. WHEN displaying a FAP, THE System SHALL show the single PO document with its extracted data
+
+##### AC2: PO to Invoice Relationship (1:Many)
+
+1. WHEN an Agency user has uploaded a PO document, THE System SHALL allow uploading multiple Invoice documents linked to that PO
+2. WHEN an Invoice document is uploaded, THE System SHALL link it to the PO document within the same FAP
+3. WHEN displaying invoices, THE System SHALL show all invoices associated with the PO in a list or card format
+4. WHEN adding a new invoice, THE System SHALL provide an "Add Invoice" button that allows uploading additional invoice documents
+5. WHEN an invoice is uploaded, THE System SHALL extract and store Invoice data (Invoice Number, Date, Amount, GST, Vendor)
+
+##### AC3: Invoice to Campaign Relationship (1:Many)
+
+1. WHEN an Agency user has uploaded an Invoice, THE System SHALL allow adding multiple campaigns linked to that invoice
+2. WHEN adding a campaign, THE System SHALL capture: Campaign Name, Start Date, End Date, Working Days, Dealership Name, Address, GPS Location, State, Total Cost
+3. WHEN displaying campaigns, THE System SHALL show all campaigns associated with each invoice
+4. WHEN adding a new campaign, THE System SHALL provide an "Add Campaign" button within each invoice section
+5. WHEN a campaign is added, THE System SHALL allow uploading a Cost Summary document specific to that campaign
+
+##### AC4: Campaign to Photo Relationship (1:Many)
+
+1. WHEN an Agency user has added a Campaign, THE System SHALL allow uploading multiple photos linked to that campaign
+2. WHEN photos are uploaded, THE System SHALL extract EXIF metadata (timestamp, GPS coordinates, device model)
+3. WHEN displaying photos, THE System SHALL show all photos associated with each campaign in a gallery format
+4. WHEN adding photos, THE System SHALL allow up to 20 photos per campaign
+5. WHEN displaying photo metadata, THE System SHALL show timestamp, location (if available), and device info
+
+##### AC5: Teams/Members per Campaign
+
+1. WHEN an Agency user is editing a campaign, THE System SHALL allow adding multiple team members
+2. WHEN adding a team member, THE System SHALL capture: Team Name, Member Count, Role/Activity
+3. WHEN displaying teams, THE System SHALL show all team members associated with each campaign
+4. WHEN adding a new team, THE System SHALL provide an "Add New Team" button within the campaign section
+
+##### AC6: Data Integrity and Navigation
+
+1. WHEN deleting an Invoice, THE System SHALL cascade delete all associated Campaigns and Photos
+2. WHEN deleting a Campaign, THE System SHALL cascade delete all associated Photos
+3. WHEN viewing a FAP, THE System SHALL display the hierarchical structure: PO → Invoices → Campaigns → Photos
+4. WHEN navigating the hierarchy, THE System SHALL allow expanding/collapsing each level for better readability
+5. WHEN calculating confidence scores, THE System SHALL aggregate scores from all invoices, campaigns, and photos in the FAP
+
+##### AC7: Validation Across Hierarchy
+
+1. WHEN validating a FAP, THE System SHALL verify that the sum of all Invoice amounts matches the PO amount (within tolerance)
+2. WHEN validating campaigns, THE System SHALL verify that campaign dates fall within the PO date range
+3. WHEN validating photos, THE System SHALL verify that photo timestamps fall within the campaign date range
+4. WHEN validation issues are found, THE System SHALL display them at the appropriate hierarchy level (Invoice, Campaign, or Photo)
+

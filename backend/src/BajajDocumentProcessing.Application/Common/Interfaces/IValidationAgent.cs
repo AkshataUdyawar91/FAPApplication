@@ -69,6 +69,9 @@ public class PackageValidationResult
     public ActivityCrossDocumentResult? ActivityCrossDocument { get; set; }
     public PhotoFieldPresenceResult? PhotoFieldPresence { get; set; }
     public PhotoCrossDocumentResult? PhotoCrossDocument { get; set; }
+    // CHANGE: Added EnquiryDump validation result properties
+    public EnquiryDumpFieldPresenceResult? EnquiryDumpFieldPresence { get; set; }
+    public EnquiryDumpCrossDocumentResult? EnquiryDumpCrossDocument { get; set; }
     public List<ValidationIssue> Issues { get; set; } = new();
     public DateTime ValidatedAt { get; set; }
 }
@@ -248,5 +251,37 @@ public class PhotoCrossDocumentResult
     public int PhotoCount { get; set; }
     public int ManDays { get; set; }
     public int CostSummaryDays { get; set; }
+    public List<string> Issues { get; set; } = new();
+}
+
+// CHANGE: Added EnquiryDumpFieldPresenceResult for Enquiry Dump field validation
+/// <summary>
+/// Enquiry Dump field presence validation result
+/// </summary>
+public class EnquiryDumpFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public int TotalRecords { get; set; }
+    public int RecordsWithState { get; set; }
+    public int RecordsWithDate { get; set; }
+    public int RecordsWithDealerCode { get; set; }
+    public int RecordsWithDealerName { get; set; }
+    public int RecordsWithDistrict { get; set; }
+    public int RecordsWithPincode { get; set; }
+    public int RecordsWithCustomerName { get; set; }
+    public int RecordsWithCustomerNumber { get; set; }
+    public int RecordsWithTestRide { get; set; }
+    public List<string> MissingFields { get; set; } = new();
+}
+
+// CHANGE: Added EnquiryDumpCrossDocumentResult for cross-document validation
+/// <summary>
+/// Enquiry Dump cross-document validation result
+/// </summary>
+public class EnquiryDumpCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool StateMatchesActivity { get; set; }
+    public bool DealerDetailsMatchActivity { get; set; }
     public List<string> Issues { get; set; } = new();
 }

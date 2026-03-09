@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.Documents;
+using BajajDocumentProcessing.Application.Utilities;
 using BajajDocumentProcessing.Domain.Entities;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Persistence;
@@ -33,6 +34,10 @@ public class DocumentService : IDocumentService
         { DocumentType.Invoice, new[] { ".pdf", ".jpg", ".jpeg", ".png", ".tiff", ".tif" } },
         { DocumentType.CostSummary, new[] { ".pdf", ".xls", ".xlsx", ".csv" } },
         { DocumentType.Photo, new[] { ".jpg", ".jpeg", ".png", ".heic" } },
+        // CHANGE: Added allowed extensions for Activity Summary (PDF/image)
+        { DocumentType.Activity, new[] { ".pdf", ".jpg", ".jpeg", ".png", ".xls", ".xlsx" } },
+        // CHANGE: Added allowed extensions for Enquiry Dump (Excel format)
+        { DocumentType.EnquiryDump, new[] { ".xls", ".xlsx", ".csv" } },
         { DocumentType.AdditionalDocument, new[] { ".pdf", ".doc", ".docx", ".xls", ".xlsx" } }
     };
 
@@ -61,7 +66,11 @@ public class DocumentService : IDocumentService
         // Validate file
         if (!await ValidateFileAsync(file, documentType))
         {
-            throw new InvalidOperationException("File validation failed");
+            throw new Domain.Exceptions.ValidationException(
+                new Dictionary<string, string[]>
+                {
+                    { "file", new[] { "File validation failed. Check file type and size." } }
+                });
         }
 
         // Create or get package
@@ -77,7 +86,7 @@ public class DocumentService : IDocumentService
             
             if (existingPackage == null)
             {
-                throw new InvalidOperationException("Package not found");
+                throw new Domain.Exceptions.NotFoundException("Package not found");
             }
             
             // Log if user mismatch (for debugging)
@@ -115,7 +124,11 @@ public class DocumentService : IDocumentService
             
             if (photoCount >= 20)
             {
-                throw new InvalidOperationException("Photo limit exceeded. Maximum 20 photos allowed per submission.");
+                throw new Domain.Exceptions.ValidationException(
+                    new Dictionary<string, string[]>
+                    {
+                        { "photos", new[] { "Photo limit exceeded. Maximum 20 photos allowed per submission." } }
+                    });
             }
         }
 
@@ -153,10 +166,15 @@ public class DocumentService : IDocumentService
         {
             try
             {
+                var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
+                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] Starting for doc {document.Id}, type: {documentType}, blob: {document.BlobUrl}\n");
                 await ExtractDocumentDataAsync(document.Id, document.BlobUrl, documentType);
+                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] Completed for doc {document.Id}\n");
             }
             catch (Exception ex)
             {
+                var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
+                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] FAILED for doc {document.Id}: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n");
                 _logger.LogError(ex, "Error extracting document {DocumentId}", document.Id);
             }
         });
@@ -191,34 +209,54 @@ public class DocumentService : IDocumentService
                 documentId, classification.Type, classification.Confidence);
 
             // Extract data based on type
-            object? extractedData = null;
+            // CHANGE: Use string for serialized JSON instead of object? to avoid System.Text.Json polymorphism issue
+            // System.Text.Json serializes declared type (object) not runtime type, causing "{}" for some types
+            string? extractedJson = null;
             double confidence = classification.Confidence;
 
             switch (documentType)
             {
                 case DocumentType.PO:
                     var poData = await _documentAgent.ExtractPOAsync(blobUrl);
-                    extractedData = poData;
+                    extractedJson = System.Text.Json.JsonSerializer.Serialize(poData);
                     confidence = poData.FieldConfidences.Values.Any() ? poData.FieldConfidences.Values.Average() : 0.5;
                     break;
 
                 case DocumentType.Invoice:
                     var invoiceData = await _documentAgent.ExtractInvoiceAsync(blobUrl);
-                    extractedData = invoiceData;
+                    extractedJson = System.Text.Json.JsonSerializer.Serialize(invoiceData);
                     confidence = invoiceData.FieldConfidences.Values.Any() ? invoiceData.FieldConfidences.Values.Average() : 0.5;
                     break;
 
                 case DocumentType.CostSummary:
                     var costSummaryData = await _documentAgent.ExtractCostSummaryAsync(blobUrl);
-                    extractedData = costSummaryData;
+                    extractedJson = System.Text.Json.JsonSerializer.Serialize(costSummaryData);
                     confidence = costSummaryData.FieldConfidences.Values.Any() ? costSummaryData.FieldConfidences.Values.Average() : 0.5;
                     break;
 
                 case DocumentType.Photo:
                     var photoMetadata = await _documentAgent.ExtractPhotoMetadataAsync(blobUrl);
-                    extractedData = photoMetadata;
+                    extractedJson = System.Text.Json.JsonSerializer.Serialize(photoMetadata);
                     confidence = photoMetadata.FieldConfidences.Values.Any() 
                         ? photoMetadata.FieldConfidences.Values.Average() 
+                        : 0.5;
+                    break;
+
+                // CHANGE: Added Activity Summary extraction case
+                case DocumentType.Activity:
+                    var activityData = await _documentAgent.ExtractActivityAsync(blobUrl);
+                    extractedJson = System.Text.Json.JsonSerializer.Serialize(activityData);
+                    confidence = activityData.FieldConfidences.Values.Any()
+                        ? activityData.FieldConfidences.Values.Average()
+                        : 0.5;
+                    break;
+
+                // CHANGE: Added Enquiry Dump extraction case
+                case DocumentType.EnquiryDump:
+                    var enquiryData = await _documentAgent.ExtractEnquiryDumpAsync(blobUrl);
+                    extractedJson = System.Text.Json.JsonSerializer.Serialize(enquiryData);
+                    confidence = enquiryData.FieldConfidences.Values.Any()
+                        ? enquiryData.FieldConfidences.Values.Average()
                         : 0.5;
                     break;
 
@@ -227,18 +265,27 @@ public class DocumentService : IDocumentService
                     return;
             }
 
-            if (extractedData != null)
+            if (!string.IsNullOrEmpty(extractedJson))
             {
                 // Save extracted data to database using the new scope's context
                 var document = await context.Documents.FindAsync(documentId);
                 if (document != null)
                 {
-                    document.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(extractedData);
+                    // CHANGE: Debug log to file to check what's being saved
+                    var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [SAVE] Doc {documentId}, type: {documentType}, JSON length: {extractedJson.Length}, preview: {extractedJson.Substring(0, Math.Min(200, extractedJson.Length))}\n");
+
+                    // CHANGE: Directly assign pre-serialized JSON string instead of re-serializing object
+                    document.ExtractedDataJson = extractedJson;
                     document.ExtractionConfidence = confidence;
                     document.UpdatedAt = DateTime.UtcNow;
                     
                     await context.SaveChangesAsync();
                     
+                    // CHANGE: Verify save by re-reading
+                    var verify = await context.Documents.FindAsync(documentId);
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [VERIFY] Doc {documentId}, saved JSON length: {verify?.ExtractedDataJson?.Length}, preview: {verify?.ExtractedDataJson?.Substring(0, Math.Min(200, verify?.ExtractedDataJson?.Length ?? 0))}\n");
+
                     _logger.LogInformation(
                         "Extracted data saved for document {DocumentId} with confidence {Confidence}",
                         documentId, confidence);
@@ -278,6 +325,15 @@ public class DocumentService : IDocumentService
             _logger.LogWarning(
                 "File extension {Extension} not allowed for {DocumentType}",
                 fileExtension, documentType);
+            return false;
+        }
+
+        // Validate file type by magic bytes (prevents file type spoofing)
+        if (!await FileUploadValidator.ValidateFileTypeByMagicBytesAsync(file))
+        {
+            _logger.LogWarning(
+                "File {FileName} failed magic byte validation. Extension: {Extension}",
+                file.FileName, fileExtension);
             return false;
         }
 

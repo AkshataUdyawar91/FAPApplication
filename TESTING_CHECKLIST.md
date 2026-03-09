@@ -1,217 +1,291 @@
-# Testing Checklist - Download & Chat Features
+# Enhanced Validation Report - Testing Checklist
 
-## Prerequisites
-1. Ensure backend API is running on `http://localhost:5000`
-2. Ensure database has test data with documents
-3. Run Flutter app: `flutter run -d chrome` (from frontend directory)
+Use this checklist to verify the feature is working correctly.
 
-## Test Scenarios
+## Pre-Testing Setup
 
-### 1. Agency User - Download Documents
+- [ ] Backend is running (`dotnet run` in backend directory)
+- [ ] Database has test submissions
+- [ ] Users are created (ASM and HQ)
+- [ ] Frontend dependencies installed (`flutter pub get`)
 
-**Login as Agency User**
-- Email: `agency@bajaj.com`
-- Password: `Password123!`
+## Backend API Testing
 
-**Steps:**
-1. ✅ Login to agency dashboard
-2. ✅ Click "View" button on any submission
-3. ✅ Verify submission detail page loads with all documents
-4. ✅ Click download icon next to PO document
-   - Expected: Document opens in new browser tab
-   - Expected: Success message appears
-5. ✅ Click download icon next to Invoice document
-   - Expected: Document opens in new browser tab
-6. ✅ Click download icon next to Cost Summary document
-   - Expected: Document opens in new browser tab
-7. ✅ Expand Photos section and verify photos are displayed
-8. ✅ Test with submission that has no documents
-   - Expected: Error message "Document URL not available"
+### Run Test Script
+```bash
+.\test-enhanced-validation.bat
+```
 
-**Chat Bot Test:**
-1. ✅ Verify chat panel toggle button exists on dashboard
-2. ✅ Click chat toggle button
-3. ✅ Verify chat panel opens
-4. ✅ Send a test message
-5. ✅ Verify AI responds
+- [ ] ASM login successful
+- [ ] Submissions retrieved (count > 0)
+- [ ] Validation report API returns 200 OK
+- [ ] Response contains all required fields:
+  - [ ] summary
+  - [ ] categories
+  - [ ] confidenceBreakdown
+  - [ ] recommendation
+  - [ ] detailedEvidence
+- [ ] Overall confidence is between 0-100
+- [ ] Validation categories list is not empty
+- [ ] Recommendation has action and reasoning
+- [ ] No errors in console
 
----
+## Frontend UI Testing
 
-### 2. ASM User - Download Documents & Chat
+### Start Frontend
+```bash
+cd frontend
+flutter run -d chrome
+```
 
-**Login as ASM User**
-- Email: `asm@bajaj.com`
-- Password: `Password123!`
+### Login Test
+- [ ] Login page loads
+- [ ] Can login as ASM (asm@bajaj.com / ASM@123)
+- [ ] Dashboard loads successfully
+- [ ] Submissions are displayed
 
-**Steps:**
-1. ✅ Login to ASM review page
-2. ✅ Verify floating chat button (FAB) appears in bottom-right corner
-3. ✅ Click on any submission to open detail page
-4. ✅ Verify all documents are displayed with download buttons
-5. ✅ Click "Download" button next to PO document
-   - Expected: Document opens in new tab
-   - Expected: Success message appears
-6. ✅ Click "Download" button next to Invoice document
-7. ✅ Click "Download" button next to Cost Summary document
-8. ✅ Scroll to Photos section
-9. ✅ Click "Download All" button for photos (if available)
-10. ✅ Go back to review list page
-11. ✅ Click floating chat button (FAB)
-    - Expected: Navigates to chat page
-12. ✅ Send a test message in chat
-    - Expected: AI responds
-13. ✅ Navigate back to review page
-    - Expected: Chat FAB still visible
+### Button Visibility Test
 
----
+**Mobile View** (resize browser < 600px):
+- [ ] "View AI Report" button visible on submission cards
+- [ ] Button has icon and text
+- [ ] Button is styled correctly (Bajaj blue)
+- [ ] Button is next to "View Details" button
 
-### 3. HQ User - Download Documents & Chat
+**Desktop View** (resize browser > 900px):
+- [ ] 📊 icon button visible in action column
+- [ ] Icon button is next to 👁 view details icon
+- [ ] Tooltip shows "View AI Validation Report"
+- [ ] Action column width is sufficient (120px)
 
-**Login as HQ User**
-- Email: `hq@bajaj.com`
-- Password: `Password123!`
+### Dialog Opening Test
+- [ ] Click "View AI Report" button
+- [ ] Dialog opens smoothly
+- [ ] Loading spinner appears briefly
+- [ ] Dialog is centered on screen
+- [ ] Dialog size is appropriate (90% width/height)
 
-**Steps:**
-1. ✅ Login to HQ review page
-2. ✅ Verify floating chat button (FAB) appears in bottom-right corner
-3. ✅ Click on any submission to open detail page
-4. ✅ Verify all documents are displayed with download buttons
-5. ✅ Click "Download" button next to PO document
-   - Expected: Document opens in new tab
-   - Expected: Success message appears
-6. ✅ Click "Download" button next to Invoice document
-7. ✅ Click "Download" button next to Cost Summary document
-8. ✅ Verify ASM review notes section is displayed (if ASM approved)
-9. ✅ Go back to review list page
-10. ✅ Click floating chat button (FAB)
-    - Expected: Navigates to chat page
-11. ✅ Send a test message in chat
-    - Expected: AI responds
-12. ✅ Navigate back to review page
-    - Expected: Chat FAB still visible
+### Report Display Test
 
----
+**Header Section**:
+- [ ] Title: "Enhanced Validation Report"
+- [ ] Package ID is displayed
+- [ ] Refresh button (🔄) is visible
+- [ ] Close button (✕) is visible
 
-## Error Handling Tests
+**Summary Section**:
+- [ ] Confidence score card displays
+- [ ] Confidence percentage is visible
+- [ ] Risk level badge displays (Low/Medium/High/Critical)
+- [ ] Color coding is correct:
+  - [ ] Green for ≥85%
+  - [ ] Orange for 70-85%
+  - [ ] Red for <70%
+- [ ] Validation statistics show:
+  - [ ] Total validations
+  - [ ] Passed count
+  - [ ] Failed count
+  - [ ] Critical issues count
+  - [ ] High priority count
+  - [ ] Medium priority count
 
-### Download Errors
-1. ✅ Test with document that has null/empty blobUrl
-   - Expected: Orange snackbar with "Document URL not available"
-2. ✅ Test with invalid blobUrl
-   - Expected: Red snackbar with error message
-3. ✅ Test network failure during download
-   - Expected: Appropriate error message
+**Validation Categories Section**:
+- [ ] All validation categories are listed
+- [ ] Each category shows:
+  - [ ] Category name
+  - [ ] Pass/fail icon (✅ or ❌)
+  - [ ] Severity badge (Critical/High/Medium/Low)
+  - [ ] Short description
+- [ ] Categories are expandable (▼ icon)
 
-### Chat Errors
-1. ✅ Test chat without network connection
-   - Expected: Error message displayed
-2. ✅ Test chat with invalid token
-   - Expected: Authentication error
-3. ✅ Test sending empty message
-   - Expected: Message not sent
+**Recommendation Section**:
+- [ ] AI recommendation displays
+- [ ] Action badge shows (Approve/Request Resubmission/Reject)
+- [ ] Reasoning text is visible
+- [ ] Color coding matches action:
+  - [ ] Green for Approve
+  - [ ] Orange for Request Resubmission
+  - [ ] Red for Reject
 
----
+**Detailed Evidence Section**:
+- [ ] Section is collapsible
+- [ ] Can expand to view full text
+- [ ] Text is selectable
+- [ ] Monospace font is used
 
-## Cross-Browser Testing
+### Interaction Test
 
-### Chrome
-- ✅ Download functionality works
-- ✅ Chat FAB appears correctly
-- ✅ Documents open in new tab
+**Expand Validation Category**:
+- [ ] Click on a validation category
+- [ ] Card expands smoothly
+- [ ] Details section displays:
+  - [ ] Description
+  - [ ] Expected value (green box)
+  - [ ] Actual value (red box)
+  - [ ] Impact description
+  - [ ] Suggested action (with 💡 icon)
+- [ ] Click again to collapse
 
-### Firefox
-- ✅ Download functionality works
-- ✅ Chat FAB appears correctly
-- ✅ Documents open in new tab
+**Refresh Report**:
+- [ ] Click refresh button (🔄)
+- [ ] Loading spinner appears
+- [ ] Report reloads
+- [ ] Data updates (if changed)
+- [ ] No errors
 
-### Edge
-- ✅ Download functionality works
-- ✅ Chat FAB appears correctly
-- ✅ Documents open in new tab
+**Close Dialog**:
+- [ ] Click close button (✕)
+- [ ] Dialog closes smoothly
+- [ ] Returns to dashboard
+- [ ] No errors in console
 
----
+### Error Handling Test
 
-## UI/UX Verification
+**Network Error**:
+- [ ] Stop backend API
+- [ ] Click "View AI Report" button
+- [ ] Error message displays
+- [ ] Retry button appears
+- [ ] Click retry button
+- [ ] Error persists (backend still stopped)
+- [ ] Restart backend
+- [ ] Click retry button
+- [ ] Report loads successfully
 
-### Download Buttons
-- ✅ Download icon is visible and clear
-- ✅ Tooltip shows "Download" on hover
-- ✅ Button is properly aligned with document info
-- ✅ Success message is clear and visible
-- ✅ Error messages are clear and actionable
+**Invalid Submission**:
+- [ ] Manually call API with invalid ID
+- [ ] 404 error is handled gracefully
+- [ ] User-friendly error message displays
 
-### Chat FAB
-- ✅ FAB is visible in bottom-right corner
-- ✅ FAB doesn't overlap with other UI elements
-- ✅ FAB icon is clear (chat bubble)
-- ✅ FAB label says "AI Assistant"
-- ✅ FAB color matches app theme (primary blue)
-- ✅ FAB has proper elevation/shadow
-- ✅ Clicking FAB navigates to chat page smoothly
+### Responsive Design Test
 
-### Chat Page
-- ✅ Chat page loads correctly
-- ✅ Previous messages are displayed (if any)
-- ✅ Input field is functional
-- ✅ Send button works
-- ✅ Messages are displayed in correct order
-- ✅ Loading indicator shows while AI is responding
-- ✅ Back button returns to previous page
+**Mobile (< 600px)**:
+- [ ] Dialog is full-width
+- [ ] Content is stacked vertically
+- [ ] Buttons are full-width
+- [ ] Text is readable
+- [ ] Touch targets are ≥48×48px
+- [ ] Scrolling works smoothly
 
----
+**Tablet (600-900px)**:
+- [ ] Dialog is appropriately sized
+- [ ] Layout adjusts for medium screen
+- [ ] All content is visible
+- [ ] No horizontal scrolling
 
-## Performance Tests
+**Desktop (> 900px)**:
+- [ ] Dialog is centered
+- [ ] Content uses available space
+- [ ] Side-by-side layouts work
+- [ ] All sections are visible
 
-1. ✅ Download large PDF (>5MB)
-   - Expected: Opens without freezing UI
-2. ✅ Download multiple documents quickly
-   - Expected: All open successfully
-3. ✅ Chat with long conversation history
-   - Expected: Loads and scrolls smoothly
-4. ✅ Send multiple chat messages rapidly
-   - Expected: All messages processed correctly
+### Performance Test
 
----
+**Load Time**:
+- [ ] Report loads in < 2 seconds
+- [ ] No lag or freezing
+- [ ] Smooth animations
 
-## Accessibility Tests
+**Memory Usage**:
+- [ ] Open 5 different validation reports
+- [ ] Check browser memory (DevTools)
+- [ ] No memory leaks
+- [ ] Memory usage is stable
 
-1. ✅ Download buttons are keyboard accessible (Tab + Enter)
-2. ✅ Chat FAB is keyboard accessible
-3. ✅ Screen reader announces download actions
-4. ✅ Screen reader announces chat FAB
-5. ✅ Color contrast is sufficient for all buttons
-6. ✅ Focus indicators are visible
+### HQ User Test
+- [ ] Logout from ASM account
+- [ ] Login as HQ (hq@bajaj.com / HQ@123)
+- [ ] Repeat all tests above
+- [ ] All features work identically
 
----
+## Browser Compatibility Test
 
-## Known Limitations
+- [ ] Chrome (latest)
+- [ ] Firefox (latest)
+- [ ] Safari (latest)
+- [ ] Edge (latest)
 
-1. **Web Only**: `dart:html` import only works for web platform
-   - For mobile apps, would need to use `url_launcher` package
-2. **Download Behavior**: Opens in new tab rather than forcing download
-   - Browser settings control actual download behavior
-3. **Chat Context**: Chat page doesn't maintain context when navigating away
-   - This is expected behavior based on current implementation
+## Accessibility Test
 
----
+- [ ] Tab navigation works
+- [ ] Screen reader announces elements
+- [ ] Color contrast is sufficient (WCAG AA)
+- [ ] Touch targets are ≥48×48px
+- [ ] Keyboard shortcuts work (Esc to close)
 
-## Success Criteria
+## Visual Quality Test
 
-✅ All personas can download documents from their respective pages
-✅ All personas can access chat bot functionality
-✅ Download buttons are functional and provide user feedback
-✅ Chat FAB is visible and accessible on ASM and HQ pages
-✅ Error handling works correctly for edge cases
-✅ UI is consistent across all pages
-✅ No console errors or warnings
+**Colors**:
+- [ ] Bajaj brand colors used correctly
+- [ ] Confidence colors are distinct
+- [ ] Severity colors are appropriate
+- [ ] Text is readable on all backgrounds
 
----
+**Layout**:
+- [ ] Spacing is consistent
+- [ ] Alignment is correct
+- [ ] No overlapping elements
+- [ ] Cards have proper elevation/shadows
 
-## Rollback Plan
+**Typography**:
+- [ ] Font sizes are appropriate
+- [ ] Font weights are correct
+- [ ] Line heights are readable
+- [ ] Text doesn't overflow
 
-If issues are found:
-1. Revert changes to the 6 modified files
-2. Remove chat route from main.dart
-3. Remove ChatFAB imports from ASM and HQ pages
-4. Remove download method implementations
-5. Test that app still functions without new features
+**Icons**:
+- [ ] All icons display correctly
+- [ ] Icon sizes are consistent
+- [ ] Icons have proper colors
+- [ ] Icons align with text
+
+## Edge Cases Test
+
+- [ ] Submission with 0% confidence
+- [ ] Submission with 100% confidence
+- [ ] Submission with all validations passed
+- [ ] Submission with all validations failed
+- [ ] Submission with no validation data
+- [ ] Very long text in descriptions
+- [ ] Special characters in data
+- [ ] Empty/null values
+
+## Final Verification
+
+- [ ] No console errors
+- [ ] No console warnings (related to this feature)
+- [ ] No network errors
+- [ ] No visual glitches
+- [ ] All animations are smooth
+- [ ] All interactions work as expected
+- [ ] Feature is ready for production
+
+## Sign-Off
+
+**Tested By**: ___________________
+
+**Date**: ___________________
+
+**Status**: 
+- [ ] ✅ All tests passed - Ready for production
+- [ ] ⚠️ Minor issues found - Needs adjustments
+- [ ] ❌ Major issues found - Needs fixes
+
+**Notes**:
+_______________________________________
+_______________________________________
+_______________________________________
+
+## Issues Found
+
+| # | Issue Description | Severity | Status |
+|---|-------------------|----------|--------|
+| 1 |                   |          |        |
+| 2 |                   |          |        |
+| 3 |                   |          |        |
+
+## Recommendations
+
+_______________________________________
+_______________________________________
+_______________________________________

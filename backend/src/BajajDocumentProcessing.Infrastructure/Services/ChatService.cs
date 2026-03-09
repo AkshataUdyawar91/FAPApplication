@@ -10,6 +10,9 @@ using Microsoft.SemanticKernel.Connectors.OpenAI;
 
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
+/// <summary>
+/// Service for processing conversational AI chat queries with guardrails and semantic search
+/// </summary>
 public class ChatService : IChatService
 {
     private readonly IApplicationDbContext _context;
@@ -20,6 +23,7 @@ public class ChatService : IChatService
     private readonly IEmbeddingService _embeddingService;
     private readonly ILogger<ChatService> _logger;
     private readonly Kernel _kernel;
+    private readonly ICorrelationIdService _correlationIdService;
     private const int MaxConversationMessages = 10;
 
     public ChatService(
@@ -30,7 +34,8 @@ public class ChatService : IChatService
         IVectorSearchService vectorSearchService,
         IEmbeddingService embeddingService,
         IConfiguration configuration,
-        ILogger<ChatService> logger)
+        ILogger<ChatService> logger,
+        ICorrelationIdService correlationIdService)
     {
         _context = context;
         _inputGuardrail = inputGuardrail;
@@ -39,6 +44,7 @@ public class ChatService : IChatService
         _vectorSearchService = vectorSearchService;
         _embeddingService = embeddingService;
         _logger = logger;
+        _correlationIdService = correlationIdService;
 
         // Build Semantic Kernel
         var endpoint = configuration["AzureOpenAI:Endpoint"] ?? throw new InvalidOperationException("AzureOpenAI:Endpoint not configured");
@@ -54,6 +60,16 @@ public class ChatService : IChatService
         _kernel = builder.Build();
     }
 
+    /// <summary>
+    /// Processes a chat query with input validation, authorization, vector search, and output guardrails
+    /// </summary>
+    /// <param name="userId">The ID of the user making the query</param>
+    /// <param name="query">The user's chat query</param>
+    /// <param name="conversationId">Optional ID of an existing conversation to continue</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A chat response with the AI-generated message, citations, and conversation ID</returns>
+    /// <exception cref="InputValidationException">Thrown when input validation fails</exception>
+    /// <exception cref="Application.Common.Interfaces.UnauthorizedAccessException">Thrown when authorization fails</exception>
     public async Task<ChatResponse> ProcessQueryAsync(
         Guid userId,
         string query,
@@ -62,7 +78,10 @@ public class ChatService : IChatService
     {
         try
         {
-            _logger.LogInformation("Processing chat query for user {UserId}", userId);
+            var correlationId = _correlationIdService.GetCorrelationId();
+            _logger.LogInformation(
+                "Processing chat query for user {UserId}. CorrelationId: {CorrelationId}",
+                userId, correlationId);
 
             // Step 1: Input Guardrails
             await _inputGuardrail.ValidateInputAsync(query, userId, cancellationToken);
@@ -248,6 +267,12 @@ Additional context from analytics database:
         }
     }
 
+    /// <summary>
+    /// Retrieves the message history for a conversation
+    /// </summary>
+    /// <param name="conversationId">The ID of the conversation</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A list of chat messages ordered by creation date</returns>
     public async Task<List<ChatMessage>> GetConversationHistoryAsync(
         Guid conversationId,
         CancellationToken cancellationToken = default)
@@ -268,6 +293,29 @@ Additional context from analytics database:
         return messages;
     }
 
+    /// <summary>
+    /// Retrieves a conversation by its ID
+    /// </summary>
+    /// <param name="conversationId">The ID of the conversation</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The conversation if found, otherwise null</returns>
+    public async Task<Conversation?> GetConversationAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await _context.Conversations
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
+
+        return conversation;
+    }
+
+    /// <summary>
+    /// Clears a conversation by soft-deleting it and all its messages
+    /// </summary>
+    /// <param name="conversationId">The ID of the conversation to clear</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
     public async Task ClearConversationAsync(Guid conversationId, CancellationToken cancellationToken = default)
     {
         var conversation = await _context.Conversations

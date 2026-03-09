@@ -26,9 +26,12 @@ public class NotificationsController : ControllerBase
     }
 
     /// <summary>
-    /// Get notifications for the current user
+    /// Get notifications for the current authenticated user
     /// </summary>
-    /// <param name="unreadOnly">If true, returns only unread notifications</param>
+    /// <param name="unreadOnly">If true, returns only unread notifications (default: false)</param>
+    /// <returns>List of notifications with unread count</returns>
+    /// <response code="200">Returns notification list and unread count</response>
+    /// <response code="401">Unauthorized - authentication required</response>
     [HttpGet]
     [ProducesResponseType(typeof(NotificationListResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -89,8 +92,11 @@ public class NotificationsController : ControllerBase
     }
 
     /// <summary>
-    /// Get unread notification count for the current user
+    /// Get count of unread notifications for the current authenticated user
     /// </summary>
+    /// <returns>Unread notification count</returns>
+    /// <response code="200">Returns unread count</response>
+    /// <response code="401">Unauthorized - authentication required</response>
     [HttpGet("unread-count")]
     [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -119,12 +125,19 @@ public class NotificationsController : ControllerBase
     }
 
     /// <summary>
-    /// Mark a notification as read
+    /// Mark a notification as read with resource ownership verification
     /// </summary>
+    /// <param name="id">Unique identifier of the notification</param>
+    /// <returns>Success message</returns>
+    /// <response code="200">Notification marked as read</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - user does not own this notification</response>
+    /// <response code="404">Not found - notification does not exist</response>
     [HttpPatch("{id}/read")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> MarkAsRead(Guid id)
     {
         try
@@ -134,6 +147,23 @@ public class NotificationsController : ControllerBase
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
             {
                 return Unauthorized(new { message = "Invalid user" });
+            }
+
+            // Verify resource ownership - get the notification first
+            var notification = await _notificationAgent.GetNotificationByIdAsync(id, HttpContext.RequestAborted);
+            
+            if (notification == null)
+            {
+                return NotFound(new { message = "Notification not found" });
+            }
+
+            // Verify the notification belongs to the current user
+            if (notification.UserId != userId)
+            {
+                _logger.LogWarning(
+                    "User {UserId} attempted to mark notification {NotificationId} owned by {OwnerId} as read",
+                    userId, id, notification.UserId);
+                return StatusCode(403, new { message = "You do not have permission to modify this notification" });
             }
 
             await _notificationAgent.MarkAsReadAsync(id, HttpContext.RequestAborted);
@@ -148,7 +178,7 @@ public class NotificationsController : ControllerBase
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Notification {NotificationId} not found", id);
-            return NotFound(new { message = ex.Message });
+            return NotFound(new { message = "Notification not found" });
         }
         catch (Exception ex)
         {

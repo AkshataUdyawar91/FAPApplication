@@ -270,7 +270,8 @@ public class RecommendationLogicProperties
         mockConfiguration.Setup(c => c.GetSection("AzureOpenAI:DeploymentName")).Returns(mockDeploymentSection.Object);
         mockConfiguration.Setup(c => c["AzureOpenAI:DeploymentName"]).Returns("gpt-4");
 
-        var agent = new RecommendationAgent(mockContext.Object, mockConfiguration.Object, mockLogger.Object);
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        var agent = new RecommendationAgent(mockContext.Object, mockConfiguration.Object, mockLogger.Object, mockCorrelationIdService.Object);
 
         return (agent, mockContext);
     }

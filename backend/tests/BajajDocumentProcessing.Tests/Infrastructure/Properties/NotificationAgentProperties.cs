@@ -360,7 +360,8 @@ public class NotificationAgentProperties
         var mockEmailAgent = new Mock<IEmailAgent>();
         var mockLogger = new Mock<ILogger<NotificationAgent>>();
 
-        var agent = new NotificationAgent(mockContext.Object, mockEmailAgent.Object, mockLogger.Object);
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        var agent = new NotificationAgent(mockContext.Object, mockEmailAgent.Object, mockLogger.Object, mockCorrelationIdService.Object);
 
         return (agent, mockContext, mockEmailAgent);
     }
