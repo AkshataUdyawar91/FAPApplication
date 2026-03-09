@@ -371,17 +371,35 @@ public class RecommendationAgent : IRecommendationAgent
                 }
             }
 
-            // Create AI prompt for evidence generation
-            var prompt = $@"You are an AI assistant for the Bajaj Document Processing System. Generate a clear, professional evidence summary for the following document package recommendation.
+            // Create AI prompt for evidence generation - optimized for ASM readability
+            var prompt = $@"You are an AI assistant helping Area Sales Managers (ASMs) review document submissions at Bajaj Auto. Generate a clear, easy-to-understand summary for the following submission.
 
+DATA:
 {dataSummary}
 
-Generate a concise evidence summary (2-3 paragraphs) that:
-1. Summarizes the key confidence scores and validation results
-2. Explains the rationale for the {recommendationType} recommendation
-3. Highlights any specific concerns or strengths
-4. Uses specific citations from the data above
-5. Maintains a professional, objective tone
+INSTRUCTIONS:
+Write a brief summary (3-4 short paragraphs) that an ASM can quickly understand. Use simple language, not technical jargon.
+
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+
+RECOMMENDATION SUMMARY
+[One sentence stating the recommendation clearly, e.g., ""This submission is recommended for APPROVAL because..."" or ""This submission requires MANUAL REVIEW because...""]
+
+KEY STRENGTHS
+- [List 2-3 positive findings as bullet points]
+
+AREAS OF CONCERN
+- [List any issues or concerns as bullet points, or write ""No significant concerns identified"" if all checks passed]
+
+DECISION GUIDANCE
+[One sentence advising the ASM on what to focus on when making their decision]
+
+IMPORTANT RULES:
+- Use plain English, avoid technical terms
+- Be specific with numbers and percentages
+- Focus on what matters for the approval decision
+- Keep each bullet point to one line
+- Do not include raw data or JSON
 
 Evidence Summary:";
 

@@ -354,16 +354,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         }
       }
       
-      // Step 4: Trigger processing
-      _showSuccess('Processing documents...');
-      final submitResponse = await _dio.post('/submissions/$packageId/process-now',
+      // Step 4: Queue for background processing (fast - returns immediately)
+      _showSuccess('Submission complete! Processing in background...');
+      await _dio.post('/submissions/$packageId/process-async',
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
-      
-      if (submitResponse.statusCode == 200 && submitResponse.data['success'] == true) {
-        _showSuccess('Submission complete! Package is ready for review.');
-      } else {
-        _showSuccess('Submission complete. Check package status.');
-      }
       
       if (mounted) _navigateToDashboard();
     } catch (e) {

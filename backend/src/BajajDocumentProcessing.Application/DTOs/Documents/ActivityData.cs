@@ -44,6 +44,18 @@ public class ActivityData
 }
 
 /// <summary>
+/// Activity at a specific location
+/// </summary>
+public class LocationActivity
+{
+    public string LocationName { get; set; } = string.Empty;
+    public string? LocationAddress { get; set; }
+    public DateTime? StartDate { get; set; }
+    public DateTime? EndDate { get; set; }
+    public int NumberOfDays { get; set; }
+}
+
+/// <summary>
 /// Single row from Activity Summary table
 /// </summary>
 public class ActivityRow

@@ -483,9 +483,12 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingASMApproval)
+            // Allow approval from PendingASMApproval, PendingApproval (legacy), or RejectedByHQ states
+            if (package.State != PackageState.PendingASMApproval && 
+                package.State != PackageState.PendingApproval &&
+                package.State != PackageState.RejectedByHQ)
             {
-                return BadRequest(new { error = $"Submission is not in pending ASM approval state. Current state: {package.State}" });
+                return BadRequest(new { error = $"Submission is not in a state that can be approved by ASM. Current state: {package.State}" });
             }
 
             package.State = PackageState.PendingHQApproval;
@@ -546,9 +549,12 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingASMApproval)
+            // Allow rejection from PendingASMApproval, PendingApproval (legacy), or RejectedByHQ states
+            if (package.State != PackageState.PendingASMApproval && 
+                package.State != PackageState.PendingApproval &&
+                package.State != PackageState.RejectedByHQ)
             {
-                return BadRequest(new { error = $"Submission is not in pending ASM approval state. Current state: {package.State}" });
+                return BadRequest(new { error = $"Submission is not in a state that can be rejected by ASM. Current state: {package.State}" });
             }
 
             package.State = PackageState.RejectedByASM;
@@ -1176,6 +1182,47 @@ public class SubmissionsController : ControllerBase
         {
             _logger.LogError(ex, "Error updating campaign data for submission {Id}", id);
             return StatusCode(500, new { error = "An error occurred while updating campaign data" });
+        }
+    }
+
+    /// <summary>
+    /// Queue package for background processing (fast - returns immediately)
+    /// </summary>
+    /// <param name="packageId">Unique identifier of the package to process</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Acknowledgment that processing has been queued</returns>
+    [HttpPost("{packageId}/process-async")]
+    [Authorize]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status202Accepted)]
+    public async Task<IActionResult> ProcessPackageAsync(Guid packageId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Package not found" });
+            }
+
+            // Queue for background processing - returns immediately
+            await _backgroundQueue.QueueWorkflowAsync(packageId);
+            
+            _logger.LogInformation("Package {PackageId} queued for background processing", packageId);
+
+            return Accepted(new SubmissionStatusResponse
+            {
+                Id = packageId,
+                Success = true,
+                CurrentState = package.State.ToString(),
+                Message = "Submission received. Processing in background."
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error queuing package {PackageId}", packageId);
+            return StatusCode(500, new { error = "An error occurred" });
         }
     }
 
