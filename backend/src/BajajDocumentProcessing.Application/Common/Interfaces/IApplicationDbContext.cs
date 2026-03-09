@@ -19,9 +19,10 @@ public interface IApplicationDbContext
     DbSet<Conversation> Conversations { get; }
     DbSet<ConversationMessage> ConversationMessages { get; }
     
-    // Hierarchical structure: FAP -> PO -> Invoices -> Campaigns -> Photos
-    DbSet<Invoice> Invoices { get; }
+    // Hierarchical structure: FAP -> PO -> Campaigns (Teams) -> Invoices/Photos
+    DbSet<Invoice> Invoices { get; }  // Legacy - kept for backward compatibility
     DbSet<Campaign> Campaigns { get; }
+    DbSet<CampaignInvoice> CampaignInvoices { get; }
     DbSet<CampaignPhoto> CampaignPhotos { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

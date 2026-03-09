@@ -25,9 +25,10 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
     
-    // Hierarchical structure: FAP -> PO -> Invoices -> Campaigns -> Photos
-    public DbSet<Invoice> Invoices => Set<Invoice>();
+    // Hierarchical structure: FAP -> PO -> Campaigns (Teams) -> Invoices/Photos
+    public DbSet<Invoice> Invoices => Set<Invoice>();  // Legacy - kept for backward compatibility
     public DbSet<Campaign> Campaigns => Set<Campaign>();
+    public DbSet<CampaignInvoice> CampaignInvoices => Set<CampaignInvoice>();
     public DbSet<CampaignPhoto> CampaignPhotos => Set<CampaignPhoto>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -52,6 +53,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         // Hierarchical entities
         modelBuilder.Entity<Invoice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Campaign>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CampaignInvoice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CampaignPhoto>().HasQueryFilter(e => !e.IsDeleted);
     }
 

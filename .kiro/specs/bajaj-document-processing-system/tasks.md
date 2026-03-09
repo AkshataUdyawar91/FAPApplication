@@ -1117,3 +1117,60 @@ dev_dependencies:
     - Write integration test for cross-validation with matching PO numbers
     - Write integration test for cross-validation with non-matching PO numbers
     - _Requirements: 21.3, 21.4, 21.5, 21.7, 21.11, 21.14, 21.15_
+
+
+## Tasks for Requirements 22-24: Hierarchical Structure and Campaign Details Improvements
+
+- [x] 30. Restructure Campaign → Invoice hierarchy in Flutter UI
+  - [x] 30.1 Update data models to make Campaign parent of Invoice
+    - Modify CampaignData class to contain List<InvoiceData>
+    - Update InvoiceData to remove campaigns list
+    - _Requirements: 22.AC2, 22.AC3_
+  
+  - [x] 30.2 Add Campaign Name field
+    - Add campaignName field to CampaignData
+    - Add Campaign Name text input in campaign card
+    - Make Campaign Name required with validation
+    - _Requirements: 24.AC1, 24.AC2, 24.AC3_
+  
+  - [x] 30.3 Remove Campaign numbered headers
+    - Remove "Campaign 1", "Campaign 2" grid headers
+    - Display campaign by name or generic "Campaign" label
+    - _Requirements: 24.AC4_
+  
+  - [x] 30.4 Remove GPS capture feature
+    - Remove GPS Location field from campaign details
+    - Remove Capture GPS button
+    - Remove gpsLocation from CampaignData
+    - _Requirements: 24.AC5_
+  
+  - [x] 30.5 Fix Calendar widget
+    - Ensure date picker opens on tap for Start Date
+    - Ensure date picker opens on tap for End Date
+    - Verify date selection populates field correctly
+    - _Requirements: 24.AC6, 24.AC7, 24.AC8_
+  
+  - [x] 30.6 Update photo upload limit to 50
+    - Change max photos from 20 to 50 per campaign
+    - Add validation message when limit exceeded
+    - Disable upload button when 50 photos reached
+    - _Requirements: 24.AC9, 24.AC10, 24.AC11_
+  
+  - [x] 30.7 Update Step 2 title and structure
+    - Change "Invoices & Campaigns" to "Campaigns"
+    - Move "Add Campaign" button to top level
+    - Nest "Add Invoice" button within each campaign
+    - _Requirements: 23.AC2_
+
+- [x] 31. Update agency_upload_page.dart for new hierarchy
+  - [x] 31.1 Update step title from "Invoices & Campaigns" to "Campaigns"
+  - [x] 31.2 Update validation logic for Campaign → Invoice structure
+  - [x] 31.3 Update submission logic to handle new hierarchy
+  - _Requirements: 22, 23_
+
+- [x] 32. Update backend API for Campaign → Invoice hierarchy
+  - [x] 32.1 Update HierarchicalSubmissionController endpoints (already implemented)
+  - [x] 32.2 Update Campaign entity to reference invoices (already implemented)
+  - [x] 32.3 Update validation logic (already implemented)
+  - [x] 32.4 Update Flutter UI to use hierarchical API endpoints
+  - _Requirements: 22.AC8, 22.AC9_

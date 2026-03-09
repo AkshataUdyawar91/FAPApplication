@@ -1426,8 +1426,8 @@ public class ValidationAgent : IValidationAgent
         }
 
         _logger.LogInformation(
-            "Photo cross-document validation completed. AllChecksPass: {AllChecksPass}, PhotoCount: {PhotoCount}, ManDays: {ManDays}, CostSummaryDays: {CostSummaryDays}. CorrelationId: {CorrelationId}",
-            result.AllChecksPass, photoCount, manDays, costSummaryDays, correlationId);
+            "Photo cross-document validation completed. AllChecksPass: {AllChecksPass}, PhotoCount: {PhotoCount}, CostSummaryDays: {CostSummaryDays}. CorrelationId: {CorrelationId}",
+            result.AllChecksPass, photoCount, costSummaryDays, correlationId);
 
         return result;
     }

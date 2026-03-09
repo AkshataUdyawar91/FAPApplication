@@ -43,7 +43,7 @@ This document specifies the requirements for the Bajaj Document Processing Syste
 6. WHEN a user uploads Additional_Documents, THE System SHALL accept PDF, DOC, DOCX, XLS, and XLSX formats up to 10MB per file
 7. WHEN a file upload exceeds size limits, THE System SHALL reject the upload and display an error message
 8. WHEN a file upload completes, THE System SHALL display a confirmation with the filename and file size
-9. WHEN a user uploads multiple photos, THE System SHALL allow up to 20 photos per submission
+9. WHEN a user uploads multiple photos, THE System SHALL allow up to 50 photos per campaign
 10. WHEN all required documents are uploaded, THE System SHALL enable the submit button
 
 ### Requirement 2: Document Classification and Extraction
@@ -430,9 +430,28 @@ This document specifies the requirements for the Bajaj Document Processing Syste
 16. WHEN the user submits the form, THE System SHALL include the Invoice field values (whether auto-populated or manually entered) in the submission data
 
 
-### Requirement 22: Hierarchical Document Structure (FAP → PO → Invoices → Campaigns → Photos)
+### Requirement 22: Hierarchical Document Structure (FAP → PO → Campaigns → Documents)
 
-**User Story:** As an Agency user, I want to submit a FAP with one PO that can have multiple invoices, where each invoice can have multiple campaigns, and each campaign can have multiple photos, so that I can accurately represent complex field activities with multiple billing components.
+**User Story:** As an Agency user, I want to submit a FAP with one PO that can have multiple Campaigns, where each Campaign has multiple Invoices, multiple Photos, one Cost Summary, and one Activity Summary, so that I can accurately represent complex field activities organized by campaign/team.
+
+#### Correct Hierarchy
+
+```
+DocumentPackage (FAP)
+├── 1 PO Document (required)
+├── Multiple Campaigns (at least 1 required)
+│   └── Campaign 1
+│       ├── Activity Duration (Start Date, End Date, Working Days)
+│       ├── Multiple Invoices (at least 1 required per campaign)
+│       ├── Multiple Photos (at least 1 required per campaign)
+│       ├── 1 Cost Summary (required per campaign)
+│       └── 1 Activity Summary (required per campaign)
+│   └── Campaign 2
+│       └── ... (same structure)
+└── Additional Documents (at PO level)
+    ├── 1 Enquiry Document (optional)
+    └── Multiple Additional Documents (optional)
+```
 
 #### Acceptance Criteria
 
@@ -442,49 +461,283 @@ This document specifies the requirements for the Bajaj Document Processing Syste
 2. WHEN a PO document is uploaded, THE System SHALL extract and store PO data (PO Number, Amount, Date, Vendor) linked to the FAP
 3. WHEN displaying a FAP, THE System SHALL show the single PO document with its extracted data
 
-##### AC2: PO to Invoice Relationship (1:Many)
+##### AC2: PO to Campaign Relationship (1:Many)
 
-1. WHEN an Agency user has uploaded a PO document, THE System SHALL allow uploading multiple Invoice documents linked to that PO
-2. WHEN an Invoice document is uploaded, THE System SHALL link it to the PO document within the same FAP
-3. WHEN displaying invoices, THE System SHALL show all invoices associated with the PO in a list or card format
-4. WHEN adding a new invoice, THE System SHALL provide an "Add Invoice" button that allows uploading additional invoice documents
-5. WHEN an invoice is uploaded, THE System SHALL extract and store Invoice data (Invoice Number, Date, Amount, GST, Vendor)
+1. WHEN an Agency user has uploaded a PO document, THE System SHALL allow adding multiple Campaigns linked to that PO
+2. WHEN adding a campaign, THE System SHALL capture: Activity Duration (Start Date, End Date), Working Days (auto-calculated)
+3. WHEN displaying campaigns, THE System SHALL show all campaigns associated with the PO in a list format
+4. WHEN adding a new campaign, THE System SHALL provide an "Add Campaign" button
+5. WHEN a campaign is created, THE System SHALL allow uploading documents specific to that campaign
 
-##### AC3: Invoice to Campaign Relationship (1:Many)
+##### AC3: Campaign to Invoice Relationship (1:Many)
 
-1. WHEN an Agency user has uploaded an Invoice, THE System SHALL allow adding multiple campaigns linked to that invoice
-2. WHEN adding a campaign, THE System SHALL capture: Campaign Name, Start Date, End Date, Working Days, Dealership Name, Address, GPS Location, State, Total Cost
-3. WHEN displaying campaigns, THE System SHALL show all campaigns associated with each invoice
-4. WHEN adding a new campaign, THE System SHALL provide an "Add Campaign" button within each invoice section
-5. WHEN a campaign is added, THE System SHALL allow uploading a Cost Summary document specific to that campaign
+1. WHEN an Agency user has added a Campaign, THE System SHALL allow uploading multiple Invoice documents linked to that campaign
+2. WHEN an Invoice document is uploaded, THE System SHALL extract and store Invoice data (Invoice Number, Date, Amount, GST Number)
+3. WHEN displaying invoices, THE System SHALL show all invoices associated with each campaign
+4. WHEN adding a new invoice, THE System SHALL provide an "Add Invoice" button within each campaign section
+5. WHEN an invoice is uploaded, THE System SHALL link it to the specific Campaign
 
 ##### AC4: Campaign to Photo Relationship (1:Many)
 
 1. WHEN an Agency user has added a Campaign, THE System SHALL allow uploading multiple photos linked to that campaign
 2. WHEN photos are uploaded, THE System SHALL extract EXIF metadata (timestamp, GPS coordinates, device model)
 3. WHEN displaying photos, THE System SHALL show all photos associated with each campaign in a gallery format
-4. WHEN adding photos, THE System SHALL allow up to 20 photos per campaign
+4. WHEN adding photos, THE System SHALL allow up to 50 photos per campaign
 5. WHEN displaying photo metadata, THE System SHALL show timestamp, location (if available), and device info
 
-##### AC5: Teams/Members per Campaign
+##### AC5: Campaign to Cost Summary Relationship (1:1)
 
-1. WHEN an Agency user is editing a campaign, THE System SHALL allow adding multiple team members
-2. WHEN adding a team member, THE System SHALL capture: Team Name, Member Count, Role/Activity
-3. WHEN displaying teams, THE System SHALL show all team members associated with each campaign
-4. WHEN adding a new team, THE System SHALL provide an "Add New Team" button within the campaign section
+1. WHEN an Agency user has added a Campaign, THE System SHALL allow uploading exactly one Cost Summary document for that campaign
+2. WHEN a Cost Summary is uploaded, THE System SHALL link it to the specific Campaign
+3. WHEN displaying the campaign, THE System SHALL show the Cost Summary document with its extracted data
+4. WHEN a user attempts to upload a second Cost Summary for the same campaign, THE System SHALL replace the existing one
 
-##### AC6: Data Integrity and Navigation
+##### AC6: Campaign to Activity Summary Relationship (1:1)
 
-1. WHEN deleting an Invoice, THE System SHALL cascade delete all associated Campaigns and Photos
-2. WHEN deleting a Campaign, THE System SHALL cascade delete all associated Photos
-3. WHEN viewing a FAP, THE System SHALL display the hierarchical structure: PO → Invoices → Campaigns → Photos
-4. WHEN navigating the hierarchy, THE System SHALL allow expanding/collapsing each level for better readability
-5. WHEN calculating confidence scores, THE System SHALL aggregate scores from all invoices, campaigns, and photos in the FAP
+1. WHEN an Agency user has added a Campaign, THE System SHALL allow uploading exactly one Activity Summary document for that campaign
+2. WHEN an Activity Summary is uploaded, THE System SHALL link it to the specific Campaign
+3. WHEN displaying the campaign, THE System SHALL show the Activity Summary document with its extracted data
+4. WHEN a user attempts to upload a second Activity Summary for the same campaign, THE System SHALL replace the existing one
 
-##### AC7: Validation Across Hierarchy
+##### AC7: Additional Documents at PO Level
 
-1. WHEN validating a FAP, THE System SHALL verify that the sum of all Invoice amounts matches the PO amount (within tolerance)
+1. WHEN an Agency user has uploaded a PO, THE System SHALL allow uploading one Enquiry Document at the PO level
+2. WHEN an Enquiry Document is uploaded, THE System SHALL link it to the PO/FAP (not to a specific campaign)
+3. WHEN a user attempts to upload a second Enquiry Document, THE System SHALL replace the existing one
+4. WHEN an Agency user needs additional supporting documents, THE System SHALL allow uploading multiple Additional Documents at the PO level
+5. WHEN displaying Additional Documents, THE System SHALL show them in the Additional Documents section separate from campaign documents
+
+##### AC8: Data Integrity and Navigation
+
+1. WHEN deleting a Campaign, THE System SHALL cascade delete all associated Invoices, Photos, Cost Summary, and Activity Summary
+2. WHEN viewing a FAP, THE System SHALL display the hierarchical structure: PO → Campaigns → (Invoices, Photos, Cost Summary, Activity Summary)
+3. WHEN navigating the hierarchy, THE System SHALL allow expanding/collapsing each campaign for better readability
+4. WHEN calculating confidence scores, THE System SHALL aggregate scores from all campaigns and their documents in the FAP
+
+##### AC9: Validation Across Hierarchy
+
+1. WHEN validating a FAP, THE System SHALL verify that the sum of all Invoice amounts (across all campaigns) matches the PO amount (within tolerance)
 2. WHEN validating campaigns, THE System SHALL verify that campaign dates fall within the PO date range
 3. WHEN validating photos, THE System SHALL verify that photo timestamps fall within the campaign date range
-4. WHEN validation issues are found, THE System SHALL display them at the appropriate hierarchy level (Invoice, Campaign, or Photo)
+4. WHEN validation issues are found, THE System SHALL display them at the appropriate hierarchy level (Campaign, Invoice, or Photo)
 
+
+
+### Requirement 23: Multi-Step Document Upload Process
+
+**User Story:** As a user, I want to upload the Purchase Order and related campaign documents in a structured multi-step process, so that all campaign-related documents can be organized and submitted in one place.
+
+#### Description
+
+The document upload process will be divided into three steps:
+1. **Step 1: Purchase Order** - Upload the PO document
+2. **Step 2: Campaigns** - Add campaigns, and for each campaign add invoices, photos, cost summary, and activity summary
+3. **Step 3: Additional Documents** - Upload enquiry document and other supporting documents
+
+#### Step 1: Purchase Order
+
+- The user should be able to upload the Purchase Order (PO) document
+- PO document is required before proceeding to the next step
+- After uploading the PO, the user can click "Next" to proceed to Step 2
+- Validation: PO document must be uploaded before the Next button is enabled
+
+#### Step 2: Campaigns
+
+Within this step, the user can add multiple Campaigns. For each Campaign:
+
+- **Activity Duration** - Start Date, End Date, Working Days (auto-calculated)
+- **Multiple Invoices** - Upload invoice PDFs with fields (Invoice No, Invoice Date, Amount, GST Number)
+- **Multiple Photos** - Campaign activity photos (at least 1 required)
+- **One Cost Summary document** - Single cost summary document per campaign (required)
+- **One Activity Summary document** - Single activity summary document per campaign (required)
+
+After completing all campaigns, the user can click "Next" to move to Step 3.
+
+#### Step 3: Additional Documents
+
+The user should be able to upload additional supporting documents at the PO level:
+
+- **One Enquiry Document** - Single enquiry document (optional)
+- **Multiple Additional Documents** - Ability to upload multiple additional supporting documents if required (optional)
+
+#### Acceptance Criteria
+
+##### AC1: Step 1 - Purchase Order
+
+1. WHEN an Agency user accesses the upload page, THE System SHALL display Step 1 (Purchase Order) as the first step
+2. WHEN the user is on Step 1, THE System SHALL display a PO document upload control
+3. WHEN the user has not uploaded a PO document, THE System SHALL disable the "Next" button
+4. WHEN the user uploads a valid PO document, THE System SHALL enable the "Next" button
+5. WHEN the user clicks "Next" after uploading PO, THE System SHALL navigate to Step 2 (Campaigns)
+6. WHEN the user attempts to proceed without uploading PO, THE System SHALL display a validation error on the current page
+
+##### AC2: Step 2 - Campaigns
+
+1. WHEN the user navigates to Step 2, THE System SHALL display the Campaigns section
+2. WHEN the user clicks "Add Campaign", THE System SHALL create a new campaign section with Activity Duration fields and document upload controls
+3. WHEN the user adds a campaign, THE System SHALL display Activity Duration fields (Start Date, End Date, Working Days auto-calculated)
+4. WHEN the user is on Step 2, THE System SHALL allow adding multiple invoices within each campaign via "Add Invoice" button
+5. WHEN the user uploads an invoice document, THE System SHALL extract and populate the invoice fields (Invoice No, Date, Amount, GST)
+6. WHEN the user is on Step 2, THE System SHALL allow uploading multiple photos per campaign
+7. WHEN the user is on Step 2, THE System SHALL allow uploading exactly one cost summary document per campaign
+8. WHEN the user is on Step 2, THE System SHALL allow uploading exactly one activity summary document per campaign
+9. WHEN the user attempts to upload more than one cost summary for a campaign, THE System SHALL replace the existing cost summary
+10. WHEN the user attempts to upload more than one activity summary for a campaign, THE System SHALL replace the existing activity summary
+11. WHEN the user clicks "Next" on Step 2, THE System SHALL validate that:
+    - At least 1 campaign exists
+    - Each campaign has at least 1 invoice
+    - Each campaign has at least 1 photo, 1 cost summary, and 1 activity summary
+12. WHEN required documents are missing, THE System SHALL display validation errors on the current page and prevent navigation
+
+##### AC3: Step 3 - Additional Documents
+
+1. WHEN the user navigates to Step 3, THE System SHALL display the Additional Documents section
+2. WHEN the user is on Step 3, THE System SHALL allow uploading exactly one enquiry document
+3. WHEN the user is on Step 3, THE System SHALL allow uploading multiple additional supporting documents
+4. WHEN the user attempts to upload more than one enquiry document, THE System SHALL replace the existing enquiry document
+5. WHEN the user completes Step 3, THE System SHALL enable the "Submit" button
+6. WHEN no documents are uploaded in Step 3, THE System SHALL still allow submission (all documents in Step 3 are optional)
+
+##### AC4: Validation Rules
+
+1. WHEN a required document is not uploaded, THE System SHALL display a validation error on the current step page
+2. WHEN the user clicks "Next" without required documents, THE System SHALL prevent navigation and show validation errors
+3. WHEN the user submits the package, THE System SHALL perform field-level validation in the backend
+4. WHEN the user submits the package, THE System SHALL perform cross-document validation in the backend
+5. WHEN backend validation fails, THE System SHALL return detailed validation errors to the frontend
+6. WHEN frontend validation passes but backend validation fails, THE System SHALL display backend validation errors to the user
+
+##### AC5: Navigation and Progress
+
+1. WHEN the user is on any step, THE System SHALL display a step progress indicator showing current step (e.g., "Step 2 of 3") with percentage
+2. WHEN the user completes a step, THE System SHALL visually mark that step as complete with a checkmark
+3. WHEN the user is on Step 2 or Step 3, THE System SHALL allow navigating back to previous steps
+4. WHEN the user navigates back to a previous step, THE System SHALL preserve all uploaded documents
+5. WHEN the user returns to a step, THE System SHALL display previously uploaded documents
+
+#### Data Structure
+
+```
+DocumentPackage (FAP)
+├── Step 1: Purchase Order
+│   └── 1 PO Document (required)
+│
+├── Step 2: Campaigns
+│   └── Campaign 1
+│       ├── Activity Duration (Start Date, End Date, Working Days)
+│       ├── Multiple Invoices (at least 1 required)
+│       │   └── Invoice Document + Fields (Invoice No, Date, Amount, GST)
+│       ├── Multiple Photos (at least 1 required)
+│       ├── 1 Cost Summary (required)
+│       └── 1 Activity Summary (required)
+│   └── Campaign 2
+│       └── ... (same structure)
+│
+└── Step 3: Additional Documents (at PO level)
+    ├── 1 Enquiry Document (optional)
+    └── Multiple Additional Documents (optional)
+```
+
+#### API Endpoints
+
+##### Step 1: Purchase Order
+- `POST /api/documents/upload` - Upload PO document (creates package if new)
+
+##### Step 2: Campaigns
+- `POST /api/hierarchical/{packageId}/campaigns` - Add new campaign
+- `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/invoices` - Add invoice to campaign
+- `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/photos` - Add photos to campaign
+- `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/cost-summary` - Upload cost summary for campaign
+- `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/activity-summary` - Upload activity summary for campaign
+- `DELETE /api/hierarchical/{packageId}/campaigns/{campaignId}` - Delete campaign and all its documents
+
+##### Step 3: Additional Documents
+- `POST /api/hierarchical/{packageId}/enquiry-doc` - Upload enquiry document
+- `POST /api/hierarchical/{packageId}/additional-docs` - Upload additional documents
+
+##### Submission
+- `POST /api/submissions/{packageId}/process-async` - Submit for processing (triggers backend validation)
+
+##### Query
+- `GET /api/hierarchical/{packageId}/structure` - Get full package structure with all documents
+
+#### Frontend Validation (Per Step)
+
+| Step | Required Documents | Validation Message |
+|------|-------------------|-------------------|
+| Step 1 | PO Document | "Please upload a Purchase Order document to proceed" |
+| Step 2 | At least 1 Campaign | "Please add at least one campaign" |
+| Step 2 | At least 1 Invoice per Campaign | "Please upload at least one invoice for each campaign" |
+| Step 2 | At least 1 Photo per Campaign | "Please upload at least one photo for each campaign" |
+| Step 2 | Cost Summary per Campaign | "Please upload a cost summary for each campaign" |
+| Step 2 | Activity Summary per Campaign | "Please upload an activity summary for each campaign" |
+| Step 3 | None (all optional) | N/A |
+
+#### Backend Validation (At Submission)
+
+| Validation Type | Description |
+|----------------|-------------|
+| Field-level | Validate extracted fields from each document (PO number format, amounts, dates) |
+| Cross-document | Validate PO amount matches sum of all invoice amounts across all campaigns |
+| Cross-document | Validate invoice dates within PO date range |
+| Cross-document | Validate photo timestamps within campaign dates |
+| Cross-document | Validate cost summary totals match invoice amounts per campaign |
+| SAP Verification | Verify PO number exists in SAP system |
+| Completeness | Verify all required documents are present for each campaign |
+
+
+### Requirement 24: Campaign Details Screen Improvements
+
+**User Story:** As a user, I want improvements and corrections in the Campaign Details screen, so that the interface becomes simpler and functions work as expected.
+
+#### Description
+
+Enhancements are required in the Campaign Details section to improve usability and correct existing issues. These changes include adding a new field, removing unnecessary elements, fixing a calendar widget issue, and implementing a photo upload limit.
+
+#### Requirements
+
+##### 1. Add Campaign Name Field
+- A new "Campaign Name" field should be added in the Campaign Details section
+- The user must enter the campaign name while filling in campaign information
+- Campaign Name is a required field
+
+##### 2. Remove Campaign Grid Header
+- The "Campaign 1" grid header should be removed from the UI to simplify the interface
+- Campaigns should be displayed without numbered headers
+
+##### 3. Remove Capture GPS Feature
+- The Capture GPS field and button should be removed from the UI
+- This functionality is no longer required
+
+##### 4. Fix Calendar Widget
+- The Calendar widget should function correctly
+- When the user clicks the date field, the calendar picker should open properly and allow date selection
+- Both Start Date and End Date fields should use the calendar picker
+
+##### 5. Photo Upload Limit
+- In Campaign Details → Photo Upload, users should be allowed to upload a maximum of 50 photos per campaign
+- The system should restrict uploads beyond 50 photos and display an appropriate validation message
+
+#### Acceptance Criteria
+
+1. WHEN the user views Campaign Details, THE System SHALL display a "Campaign Name" text input field
+2. WHEN the user adds a new campaign, THE System SHALL require the Campaign Name field to be filled
+3. WHEN the user attempts to proceed without entering Campaign Name, THE System SHALL display a validation error
+4. WHEN displaying campaigns, THE System SHALL NOT show "Campaign 1", "Campaign 2" grid headers
+5. WHEN displaying Campaign Details, THE System SHALL NOT show the Capture GPS field or button
+6. WHEN the user clicks on the Start Date field, THE System SHALL open a calendar picker widget
+7. WHEN the user clicks on the End Date field, THE System SHALL open a calendar picker widget
+8. WHEN the user selects a date from the calendar picker, THE System SHALL populate the date field with the selected date
+9. WHEN the user uploads photos in Campaign Details, THE System SHALL allow a maximum of 50 photos per campaign
+10. WHEN the user attempts to upload more than 50 photos, THE System SHALL display a validation message: "Maximum 50 photos allowed per campaign"
+11. WHEN the user has already uploaded 50 photos, THE System SHALL disable the photo upload button or prevent additional uploads
+
+#### UI Changes Summary
+
+| Change | Before | After |
+|--------|--------|-------|
+| Campaign Name | Not present | New required text field |
+| Campaign Header | "Campaign 1", "Campaign 2" | No numbered headers |
+| Capture GPS | Field + Button visible | Removed |
+| Calendar Widget | Not working properly | Opens on click, allows date selection |
+| Photo Limit | 20 photos | 50 photos with validation |

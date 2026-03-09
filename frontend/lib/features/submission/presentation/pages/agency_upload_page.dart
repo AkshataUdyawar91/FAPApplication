@@ -6,7 +6,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../widgets/po_fields_section.dart';
-import '../widgets/invoice_list_section.dart';
+import '../widgets/campaign_list_section.dart';
 
 class AgencyUploadPage extends StatefulWidget {
   final String token;
@@ -43,12 +43,12 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   // User-entered field values
   Map<String, String> _poFields = {};
   
-  // Hierarchical invoice data (multiple invoices with campaigns and photos)
-  List<InvoiceData> _invoices = [];
+  // Hierarchical campaign data (multiple campaigns with invoices and photos)
+  List<CampaignItemData> _campaigns = [];
 
   final List<Map<String, dynamic>> _steps = [
     {'number': 1, 'title': 'Purchase Order', 'icon': Icons.description},
-    {'number': 2, 'title': 'Invoices & Campaigns', 'icon': Icons.receipt},
+    {'number': 2, 'title': 'Campaigns', 'icon': Icons.campaign},
     {'number': 3, 'title': 'Additional Documents', 'icon': Icons.upload_file},
   ];
 
@@ -215,13 +215,14 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   void _handleNext() {
     if (_currentStep == 1 && _purchaseOrder == null) { _showError('Please upload Purchase Order'); return; }
     if (_currentStep == 2) {
-      // Validate invoices - at least one invoice with file and one campaign with photos
-      if (_invoices.isEmpty) { _showError('Please add at least one invoice'); return; }
-      final hasValidInvoice = _invoices.any((inv) => inv.file != null);
-      if (!hasValidInvoice) { _showError('Please upload at least one invoice file'); return; }
-      final hasValidCampaign = _invoices.any((inv) => 
-        inv.campaigns.any((camp) => camp.photos.isNotEmpty && camp.costSummaryFile != null));
-      if (!hasValidCampaign) { _showError('Please add at least one campaign with photos and cost summary'); return; }
+      // Validate campaigns - at least one campaign with name and one invoice
+      if (_campaigns.isEmpty) { _showError('Please add at least one campaign'); return; }
+      final hasValidCampaign = _campaigns.any((camp) => 
+        camp.campaignName.isNotEmpty && 
+        camp.invoices.any((inv) => inv.file != null) &&
+        camp.photos.isNotEmpty &&
+        camp.costSummaryFile != null);
+      if (!hasValidCampaign) { _showError('Please complete at least one campaign with name, invoice, photos, and cost summary'); return; }
     }
     if (_currentStep < 3) setState(() => _currentStep++);
   }
@@ -244,8 +245,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       _showError('Please upload Purchase Order');
       return;
     }
-    if (_invoices.isEmpty || !_invoices.any((inv) => inv.file != null)) {
-      _showError('Please add at least one invoice with file');
+    if (_campaigns.isEmpty || !_campaigns.any((camp) => camp.invoices.any((inv) => inv.file != null))) {
+      _showError('Please add at least one campaign with invoice');
       return;
     }
     
@@ -271,90 +272,113 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         return;
       }
       
-      // Step 2: Upload all files in parallel for speed
-      final uploadFutures = <Future>[];
+      _showSuccess('Uploading campaigns and documents...');
       
-      // Upload invoices
-      for (final invoice in _invoices) {
-        if (invoice.file?.bytes != null) {
-          uploadFutures.add(_dio.post('/documents/upload',
-              data: FormData.fromMap({
-                'file': MultipartFile.fromBytes(invoice.file!.bytes!, filename: invoice.file!.name),
-                'documentType': 'Invoice',
-                'packageId': packageId,
-              }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'})));
+      // Step 2: Create campaigns and upload files using hierarchical API
+      for (final campaign in _campaigns) {
+        // 2a: Create campaign via hierarchical API
+        final campaignResponse = await _dio.post(
+          '/hierarchical/$packageId/campaigns',
+          data: {
+            'campaignName': campaign.campaignName,
+            'startDate': campaign.startDate.isNotEmpty ? _parseDate(campaign.startDate)?.toIso8601String() : null,
+            'endDate': campaign.endDate.isNotEmpty ? _parseDate(campaign.endDate)?.toIso8601String() : null,
+            'workingDays': campaign.workingDays.isNotEmpty ? int.tryParse(campaign.workingDays) : null,
+            'dealershipName': campaign.dealershipName,
+            'dealershipAddress': campaign.dealershipAddress,
+          },
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+        
+        final campaignId = campaignResponse.data['campaignId']?.toString();
+        if (campaignId == null) {
+          debugPrint('Failed to create campaign: ${campaign.campaignName}');
+          continue;
         }
         
-        // Upload campaign files
-        for (final campaign in invoice.campaigns) {
-          // Upload photos
-          for (final photo in campaign.photos) {
-            if (photo.bytes != null) {
-              uploadFutures.add(_dio.post('/documents/upload',
-                  data: FormData.fromMap({
-                    'file': MultipartFile.fromBytes(photo.bytes!, filename: photo.name),
-                    'documentType': 'Photo',
-                    'packageId': packageId,
-                  }),
-                  options: Options(headers: {'Authorization': 'Bearer ${widget.token}'})));
-            }
+        // 2b: Add invoices to campaign (Invoice is child of Campaign)
+        for (final invoice in campaign.invoices) {
+          if (invoice.file?.bytes != null) {
+            await _dio.post(
+              '/hierarchical/$packageId/campaigns/$campaignId/invoices',
+              data: FormData.fromMap({
+                'file': MultipartFile.fromBytes(invoice.file!.bytes!, filename: invoice.file!.name),
+                'invoiceNumber': invoice.invoiceNumber,
+                'invoiceDate': invoice.invoiceDate.isNotEmpty ? _parseDate(invoice.invoiceDate)?.toIso8601String() : null,
+                'totalAmount': invoice.totalAmount.isNotEmpty ? double.tryParse(invoice.totalAmount) : null,
+                'gstNumber': invoice.gstNumber,
+              }),
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            );
           }
+        }
+        
+        // 2c: Add photos to campaign
+        if (campaign.photos.isNotEmpty) {
+          final photoFiles = campaign.photos
+              .where((p) => p.bytes != null)
+              .map((p) => MultipartFile.fromBytes(p.bytes!, filename: p.name))
+              .toList();
           
-          // Upload cost summary
-          if (campaign.costSummaryFile?.bytes != null) {
-            uploadFutures.add(_dio.post('/documents/upload',
-                data: FormData.fromMap({
-                  'file': MultipartFile.fromBytes(campaign.costSummaryFile!.bytes!, filename: campaign.costSummaryFile!.name),
-                  'documentType': 'CostSummary',
-                  'packageId': packageId,
-                }),
-                options: Options(headers: {'Authorization': 'Bearer ${widget.token}'})));
+          if (photoFiles.isNotEmpty) {
+            await _dio.post(
+              '/hierarchical/$packageId/campaigns/$campaignId/photos',
+              data: FormData.fromMap({'files': photoFiles}),
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            );
           }
+        }
+        
+        // 2d: Upload cost summary (1 per campaign)
+        if (campaign.costSummaryFile?.bytes != null) {
+          await _dio.post(
+            '/hierarchical/$packageId/campaigns/$campaignId/cost-summary',
+            data: FormData.fromMap({
+              'file': MultipartFile.fromBytes(campaign.costSummaryFile!.bytes!, filename: campaign.costSummaryFile!.name),
+            }),
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+        }
+        
+        // 2e: Upload activity summary (1 per campaign)
+        if (campaign.activitySummaryFile?.bytes != null) {
+          await _dio.post(
+            '/hierarchical/$packageId/campaigns/$campaignId/activity-summary',
+            data: FormData.fromMap({
+              'file': MultipartFile.fromBytes(campaign.activitySummaryFile!.bytes!, filename: campaign.activitySummaryFile!.name),
+            }),
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
         }
       }
       
-      // Upload additional documents
-      for (final doc in _additionalDocs) {
+      // Step 3: Upload enquiry document (at PO level - Additional Documents)
+      final enquiryDoc = _additionalDocs.isNotEmpty ? _additionalDocs.first : null;
+      if (enquiryDoc?.bytes != null) {
+        await _dio.post(
+          '/hierarchical/$packageId/enquiry-doc',
+          data: FormData.fromMap({
+            'file': MultipartFile.fromBytes(enquiryDoc!.bytes!, filename: enquiryDoc.name),
+          }),
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+      }
+      
+      // Step 4: Upload remaining additional documents via flat API
+      for (int i = 1; i < _additionalDocs.length; i++) {
+        final doc = _additionalDocs[i];
         if (doc.bytes != null) {
-          uploadFutures.add(_dio.post('/documents/upload',
+          await _dio.post('/documents/upload',
               data: FormData.fromMap({
                 'file': MultipartFile.fromBytes(doc.bytes!, filename: doc.name),
                 'documentType': 'AdditionalDocument',
                 'packageId': packageId,
               }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'})));
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
         }
       }
       
-      // Wait for all uploads to complete in parallel
-      if (uploadFutures.isNotEmpty) {
-        _showSuccess('Uploading ${uploadFutures.length} files...');
-        await Future.wait(uploadFutures);
-      }
-      
-      // Step 3: Update package with campaign data from first campaign
-      if (_invoices.isNotEmpty && _invoices.first.campaigns.isNotEmpty) {
-        final firstCampaign = _invoices.first.campaigns.first;
-        try {
-          await _dio.patch(
-            '/submissions/$packageId/campaign-data',
-            data: {
-              'campaignStartDate': firstCampaign.startDate.isNotEmpty ? _parseDate(firstCampaign.startDate)?.toIso8601String() : null,
-              'campaignEndDate': firstCampaign.endDate.isNotEmpty ? _parseDate(firstCampaign.endDate)?.toIso8601String() : null,
-              'campaignWorkingDays': firstCampaign.workingDays.isNotEmpty ? int.tryParse(firstCampaign.workingDays) : null,
-              'dealershipName': firstCampaign.dealershipName,
-              'dealershipAddress': firstCampaign.dealershipAddress,
-              'gpsLocation': firstCampaign.gpsLocation,
-            },
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-          );
-        } catch (e) {
-          debugPrint('Campaign data update failed: $e');
-        }
-      }
-      
-      // Step 4: Queue for background processing (fast - returns immediately)
+      // Step 5: Queue for background processing (fast - returns immediately)
       _showSuccess('Submission complete! Processing in background...');
       await _dio.post('/submissions/$packageId/process-async',
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
@@ -891,11 +915,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         );
         break;
       case 2:
-        // Hierarchical: Multiple Invoices → Multiple Campaigns → Multiple Photos
-        content = InvoiceListSection(
-          invoices: _invoices,
-          onInvoicesChanged: (invoices) {
-            setState(() => _invoices = invoices);
+        // Hierarchical: Multiple Campaigns → Multiple Invoices → Multiple Photos
+        content = CampaignListSection(
+          campaigns: _campaigns,
+          onCampaignsChanged: (campaigns) {
+            setState(() => _campaigns = campaigns);
           },
         );
         break;

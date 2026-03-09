@@ -4,14 +4,14 @@ using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
-using System.Text.Json;
 
 namespace BajajDocumentProcessing.API.Controllers;
 
 /// <summary>
-/// Controller for hierarchical document submission (FAP → PO → Invoices → Campaigns → Photos)
+/// Controller for hierarchical document submission
+/// New Structure: FAP → PO → Campaigns (Teams) → Invoices/Photos
+/// Each Campaign has: multiple Invoices, multiple Photos, 1 Cost Summary, 1 Activity Summary
 /// </summary>
 [ApiController]
 [Route("api/hierarchical")]
@@ -33,78 +33,12 @@ public class HierarchicalSubmissionController : ControllerBase
     }
 
     /// <summary>
-    /// Add an invoice to a package (linked to PO)
+    /// Add a campaign (team) to a package
     /// </summary>
-    [HttpPost("{packageId}/invoices")]
-    [Authorize(Roles = "Agency")]
-    public async Task<IActionResult> AddInvoice(
-        Guid packageId,
-        [FromForm] AddInvoiceRequest request,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var userId = GetUserId();
-            
-            var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
-                .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
-
-            if (package == null)
-                return NotFound(new { error = "Package not found" });
-
-            // Find the PO document
-            var poDocument = package.Documents.FirstOrDefault(d => d.Type == DocumentType.PO);
-            if (poDocument == null)
-                return BadRequest(new { error = "PO document must be uploaded first" });
-
-            // Upload file
-            string blobUrl = "";
-            if (request.File != null)
-            {
-                blobUrl = await _fileStorage.UploadFileAsync(request.File, "invoices", $"{Guid.NewGuid()}_{request.File.FileName}");
-            }
-
-            var invoice = new Invoice
-            {
-                Id = Guid.NewGuid(),
-                PackageId = packageId,
-                PODocumentId = poDocument.Id,
-                InvoiceNumber = request.InvoiceNumber,
-                InvoiceDate = request.InvoiceDate,
-                VendorName = request.VendorName,
-                GSTNumber = request.GSTNumber,
-                TotalAmount = request.TotalAmount,
-                FileName = request.File?.FileName ?? "",
-                BlobUrl = blobUrl,
-                FileSizeBytes = request.File?.Length ?? 0,
-                ContentType = request.File?.ContentType ?? "",
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-
-            _context.Invoices.Add(invoice);
-            await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Invoice {InvoiceId} added to package {PackageId}", invoice.Id, packageId);
-
-            return Ok(new { invoiceId = invoice.Id, message = "Invoice added successfully" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error adding invoice to package {PackageId}", packageId);
-            return StatusCode(500, new { error = "Failed to add invoice" });
-        }
-    }
-
-    /// <summary>
-    /// Add a campaign to an invoice
-    /// </summary>
-    [HttpPost("{packageId}/invoices/{invoiceId}/campaigns")]
+    [HttpPost("{packageId}/campaigns")]
     [Authorize(Roles = "Agency")]
     public async Task<IActionResult> AddCampaign(
         Guid packageId,
-        Guid invoiceId,
         [FromBody] AddCampaignRequest request,
         CancellationToken cancellationToken)
     {
@@ -112,19 +46,18 @@ public class HierarchicalSubmissionController : ControllerBase
         {
             var userId = GetUserId();
             
-            var invoice = await _context.Invoices
-                .Include(i => i.Package)
-                .FirstOrDefaultAsync(i => i.Id == invoiceId && i.PackageId == packageId, cancellationToken);
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
 
-            if (invoice == null || invoice.Package.SubmittedByUserId != userId)
-                return NotFound(new { error = "Invoice not found" });
+            if (package == null)
+                return NotFound(new { error = "Package not found" });
 
             var campaign = new Campaign
             {
                 Id = Guid.NewGuid(),
-                InvoiceId = invoiceId,
                 PackageId = packageId,
                 CampaignName = request.CampaignName,
+                TeamCode = request.TeamCode,
                 StartDate = request.StartDate,
                 EndDate = request.EndDate,
                 WorkingDays = request.WorkingDays,
@@ -141,14 +74,75 @@ public class HierarchicalSubmissionController : ControllerBase
             _context.Campaigns.Add(campaign);
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Campaign {CampaignId} added to invoice {InvoiceId}", campaign.Id, invoiceId);
+            _logger.LogInformation("Campaign {CampaignId} added to package {PackageId}", campaign.Id, packageId);
 
             return Ok(new { campaignId = campaign.Id, message = "Campaign added successfully" });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error adding campaign to invoice {InvoiceId}", invoiceId);
+            _logger.LogError(ex, "Error adding campaign to package {PackageId}", packageId);
             return StatusCode(500, new { error = "Failed to add campaign" });
+        }
+    }
+
+    /// <summary>
+    /// Add an invoice to a campaign
+    /// </summary>
+    [HttpPost("{packageId}/campaigns/{campaignId}/invoices")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> AddInvoiceToCampaign(
+        Guid packageId,
+        Guid campaignId,
+        [FromForm] AddInvoiceRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+            
+            var campaign = await _context.Campaigns
+                .Include(c => c.Package)
+                .FirstOrDefaultAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+
+            if (campaign == null || campaign.Package.SubmittedByUserId != userId)
+                return NotFound(new { error = "Campaign not found" });
+
+            // Upload file
+            string blobUrl = "";
+            if (request.File != null)
+            {
+                blobUrl = await _fileStorage.UploadFileAsync(request.File, "invoices", $"{Guid.NewGuid()}_{request.File.FileName}");
+            }
+
+            var invoice = new CampaignInvoice
+            {
+                Id = Guid.NewGuid(),
+                CampaignId = campaignId,
+                PackageId = packageId,
+                InvoiceNumber = request.InvoiceNumber,
+                InvoiceDate = request.InvoiceDate,
+                VendorName = request.VendorName,
+                GSTNumber = request.GSTNumber,
+                TotalAmount = request.TotalAmount,
+                FileName = request.File?.FileName ?? "",
+                BlobUrl = blobUrl,
+                FileSizeBytes = request.File?.Length ?? 0,
+                ContentType = request.File?.ContentType ?? "",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _context.CampaignInvoices.Add(invoice);
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Invoice {InvoiceId} added to campaign {CampaignId}", invoice.Id, campaignId);
+
+            return Ok(new { invoiceId = invoice.Id, message = "Invoice added successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding invoice to campaign {CampaignId}", campaignId);
+            return StatusCode(500, new { error = "Failed to add invoice" });
         }
     }
 
@@ -181,7 +175,6 @@ public class HierarchicalSubmissionController : ControllerBase
 
             foreach (var file in files)
             {
-                // Upload file
                 var blobUrl = await _fileStorage.UploadFileAsync(file, "photos", $"{Guid.NewGuid()}_{file.FileName}");
 
                 var photo = new CampaignPhoto
@@ -216,6 +209,133 @@ public class HierarchicalSubmissionController : ControllerBase
     }
 
     /// <summary>
+    /// Upload cost summary for a campaign (1 per campaign)
+    /// </summary>
+    [HttpPost("{packageId}/campaigns/{campaignId}/cost-summary")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> UploadCostSummary(
+        Guid packageId,
+        Guid campaignId,
+        [FromForm] IFormFile file,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+            
+            var campaign = await _context.Campaigns
+                .Include(c => c.Package)
+                .FirstOrDefaultAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+
+            if (campaign == null || campaign.Package.SubmittedByUserId != userId)
+                return NotFound(new { error = "Campaign not found" });
+
+            var blobUrl = await _fileStorage.UploadFileAsync(file, "cost-summaries", $"{Guid.NewGuid()}_{file.FileName}");
+
+            campaign.CostSummaryFileName = file.FileName;
+            campaign.CostSummaryBlobUrl = blobUrl;
+            campaign.CostSummaryContentType = file.ContentType;
+            campaign.CostSummaryFileSizeBytes = file.Length;
+            campaign.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Cost summary uploaded for campaign {CampaignId}", campaignId);
+
+            return Ok(new { message = "Cost summary uploaded successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading cost summary for campaign {CampaignId}", campaignId);
+            return StatusCode(500, new { error = "Failed to upload cost summary" });
+        }
+    }
+
+    /// <summary>
+    /// Upload activity summary for a campaign (1 per campaign)
+    /// </summary>
+    [HttpPost("{packageId}/campaigns/{campaignId}/activity-summary")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> UploadActivitySummary(
+        Guid packageId,
+        Guid campaignId,
+        [FromForm] IFormFile file,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+            
+            var campaign = await _context.Campaigns
+                .Include(c => c.Package)
+                .FirstOrDefaultAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+
+            if (campaign == null || campaign.Package.SubmittedByUserId != userId)
+                return NotFound(new { error = "Campaign not found" });
+
+            var blobUrl = await _fileStorage.UploadFileAsync(file, "activity-summaries", $"{Guid.NewGuid()}_{file.FileName}");
+
+            campaign.ActivitySummaryFileName = file.FileName;
+            campaign.ActivitySummaryBlobUrl = blobUrl;
+            campaign.ActivitySummaryContentType = file.ContentType;
+            campaign.ActivitySummaryFileSizeBytes = file.Length;
+            campaign.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Activity summary uploaded for campaign {CampaignId}", campaignId);
+
+            return Ok(new { message = "Activity summary uploaded successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading activity summary for campaign {CampaignId}", campaignId);
+            return StatusCode(500, new { error = "Failed to upload activity summary" });
+        }
+    }
+
+    /// <summary>
+    /// Upload enquiry document for a package (1 per package - Additional docs at PO level)
+    /// </summary>
+    [HttpPost("{packageId}/enquiry-doc")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> UploadEnquiryDoc(
+        Guid packageId,
+        [FromForm] IFormFile file,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+            
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
+
+            if (package == null)
+                return NotFound(new { error = "Package not found" });
+
+            var blobUrl = await _fileStorage.UploadFileAsync(file, "enquiry-docs", $"{Guid.NewGuid()}_{file.FileName}");
+
+            package.EnquiryDocFileName = file.FileName;
+            package.EnquiryDocBlobUrl = blobUrl;
+            package.EnquiryDocContentType = file.ContentType;
+            package.EnquiryDocFileSizeBytes = file.Length;
+            package.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Enquiry document uploaded for package {PackageId}", packageId);
+
+            return Ok(new { message = "Enquiry document uploaded successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading enquiry document for package {PackageId}", packageId);
+            return StatusCode(500, new { error = "Failed to upload enquiry document" });
+        }
+    }
+
+    /// <summary>
     /// Get hierarchical structure for a package
     /// </summary>
     [HttpGet("{packageId}/structure")]
@@ -228,15 +348,15 @@ public class HierarchicalSubmissionController : ControllerBase
 
             var package = await _context.DocumentPackages
                 .Include(p => p.Documents)
-                .Include(p => p.Invoices)
-                    .ThenInclude(i => i.Campaigns)
-                        .ThenInclude(c => c.Photos)
+                .Include(p => p.Campaigns)
+                    .ThenInclude(c => c.Invoices)
+                .Include(p => p.Campaigns)
+                    .ThenInclude(c => c.Photos)
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
                 return NotFound(new { error = "Package not found" });
 
-            // Agency users can only see their own packages
             if (userRole == "Agency" && package.SubmittedByUserId != userId)
                 return NotFound(new { error = "Package not found" });
 
@@ -253,29 +373,37 @@ public class HierarchicalSubmissionController : ControllerBase
                     FileName = poDocument.FileName,
                     ExtractedData = poDocument.ExtractedDataJson
                 } : null,
-                Invoices = package.Invoices.Select(i => new InvoiceInfo
+                EnquiryDoc = package.EnquiryDocFileName != null ? new EnquiryDocInfo
                 {
-                    InvoiceId = i.Id,
-                    InvoiceNumber = i.InvoiceNumber,
-                    InvoiceDate = i.InvoiceDate,
-                    TotalAmount = i.TotalAmount,
-                    FileName = i.FileName,
-                    Campaigns = i.Campaigns.Select(c => new CampaignInfo
+                    FileName = package.EnquiryDocFileName,
+                    BlobUrl = package.EnquiryDocBlobUrl
+                } : null,
+                Campaigns = package.Campaigns.Select(c => new CampaignInfo
+                {
+                    CampaignId = c.Id,
+                    CampaignName = c.CampaignName,
+                    TeamCode = c.TeamCode,
+                    StartDate = c.StartDate,
+                    EndDate = c.EndDate,
+                    WorkingDays = c.WorkingDays,
+                    DealershipName = c.DealershipName,
+                    TotalCost = c.TotalCost,
+                    CostSummaryFileName = c.CostSummaryFileName,
+                    ActivitySummaryFileName = c.ActivitySummaryFileName,
+                    Invoices = c.Invoices.Select(i => new CampaignInvoiceInfo
                     {
-                        CampaignId = c.Id,
-                        CampaignName = c.CampaignName,
-                        StartDate = c.StartDate,
-                        EndDate = c.EndDate,
-                        DealershipName = c.DealershipName,
-                        TotalCost = c.TotalCost,
-                        PhotoCount = c.Photos.Count,
-                        Photos = c.Photos.OrderBy(p => p.DisplayOrder).Select(p => new PhotoInfo
-                        {
-                            PhotoId = p.Id,
-                            FileName = p.FileName,
-                            BlobUrl = p.BlobUrl,
-                            PhotoTimestamp = p.PhotoTimestamp
-                        }).ToList()
+                        InvoiceId = i.Id,
+                        InvoiceNumber = i.InvoiceNumber,
+                        InvoiceDate = i.InvoiceDate,
+                        TotalAmount = i.TotalAmount,
+                        FileName = i.FileName
+                    }).ToList(),
+                    Photos = c.Photos.OrderBy(p => p.DisplayOrder).Select(p => new PhotoInfo
+                    {
+                        PhotoId = p.Id,
+                        FileName = p.FileName,
+                        BlobUrl = p.BlobUrl,
+                        PhotoTimestamp = p.PhotoTimestamp
                     }).ToList()
                 }).ToList()
             };
@@ -290,41 +418,7 @@ public class HierarchicalSubmissionController : ControllerBase
     }
 
     /// <summary>
-    /// Delete an invoice and all its campaigns/photos
-    /// </summary>
-    [HttpDelete("{packageId}/invoices/{invoiceId}")]
-    [Authorize(Roles = "Agency")]
-    public async Task<IActionResult> DeleteInvoice(Guid packageId, Guid invoiceId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var userId = GetUserId();
-            
-            var invoice = await _context.Invoices
-                .Include(i => i.Package)
-                .FirstOrDefaultAsync(i => i.Id == invoiceId && i.PackageId == packageId, cancellationToken);
-
-            if (invoice == null || invoice.Package.SubmittedByUserId != userId)
-                return NotFound(new { error = "Invoice not found" });
-
-            // Soft delete
-            invoice.IsDeleted = true;
-            invoice.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Invoice {InvoiceId} deleted from package {PackageId}", invoiceId, packageId);
-
-            return Ok(new { message = "Invoice deleted successfully" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error deleting invoice {InvoiceId}", invoiceId);
-            return StatusCode(500, new { error = "Failed to delete invoice" });
-        }
-    }
-
-    /// <summary>
-    /// Delete a campaign and all its photos
+    /// Delete a campaign and all its invoices/photos
     /// </summary>
     [HttpDelete("{packageId}/campaigns/{campaignId}")]
     [Authorize(Roles = "Agency")]
@@ -357,11 +451,44 @@ public class HierarchicalSubmissionController : ControllerBase
     }
 
     /// <summary>
-    /// Delete a photo
+    /// Delete an invoice from a campaign
     /// </summary>
-    [HttpDelete("{packageId}/photos/{photoId}")]
+    [HttpDelete("{packageId}/campaigns/{campaignId}/invoices/{invoiceId}")]
     [Authorize(Roles = "Agency")]
-    public async Task<IActionResult> DeletePhoto(Guid packageId, Guid photoId, CancellationToken cancellationToken)
+    public async Task<IActionResult> DeleteInvoice(Guid packageId, Guid campaignId, Guid invoiceId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+            
+            var invoice = await _context.CampaignInvoices
+                .Include(i => i.Package)
+                .FirstOrDefaultAsync(i => i.Id == invoiceId && i.CampaignId == campaignId && i.PackageId == packageId, cancellationToken);
+
+            if (invoice == null || invoice.Package.SubmittedByUserId != userId)
+                return NotFound(new { error = "Invoice not found" });
+
+            invoice.IsDeleted = true;
+            invoice.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Invoice {InvoiceId} deleted from campaign {CampaignId}", invoiceId, campaignId);
+
+            return Ok(new { message = "Invoice deleted successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting invoice {InvoiceId}", invoiceId);
+            return StatusCode(500, new { error = "Failed to delete invoice" });
+        }
+    }
+
+    /// <summary>
+    /// Delete a photo from a campaign
+    /// </summary>
+    [HttpDelete("{packageId}/campaigns/{campaignId}/photos/{photoId}")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> DeletePhoto(Guid packageId, Guid campaignId, Guid photoId, CancellationToken cancellationToken)
     {
         try
         {
@@ -369,7 +496,7 @@ public class HierarchicalSubmissionController : ControllerBase
             
             var photo = await _context.CampaignPhotos
                 .Include(p => p.Package)
-                .FirstOrDefaultAsync(p => p.Id == photoId && p.PackageId == packageId, cancellationToken);
+                .FirstOrDefaultAsync(p => p.Id == photoId && p.CampaignId == campaignId && p.PackageId == packageId, cancellationToken);
 
             if (photo == null || photo.Package.SubmittedByUserId != userId)
                 return NotFound(new { error = "Photo not found" });
@@ -378,7 +505,7 @@ public class HierarchicalSubmissionController : ControllerBase
             photo.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Photo {PhotoId} deleted from package {PackageId}", photoId, packageId);
+            _logger.LogInformation("Photo {PhotoId} deleted from campaign {CampaignId}", photoId, campaignId);
 
             return Ok(new { message = "Photo deleted successfully" });
         }
@@ -412,6 +539,7 @@ public class AddInvoiceRequest
 public class AddCampaignRequest
 {
     public string? CampaignName { get; set; }
+    public string? TeamCode { get; set; }
     public DateTime? StartDate { get; set; }
     public DateTime? EndDate { get; set; }
     public int? WorkingDays { get; set; }
@@ -430,7 +558,8 @@ public class HierarchicalStructureResponse
     public string State { get; set; } = "";
     public DateTime CreatedAt { get; set; }
     public POInfo? PO { get; set; }
-    public List<InvoiceInfo> Invoices { get; set; } = new();
+    public EnquiryDocInfo? EnquiryDoc { get; set; }
+    public List<CampaignInfo> Campaigns { get; set; } = new();
 }
 
 public class POInfo
@@ -440,26 +569,35 @@ public class POInfo
     public string? ExtractedData { get; set; }
 }
 
-public class InvoiceInfo
+public class EnquiryDocInfo
 {
-    public Guid InvoiceId { get; set; }
-    public string? InvoiceNumber { get; set; }
-    public DateTime? InvoiceDate { get; set; }
-    public decimal? TotalAmount { get; set; }
-    public string FileName { get; set; } = "";
-    public List<CampaignInfo> Campaigns { get; set; } = new();
+    public string? FileName { get; set; }
+    public string? BlobUrl { get; set; }
 }
 
 public class CampaignInfo
 {
     public Guid CampaignId { get; set; }
     public string? CampaignName { get; set; }
+    public string? TeamCode { get; set; }
     public DateTime? StartDate { get; set; }
     public DateTime? EndDate { get; set; }
+    public int? WorkingDays { get; set; }
     public string? DealershipName { get; set; }
     public decimal? TotalCost { get; set; }
-    public int PhotoCount { get; set; }
+    public string? CostSummaryFileName { get; set; }
+    public string? ActivitySummaryFileName { get; set; }
+    public List<CampaignInvoiceInfo> Invoices { get; set; } = new();
     public List<PhotoInfo> Photos { get; set; } = new();
+}
+
+public class CampaignInvoiceInfo
+{
+    public Guid InvoiceId { get; set; }
+    public string? InvoiceNumber { get; set; }
+    public DateTime? InvoiceDate { get; set; }
+    public decimal? TotalAmount { get; set; }
+    public string FileName { get; set; } = "";
 }
 
 public class PhotoInfo

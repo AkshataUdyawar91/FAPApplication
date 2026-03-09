@@ -4168,3 +4168,87 @@ String? validateGSTIN(String? value) {
 - Fallback to manual entry if retry fails
 
 This design ensures a smooth user experience with automatic data population, real-time cross-validation, and full user control over data accuracy.
+
+
+## Design: Requirement 22-24 - Hierarchical Structure and Campaign Details Improvements
+
+### Data Model Changes
+
+#### Correct Hierarchy: Campaign → Invoice
+
+The document structure follows this hierarchy:
+- **DocumentPackage (FAP)** - Root container
+  - **PO Document** (1:1) - Single Purchase Order
+  - **Campaigns** (1:Many) - Multiple campaigns per PO
+    - **Invoices** (1:Many per Campaign) - Multiple invoices per campaign
+    - **Photos** (1:Many per Campaign) - Up to 50 photos per campaign
+    - **Cost Summary** (1:1 per Campaign) - Single cost summary
+    - **Activity Summary** (1:1 per Campaign) - Single activity summary
+  - **Additional Documents** (at PO level)
+    - **Enquiry Document** (0:1) - Optional single enquiry doc
+    - **Other Documents** (0:Many) - Optional additional docs
+
+#### Campaign Data Model
+
+```dart
+class CampaignData {
+  final String id;
+  String campaignName;        // NEW: Required field
+  String startDate;
+  String endDate;
+  String workingDays;         // Auto-calculated
+  String dealershipName;
+  String dealershipAddress;
+  // REMOVED: gpsLocation - No longer needed
+  String state;
+  String totalCost;
+  PlatformFile? costSummaryFile;
+  PlatformFile? activitySummaryFile;
+  List<PlatformFile> photos;  // Max 50 photos
+  List<InvoiceData> invoices; // Invoices are children of Campaign
+}
+```
+
+### UI Changes
+
+#### Step 2: Campaigns (not "Invoices & Campaigns")
+
+1. **Add Campaign** button at top level
+2. Each Campaign contains:
+   - Campaign Name field (NEW, required)
+   - Activity Duration (Start Date, End Date, Working Days)
+   - Dealership Details (Name, Address) - GPS REMOVED
+   - Invoices section (Add Invoice button within campaign)
+   - Photos section (max 50)
+   - Cost Summary upload
+   - Activity Summary upload
+
+#### Removed Features
+- GPS Location field and Capture GPS button
+- "Campaign 1", "Campaign 2" numbered headers
+
+#### Added Features
+- Campaign Name text field (required)
+- Photo limit increased from 20 to 50
+- Calendar picker fix for date fields
+
+### Validation Rules
+
+| Field | Validation |
+|-------|------------|
+| Campaign Name | Required, non-empty |
+| Start Date | Required, valid date format |
+| End Date | Required, >= Start Date |
+| Photos | At least 1, max 50 per campaign |
+| Invoices | At least 1 per campaign |
+| Cost Summary | Required per campaign |
+| Activity Summary | Required per campaign |
+
+### API Endpoint Changes
+
+Step 2 endpoints now use Campaign as parent:
+- `POST /api/hierarchical/{packageId}/campaigns` - Add campaign
+- `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/invoices` - Add invoice to campaign
+- `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/photos` - Add photos
+- `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/cost-summary` - Upload cost summary
+- `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/activity-summary` - Upload activity summary

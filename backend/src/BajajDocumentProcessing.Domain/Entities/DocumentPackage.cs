@@ -104,6 +104,38 @@ public class DocumentPackage : BaseEntity
     /// </summary>
     public string? GPSLocation { get; set; }
 
+    // ============ Additional Documents (at PO level) ============
+    
+    /// <summary>
+    /// Gets or sets the original filename of the enquiry document
+    /// </summary>
+    public string? EnquiryDocFileName { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the Azure Blob Storage URL for the enquiry document
+    /// </summary>
+    public string? EnquiryDocBlobUrl { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the MIME content type of the enquiry document
+    /// </summary>
+    public string? EnquiryDocContentType { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the file size in bytes of the enquiry document
+    /// </summary>
+    public long? EnquiryDocFileSizeBytes { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the JSON representation of extracted enquiry document data
+    /// </summary>
+    public string? EnquiryDocExtractedDataJson { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the AI confidence score for enquiry document extraction
+    /// </summary>
+    public double? EnquiryDocExtractionConfidence { get; set; }
+
     /// <summary>
     /// Gets or sets the agency user who submitted this package
     /// </summary>
@@ -163,4 +195,9 @@ public class DocumentPackage : BaseEntity
     /// Gets or sets the collection of campaign photos in this package (for easier querying)
     /// </summary>
     public ICollection<CampaignPhoto> CampaignPhotos { get; set; } = new List<CampaignPhoto>();
+    
+    /// <summary>
+    /// Gets or sets the collection of campaign invoices in this package (for easier querying)
+    /// </summary>
+    public ICollection<CampaignInvoice> CampaignInvoices { get; set; } = new List<CampaignInvoice>();
 }
