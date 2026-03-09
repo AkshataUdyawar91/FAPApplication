@@ -4,6 +4,19 @@ import 'dart:convert';
 import 'dart:html' as html;
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/responsive/responsive.dart';
+import '../../../../core/widgets/app_sidebar.dart';
+import '../../../../core/widgets/app_drawer.dart';
+import '../../../../core/widgets/chat_side_panel.dart';
+import '../../../../core/widgets/chat_end_drawer.dart';
+import '../../../../core/widgets/nav_item.dart';
+import '../../../approval/data/models/invoice_summary_data.dart';
+import '../../../approval/data/models/invoice_document_row.dart';
+import '../../../approval/data/models/campaign_detail_row.dart';
+import '../../../approval/presentation/utils/submission_data_transformer.dart';
+import '../../../approval/presentation/widgets/invoice_summary_section.dart';
+import '../../../approval/presentation/widgets/invoice_documents_table.dart';
+import '../../../approval/presentation/widgets/campaign_details_table.dart';
 
 class AgencySubmissionDetailPage extends StatefulWidget {
   final String submissionId;
@@ -23,10 +36,17 @@ class AgencySubmissionDetailPage extends StatefulWidget {
 
 class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage> {
   final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
-  
+
   bool _isLoading = true;
   Map<String, dynamic>? _submission;
   String? _errorMessage;
+  bool _isChatOpen = false;
+  bool _isSidebarCollapsed = true;
+
+  // Transformed data for ASM-style layout
+  InvoiceSummaryData? _invoiceSummary;
+  List<InvoiceDocumentRow> _invoiceDocuments = [];
+  List<CampaignDetailRow> _campaignDetails = [];
 
   @override
   void initState() {
@@ -36,21 +56,42 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
 
   Future<void> _loadSubmissionDetails() async {
     setState(() => _isLoading = true);
-    
     try {
       final response = await _dio.get(
         '/submissions/${widget.submissionId}',
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
-      
       if (response.statusCode == 200 && mounted) {
+        final submissionData = response.data as Map<String, dynamic>;
+        
+        // Transform data for ASM-style layout (exclude PO documents)
+        final invoiceSummary = SubmissionDataTransformer.extractInvoiceSummary(submissionData);
+        final allInvoiceDocs = SubmissionDataTransformer.transformToInvoiceDocuments(submissionData);
+        // Filter out PO documents
+        final filteredDocs = allInvoiceDocs.where((d) => d.category != 'PO').toList();
+        // Re-number serial numbers
+        for (int i = 0; i < filteredDocs.length; i++) {
+          filteredDocs[i] = InvoiceDocumentRow(
+            serialNumber: i + 1,
+            category: filteredDocs[i].category,
+            documentName: filteredDocs[i].documentName,
+            status: filteredDocs[i].status,
+            remarks: filteredDocs[i].remarks,
+            blobUrl: filteredDocs[i].blobUrl,
+            documentId: filteredDocs[i].documentId,
+          );
+        }
+        final campaignDetails = SubmissionDataTransformer.transformToCampaignDetails(submissionData);
+        
         setState(() {
-          _submission = response.data;
+          _submission = submissionData;
+          _invoiceSummary = invoiceSummary;
+          _invoiceDocuments = filteredDocs;
+          _campaignDetails = campaignDetails;
           _isLoading = false;
         });
       }
     } catch (e) {
-      print('Error loading submission details: $e');
       if (mounted) {
         setState(() {
           _errorMessage = 'Failed to load submission details';
@@ -60,87 +101,176 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: AppColors.gradientBlue,
-          ),
-        ),
-        child: Column(
-          children: [
-            _buildHeader(),
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator(color: Colors.white))
-                  : _errorMessage != null
-                      ? _buildError()
-                      : _buildContent(),
+  void _navigateToUpload() {
+    Navigator.pushNamed(context, '/agency/upload', arguments: {
+      'token': widget.token,
+      'userName': widget.userName,
+    });
+  }
+
+  List<NavItem> _getNavItems(BuildContext context) {
+    return [
+      NavItem(icon: Icons.dashboard, label: 'Dashboard', onTap: () => Navigator.pop(context)),
+      NavItem(icon: Icons.upload_file, label: 'Upload', onTap: _navigateToUpload),
+      NavItem(icon: Icons.visibility, label: 'View Request', isActive: true, onTap: () {}),
+      NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
+      }),
+      NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
+      }),
+    ];
+  }
+
+  Widget _buildTopBar() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: const Color(0xFF003087),
+      child: Row(
+        children: [
+          const Icon(Icons.business, color: Colors.white, size: 22),
+          const SizedBox(width: 8),
+          const Text(
+            'Bajaj',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              letterSpacing: 0.5,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildHeader() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF1E3A8A), Color(0xFF1E40AF)],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x1A000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                onPressed: () => Navigator.pop(context),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Submission Details',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'Logged in as',
-                    style: TextStyle(color: Color(0xFFBFDBFE), fontSize: 12),
-                  ),
-                  Text(
-                    widget.userName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final device = getDeviceType(width);
+        final isMobile = device == DeviceType.mobile;
+
+        return Scaffold(
+          appBar: isMobile
+              ? AppBar(
+                  backgroundColor: const Color(0xFF1E3A8A),
+                  title: const Text('Bajaj', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  iconTheme: const IconThemeData(color: Colors.white),
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      onPressed: () => Navigator.pop(context),
+                      tooltip: 'Back to Dashboard',
                     ),
-                  ),
-                ],
+                  ],
+                )
+              : null,
+          drawer: isMobile
+              ? AppDrawer(
+                  userName: widget.userName,
+                  userRole: 'Agency',
+                  navItems: _getNavItems(context),
+                  onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                )
+              : null,
+          body: Column(
+            children: [
+              if (!isMobile) _buildTopBar(),
+              Expanded(
+                child: Row(
+                  children: [
+                    if (!isMobile)
+                      AppSidebar(
+                        userName: widget.userName,
+                        userRole: 'Agency',
+                        navItems: _getNavItems(context),
+                        onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                        isCollapsed: _isSidebarCollapsed,
+                        onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                      ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          if (!isMobile) _buildDesktopHeader(device),
+                          Expanded(
+                            child: _isLoading
+                                ? const Center(child: CircularProgressIndicator())
+                                : _errorMessage != null
+                                    ? _buildError()
+                                    : _buildContent(device),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_isChatOpen && !isMobile)
+                      ChatSidePanel(
+                        token: widget.token,
+                        deviceType: device,
+                        onClose: () => setState(() => _isChatOpen = false),
+                      ),
+                  ],
+                ),
               ),
             ],
           ),
-        ),
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          floatingActionButton: (_isChatOpen && !isMobile)
+              ? null
+              : Builder(
+                  builder: (scaffoldContext) => Padding(
+                    padding: const EdgeInsets.only(bottom: 16, right: 4),
+                    child: FloatingActionButton(
+                      onPressed: () {
+                        if (isMobile) {
+                          Scaffold.of(scaffoldContext).openEndDrawer();
+                        } else {
+                          setState(() => _isChatOpen = !_isChatOpen);
+                        }
+                      },
+                      backgroundColor: AppColors.primary,
+                      child: const Icon(Icons.smart_toy, color: Colors.white),
+                    ),
+                  ),
+                ),
+          floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+        );
+      },
+    );
+  }
+
+  Widget _buildDesktopHeader(DeviceType device) {
+    final fapNumber = 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: device == DeviceType.desktop ? 24 : 16,
+        vertical: 16,
+      ),
+      decoration: const BoxDecoration(
+        color: AppColors.cardBackground,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(context),
+            tooltip: 'Back to Dashboard',
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Submission Details', style: AppTextStyles.h2),
+                const SizedBox(height: 4),
+                Text(fapNumber, style: AppTextStyles.bodySmall),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -173,41 +303,74 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     );
   }
 
-  Widget _buildContent() {
+  Widget _buildContent(DeviceType device) {
     if (_submission == null) return const SizedBox();
 
     final state = _submission!['state']?.toString() ?? 'Unknown';
-    final fapNumber = 'FAP-${widget.submissionId.substring(0, 8).toUpperCase()}';
+    final fapNumber = 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    final hPad = responsiveValue<double>(MediaQuery.of(context).size.width, mobile: 12, tablet: 16, desktop: 24);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1200),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildStatusCard(state, fapNumber),
-            const SizedBox(height: 24),
-            if (_submission!['asmReviewNotes'] != null) ...[
-              _buildRejectionCard('ASM', _submission!['asmReviewNotes'], _submission!['asmReviewedAt']),
-              const SizedBox(height: 24),
-            ],
-            if (_submission!['hqReviewNotes'] != null) ...[
-              _buildRejectionCard('HQ', _submission!['hqReviewNotes'], _submission!['hqReviewedAt']),
-              const SizedBox(height: 24),
-            ],
-            _buildDocumentsSection(),
+      padding: EdgeInsets.all(hPad),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (device == DeviceType.mobile) ...[
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () => Navigator.pop(context),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Submission Details', style: AppTextStyles.h2),
+                      Text(fapNumber, style: AppTextStyles.bodySmall),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
           ],
-        ),
+          _buildStatusCard(state, fapNumber),
+          const SizedBox(height: 24),
+
+          // PO Document Section (expansion tile)
+          _buildPOSection(),
+          const SizedBox(height: 24),
+
+          // Invoice Summary Section (ASM-style)
+          if (_invoiceSummary != null)
+            InvoiceSummarySection(data: _invoiceSummary!),
+          const SizedBox(height: 24),
+
+          // Invoice Documents Table (ASM-style, without PO)
+          InvoiceDocumentsTable(
+            documents: _invoiceDocuments,
+            onDocumentTap: (doc) => _downloadDocument(doc.blobUrl, doc.documentName),
+          ),
+          const SizedBox(height: 24),
+
+          // Campaign Details Table (ASM-style)
+          CampaignDetailsTable(
+            campaignDetails: _campaignDetails,
+            onPhotoTap: (detail) => _downloadDocument(detail.blobUrl, detail.documentName),
+          ),
+          const SizedBox(height: 80),
+        ],
       ),
     );
   }
 
   Widget _buildStatusCard(String state, String fapNumber) {
     final statusInfo = _getStatusInfo(state);
-    
     return Card(
-      elevation: 4,
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -221,10 +384,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        fapNumber,
-                        style: AppTextStyles.h2,
-                      ),
+                      Text(fapNumber, style: AppTextStyles.h2),
                       const SizedBox(height: 4),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -251,19 +411,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             const SizedBox(height: 16),
             Row(
               children: [
-                Expanded(
-                  child: _buildInfoItem('Submitted', _formatDate(_submission!['createdAt'])),
-                ),
-                Expanded(
-                  child: _buildInfoItem('Last Updated', _formatDate(_submission!['updatedAt'])),
-                ),
-                if (_submission!['confidenceScore'] != null)
-                  Expanded(
-                    child: _buildInfoItem(
-                      'AI Confidence',
-                      '${(_submission!['confidenceScore']['overallConfidence'] * 100).toStringAsFixed(0)}%',
-                    ),
-                  ),
+                Expanded(child: _buildInfoItem('Submitted', _formatDate(_submission!['createdAt']))),
+                Expanded(child: _buildInfoItem('Last Updated', _formatDate(_submission!['updatedAt']))),
               ],
             ),
           ],
@@ -276,119 +425,41 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: AppTextStyles.bodySmall.copyWith(
-            color: AppColors.textSecondary,
-          ),
-        ),
+        Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
         const SizedBox(height: 4),
-        Text(
-          value,
-          style: AppTextStyles.bodyMedium.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        Text(value, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
       ],
     );
   }
 
-  Widget _buildRejectionCard(String reviewer, String notes, dynamic reviewedAt) {
-    return Card(
-      elevation: 2,
-      color: const Color(0xFFFEF2F2),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.info_outline, color: Color(0xFFDC2626), size: 24),
-                const SizedBox(width: 12),
-                Text(
-                  'Rejected by $reviewer',
-                  style: AppTextStyles.h3.copyWith(
-                    color: const Color(0xFFDC2626),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              notes,
-              style: AppTextStyles.bodyMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Reviewed on: ${_formatDate(reviewedAt)}',
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDocumentsSection() {
+  Widget _buildPOSection() {
+    if (_submission == null) return const SizedBox();
     final documents = _submission!['documents'] as List? ?? [];
-    
-    final poDoc = documents.where((d) => d['type'] == 'PO').toList();
-    final invoiceDoc = documents.where((d) => d['type'] == 'Invoice').toList();
-    final costSummaryDoc = documents.where((d) => d['type'] == 'CostSummary').toList();
-    final photos = documents.where((d) => d['type'] == 'Photo').toList();
+    final poDocs = documents.where((d) => d['type'] == 'PO').toList();
+    if (poDocs.isEmpty) return const SizedBox();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (poDoc.isNotEmpty) ...[
-          _buildDocumentCard('Purchase Order', poDoc, Icons.description, const Color(0xFF3B82F6)),
-          const SizedBox(height: 16),
-        ],
-        if (invoiceDoc.isNotEmpty) ...[
-          _buildDocumentCard('Invoice', invoiceDoc, Icons.receipt_long, const Color(0xFF10B981)),
-          const SizedBox(height: 16),
-        ],
-        if (costSummaryDoc.isNotEmpty) ...[
-          _buildDocumentCard('Cost Summary', costSummaryDoc, Icons.calculate, const Color(0xFFF59E0B)),
-          const SizedBox(height: 16),
-        ],
-        if (photos.isNotEmpty) ...[
-          _buildPhotosCard(photos),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildDocumentCard(String title, List<dynamic> docs, IconData icon, Color color) {
     return Card(
       elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
       child: ExpansionTile(
-        leading: Icon(icon, color: color, size: 32),
-        title: Text(
-          title,
-          style: AppTextStyles.h3,
-        ),
-        subtitle: Text('${docs.length} document(s)'),
-        children: docs.map((doc) {
-          final extractedData = doc['extractedData'];
+        leading: const Icon(Icons.description, color: Color(0xFF3B82F6), size: 32),
+        title: Text('Purchase Order', style: AppTextStyles.h3),
+        subtitle: Text('${poDocs.length} document(s)'),
+        children: poDocs.map((doc) {
           Map<String, dynamic>? data;
-          
-          if (extractedData != null && extractedData is String && extractedData.isNotEmpty) {
+          final extractedData = doc['extractedData'];
+          if (extractedData != null) {
             try {
-              data = Map<String, dynamic>.from(
-                const JsonDecoder().convert(extractedData)
-              );
-            } catch (e) {
-              print('Error parsing extracted data: $e');
-            }
+              if (extractedData is String && extractedData.isNotEmpty) {
+                data = Map<String, dynamic>.from(jsonDecode(extractedData));
+              } else if (extractedData is Map) {
+                data = Map<String, dynamic>.from(extractedData);
+              }
+            } catch (_) {}
           }
-
           return Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               border: Border(top: BorderSide(color: AppColors.border)),
             ),
             child: Column(
@@ -401,27 +472,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                     Expanded(
                       child: Text(
                         doc['filename'] ?? 'Unknown',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
+                        style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
                       ),
                     ),
-                    if (doc['extractionConfidence'] != null)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.pendingBackground,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '${(doc['extractionConfidence'] * 100).toStringAsFixed(0)}% confidence',
-                          style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.pendingText,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    const SizedBox(width: 8),
                     IconButton(
                       icon: const Icon(Icons.download, size: 20),
                       onPressed: () => _downloadDocument(doc['blobUrl'], doc['filename']),
@@ -436,7 +489,29 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                   const SizedBox(height: 12),
                   const Divider(),
                   const SizedBox(height: 12),
-                  _buildExtractedData(data),
+                  Wrap(
+                    spacing: 24,
+                    runSpacing: 12,
+                    children: data.entries.map((entry) {
+                      return SizedBox(
+                        width: 200,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _formatFieldName(entry.key),
+                              style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              entry.value?.toString() ?? '-',
+                              style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
                 ],
               ],
             ),
@@ -446,99 +521,187 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     );
   }
 
-  Widget _buildExtractedData(Map<String, dynamic> data) {
-    return Wrap(
-      spacing: 24,
-      runSpacing: 12,
-      children: data.entries.map((entry) {
-        return SizedBox(
-          width: 200,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _formatFieldName(entry.key),
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                entry.value?.toString() ?? '-',
-                style: AppTextStyles.bodyMedium.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
+  String _formatFieldName(String key) {
+    return key.replaceAllMapped(
+      RegExp(r'([A-Z])'),
+      (match) => ' ${match.group(0)}',
+    ).trim().split(' ').map((word) =>
+      word[0].toUpperCase() + word.substring(1),
+    ).join(' ');
   }
 
-  Widget _buildPhotosCard(List<dynamic> photos) {
+  Widget _buildApprovalTimeline() {
+    final state = _submission!['state']?.toString().toLowerCase() ?? '';
+    final createdAt = _submission!['createdAt'];
+    final asmReviewedAt = _submission!['asmReviewedAt'];
+    final asmReviewNotes = _submission!['asmReviewNotes']?.toString();
+    final hqReviewedAt = _submission!['hqReviewedAt'];
+    final hqReviewNotes = _submission!['hqReviewNotes']?.toString();
+
+    // Determine ASM status
+    String asmStatus = 'pending';
+    if (state.contains('rejectedbyasm')) {
+      asmStatus = 'rejected';
+    } else if (state.contains('approved') || state.contains('pendinghq') || state.contains('rejectedbyhq')) {
+      asmStatus = 'approved';
+    } else if (asmReviewedAt != null) {
+      asmStatus = asmReviewNotes != null && asmReviewNotes.isNotEmpty ? 'rejected' : 'approved';
+    }
+
+    // Determine HQ/RA status
+    String hqStatus = 'pending';
+    if (state == 'approved') {
+      hqStatus = 'approved';
+    } else if (state.contains('rejectedbyhq')) {
+      hqStatus = 'rejected';
+    } else if (hqReviewedAt != null) {
+      hqStatus = hqReviewNotes != null && hqReviewNotes.isNotEmpty ? 'rejected' : 'approved';
+    }
+
     return Card(
       elevation: 2,
-      child: ExpansionTile(
-        leading: const Icon(Icons.photo_library, color: Color(0xFF8B5CF6), size: 32),
-        title: Text(
-          'Activity Photos',
-          style: AppTextStyles.h3,
-        ),
-        subtitle: Text('${photos.length} photo(s)'),
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 1,
-              ),
-              itemCount: photos.length,
-              itemBuilder: (context, index) {
-                final photo = photos[index];
-                return _buildPhotoTile(photo);
-              },
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Approval Flow', style: AppTextStyles.h3),
+            const SizedBox(height: 20),
+            // Step 1: Submitted
+            _buildTimelineStep(
+              icon: Icons.upload_file,
+              color: const Color(0xFF3B82F6),
+              title: 'Submitted',
+              date: _formatDate(createdAt),
+              comment: null,
+              isCompleted: true,
+              isLast: false,
             ),
-          ),
-        ],
+            // Step 2: ASM Review
+            _buildTimelineStep(
+              icon: asmStatus == 'approved'
+                  ? Icons.check_circle
+                  : asmStatus == 'rejected'
+                      ? Icons.cancel
+                      : Icons.schedule,
+              color: asmStatus == 'approved'
+                  ? const Color(0xFF10B981)
+                  : asmStatus == 'rejected'
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF9CA3AF),
+              title: asmStatus == 'approved'
+                  ? 'Approved by ASM'
+                  : asmStatus == 'rejected'
+                      ? 'Rejected by ASM'
+                      : 'Pending ASM Review',
+              date: asmReviewedAt != null ? _formatDate(asmReviewedAt) : null,
+              comment: asmReviewNotes,
+              isCompleted: asmStatus != 'pending',
+              isLast: false,
+            ),
+            // Step 3: HQ/RA Review
+            _buildTimelineStep(
+              icon: hqStatus == 'approved'
+                  ? Icons.check_circle
+                  : hqStatus == 'rejected'
+                      ? Icons.cancel
+                      : Icons.schedule,
+              color: hqStatus == 'approved'
+                  ? const Color(0xFF10B981)
+                  : hqStatus == 'rejected'
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF9CA3AF),
+              title: hqStatus == 'approved'
+                  ? 'Approved by HQ/RA'
+                  : hqStatus == 'rejected'
+                      ? 'Rejected by HQ/RA'
+                      : 'Pending HQ/RA Review',
+              date: hqReviewedAt != null ? _formatDate(hqReviewedAt) : null,
+              comment: hqReviewNotes,
+              isCompleted: hqStatus != 'pending',
+              isLast: true,
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildPhotoTile(Map<String, dynamic> photo) {
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget _buildTimelineStep({
+    required IconData icon,
+    required Color color,
+    required String title,
+    String? date,
+    String? comment,
+    required bool isCompleted,
+    required bool isLast,
+  }) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.background,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-              ),
-              child: const Icon(Icons.image, size: 48, color: AppColors.textSecondary),
+          // Timeline line + dot
+          SizedBox(
+            width: 32,
+            child: Column(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: isCompleted ? color.withOpacity(0.15) : const Color(0xFFF3F4F6),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: isCompleted ? color : const Color(0xFFD1D5DB), width: 2),
+                  ),
+                  child: Icon(icon, size: 14, color: isCompleted ? color : const Color(0xFF9CA3AF)),
+                ),
+                if (!isLast)
+                  Expanded(
+                    child: Container(
+                      width: 2,
+                      color: isCompleted ? color.withOpacity(0.3) : const Color(0xFFE5E7EB),
+                    ),
+                  ),
+              ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(8)),
-            ),
-            child: Text(
-              photo['filename'] ?? 'Photo',
-              style: AppTextStyles.bodySmall,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+          const SizedBox(width: 12),
+          // Content
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: isLast ? 0 : 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: isCompleted ? const Color(0xFF111827) : const Color(0xFF9CA3AF),
+                    ),
+                  ),
+                  if (date != null) ...[
+                    const SizedBox(height: 2),
+                    Text(date, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary, fontSize: 11)),
+                  ],
+                  if (comment != null && comment.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF9FAFB),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                      ),
+                      child: Text(
+                        comment,
+                        style: AppTextStyles.bodySmall.copyWith(color: const Color(0xFF4B5563), height: 1.4),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ],
@@ -548,7 +711,6 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
 
   Map<String, dynamic> _getStatusInfo(String state) {
     final stateLower = state.toLowerCase();
-    
     if (stateLower.contains('approved') && !stateLower.contains('pending')) {
       return {
         'label': 'Approved',
@@ -567,7 +729,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       };
     } else if (stateLower.contains('pendinghq')) {
       return {
-        'label': 'Pending HQ Approval',
+        'label': 'Pending HQ/RA Approval',
         'color': const Color(0xFF3B82F6),
         'bgColor': const Color(0xFFDBEAFE),
         'borderColor': const Color(0xFF93C5FD),
@@ -602,31 +764,15 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     }
   }
 
-  String _formatFieldName(String key) {
-    // Convert camelCase to Title Case
-    return key.replaceAllMapped(
-      RegExp(r'([A-Z])'),
-      (match) => ' ${match.group(0)}',
-    ).trim().split(' ').map((word) => 
-      word[0].toUpperCase() + word.substring(1)
-    ).join(' ');
-  }
-
   void _downloadDocument(String? blobUrl, String? filename) async {
     if (blobUrl == null || blobUrl.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Document URL not available'),
-          backgroundColor: Colors.orange,
-        ),
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
       );
       return;
     }
-
     try {
-      // Open document in new browser tab
       html.window.open(blobUrl, '_blank');
-      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -639,10 +785,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to open document: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Failed to open document: $e'), backgroundColor: Colors.red),
         );
       }
     }

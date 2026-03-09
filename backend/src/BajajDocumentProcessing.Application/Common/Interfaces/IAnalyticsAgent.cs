@@ -1,3 +1,5 @@
+using BajajDocumentProcessing.Application.DTOs.Analytics;
+
 namespace BajajDocumentProcessing.Application.Common.Interfaces;
 
 /// <summary>
@@ -48,6 +50,7 @@ public interface IAnalyticsAgent
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Natural language narrative describing key insights</returns>
     Task<string> GenerateNarrativeAsync(KPIDashboard kpis, CancellationToken cancellationToken = default);
+    Task<QuarterlyFapKpiResponse> GetQuarterlyFapKpisAsync(string quarter, int year, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

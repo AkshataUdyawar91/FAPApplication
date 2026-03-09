@@ -1,4 +1,5 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Application.DTOs.Analytics;
 using BajajDocumentProcessing.Application.DTOs.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,7 +11,7 @@ namespace BajajDocumentProcessing.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "HQ")]
+[Authorize]
 public class AnalyticsController : ControllerBase
 {
     private readonly IAnalyticsAgent _analyticsAgent;
@@ -27,15 +28,8 @@ public class AnalyticsController : ControllerBase
     /// <summary>
     /// Get KPI dashboard data for a specified date range
     /// </summary>
-    /// <param name="startDate">Start date for analytics period (defaults to 1 month ago)</param>
-    /// <param name="endDate">End date for analytics period (defaults to now)</param>
-    /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>KPI metrics including submission counts, approval rates, and processing times</returns>
-    /// <response code="200">Returns KPI dashboard data</response>
-    /// <response code="401">Unauthorized - authentication required</response>
-    /// <response code="403">Forbidden - HQ role required</response>
-    /// <response code="500">Internal server error</response>
     [HttpGet("kpis")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> GetKPIs(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -52,15 +46,8 @@ public class AnalyticsController : ControllerBase
     /// <summary>
     /// Get state-level ROI data for geographic analysis
     /// </summary>
-    /// <param name="startDate">Start date for analytics period (defaults to 1 month ago)</param>
-    /// <param name="endDate">End date for analytics period (defaults to now)</param>
-    /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>State-wise ROI metrics including submission counts and approval rates</returns>
-    /// <response code="200">Returns state ROI data</response>
-    /// <response code="401">Unauthorized - authentication required</response>
-    /// <response code="403">Forbidden - HQ role required</response>
-    /// <response code="500">Internal server error</response>
     [HttpGet("state-roi")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> GetStateROI(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -77,15 +64,8 @@ public class AnalyticsController : ControllerBase
     /// <summary>
     /// Get campaign breakdown data showing performance by campaign type
     /// </summary>
-    /// <param name="startDate">Start date for analytics period (defaults to 1 month ago)</param>
-    /// <param name="endDate">End date for analytics period (defaults to now)</param>
-    /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>Campaign-wise metrics including submission counts and approval rates</returns>
-    /// <response code="200">Returns campaign breakdown data</response>
-    /// <response code="401">Unauthorized - authentication required</response>
-    /// <response code="403">Forbidden - HQ role required</response>
-    /// <response code="500">Internal server error</response>
     [HttpGet("campaign-breakdown")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> GetCampaignBreakdown(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -102,15 +82,8 @@ public class AnalyticsController : ControllerBase
     /// <summary>
     /// Export analytics data to Excel format for offline analysis
     /// </summary>
-    /// <param name="startDate">Start date for analytics period (defaults to 1 month ago)</param>
-    /// <param name="endDate">End date for analytics period (defaults to now)</param>
-    /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>Excel file containing analytics data</returns>
-    /// <response code="200">Returns Excel file with analytics data</response>
-    /// <response code="401">Unauthorized - authentication required</response>
-    /// <response code="403">Forbidden - HQ role required</response>
-    /// <response code="500">Internal server error</response>
     [HttpPost("export")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> ExportToExcel(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -130,15 +103,8 @@ public class AnalyticsController : ControllerBase
     /// <summary>
     /// Generate AI-powered narrative summary of KPI data using Azure OpenAI
     /// </summary>
-    /// <param name="startDate">Start date for analytics period (defaults to 1 month ago)</param>
-    /// <param name="endDate">End date for analytics period (defaults to now)</param>
-    /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>AI-generated narrative explaining KPI trends and insights</returns>
-    /// <response code="200">Returns AI narrative response</response>
-    /// <response code="401">Unauthorized - authentication required</response>
-    /// <response code="403">Forbidden - HQ role required</response>
-    /// <response code="500">Internal server error</response>
     [HttpPost("narrative")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> GenerateNarrative(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -150,7 +116,7 @@ public class AnalyticsController : ControllerBase
         var kpis = await _analyticsAgent.GetKPIsAsync(start, end, cancellationToken);
         var narrative = await _analyticsAgent.GenerateNarrativeAsync(kpis, cancellationToken);
 
-        return Ok(new Application.DTOs.Analytics.NarrativeResponse
+        return Ok(new NarrativeResponse
         {
             Narrative = narrative,
             GeneratedAt = DateTime.UtcNow
@@ -160,16 +126,8 @@ public class AnalyticsController : ControllerBase
     /// <summary>
     /// Get complete dashboard data including KPIs, state ROI, campaign breakdowns, and optional AI narrative
     /// </summary>
-    /// <param name="startDate">Start date for analytics period (defaults to 1 month ago)</param>
-    /// <param name="endDate">End date for analytics period (defaults to now)</param>
-    /// <param name="includeNarrative">Whether to include AI-generated narrative (default: false)</param>
-    /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>Comprehensive dashboard data with all analytics metrics</returns>
-    /// <response code="200">Returns complete dashboard data</response>
-    /// <response code="401">Unauthorized - authentication required</response>
-    /// <response code="403">Forbidden - HQ role required</response>
-    /// <response code="500">Internal server error</response>
     [HttpGet("dashboard")]
+    [Authorize(Roles = "HQ")]
     public async Task<IActionResult> GetDashboard(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null,
@@ -181,7 +139,6 @@ public class AnalyticsController : ControllerBase
             var start = startDate ?? DateTime.UtcNow.AddMonths(-1);
             var end = endDate ?? DateTime.UtcNow;
 
-            // Fetch all analytics data in parallel
             var kpisTask = _analyticsAgent.GetKPIsAsync(start, end, cancellationToken);
             var stateRoiTask = _analyticsAgent.GetStateROIAsync(start, end, cancellationToken);
             var campaignBreakdownTask = _analyticsAgent.GetCampaignBreakdownAsync(start, end, cancellationToken);
@@ -192,15 +149,13 @@ public class AnalyticsController : ControllerBase
             var stateRoi = await stateRoiTask;
             var campaignBreakdown = await campaignBreakdownTask;
 
-            // Optionally generate AI narrative
             string? narrative = null;
             if (includeNarrative)
             {
                 narrative = await _analyticsAgent.GenerateNarrativeAsync(kpis, cancellationToken);
             }
 
-            // Map domain models to DTOs
-            var response = new Application.DTOs.Analytics.DashboardDataResponse
+            var response = new DashboardDataResponse
             {
                 Kpis = MapKpisToDtos(kpis),
                 StateRoi = MapStateRoiToDtos(stateRoi),
@@ -224,9 +179,52 @@ public class AnalyticsController : ControllerBase
         }
     }
 
-    private static List<Application.DTOs.Analytics.KpiMetricDto> MapKpisToDtos(KPIDashboard kpis)
+    /// <summary>
+    /// Get quarterly FAP (Final Approved Payment) KPI data
+    /// </summary>
+    [HttpGet("quarterly-fap")]
+    [Authorize(Roles = "ASM,HQ")]
+    public async Task<IActionResult> GetQuarterlyFapKpis(
+        [FromQuery] string quarter = "current",
+        [FromQuery] int? year = null,
+        CancellationToken cancellationToken = default)
     {
-        return new List<Application.DTOs.Analytics.KpiMetricDto>
+        try
+        {
+            var currentYear = DateTime.UtcNow.Year;
+            var resolvedYear = year ?? currentYear;
+
+            if (string.Equals(quarter, "current", StringComparison.OrdinalIgnoreCase))
+            {
+                quarter = $"Q{(DateTime.UtcNow.Month - 1) / 3 + 1}";
+            }
+
+            var validQuarters = new[] { "Q1", "Q2", "Q3", "Q4", "All" };
+            if (!validQuarters.Contains(quarter, StringComparer.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { error = "Invalid quarter. Use Q1, Q2, Q3, Q4, or All." });
+            }
+
+            if (resolvedYear < 2000 || resolvedYear > currentYear + 1)
+            {
+                return BadRequest(new { error = "Invalid year." });
+            }
+
+            quarter = quarter.ToUpperInvariant() == "ALL" ? "All" : quarter.ToUpperInvariant();
+
+            var result = await _analyticsAgent.GetQuarterlyFapKpisAsync(quarter, resolvedYear, cancellationToken);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving quarterly FAP KPIs");
+            return StatusCode(500, new { error = "An error occurred while retrieving quarterly KPIs" });
+        }
+    }
+
+    private static List<KpiMetricDto> MapKpisToDtos(KPIDashboard kpis)
+    {
+        return new List<KpiMetricDto>
         {
             new() { Name = "Total Submissions", Value = kpis.TotalSubmissions, Unit = "count", Change = null, Trend = null },
             new() { Name = "Approved Count", Value = kpis.ApprovedCount, Unit = "count", Change = null, Trend = null },
@@ -240,30 +238,30 @@ public class AnalyticsController : ControllerBase
         };
     }
 
-    private static List<Application.DTOs.Analytics.StateRoiDto> MapStateRoiToDtos(List<StateROI> stateRoi)
+    private static List<StateRoiDto> MapStateRoiToDtos(List<StateROI> stateRoi)
     {
-        return stateRoi.Select(s => new Application.DTOs.Analytics.StateRoiDto
+        return stateRoi.Select(s => new StateRoiDto
         {
             State = s.State,
             SubmissionCount = s.SubmissionCount,
-            ApprovedAmount = (decimal)s.ROI * 1000, // Placeholder calculation
+            ApprovedAmount = (decimal)s.ROI * 1000,
             ApprovalRate = (decimal)s.ApprovalRate,
-            AvgProcessingTime = 0, // Not available in source data
+            AvgProcessingTime = 0,
             Roi = (decimal)s.ROI
         }).ToList();
     }
 
-    private static List<Application.DTOs.Analytics.CampaignBreakdownDto> MapCampaignBreakdownToDtos(List<CampaignBreakdown> campaigns)
+    private static List<CampaignBreakdownDto> MapCampaignBreakdownToDtos(List<CampaignBreakdown> campaigns)
     {
-        return campaigns.Select(c => new Application.DTOs.Analytics.CampaignBreakdownDto
+        return campaigns.Select(c => new CampaignBreakdownDto
         {
             CampaignName = c.Campaign,
             SubmissionCount = c.SubmissionCount,
             ApprovedCount = c.ApprovedCount,
-            RejectedCount = c.SubmissionCount - c.ApprovedCount, // Calculated
-            PendingCount = 0, // Not available in source data
+            RejectedCount = c.SubmissionCount - c.ApprovedCount,
+            PendingCount = 0,
             ApprovalRate = (decimal)c.ApprovalRate,
-            TotalAmount = 0 // Not available in source data
+            TotalAmount = 0
         }).ToList();
     }
 }

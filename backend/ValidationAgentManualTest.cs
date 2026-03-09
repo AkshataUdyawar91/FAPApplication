@@ -126,13 +126,13 @@ public class ValidationAgentManualTest
         // Test 12: Activity days vs Cost Summary days
         var activity = new ActivityData
         {
-            LocationActivities = new List<LocationActivity>
+            Rows = new List<ActivityRow>
             {
-                new LocationActivity { LocationName = "Mumbai", NumberOfDays = 5 },
-                new LocationActivity { LocationName = "Pune", NumberOfDays = 3 }
+                new ActivityRow { LocationName = "Mumbai", NumberOfDays = 5 },
+                new ActivityRow { LocationName = "Pune", NumberOfDays = 3 }
             }
         };
-        var activityTotalDays = activity.LocationActivities.Sum(la => la.NumberOfDays);
+        var activityTotalDays = activity.Rows.Sum(r => r.NumberOfDays);
         
         var costSummary = new CostSummaryData
         {
@@ -153,13 +153,13 @@ public class ValidationAgentManualTest
         var photoCount = 8;
         var activity = new ActivityData
         {
-            LocationActivities = new List<LocationActivity>
+            Rows = new List<ActivityRow>
             {
-                new LocationActivity { LocationName = "Mumbai", NumberOfDays = 5 },
-                new LocationActivity { LocationName = "Pune", NumberOfDays = 3 }
+                new ActivityRow { LocationName = "Mumbai", NumberOfDays = 5 },
+                new ActivityRow { LocationName = "Pune", NumberOfDays = 3 }
             }
         };
-        var manDays = activity.LocationActivities.Sum(la => la.NumberOfDays);
+        var manDays = activity.Rows.Sum(r => r.NumberOfDays);
         
         var photoCountValid = photoCount >= manDays;
         Console.WriteLine($"✓ Requirement 13: Photo count vs Man-days - {(photoCountValid ? "VALID" : "INVALID")} (Photos: {photoCount}, Man-days: {manDays})");

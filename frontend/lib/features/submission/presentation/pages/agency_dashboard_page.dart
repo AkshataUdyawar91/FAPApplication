@@ -4,9 +4,11 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 
 import '../../../../core/responsive/responsive.dart';
-
-
-class AgencyDashboardPage extends StatefulWidget {
+import '../../../../core/widgets/app_sidebar.dart';
+import '../../../../core/widgets/app_drawer.dart';
+import '../../../../core/widgets/chat_side_panel.dart';
+import '../../../../core/widgets/chat_end_drawer.dart';
+import '../../../../core/widgets/nav_item.dart';class AgencyDashboardPage extends StatefulWidget {
   final String token;
   final String userName;
 
@@ -23,14 +25,12 @@ class AgencyDashboardPage extends StatefulWidget {
 class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
   final _searchController = TextEditingController();
-  final _chatController = TextEditingController();
 
   String _statusFilter = 'all';
   List<Map<String, dynamic>> _requests = [];
   bool _isLoading = true;
-  bool _isChatOpen = true;
-  List<Map<String, dynamic>> _chatMessages = [];
-  bool _isSendingMessage = false;
+  bool _isChatOpen = false;
+  bool _isSidebarCollapsed = true;
 
   @override
   void initState() {
@@ -41,7 +41,6 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   @override
   void dispose() {
     _searchController.dispose();
-    _chatController.dispose();
     super.dispose();
   }
 
@@ -124,7 +123,6 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         final width = constraints.maxWidth;
         final device = getDeviceType(width);
         final isMobile = device == DeviceType.mobile;
-        final isTablet = device == DeviceType.tablet;
 
         return Scaffold(
           appBar: isMobile
@@ -137,26 +135,49 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   ],
                 )
               : null,
-          drawer: isMobile ? _buildDrawer() : null,
-          body: Row(
+          drawer: isMobile ? AppDrawer(
+            userName: widget.userName,
+            userRole: 'Agency',
+            navItems: _getNavItems(context),
+            onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+          ) : null,
+          body: Column(
             children: [
-              if (!isMobile) _buildSidebar(isTablet),
+              if (!isMobile) _buildTopBar(),
               Expanded(
-                child: Column(
+                child: Row(
                   children: [
-                    if (!isMobile) _buildHeader(device),
+                    if (!isMobile) AppSidebar(
+                      userName: widget.userName,
+                      userRole: 'Agency',
+                      navItems: _getNavItems(context),
+                      onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                      isCollapsed: _isSidebarCollapsed,
+                      onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                    ),
                     Expanded(
-                      child: _isLoading
-                          ? const Center(child: CircularProgressIndicator())
-                          : _buildContent(device),
+                      child: Column(
+                        children: [
+                          if (!isMobile) _buildHeader(device),
+                          Expanded(
+                            child: _isLoading
+                                ? const Center(child: CircularProgressIndicator())
+                                : _buildContent(device),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_isChatOpen && !isMobile) ChatSidePanel(
+                      token: widget.token,
+                      deviceType: device,
+                      onClose: () => setState(() => _isChatOpen = false),
                     ),
                   ],
                 ),
               ),
-              if (_isChatOpen && !isMobile) _buildChatPanel(device),
             ],
           ),
-          endDrawer: isMobile ? _buildChatDrawer() : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
           floatingActionButton: (_isChatOpen && !isMobile) ? null : Builder(
             builder: (scaffoldContext) => Padding(
               padding: const EdgeInsets.only(bottom: 16, right: 4),
@@ -189,194 +210,40 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     });
   }
 
-  // ─── DRAWER (mobile) ─────────────────────────────────────────────────
-  Widget _buildDrawer() {
-    return Drawer(
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF1E3A8A), Color(0xFF1E40AF)],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                      child: const Icon(Icons.business, color: Colors.white, size: 24),
-                    ),
-                    const SizedBox(width: 12),
-                    const Text('Bajaj', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                  ],
-                ),
-              ),
-              Divider(height: 1, color: Colors.white.withOpacity(0.2)),
-              _buildNavItem(Icons.dashboard, 'Dashboard', true, () => Navigator.pop(context)),
-              _buildNavItem(Icons.upload_file, 'Upload', false, () { Navigator.pop(context); _navigateToUpload(); }),
-              _buildNavItem(Icons.notifications, 'Notifications', false, () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-              }),
-              _buildNavItem(Icons.settings, 'Settings', false, () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-              }),
-              const Spacer(),
-              _buildUserInfo(),
-              _buildLogoutButton(),
-            ],
-          ),
-        ),
-      ),
-    );
+  List<NavItem> _getNavItems(BuildContext context) {
+    return [
+      NavItem(icon: Icons.dashboard, label: 'Dashboard', isActive: true, onTap: () {}),
+      NavItem(icon: Icons.upload_file, label: 'Upload', onTap: _navigateToUpload),
+      NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
+      }),
+      NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
+      }),
+    ];
   }
 
-  // ─── SIDEBAR (tablet/desktop) ─────────────────────────────────────────
-  Widget _buildSidebar(bool collapsed) {
-    final sidebarWidth = collapsed ? 72.0 : 250.0;
+  /// Full-width top bar with Bajaj branding — spans sidebar + content.
+  Widget _buildTopBar() {
     return Container(
-      width: sidebarWidth,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF1E3A8A), Color(0xFF1E40AF)],
-        ),
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.all(collapsed ? 16 : 24),
-            child: collapsed
-                ? Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                    child: const Icon(Icons.business, color: Colors.white, size: 24),
-                  )
-                : Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                        child: const Icon(Icons.business, color: Colors.white, size: 24),
-                      ),
-                      const SizedBox(width: 12),
-                      const Text('Bajaj', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                    ],
-                  ),
-          ),
-          Divider(height: 1, color: Colors.white.withOpacity(0.2)),
-          if (collapsed) ...[
-            _buildCollapsedNavItem(Icons.dashboard, 'Dashboard', true, () {}),
-            _buildCollapsedNavItem(Icons.upload_file, 'Upload', false, _navigateToUpload),
-            _buildCollapsedNavItem(Icons.notifications, 'Notifications', false, () {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-            }),
-            _buildCollapsedNavItem(Icons.settings, 'Settings', false, () {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-            }),
-          ] else ...[
-            _buildNavItem(Icons.dashboard, 'Dashboard', true, () {}),
-            _buildNavItem(Icons.upload_file, 'Upload', false, _navigateToUpload),
-            _buildNavItem(Icons.notifications, 'Notifications', false, () {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-            }),
-            _buildNavItem(Icons.settings, 'Settings', false, () {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-            }),
-          ],
-          const Spacer(),
-          if (!collapsed) _buildUserInfo(),
-          _buildLogoutButton(collapsed: collapsed),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNavItem(IconData icon, String label, bool isActive, VoidCallback onTap) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: isActive ? Colors.white.withOpacity(0.2) : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: ListTile(
-        leading: Icon(icon, color: Colors.white, size: 20),
-        title: Text(label, style: TextStyle(fontSize: 14, color: Colors.white, fontWeight: isActive ? FontWeight.w600 : FontWeight.normal)),
-        dense: true,
-        onTap: onTap,
-      ),
-    );
-  }
-
-  Widget _buildCollapsedNavItem(IconData icon, String tooltip, bool isActive, VoidCallback onTap) {
-    return Tooltip(
-      message: tooltip,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: isActive ? Colors.white.withOpacity(0.2) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: IconButton(icon: Icon(icon, color: Colors.white, size: 20), onPressed: onTap),
-      ),
-    );
-  }
-
-  Widget _buildUserInfo() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: const Color(0xFF003087),
       child: Row(
         children: [
-          CircleAvatar(
-            backgroundColor: Colors.white,
-            radius: 16,
-            child: Text(widget.userName[0].toUpperCase(), style: const TextStyle(color: Color(0xFF1E3A8A), fontWeight: FontWeight.bold, fontSize: 14)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white), overflow: TextOverflow.ellipsis),
-                Text('Agency', style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.7))),
-              ],
+          const Icon(Icons.business, color: Colors.white, size: 22),
+          const SizedBox(width: 8),
+          const Text(
+            'Bajaj',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              letterSpacing: 0.5,
             ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildLogoutButton({bool collapsed = false}) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: collapsed
-          ? Tooltip(
-              message: 'Logout',
-              child: IconButton(
-                onPressed: () => Navigator.pushReplacementNamed(context, '/'),
-                icon: const Icon(Icons.logout, size: 18, color: Colors.white),
-              ),
-            )
-          : OutlinedButton.icon(
-              onPressed: () => Navigator.pushReplacementNamed(context, '/'),
-              icon: const Icon(Icons.logout, size: 18),
-              label: const Text('Logout'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
-                side: BorderSide(color: Colors.white.withOpacity(0.5)),
-              ),
-            ),
     );
   }
 
@@ -446,64 +313,62 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Widget _buildStatsCards(DeviceType device) {
     final stats = _stats;
     final cards = [
-      _StatData('Pending Requests', stats['pending']!.toString(), Icons.schedule, const Color(0xFF3B82F6)),
-      _StatData('Approved This Month', stats['approved']!.toString(), Icons.check_circle, const Color(0xFF10B981)),
-      _StatData('Total Reimbursed', '₹${_calculateTotalAmount()}', Icons.account_balance_wallet, const Color(0xFF8B5CF6)),
-      _StatData('Drafts', stats['rejected']!.toString(), Icons.drafts, const Color(0xFFF59E0B)),
+      _StatData('Pending Requests', stats['pending']!.toString(), Icons.schedule, const Color(0xFF3B82F6), 'pending'),
+      _StatData('Approved This Month', stats['approved']!.toString(), Icons.check_circle, const Color(0xFF10B981), 'approved'),
     ];
 
     // Use LayoutBuilder so cards respond to actual available width, not screen width
     return LayoutBuilder(
       builder: (context, constraints) {
         final w = constraints.maxWidth;
-        // 4-col when wide enough, 2-col otherwise
+        // Wide layout: single row
         if (w >= 600) {
           return Row(
             children: cards.map((c) => Expanded(
               child: Padding(
                 padding: EdgeInsets.only(right: c == cards.last ? 0 : 12),
-                child: _buildStatCard(c.label, c.value, c.icon, c.color, w / 4),
+                child: _buildStatCard(c.label, c.value, c.icon, c.color, w / 4, filterKey: c.filterKey),
               ),
             )).toList(),
           );
         }
-        return Column(
+        // Mobile: single row with 2 cards
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: _buildStatCard(cards[0].label, cards[0].value, cards[0].icon, cards[0].color, w / 2)),
-                const SizedBox(width: 12),
-                Expanded(child: _buildStatCard(cards[1].label, cards[1].value, cards[1].icon, cards[1].color, w / 2)),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: _buildStatCard(cards[2].label, cards[2].value, cards[2].icon, cards[2].color, w / 2)),
-                const SizedBox(width: 12),
-                Expanded(child: _buildStatCard(cards[3].label, cards[3].value, cards[3].icon, cards[3].color, w / 2)),
-              ],
-            ),
+            Expanded(child: _buildStatCard(cards[0].label, cards[0].value, cards[0].icon, cards[0].color, w / 2, filterKey: cards[0].filterKey)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildStatCard(cards[1].label, cards[1].value, cards[1].icon, cards[1].color, w / 2, filterKey: cards[1].filterKey)),
           ],
         );
       },
     );
   }
 
-  Widget _buildStatCard(String label, String value, IconData icon, Color color, double cardWidth) {
+  Widget _buildStatCard(String label, String value, IconData icon, Color color, double cardWidth, {String? filterKey}) {
     // Use column layout when card is too narrow for side-by-side icon+text
     final useColumn = cardWidth < 200;
+    final isActive = filterKey != null && _statusFilter == filterKey;
     
     // Determine font size based on card width for better responsiveness
     final valueFontSize = useColumn 
         ? (cardWidth < 150 ? 18.0 : 20.0)
         : (cardWidth < 250 ? 20.0 : 22.0);
     
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+    return InkWell(
+      onTap: filterKey == null ? null : () {
+        setState(() {
+          // Toggle: tap again to reset to 'all'
+          _statusFilter = _statusFilter == filterKey ? 'all' : filterKey;
+        });
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Card(
+      elevation: isActive ? 2 : 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: isActive ? color : AppColors.border, width: isActive ? 2 : 1),
+      ),
       child: Padding(
         padding: EdgeInsets.all(useColumn ? 14 : 20),
         child: useColumn
@@ -581,6 +446,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   ),
                 ],
               ),
+      ),
       ),
     );
   }
@@ -693,11 +559,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                 columns: const [
                   DataColumn(label: Text('FAP NUMBER')),
                   DataColumn(label: Text('PO NO.')),
-                  DataColumn(label: Text('PO AMT')),
                   DataColumn(label: Text('INVOICE NO.')),
                   DataColumn(label: Text('INVOICE AMT')),
                   DataColumn(label: Text('SUBMITTED DATE')),
-                  DataColumn(label: Text('AI SCORE')),
                   DataColumn(label: Text('STATUS')),
                   DataColumn(label: SizedBox.shrink()),
                 ],
@@ -708,28 +572,17 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   final fapNumber = 'FAP-${id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase()}';
                   final poNumber = r['poNumber']?.toString() ?? r['poNo']?.toString() ?? '—';
                   final invoiceNumber = r['invoiceNumber']?.toString() ?? r['invoiceNo']?.toString() ?? '—';
-                  final poAmount = r['poAmount'];
                   final invoiceAmount = r['invoiceAmount'];
-                  final poAmountStr = poAmount != null
-                      ? '₹${double.tryParse(poAmount.toString())?.toStringAsFixed(2) ?? '—'}'
-                      : '—';
                   final invoiceAmountStr = invoiceAmount != null
                       ? '₹${double.tryParse(invoiceAmount.toString())?.toStringAsFixed(2) ?? '—'}'
-                      : '—';
-                  final overallConfidence = r['overallConfidence'];
-                  final aiScore = overallConfidence != null
-                      ? '${(overallConfidence * 100).toStringAsFixed(0)}%'
                       : '—';
                   return DataRow(cells: [
                     DataCell(Text(fapNumber,
                         style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Color(0xFF111827)))),
                     DataCell(Text(poNumber, style: const TextStyle(fontSize: 12))),
-                    DataCell(Text(poAmountStr, style: const TextStyle(fontSize: 12))),
                     DataCell(Text(invoiceNumber, style: const TextStyle(fontSize: 12))),
                     DataCell(Text(invoiceAmountStr, style: const TextStyle(fontSize: 12))),
                     DataCell(Text(_formatDate(r['createdAt']), style: const TextStyle(fontSize: 12))),
-                    DataCell(Text(aiScore,
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500))),
                     DataCell(_buildStatusBadge(status, rawState)),
                     DataCell(
                          SizedBox(
@@ -793,170 +646,6 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     );
   }
 
-  // ─── CHAT PANEL ───────────────────────────────────────────────────────
-  Widget _buildChatPanel(DeviceType device) {
-    final panelWidth = device == DeviceType.tablet ? 300.0 : 380.0;
-    return Container(
-      width: panelWidth,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: const Border(left: BorderSide(color: AppColors.border)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(-2, 0))],
-      ),
-      child: _buildChatContent(showClose: true),
-    );
-  }
-
-  Widget _buildChatDrawer() {
-    return Drawer(
-      width: MediaQuery.of(context).size.width * 0.85,
-      child: SafeArea(child: _buildChatContent(showClose: false)),
-    );
-  }
-
-  Widget _buildChatContent({bool showClose = false}) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: const BoxDecoration(
-            color: AppColors.primary,
-            border: Border(bottom: BorderSide(color: AppColors.border)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.smart_toy, color: Colors.white, size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('AI Assistant', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                    Text('Ask me anything about your submissions', style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.8))),
-                  ],
-                ),
-              ),
-              if (showClose)
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white, size: 20),
-                  onPressed: () => setState(() => _isChatOpen = false),
-                  tooltip: 'Close',
-                ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: _chatMessages.isEmpty
-              ? _buildChatEmptyState()
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _chatMessages.length,
-                  itemBuilder: (context, index) {
-                    final msg = _chatMessages[index];
-                    return _buildChatMessage(msg['text'] as String, msg['isUser'] as bool);
-                  },
-                ),
-        ),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: AppColors.border))),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _chatController,
-                  decoration: InputDecoration(
-                    hintText: 'Type your message...',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  ),
-                  onSubmitted: (_) => _sendMessage(),
-                  enabled: !_isSendingMessage,
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                onPressed: _isSendingMessage ? null : _sendMessage,
-                icon: _isSendingMessage
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.send),
-                style: IconButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildChatEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.chat_bubble_outline, size: 56, color: AppColors.textTertiary),
-            const SizedBox(height: 16),
-            Text('Start a conversation', style: AppTextStyles.h4.copyWith(color: AppColors.textSecondary)),
-            const SizedBox(height: 8),
-            Text('Ask about your submissions, status updates, or any questions',
-                style: AppTextStyles.bodySmall.copyWith(color: AppColors.textTertiary), textAlign: TextAlign.center),
-            const SizedBox(height: 24),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                _buildSuggestedQuestion('What is my latest submission status?'),
-                _buildSuggestedQuestion('How many pending requests do I have?'),
-                _buildSuggestedQuestion('Show me approved submissions'),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSuggestedQuestion(String question) {
-    return InkWell(
-      onTap: () {
-        _chatController.text = question;
-        _sendMessage();
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.primary.withOpacity(0.3)),
-        ),
-        child: Text(question, style: AppTextStyles.bodySmall.copyWith(color: AppColors.primary)),
-      ),
-    );
-  }
-
-  Widget _buildChatMessage(String text, bool isUser) {
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(12),
-        constraints: const BoxConstraints(maxWidth: 280),
-        decoration: BoxDecoration(
-          color: isUser ? AppColors.primary : AppColors.background,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(text, style: AppTextStyles.bodyMedium.copyWith(color: isUser ? Colors.white : AppColors.textPrimary)),
-      ),
-    );
-  }
-
   // ─── HELPERS ──────────────────────────────────────────────────────────
 
   /// Granular status badge used in the DataTable — shows exact backend state label
@@ -974,7 +663,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       case 'rejectedbyasm':
         bgColor = const Color(0xFFFEE2E2); textColor = const Color(0xFF991B1B); label = 'Rejected by ASM'; break;
       case 'rejectedbyhq':
-        bgColor = const Color(0xFFFEE2E2); textColor = const Color(0xFF991B1B); label = 'Rejected by HQ'; break;
+        bgColor = const Color(0xFFFEE2E2); textColor = const Color(0xFF991B1B); label = 'Rejected by HQ/RA'; break;
       case 'validated':
       case 'recommending':
       case 'pendingapproval':
@@ -985,7 +674,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       case 'pendingasmapproval':
         bgColor = const Color(0xFFDBEAFE); textColor = const Color(0xFF1E40AF); label = 'Pending ASM Approval'; break;
       case 'pendinghqapproval':
-        bgColor = const Color(0xFFFEF3C7); textColor = const Color(0xFF92400E); label = 'Pending HQ Approval'; break;
+        bgColor = const Color(0xFFFEF3C7); textColor = const Color(0xFF92400E); label = 'Pending HQ/RA Approval'; break;
       case 'reuploadrequested':
         bgColor = const Color(0xFFFEE2E2); textColor = const Color(0xFF991B1B); label = 'Re-upload Requested'; break;
       case 'onhold':
@@ -1014,9 +703,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       case 'approved': return 'Approved';
       case 'rejected': return 'Rejected';
       case 'rejected_by_asm': return 'Rejected by ASM';
-      case 'rejected_by_hq': return 'Rejected by HQ';
+      case 'rejected_by_hq': return 'Rejected by HQ/RA';
       case 'pending_asm': return 'Pending ASM Approval';
-      case 'pending_hq': return 'Pending HQ Approval';
+      case 'pending_hq': return 'Pending HQ/RA Approval';
       case 'under_review': return 'Under Review';
       default: return 'Pending';
     }
@@ -1123,7 +812,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                 ),
               ],
               
-              // Show HQ rejection notes if rejected by HQ
+              // Show HQ/RA rejection notes if rejected by HQ/RA
               if (status == 'rejected_by_hq' && hqReviewNotes != null && hqReviewNotes.toString().isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Container(
@@ -1141,7 +830,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                           const Icon(Icons.cancel, color: Color(0xFFDC2626), size: 20),
                           const SizedBox(width: 8),
                           Text(
-                            'Rejected by HQ',
+                            'Rejected by HQ/RA',
                             style: AppTextStyles.bodyMedium.copyWith(
                               fontWeight: FontWeight.bold,
                               color: const Color(0xFFB91C1C),
@@ -1266,43 +955,6 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     );
   }
 
-  Future<void> _sendMessage() async {
-    if (_chatController.text.trim().isEmpty) return;
-    final userMessage = _chatController.text.trim();
-    _chatController.clear();
-    setState(() {
-      _chatMessages.add({'text': userMessage, 'isUser': true});
-      _isSendingMessage = true;
-    });
-    try {
-      final response = await _dio.post('/chat/message', data: {'message': userMessage},
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
-      if (response.statusCode == 200 && mounted) {
-        setState(() => _chatMessages.add({'text': response.data['response'] ?? 'I received your message.', 'isUser': false}));
-      }
-    } catch (e) {
-      await Future.delayed(const Duration(seconds: 1));
-      if (mounted) {
-        setState(() => _chatMessages.add({'text': _getMockResponse(userMessage), 'isUser': false}));
-      }
-    } finally {
-      if (mounted) setState(() => _isSendingMessage = false);
-    }
-  }
-
-  String _getMockResponse(String message) {
-    final lower = message.toLowerCase();
-    if (lower.contains('status') || lower.contains('latest')) {
-      return 'You have ${_requests.length} total submissions. ${_stats['pending']} are pending review.';
-    } else if (lower.contains('pending')) {
-      return 'You currently have ${_stats['pending']} pending requests waiting for review.';
-    } else if (lower.contains('approved')) {
-      return 'You have ${_stats['approved']} approved submissions this month.';
-    } else if (lower.contains('help')) {
-      return 'I can help you with:\n• Check submission status\n• View pending requests\n• Get approval statistics\n• Answer questions about your submissions';
-    }
-    return 'I understand your question. The AI chat service will be available once Azure OpenAI is configured.';
-  }
 }
 
 // ─── DATA CLASS ───────────────────────────────────────────────────────
@@ -1311,5 +963,6 @@ class _StatData {
   final String value;
   final IconData icon;
   final Color color;
-  const _StatData(this.label, this.value, this.icon, this.color);
+  final String filterKey;
+  const _StatData(this.label, this.value, this.icon, this.color, this.filterKey);
 }

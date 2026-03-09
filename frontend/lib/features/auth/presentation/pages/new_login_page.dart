@@ -59,7 +59,7 @@ class _NewLoginPageState extends State<NewLoginPage> {
       case UserRole.asm:
         return 'ASM';
       case UserRole.hq:
-        return 'HQ';
+        return 'HQ/RA';
     }
   }
 
@@ -213,7 +213,7 @@ class _NewLoginPageState extends State<NewLoginPage> {
                           children: [
                             _buildTab(UserRole.agency, 'Agency', Icons.business),
                             _buildTab(UserRole.asm, 'ASM', Icons.admin_panel_settings),
-                            _buildTab(UserRole.hq, 'HQ', Icons.corporate_fare),
+                            _buildTab(UserRole.hq, 'HQ/RA', Icons.corporate_fare),
                           ],
                         ),
                       ),
