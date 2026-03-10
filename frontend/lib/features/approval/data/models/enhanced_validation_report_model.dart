@@ -168,22 +168,43 @@ class ValidationDetailModel extends Equatable {
 
 /// Confidence breakdown model
 class ConfidenceBreakdownModel extends Equatable {
-  final List<DocumentConfidenceModel> documents;
+  final double overallConfidence;
+  final DocumentConfidenceModel poConfidence;
+  final DocumentConfidenceModel invoiceConfidence;
+  final DocumentConfidenceModel costSummaryConfidence;
+  final DocumentConfidenceModel activityConfidence;
+  final DocumentConfidenceModel photosConfidence;
 
   const ConfidenceBreakdownModel({
-    required this.documents,
+    required this.overallConfidence,
+    required this.poConfidence,
+    required this.invoiceConfidence,
+    required this.costSummaryConfidence,
+    required this.activityConfidence,
+    required this.photosConfidence,
   });
+
+  List<DocumentConfidenceModel> get documents => [
+    poConfidence,
+    invoiceConfidence,
+    costSummaryConfidence,
+    activityConfidence,
+    photosConfidence,
+  ];
 
   factory ConfidenceBreakdownModel.fromJson(Map<String, dynamic> json) {
     return ConfidenceBreakdownModel(
-      documents: (json['documents'] as List)
-          .map((d) => DocumentConfidenceModel.fromJson(d))
-          .toList(),
+      overallConfidence: (json['overallConfidence'] ?? 0).toDouble(),
+      poConfidence: DocumentConfidenceModel.fromJson(json['poConfidence'] ?? {}, 'PO'),
+      invoiceConfidence: DocumentConfidenceModel.fromJson(json['invoiceConfidence'] ?? {}, 'Invoice'),
+      costSummaryConfidence: DocumentConfidenceModel.fromJson(json['costSummaryConfidence'] ?? {}, 'Cost Summary'),
+      activityConfidence: DocumentConfidenceModel.fromJson(json['activityConfidence'] ?? {}, 'Activity'),
+      photosConfidence: DocumentConfidenceModel.fromJson(json['photosConfidence'] ?? {}, 'Photos'),
     );
   }
 
   @override
-  List<Object?> get props => [documents];
+  List<Object?> get props => [overallConfidence, poConfidence, invoiceConfidence, costSummaryConfidence, activityConfidence, photosConfidence];
 }
 
 /// Document confidence model
@@ -192,20 +213,34 @@ class DocumentConfidenceModel extends Equatable {
   final double confidence;
   final double weight;
   final double weightedScore;
+  final int passedChecks;
+  final int totalChecks;
+  final List<String> passedValidations;
+  final List<String> failedValidations;
 
   const DocumentConfidenceModel({
     required this.documentType,
     required this.confidence,
     required this.weight,
     required this.weightedScore,
+    this.passedChecks = 0,
+    this.totalChecks = 0,
+    this.passedValidations = const [],
+    this.failedValidations = const [],
   });
 
-  factory DocumentConfidenceModel.fromJson(Map<String, dynamic> json) {
+  factory DocumentConfidenceModel.fromJson(Map<String, dynamic> json, [String type = '']) {
+    final score = (json['score'] ?? json['confidence'] ?? 0).toDouble();
+    final weight = (json['weight'] ?? 0).toDouble();
     return DocumentConfidenceModel(
-      documentType: json['documentType'] ?? '',
-      confidence: (json['confidence'] ?? 0).toDouble(),
-      weight: (json['weight'] ?? 0).toDouble(),
-      weightedScore: (json['weightedScore'] ?? 0).toDouble(),
+      documentType: type,
+      confidence: score,
+      weight: weight,
+      weightedScore: score * weight,
+      passedChecks: json['passedChecks'] ?? 0,
+      totalChecks: json['totalChecks'] ?? 0,
+      passedValidations: (json['passedValidations'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      failedValidations: (json['failedValidations'] as List?)?.map((e) => e.toString()).toList() ?? [],
     );
   }
 
@@ -226,6 +261,8 @@ class EnhancedRecommendationModel extends Equatable {
   final List<IssueModel> highPriorityIssues;
   final List<IssueModel> mediumPriorityIssues;
   final String riskAssessment;
+  final String recommendedAction;
+  final List<String> passedValidations;
 
   const EnhancedRecommendationModel({
     required this.action,
@@ -234,12 +271,14 @@ class EnhancedRecommendationModel extends Equatable {
     required this.highPriorityIssues,
     required this.mediumPriorityIssues,
     required this.riskAssessment,
+    this.recommendedAction = '',
+    this.passedValidations = const [],
   });
 
   factory EnhancedRecommendationModel.fromJson(Map<String, dynamic> json) {
     return EnhancedRecommendationModel(
-      action: json['action'] ?? '',
-      reasoning: json['reasoning'] ?? '',
+      action: json['type'] ?? json['action'] ?? '',
+      reasoning: json['summary'] ?? json['reasoning'] ?? '',
       criticalIssues: (json['criticalIssues'] as List? ?? [])
           .map((i) => IssueModel.fromJson(i))
           .toList(),
@@ -250,6 +289,10 @@ class EnhancedRecommendationModel extends Equatable {
           .map((i) => IssueModel.fromJson(i))
           .toList(),
       riskAssessment: json['riskAssessment'] ?? '',
+      recommendedAction: json['recommendedAction'] ?? '',
+      passedValidations: (json['passedValidations'] as List? ?? [])
+          .map((e) => e.toString())
+          .toList(),
     );
   }
 
@@ -269,18 +312,30 @@ class IssueModel extends Equatable {
   final String category;
   final String description;
   final String suggestedAction;
+  final String severity;
+  final String expectedValue;
+  final String actualValue;
+  final String impact;
 
   const IssueModel({
     required this.category,
     required this.description,
     required this.suggestedAction,
+    this.severity = '',
+    this.expectedValue = '',
+    this.actualValue = '',
+    this.impact = '',
   });
 
   factory IssueModel.fromJson(Map<String, dynamic> json) {
     return IssueModel(
-      category: json['category'] ?? '',
+      category: json['title'] ?? json['category'] ?? '',
       description: json['description'] ?? '',
-      suggestedAction: json['suggestedAction'] ?? '',
+      suggestedAction: json['suggestedResolution'] ?? json['suggestedAction'] ?? '',
+      severity: json['severity'] ?? '',
+      expectedValue: json['expectedValue'] ?? '',
+      actualValue: json['actualValue'] ?? '',
+      impact: json['impact'] ?? '',
     );
   }
 

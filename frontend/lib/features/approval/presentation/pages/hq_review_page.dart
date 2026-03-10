@@ -574,6 +574,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                   child: ViewValidationReportButton(
                     packageId: doc['id'],
                     isCompact: false,
+                    token: widget.token,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -675,7 +676,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
       DataCell(Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          ViewValidationReportButton(packageId: doc['id'], isCompact: true),
+          ViewValidationReportButton(packageId: doc['id'], isCompact: true, token: widget.token),
           const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.visibility_outlined, size: 20),

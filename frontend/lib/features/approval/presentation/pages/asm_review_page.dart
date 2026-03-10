@@ -606,6 +606,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                     child: ViewValidationReportButton(
                       packageId: doc['id'],
                       isCompact: false,
+                      token: widget.token,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -708,7 +709,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
       DataCell(Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          ViewValidationReportButton(packageId: doc['id'], isCompact: true),
+          ViewValidationReportButton(packageId: doc['id'], isCompact: true, token: widget.token),
           const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.visibility_outlined, size: 20),

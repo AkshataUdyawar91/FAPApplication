@@ -113,17 +113,25 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   
   // ─── POLL FOR PO EXTRACTION ──────────────────────────────────────────
   Future<void> _pollForPOExtraction(String packageId, String documentId) async {
-    const maxAttempts = 15;
+    const maxAttempts = 25;
     const delayBetweenAttempts = Duration(seconds: 2);
+    
+    print('PO polling started: packageId=$packageId, documentId=$documentId');
     
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
       await Future.delayed(delayBetweenAttempts);
+      if (!mounted) {
+        print('PO polling stopped: widget disposed at attempt $attempt');
+        return;
+      }
       
       try {
         final response = await _dio.get(
           '/submissions/$packageId',
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
+        
+        if (!mounted) return;
         
         if (response.statusCode == 200 && response.data != null) {
           final documents = response.data['documents'] as List?;
@@ -132,6 +140,12 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
               (doc) => doc['type']?.toString().toLowerCase() == 'po',
               orElse: () => null,
             );
+            
+            if (poDoc == null) {
+              print('PO poll attempt $attempt: PO doc not found in ${documents.length} docs');
+            } else if (poDoc['extractedData'] == null) {
+              print('PO poll attempt $attempt: doc found but extractedData is null');
+            }
             
             if (poDoc != null) {
               // ExtractedData is returned as a JSON string, need to parse it
@@ -155,6 +169,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                   
                   // Accept data even if only some fields are present
                   if (poNumber != null || totalAmount != null || vendorName != null || date != null) {
+                    if (!mounted) return;
                     setState(() {
                       _poData = {
                         'poNumber': poNumber,
@@ -166,7 +181,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                     print('PO extraction successful: $_poData');
                     return; // Success - exit polling
                   } else {
-                    print('PO extraction: No meaningful data found in extractedData');
+                    print('PO extraction attempt $attempt: No meaningful data found in extractedData');
                   }
                 }
               }
@@ -921,6 +936,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           onCampaignsChanged: (campaigns) {
             setState(() => _campaigns = campaigns);
           },
+          token: widget.token,
+          packageId: _currentPackageId,
         );
         break;
       case 3:

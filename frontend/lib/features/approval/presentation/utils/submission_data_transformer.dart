@@ -49,8 +49,8 @@ class SubmissionDataTransformer {
 
   /// Transforms submission documents into invoice document rows.
   ///
-  /// Shows ALL non-Photo documents from the API response. Each document
-  /// gets its own row with actual filename, blobUrl, and validation info.
+  /// Shows only PO documents. Maps validation failure messages from
+  /// failureReason to each document type based on keywords.
   static List<InvoiceDocumentRow> transformToInvoiceDocuments(
     Map<String, dynamic> submission,
   ) {
@@ -65,20 +65,25 @@ class SubmissionDataTransformer {
 
     for (var doc in documents) {
       final type = doc['type']?.toString() ?? '';
-      // Skip Photo-type documents — those go in Campaign Details
-      if (type == 'Photo') continue;
+      // Only show PO in this table — Invoice, Photo, and campaign docs go in Campaign Details
+      if (type != 'PO') continue;
 
       final filename = doc['filename']?.toString() ?? '';
       final blobUrl = doc['blobUrl']?.toString() ?? '';
       final docId = doc['id']?.toString() ?? '';
-      final validationInfo = _getValidationInfo(type, failureReason, allPassed);
+      final remarks = buildRemarksFromFailureReason(type, failureReason, allPassed);
+      final status = allPassed
+          ? ValidationStatus.ok
+          : remarks.isNotEmpty
+              ? ValidationStatus.failed
+              : ValidationStatus.ok;
 
       rows.add(InvoiceDocumentRow(
         serialNumber: serialNumber,
         category: type,
         documentName: filename,
-        status: validationInfo.status,
-        remarks: validationInfo.remarks,
+        status: status,
+        remarks: remarks,
         blobUrl: blobUrl,
         documentId: docId,
       ));
@@ -106,22 +111,27 @@ class SubmissionDataTransformer {
 
     for (var doc in documents) {
       final type = doc['type']?.toString() ?? '';
-      if (type != 'Photo') continue;
+      // Campaign Details shows everything except PO (Invoice, Photo, CostSummary, Activity, etc.)
+      if (type == 'PO') continue;
 
       final filename = doc['filename']?.toString() ?? '';
       final blobUrl = doc['blobUrl']?.toString() ?? '';
       final docId = doc['id']?.toString() ?? '';
       final campaignDate = _formatCampaignDate(doc['extractedData']);
-      final validationInfo =
-          _getPhotoValidationInfo(failureReason, allPassed);
+      final remarks = buildRemarksFromFailureReason(type, failureReason, allPassed);
+      final status = allPassed
+          ? ValidationStatus.ok
+          : remarks.isNotEmpty
+              ? ValidationStatus.failed
+              : ValidationStatus.ok;
 
       rows.add(CampaignDetailRow(
         serialNumber: serialNumber,
-        dealerName: '',
+        dealerName: type,
         campaignDate: campaignDate,
         documentName: filename,
-        status: validationInfo.status,
-        remarks: validationInfo.remarks,
+        status: status,
+        remarks: remarks,
         blobUrl: blobUrl,
         documentId: docId,
         isFirstInGroup: serialNumber == 1,
@@ -177,57 +187,135 @@ class SubmissionDataTransformer {
     return _formatDate(dateValue);
   }
 
-  /// Gets validation info for a specific document type from the failureReason
-  /// string. Remarks are left empty — AI analysis is shown in the dedicated
-  /// collapsible AI Analysis section instead.
-  static _ValidationInfo _getValidationInfo(
+  /// Builds remarks for a document type by parsing the failureReason string.
+  /// Splits by ';' and maps each message to document types based on keywords.
+  static String buildRemarksFromFailureReason(
     String docType,
     String failureReason,
     bool allPassed,
   ) {
-    if (allPassed) {
-      return const _ValidationInfo(ValidationStatus.ok, '');
-    }
-    if (failureReason.isEmpty) {
-      return const _ValidationInfo(ValidationStatus.unknown, '');
+    if (allPassed || failureReason.isEmpty) return '';
+
+    final messages = failureReason.split(';').map((m) => m.trim()).where((m) => m.isNotEmpty).toList();
+    final matched = <String>[];
+
+    for (final msg in messages) {
+      final lower = msg.toLowerCase();
+      final types = _messageToDocTypes(lower);
+      if (types.contains(docType)) {
+        matched.add(msg);
+      }
     }
 
-    final lowerReason = failureReason.toLowerCase();
-    final lowerType = docType.toLowerCase();
-
-    if (lowerReason.contains(lowerType)) {
-      return const _ValidationInfo(ValidationStatus.failed, '');
-    }
-
-    return const _ValidationInfo(ValidationStatus.ok, '');
+    return matched.join('; ');
   }
 
-  /// Gets validation info for photo documents from the failureReason string.
-  /// Remarks are left empty — AI analysis is shown in the collapsible section.
-  static _ValidationInfo _getPhotoValidationInfo(
-    String failureReason,
-    bool allPassed,
-  ) {
-    if (allPassed) {
-      return const _ValidationInfo(ValidationStatus.ok, '');
-    }
-    if (failureReason.isEmpty) {
-      return const _ValidationInfo(ValidationStatus.unknown, '');
+  /// Maps a failure message (lowercase) to the document types it relates to.
+  static List<String> _messageToDocTypes(String lowerMsg) {
+    final types = <String>{};
+
+    // PO-related keywords
+    if (lowerMsg.contains('po line item') ||
+        lowerMsg.contains('po amount') ||
+        lowerMsg.contains('po number') ||
+        lowerMsg.contains('po date') ||
+        lowerMsg.contains('sap')) {
+      types.add('PO');
     }
 
-    final lowerReason = failureReason.toLowerCase();
-    if (lowerReason.contains('photo') || lowerReason.contains('image')) {
-      return const _ValidationInfo(ValidationStatus.failed, '');
+    // Invoice-related keywords
+    if (lowerMsg.contains('invoice') ||
+        lowerMsg.contains('gst') ||
+        lowerMsg.contains('hsn') ||
+        lowerMsg.contains('sac code') ||
+        lowerMsg.contains('vendor code') ||
+        lowerMsg.contains('vendor name') ||
+        lowerMsg.contains('billing')) {
+      types.add('Invoice');
     }
 
-    return const _ValidationInfo(ValidationStatus.ok, '');
+    // Messages about PO line items in Invoice affect both
+    if (lowerMsg.contains('po line item') && lowerMsg.contains('invoice')) {
+      types.add('PO');
+      types.add('Invoice');
+    }
+
+    // Invoice amount vs PO amount affects both
+    if (lowerMsg.contains('invoice amount') && lowerMsg.contains('po amount')) {
+      types.add('PO');
+      types.add('Invoice');
+    }
+
+    // Missing required fields with specific field names
+    if (lowerMsg.contains('missing required fields')) {
+      // Check for invoice-specific fields
+      if (lowerMsg.contains('vendor code') ||
+          lowerMsg.contains('po number') ||
+          lowerMsg.contains('invoice number') ||
+          lowerMsg.contains('gst') ||
+          lowerMsg.contains('hsn')) {
+        types.add('Invoice');
+      }
+      // Check for cost summary fields
+      if (lowerMsg.contains('element wise quantity') ||
+          lowerMsg.contains('number of activations') ||
+          lowerMsg.contains('number of days') ||
+          lowerMsg.contains('number of teams') ||
+          lowerMsg.contains('total cost') ||
+          lowerMsg.contains('campaign')) {
+        types.add('CostSummary');
+      }
+      // Check for activity fields
+      if (lowerMsg.contains('activity') ||
+          lowerMsg.contains('activation')) {
+        types.add('Activity');
+      }
+    }
+
+    // Photo-related keywords
+    if (lowerMsg.contains('photo') ||
+        lowerMsg.contains('image') ||
+        lowerMsg.contains('vehicle') ||
+        lowerMsg.contains('blue t-shirt') ||
+        lowerMsg.contains('branding') ||
+        lowerMsg.contains('bajaj vehicle')) {
+      types.add('Photo');
+    }
+
+    // Cost Summary-related keywords
+    if (lowerMsg.contains('cost summary') ||
+        lowerMsg.contains('cost breakdown') ||
+        lowerMsg.contains('total cost')) {
+      types.add('CostSummary');
+    }
+
+    // Activity-related keywords
+    if (lowerMsg.contains('activity') ||
+        lowerMsg.contains('activation')) {
+      types.add('Activity');
+    }
+
+    // Enquiry dump keywords
+    if (lowerMsg.contains('enquiry') || lowerMsg.contains('enquiry dump')) {
+      types.add('EnquiryDump');
+    }
+
+    // Date validation typically affects PO + Invoice
+    if (lowerMsg.contains('date') &&
+        (lowerMsg.contains('before') || lowerMsg.contains('after') || lowerMsg.contains('future'))) {
+      types.add('PO');
+      types.add('Invoice');
+    }
+
+    // If nothing matched, try a broad fallback
+    if (types.isEmpty) {
+      // Generic completeness messages
+      if (lowerMsg.contains('missing')) {
+        types.add('PO');
+        types.add('Invoice');
+      }
+    }
+
+    return types.toList();
   }
-}
-
-/// Internal helper class for validation info.
-class _ValidationInfo {
-  final ValidationStatus status;
-  final String remarks;
-
-  const _ValidationInfo(this.status, this.remarks);
 }

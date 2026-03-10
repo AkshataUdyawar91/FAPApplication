@@ -41,23 +41,15 @@ class InvoiceDocumentsTable extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(
-              'Invoice and Additional Docs',
+              'PO and Additional Documents',
               style: AppTextStyles.h3.copyWith(
                 fontWeight: FontWeight.bold,
               ),
             ),
           ),
           
-          // Table with horizontal scroll support
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minWidth: MediaQuery.of(context).size.width - 48,
-              ),
-              child: _buildTable(),
-            ),
-          ),
+          // Table
+          _buildTable(),
         ],
       ),
     );
@@ -70,11 +62,11 @@ class InvoiceDocumentsTable extends StatelessWidget {
         top: BorderSide(color: AppColors.border),
       ),
       columnWidths: const {
-        0: FixedColumnWidth(60),   // S.No
-        1: FlexColumnWidth(1.5),   // Category
+        0: FixedColumnWidth(50),   // S.No
+        1: FlexColumnWidth(1.2),   // Category
         2: FlexColumnWidth(2),     // Document Name
-        3: FixedColumnWidth(100),  // Status
-        4: FlexColumnWidth(2),     // Remarks
+        3: FixedColumnWidth(80),   // Status
+        4: FlexColumnWidth(3),     // Remarks
       },
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       children: [
@@ -143,6 +135,7 @@ class InvoiceDocumentsTable extends StatelessWidget {
       child: Text(
         text,
         style: AppTextStyles.bodyMedium,
+        softWrap: true,
       ),
     );
   }

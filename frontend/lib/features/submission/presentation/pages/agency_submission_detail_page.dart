@@ -11,11 +11,9 @@ import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../../approval/data/models/invoice_summary_data.dart';
-import '../../../approval/data/models/invoice_document_row.dart';
 import '../../../approval/data/models/campaign_detail_row.dart';
 import '../../../approval/presentation/utils/submission_data_transformer.dart';
 import '../../../approval/presentation/widgets/invoice_summary_section.dart';
-import '../../../approval/presentation/widgets/invoice_documents_table.dart';
 import '../../../approval/presentation/widgets/campaign_details_table.dart';
 
 class AgencySubmissionDetailPage extends StatefulWidget {
@@ -45,7 +43,6 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
 
   // Transformed data for ASM-style layout
   InvoiceSummaryData? _invoiceSummary;
-  List<InvoiceDocumentRow> _invoiceDocuments = [];
   List<CampaignDetailRow> _campaignDetails = [];
 
   @override
@@ -64,29 +61,13 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       if (response.statusCode == 200 && mounted) {
         final submissionData = response.data as Map<String, dynamic>;
         
-        // Transform data for ASM-style layout (exclude PO documents)
+        // Transform data for ASM-style layout
         final invoiceSummary = SubmissionDataTransformer.extractInvoiceSummary(submissionData);
-        final allInvoiceDocs = SubmissionDataTransformer.transformToInvoiceDocuments(submissionData);
-        // Filter out PO documents
-        final filteredDocs = allInvoiceDocs.where((d) => d.category != 'PO').toList();
-        // Re-number serial numbers
-        for (int i = 0; i < filteredDocs.length; i++) {
-          filteredDocs[i] = InvoiceDocumentRow(
-            serialNumber: i + 1,
-            category: filteredDocs[i].category,
-            documentName: filteredDocs[i].documentName,
-            status: filteredDocs[i].status,
-            remarks: filteredDocs[i].remarks,
-            blobUrl: filteredDocs[i].blobUrl,
-            documentId: filteredDocs[i].documentId,
-          );
-        }
         final campaignDetails = SubmissionDataTransformer.transformToCampaignDetails(submissionData);
         
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
-          _invoiceDocuments = filteredDocs;
           _campaignDetails = campaignDetails;
           _isLoading = false;
         });
@@ -348,11 +329,6 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             InvoiceSummarySection(data: _invoiceSummary!),
           const SizedBox(height: 24),
 
-          // Invoice Documents Table (ASM-style, without PO)
-          InvoiceDocumentsTable(
-            documents: _invoiceDocuments,
-            onDocumentTap: (doc) => _downloadDocument(doc.blobUrl, doc.documentName),
-          ),
           const SizedBox(height: 24),
 
           // Campaign Details Table (ASM-style)
@@ -492,7 +468,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                   Wrap(
                     spacing: 24,
                     runSpacing: 12,
-                    children: data.entries.map((entry) {
+                    children: data.entries
+                      .where((entry) => !const {'LineItems', 'FieldConfidences', 'IsFlaggedForReview'}.contains(entry.key))
+                      .map((entry) {
                       return SizedBox(
                         width: 200,
                         child: Column(

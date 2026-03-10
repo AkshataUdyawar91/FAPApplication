@@ -2,25 +2,35 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/validation_report_provider.dart';
 import 'enhanced_validation_report_widget.dart';
+import '../../../../core/network/dio_client.dart';
 
 /// Dialog to display enhanced validation report
 class ValidationReportDialog extends ConsumerWidget {
   final String packageId;
+  final String? token;
 
   const ValidationReportDialog({
     super.key,
     required this.packageId,
+    this.token,
   });
 
-  static Future<void> show(BuildContext context, String packageId) {
+  static Future<void> show(BuildContext context, String packageId, {String? token}) {
     return showDialog(
       context: context,
-      builder: (context) => ValidationReportDialog(packageId: packageId),
+      builder: (context) => ValidationReportDialog(packageId: packageId, token: token),
     );
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Set auth token if provided
+    if (token != null && token!.isNotEmpty) {
+      Future.microtask(() {
+        ref.read(authTokenProvider.notifier).state = token;
+      });
+    }
+
     final reportState = ref.watch(validationReportProvider(packageId));
 
     return Dialog(
