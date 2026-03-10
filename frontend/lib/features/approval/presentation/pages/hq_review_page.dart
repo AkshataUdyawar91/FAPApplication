@@ -12,7 +12,6 @@ import '../../../../core/widgets/kpi_card.dart';
 import '../../../../core/widgets/quarter_year_filter.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../analytics/data/models/quarterly_fap_kpi_model.dart';
-import '../widgets/view_validation_report_button.dart';
 
 class HQReviewPage extends StatefulWidget {
   final String token;
@@ -34,6 +33,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
 
   String _statusFilter = 'all';
   String _sortBy = 'date';
+  bool _sortAscending = false;
   bool _isLoading = true;
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
@@ -55,21 +55,6 @@ class _HQReviewPageState extends State<HQReviewPage> {
         state == 'validating' || state == 'scoring' || state == 'recommending') return 'processing';
     return 'processing';
   }
-
-  int get _pendingCount => _documents.where((d) {
-    final state = d['state']?.toString().toLowerCase() ?? '';
-    return state == 'pendinghqapproval';
-  }).length;
-
-  int get _approvedCount => _documents.where((d) {
-    final state = d['state']?.toString().toLowerCase() ?? '';
-    return state == 'approved';
-  }).length;
-
-  int get _rejectedCount => _documents.where((d) {
-    final state = d['state']?.toString().toLowerCase() ?? '';
-    return state == 'rejectedbyhq';
-  }).length;
 
   @override
   void initState() {
@@ -139,10 +124,35 @@ class _HQReviewPageState extends State<HQReviewPage> {
     }
   }
 
+  (int, int) _quarterMonthRange(String quarter) {
+    switch (quarter) {
+      case 'Q1': return (1, 3);
+      case 'Q2': return (4, 6);
+      case 'Q3': return (7, 9);
+      case 'Q4': return (10, 12);
+      default: return (1, 12);
+    }
+  }
+
+  bool _matchesQuarterYear(Map<String, dynamic> doc) {
+    final dateStr = doc['createdAt']?.toString();
+    if (dateStr == null) return false;
+    try {
+      final dt = DateTime.parse(dateStr);
+      if (dt.year != _selectedYear) return false;
+      if (_selectedQuarter == 'All') return true;
+      final (startMonth, endMonth) = _quarterMonthRange(_selectedQuarter);
+      return dt.month >= startMonth && dt.month <= endMonth;
+    } catch (_) {
+      return false;
+    }
+  }
+
   List<Map<String, dynamic>> get _filteredDocuments {
-    return _documents.where((doc) {
+    final filtered = _documents.where((doc) {
       final status = _normalizeStatus(doc['state']?.toString() ?? '');
       if (status == 'processing') return false;
+      if (!_matchesQuarterYear(doc)) return false;
       final matchesSearch = _searchController.text.isEmpty ||
           doc['id']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true ||
           doc['invoiceNumber']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true ||
@@ -150,6 +160,45 @@ class _HQReviewPageState extends State<HQReviewPage> {
       final matchesStatus = _statusFilter == 'all' || status == _statusFilter;
       return matchesSearch && matchesStatus;
     }).toList();
+
+    filtered.sort((a, b) {
+      int result;
+      switch (_sortBy) {
+        case 'amount':
+          final aAmt = double.tryParse(a['poAmount']?.toString() ?? '') ?? 0;
+          final bAmt = double.tryParse(b['poAmount']?.toString() ?? '') ?? 0;
+          result = aAmt.compareTo(bAmt);
+          break;
+        case 'invoiceNo':
+          final aInv = a['invoiceNumber']?.toString() ?? '';
+          final bInv = b['invoiceNumber']?.toString() ?? '';
+          result = aInv.compareTo(bInv);
+          break;
+        case 'poNo':
+          final aPo = a['poNumber']?.toString() ?? '';
+          final bPo = b['poNumber']?.toString() ?? '';
+          result = aPo.compareTo(bPo);
+          break;
+        case 'status':
+          final aStatus = _normalizeStatus(a['state']?.toString() ?? '');
+          final bStatus = _normalizeStatus(b['state']?.toString() ?? '');
+          result = aStatus.compareTo(bStatus);
+          break;
+        case 'confidence':
+          final aConf = double.tryParse(a['overallConfidence']?.toString() ?? '') ?? 0;
+          final bConf = double.tryParse(b['overallConfidence']?.toString() ?? '') ?? 0;
+          result = aConf.compareTo(bConf);
+          break;
+        case 'date':
+        default:
+          final aDate = DateTime.tryParse(a['createdAt']?.toString() ?? '') ?? DateTime(2000);
+          final bDate = DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime(2000);
+          result = aDate.compareTo(bDate);
+      }
+      return _sortAscending ? result : -result;
+    });
+
+    return filtered;
   }
 
   List<NavItem> _getNavItems(BuildContext context) {
@@ -302,11 +351,9 @@ class _HQReviewPageState extends State<HQReviewPage> {
               Text('Review and approve agency submissions', style: AppTextStyles.bodySmall),
               const SizedBox(height: 16),
             ],
-            _buildStatsCards(),
-            const SizedBox(height: 24),
             _buildKpiSection(),
             const SizedBox(height: 24),
-            _buildFilters(),
+            _buildSearchBar(),
             const SizedBox(height: 24),
             _buildDocumentsList(),
             const SizedBox(height: 80),
@@ -325,24 +372,63 @@ class _HQReviewPageState extends State<HQReviewPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Quarterly FAP KPIs', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w700)),
-                QuarterYearFilter(
-                  selectedQuarter: _selectedQuarter,
-                  selectedYear: _selectedYear,
-                  availableYears: List.generate(5, (i) => DateTime.now().year - i),
-                  onQuarterChanged: (q) {
-                    setState(() => _selectedQuarter = q);
-                    _loadKpiData();
-                  },
-                  onYearChanged: (y) {
-                    setState(() => _selectedYear = y);
-                    _loadKpiData();
-                  },
-                ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isNarrow = constraints.maxWidth < 700;
+                if (isNarrow) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Quarterly FAP KPIs', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          QuarterYearFilter(
+                            selectedQuarter: _selectedQuarter,
+                            selectedYear: _selectedYear,
+                            availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                            onQuarterChanged: (q) {
+                              setState(() => _selectedQuarter = q);
+                              _loadKpiData();
+                            },
+                            onYearChanged: (y) {
+                              setState(() => _selectedYear = y);
+                              _loadKpiData();
+                            },
+                          ),
+                          _buildCompactStatusDropdown(),
+                          _buildCompactSortDropdown(),
+                        ],
+                      ),
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Text('Quarterly FAP KPIs', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w700)),
+                    const Spacer(),
+                    _buildCompactStatusDropdown(),
+                    const SizedBox(width: 12),
+                    _buildCompactSortDropdown(),
+                    const SizedBox(width: 12),
+                    QuarterYearFilter(
+                      selectedQuarter: _selectedQuarter,
+                      selectedYear: _selectedYear,
+                      availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                      onQuarterChanged: (q) {
+                        setState(() => _selectedQuarter = q);
+                        _loadKpiData();
+                      },
+                      onYearChanged: (y) {
+                        setState(() => _selectedYear = y);
+                        _loadKpiData();
+                      },
+                    ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 16),
             if (_kpiError != null)
@@ -393,123 +479,78 @@ class _HQReviewPageState extends State<HQReviewPage> {
     );
   }
 
-  Widget _buildStatsCards() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isMobile = constraints.maxWidth < 600;
-        final cards = [
-          _StatCardData('Pending HQ/RA Review', _pendingCount.toString(), Icons.schedule, const Color(0xFFF59E0B)),
-          _StatCardData('Approved', _approvedCount.toString(), Icons.check_circle, const Color(0xFF10B981)),
-          _StatCardData('Rejected', _rejectedCount.toString(), Icons.cancel, const Color(0xFFEF4444)),
-        ];
-        if (isMobile) {
-          return Column(children: cards.map((c) => Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: _buildStatCard(c.label, c.value, c.icon, c.color),
-          )).toList());
-        }
-        return Row(children: cards.map((c) => Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(right: c == cards.last ? 0 : 16),
-            child: _buildStatCard(c.label, c.value, c.icon, c.color),
-          ),
-        )).toList());
-      },
-    );
-  }
-
-  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-            child: Icon(icon, color: color, size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
-            const SizedBox(height: 4),
-            Text(value, style: AppTextStyles.h2.copyWith(fontWeight: FontWeight.bold)),
-          ])),
-        ]),
-      ),
-    );
-  }
-
-  Widget _buildFilters() {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final isMobile = constraints.maxWidth < 600;
-            return Column(children: [
-              TextField(
-                controller: _searchController,
-                decoration: const InputDecoration(hintText: 'Search by agency name or document ID...', prefixIcon: Icon(Icons.search)),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 16),
-              isMobile
-                  ? Column(children: [
-                      DropdownButtonFormField<String>(
-                        value: _statusFilter,
-                        decoration: const InputDecoration(labelText: 'Filter by status', border: OutlineInputBorder()),
-                        items: const [
-                          DropdownMenuItem(value: 'all', child: Text('All Status')),
-                          DropdownMenuItem(value: 'hq-review', child: Text('Pending HQ/RA Review')),
-                          DropdownMenuItem(value: 'approved', child: Text('Approved')),
-                          DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
-                        ],
-                        onChanged: (value) => setState(() => _statusFilter = value!),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: _sortBy,
-                        decoration: const InputDecoration(labelText: 'Sort by', border: OutlineInputBorder()),
-                        items: const [
-                          DropdownMenuItem(value: 'date', child: Text('Date')),
-                          DropdownMenuItem(value: 'amount', child: Text('Amount')),
-                          DropdownMenuItem(value: 'confidence', child: Text('Confidence')),
-                        ],
-                        onChanged: (value) => setState(() => _sortBy = value!),
-                      ),
-                    ])
-                  : Row(children: [
-                      Expanded(child: DropdownButtonFormField<String>(
-                        value: _statusFilter,
-                        decoration: const InputDecoration(labelText: 'Filter by status', border: OutlineInputBorder()),
-                        items: const [
-                          DropdownMenuItem(value: 'all', child: Text('All Status')),
-                          DropdownMenuItem(value: 'hq-review', child: Text('Pending HQ/RA Review')),
-                          DropdownMenuItem(value: 'approved', child: Text('Approved')),
-                          DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
-                        ],
-                        onChanged: (value) => setState(() => _statusFilter = value!),
-                      )),
-                      const SizedBox(width: 16),
-                      Expanded(child: DropdownButtonFormField<String>(
-                        value: _sortBy,
-                        decoration: const InputDecoration(labelText: 'Sort by', border: OutlineInputBorder()),
-                        items: const [
-                          DropdownMenuItem(value: 'date', child: Text('Date')),
-                          DropdownMenuItem(value: 'amount', child: Text('Amount')),
-                          DropdownMenuItem(value: 'confidence', child: Text('Confidence')),
-                        ],
-                        onChanged: (value) => setState(() => _sortBy = value!),
-                      )),
-                    ]),
-            ]);
-          },
+  Widget _buildCompactStatusDropdown() {
+    return SizedBox(
+      width: 150,
+      child: DropdownButtonFormField<String>(
+        key: ValueKey('status_$_statusFilter'),
+        value: _statusFilter,
+        isExpanded: true,
+        decoration: const InputDecoration(
+          labelText: 'Status',
+          border: OutlineInputBorder(),
+          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          isDense: true,
         ),
+        items: const [
+          DropdownMenuItem(value: 'all', child: Text('All Status')),
+          DropdownMenuItem(value: 'hq-review', child: Text('Pending Review')),
+          DropdownMenuItem(value: 'approved', child: Text('Approved')),
+          DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
+        ],
+        onChanged: (value) {
+          if (value != null) setState(() => _statusFilter = value);
+        },
       ),
+    );
+  }
+
+  Widget _buildCompactSortDropdown() {
+    return SizedBox(
+      width: 150,
+      child: DropdownButtonFormField<String>(
+        key: ValueKey('sort_$_sortBy'),
+        value: _sortBy,
+        isExpanded: true,
+        decoration: const InputDecoration(
+          labelText: 'Sort by',
+          border: OutlineInputBorder(),
+          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          isDense: true,
+        ),
+        items: const [
+          DropdownMenuItem(value: 'date', child: Text('Date')),
+          DropdownMenuItem(value: 'amount', child: Text('Amount')),
+          DropdownMenuItem(value: 'poNo', child: Text('PO No.')),
+          DropdownMenuItem(value: 'invoiceNo', child: Text('Invoice No.')),
+          DropdownMenuItem(value: 'confidence', child: Text('Confidence')),
+          DropdownMenuItem(value: 'status', child: Text('Status')),
+        ],
+        onChanged: (value) {
+          if (value != null) {
+            setState(() {
+              if (_sortBy == value) {
+                _sortAscending = !_sortAscending;
+              } else {
+                _sortBy = value;
+                _sortAscending = false;
+              }
+            });
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return TextField(
+      controller: _searchController,
+      decoration: InputDecoration(
+        hintText: 'Search by agency name or document ID...',
+        prefixIcon: const Icon(Icons.search),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      onChanged: (_) => setState(() {}),
     );
   }
 
@@ -571,13 +612,6 @@ class _HQReviewPageState extends State<HQReviewPage> {
             Row(
               children: [
                 Expanded(
-                  child: ViewValidationReportButton(
-                    packageId: doc['id'],
-                    isCompact: false,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
                   child: ElevatedButton.icon(
                     onPressed: () => _navigateToDetail(doc['id']),
                     icon: const Icon(Icons.visibility_outlined, size: 18),
@@ -612,6 +646,25 @@ class _HQReviewPageState extends State<HQReviewPage> {
     if (result == true || result == null) _loadDocuments();
   }
 
+  int? get _sortColumnIndex {
+    switch (_sortBy) {
+      case 'poNo': return 1;
+      case 'amount': return 2;
+      case 'invoiceNo': return 3;
+      case 'date': return 5;
+      case 'confidence': return 6;
+      case 'status': return 7;
+      default: return null;
+    }
+  }
+
+  void _onColumnSort(String column, bool ascending) {
+    setState(() {
+      _sortBy = column;
+      _sortAscending = ascending;
+    });
+  }
+
   Widget _buildDesktopTable(List<Map<String, dynamic>> filtered) {
     return Card(
       elevation: 0,
@@ -623,6 +676,8 @@ class _HQReviewPageState extends State<HQReviewPage> {
             child: ConstrainedBox(
               constraints: BoxConstraints(minWidth: constraints.maxWidth),
               child: DataTable(
+                sortColumnIndex: _sortColumnIndex,
+                sortAscending: _sortAscending,
                 headingRowColor: WidgetStateProperty.all(AppColors.background),
                 headingTextStyle: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, letterSpacing: 0.3),
                 dataTextStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
@@ -631,16 +686,16 @@ class _HQReviewPageState extends State<HQReviewPage> {
                 dataRowMinHeight: 56,
                 dataRowMaxHeight: 72,
                 dividerThickness: 1,
-                columns: const [
-                  DataColumn(label: Text('FAP NUMBER')),
-                  DataColumn(label: Text('PO NO.')),
-                  DataColumn(label: Text('PO AMT')),
-                  DataColumn(label: Text('INVOICE NO.')),
-                  DataColumn(label: Text('INVOICE AMT')),
-                  DataColumn(label: Text('SUBMITTED DATE')),
-                  DataColumn(label: Text('AI SCORE')),
-                  DataColumn(label: Text('STATUS')),
-                  DataColumn(label: SizedBox.shrink()),
+                columns: [
+                  const DataColumn(label: Text('FAP NUMBER')),
+                  DataColumn(label: const Text('PO NO.'), onSort: (_, asc) => _onColumnSort('poNo', asc)),
+                  DataColumn(label: const Text('PO AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
+                  DataColumn(label: const Text('INVOICE NO.'), onSort: (_, asc) => _onColumnSort('invoiceNo', asc)),
+                  DataColumn(label: const Text('INVOICE AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
+                  DataColumn(label: const Text('SUBMITTED DATE'), onSort: (_, asc) => _onColumnSort('date', asc)),
+                  DataColumn(label: const Text('AI SCORE'), onSort: (_, asc) => _onColumnSort('confidence', asc)),
+                  DataColumn(label: const Text('STATUS'), onSort: (_, asc) => _onColumnSort('status', asc)),
+                  const DataColumn(label: SizedBox.shrink()),
                 ],
                 rows: filtered.map((doc) => _buildDocumentDataRow(doc)).toList(),
               ),
@@ -675,8 +730,6 @@ class _HQReviewPageState extends State<HQReviewPage> {
       DataCell(Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          ViewValidationReportButton(packageId: doc['id'], isCompact: true),
-          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.visibility_outlined, size: 20),
             color: AppColors.primary,
@@ -717,12 +770,4 @@ class _HQReviewPageState extends State<HQReviewPage> {
       return 'N/A';
     }
   }
-}
-
-class _StatCardData {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  const _StatCardData(this.label, this.value, this.icon, this.color);
 }

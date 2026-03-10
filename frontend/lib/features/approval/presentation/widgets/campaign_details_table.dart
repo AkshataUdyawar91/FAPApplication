@@ -42,7 +42,7 @@ class CampaignDetailsTable extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(
-              'Campaign Details',
+              'Campaign Name',
               style: AppTextStyles.h3.copyWith(
                 fontWeight: FontWeight.bold,
               ),
@@ -72,9 +72,9 @@ class CampaignDetailsTable extends StatelessWidget {
       ),
       columnWidths: const {
         0: FixedColumnWidth(60),   // S.No
-        1: FixedColumnWidth(100),  // Dealer Name
-        2: FixedColumnWidth(120),  // Campaign Date
-        3: FlexColumnWidth(1.5),   // Document Name
+        1: FlexColumnWidth(0.75),  // Campaign/Team
+        2: FlexColumnWidth(0.75),  // Campaign Date
+        3: FlexColumnWidth(2),     // Document Name
         4: FixedColumnWidth(100),  // Status
         5: FlexColumnWidth(2),     // Remarks
       },
@@ -99,7 +99,7 @@ class CampaignDetailsTable extends StatelessWidget {
       ),
       children: [
         _buildHeaderCell('S.No'),
-        _buildHeaderCell('Dealer Name'),
+        _buildHeaderCell('Campaign/Team'),
         _buildHeaderCell('Campaign Date'),
         _buildHeaderCell('Document Name'),
         _buildHeaderCell('Status'),

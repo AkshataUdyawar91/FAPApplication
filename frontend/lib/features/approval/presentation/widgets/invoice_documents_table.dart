@@ -41,7 +41,7 @@ class InvoiceDocumentsTable extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(
-              'Invoice and Additional Docs',
+              'PO and Additional Docs',
               style: AppTextStyles.h3.copyWith(
                 fontWeight: FontWeight.bold,
               ),

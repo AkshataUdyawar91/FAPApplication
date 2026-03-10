@@ -224,7 +224,19 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     }
   }
 
-  Future<void> _selectDate(BuildContext context, String currentValue, Function(String) onSelected) async {
+  DateTime? _parseDate(String value) {
+    if (value.isEmpty) return null;
+    try {
+      final parts = value.split('-');
+      if (parts.length == 3) {
+        return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _selectDate(BuildContext context, String currentValue, Function(String) onSelected, {DateTime? minDate}) async {
+    final firstDate = minDate ?? DateTime(2020);
     DateTime initialDate = DateTime.now();
     if (currentValue.isNotEmpty) {
       try {
@@ -234,11 +246,15 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         }
       } catch (_) {}
     }
+    // Ensure initialDate is not before firstDate
+    if (initialDate.isBefore(firstDate)) {
+      initialDate = firstDate;
+    }
 
     final date = await showDatePicker(
       context: context,
       initialDate: initialDate,
-      firstDate: DateTime(2020),
+      firstDate: firstDate,
       lastDate: DateTime(2030),
       builder: (context, child) {
         return Theme(
@@ -395,8 +411,9 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     return _buildSectionCard(
       'Campaign Name',
       Icons.badge,
-      TextField(
-        controller: TextEditingController(text: campaign.campaignName),
+      TextFormField(
+        key: Key('campaign_name_${campaign.id}'),
+        initialValue: campaign.campaignName,
         onChanged: (v) {
           campaign.campaignName = v;
           widget.onCampaignsChanged(_campaigns);
@@ -415,44 +432,68 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     return _buildSectionCard(
       'Activity Duration',
       Icons.date_range,
-      Row(
-        children: [
-          Expanded(child: _buildDatePickerField('Start Date', campaign.startDate, (v) {
-            campaign.startDate = v;
-            _calculateWorkingDays(campaign);
-            widget.onCampaignsChanged(_campaigns);
-          })),
-          const SizedBox(width: 12),
-          Expanded(child: _buildDatePickerField('End Date', campaign.endDate, (v) {
-            campaign.endDate = v;
-            _calculateWorkingDays(campaign);
-            widget.onCampaignsChanged(_campaigns);
-          })),
-          const SizedBox(width: 12),
-          SizedBox(
-            width: 120,
-            child: TextField(
-              controller: TextEditingController(text: campaign.workingDays.isNotEmpty ? '${campaign.workingDays} days' : 'Auto-calculated'),
-              readOnly: true,
-              decoration: InputDecoration(
-                labelText: 'Working Days',
-                border: const OutlineInputBorder(),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                isDense: true,
-                filled: true,
-                fillColor: Colors.grey.shade100,
-              ),
-              style: TextStyle(fontSize: 14, color: campaign.workingDays.isEmpty ? AppColors.textSecondary : AppColors.textPrimary),
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 500;
+          final workingDaysField = TextField(
+            controller: TextEditingController(text: campaign.workingDays.isNotEmpty ? '${campaign.workingDays} days' : ''),
+            readOnly: true,
+            decoration: InputDecoration(
+              labelText: 'Working Days',
+              border: const OutlineInputBorder(),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              isDense: true,
+              filled: true,
+              fillColor: Colors.grey.shade100,
             ),
-          ),
-        ],
+            style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+          );
+
+          if (isNarrow) {
+            return Column(
+              children: [
+                _buildDatePickerField('Start Date', campaign.startDate, (v) {
+                  campaign.startDate = v;
+                  _calculateWorkingDays(campaign);
+                  widget.onCampaignsChanged(_campaigns);
+                }),
+                const SizedBox(height: 12),
+                _buildDatePickerField('End Date', campaign.endDate, (v) {
+                  campaign.endDate = v;
+                  _calculateWorkingDays(campaign);
+                  widget.onCampaignsChanged(_campaigns);
+                }, minDate: _parseDate(campaign.startDate)),
+                const SizedBox(height: 12),
+                workingDaysField,
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              Expanded(child: _buildDatePickerField('Start Date', campaign.startDate, (v) {
+                campaign.startDate = v;
+                _calculateWorkingDays(campaign);
+                widget.onCampaignsChanged(_campaigns);
+              })),
+              const SizedBox(width: 12),
+              Expanded(child: _buildDatePickerField('End Date', campaign.endDate, (v) {
+                campaign.endDate = v;
+                _calculateWorkingDays(campaign);
+                widget.onCampaignsChanged(_campaigns);
+              }, minDate: _parseDate(campaign.startDate))),
+              const SizedBox(width: 12),
+              Expanded(child: workingDaysField),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _buildDatePickerField(String label, String value, Function(String) onChanged) {
+  Widget _buildDatePickerField(String label, String value, Function(String) onChanged, {DateTime? minDate}) {
     return GestureDetector(
-      onTap: () => _selectDate(context, value, onChanged),
+      onTap: () => _selectDate(context, value, onChanged, minDate: minDate),
       child: AbsorbPointer(
         child: TextField(
           controller: TextEditingController(text: value),
@@ -476,8 +517,9 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       Icons.store,
       Column(
         children: [
-          TextField(
-            controller: TextEditingController(text: campaign.dealershipName),
+          TextFormField(
+            key: Key('dealership_name_${campaign.id}'),
+            initialValue: campaign.dealershipName,
             onChanged: (v) {
               campaign.dealershipName = v;
               widget.onCampaignsChanged(_campaigns);
@@ -491,8 +533,9 @@ class _CampaignListSectionState extends State<CampaignListSection> {
             ),
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: TextEditingController(text: campaign.dealershipAddress),
+          TextFormField(
+            key: Key('dealership_address_${campaign.id}'),
+            initialValue: campaign.dealershipAddress,
             onChanged: (v) {
               campaign.dealershipAddress = v;
               widget.onCampaignsChanged(_campaigns);
@@ -607,39 +650,54 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               ),
             ),
           const SizedBox(height: 8),
-          // Invoice fields
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildSmallField('Invoice No.', invoice.invoiceNumber, (v) {
-                invoice.invoiceNumber = v;
-                widget.onCampaignsChanged(_campaigns);
-              }),
-              _buildSmallField('Date', invoice.invoiceDate, (v) {
-                invoice.invoiceDate = v;
-                widget.onCampaignsChanged(_campaigns);
-              }, hint: 'dd-mm-yyyy'),
-              _buildSmallField('Amount (₹)', invoice.totalAmount, (v) {
-                invoice.totalAmount = v;
-                widget.onCampaignsChanged(_campaigns);
-              }),
-              _buildSmallField('GST No.', invoice.gstNumber, (v) {
-                invoice.gstNumber = v;
-                widget.onCampaignsChanged(_campaigns);
-              }),
-            ],
+          // Invoice fields - responsive layout
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 400;
+              final fields = [
+                _buildSmallField('Invoice No.', invoice.invoiceNumber, (v) {
+                  invoice.invoiceNumber = v;
+                  widget.onCampaignsChanged(_campaigns);
+                }, fieldKey: 'inv_num_${invoice.id}', fullWidth: isNarrow),
+                _buildSmallField('Date', invoice.invoiceDate, (v) {
+                  invoice.invoiceDate = v;
+                  widget.onCampaignsChanged(_campaigns);
+                }, hint: 'dd-mm-yyyy', fieldKey: 'inv_date_${invoice.id}', fullWidth: isNarrow),
+                _buildSmallField('Amount (₹)', invoice.totalAmount, (v) {
+                  invoice.totalAmount = v;
+                  widget.onCampaignsChanged(_campaigns);
+                }, fieldKey: 'inv_amt_${invoice.id}', fullWidth: isNarrow),
+                _buildSmallField('GST No.', invoice.gstNumber, (v) {
+                  invoice.gstNumber = v;
+                  widget.onCampaignsChanged(_campaigns);
+                }, fieldKey: 'inv_gst_${invoice.id}', fullWidth: isNarrow),
+              ];
+              if (isNarrow) {
+                return Column(
+                  children: fields.map((f) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: f,
+                  )).toList(),
+                );
+              }
+              return Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: fields,
+              );
+            },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSmallField(String label, String value, Function(String) onChanged, {String? hint}) {
+  Widget _buildSmallField(String label, String value, Function(String) onChanged, {String? hint, String? fieldKey, bool fullWidth = false}) {
     return SizedBox(
-      width: 140,
-      child: TextField(
-        controller: TextEditingController(text: value),
+      width: fullWidth ? double.infinity : 140,
+      child: TextFormField(
+        key: fieldKey != null ? Key(fieldKey) : null,
+        initialValue: value,
         onChanged: onChanged,
         decoration: InputDecoration(
           labelText: label,

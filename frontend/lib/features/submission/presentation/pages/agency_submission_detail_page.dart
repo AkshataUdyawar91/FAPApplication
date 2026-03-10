@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
-import 'dart:html' as html;
+import 'package:web/web.dart' as web;
+import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
@@ -351,14 +352,14 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
           // Invoice Documents Table (ASM-style, without PO)
           InvoiceDocumentsTable(
             documents: _invoiceDocuments,
-            onDocumentTap: (doc) => _downloadDocument(doc.blobUrl, doc.documentName),
+            onDocumentTap: (doc) => _downloadDocument(doc.documentId, doc.documentName),
           ),
           const SizedBox(height: 24),
 
           // Campaign Details Table (ASM-style)
           CampaignDetailsTable(
             campaignDetails: _campaignDetails,
-            onPhotoTap: (detail) => _downloadDocument(detail.blobUrl, detail.documentName),
+            onPhotoTap: (detail) => _downloadDocument(detail.documentId, detail.documentName),
           ),
           const SizedBox(height: 80),
         ],
@@ -477,7 +478,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                     ),
                     IconButton(
                       icon: const Icon(Icons.download, size: 20),
-                      onPressed: () => _downloadDocument(doc['blobUrl'], doc['filename']),
+                      onPressed: () => _downloadDocument(doc['id']?.toString(), doc['filename']),
                       tooltip: 'Download',
                       color: AppColors.primary,
                       padding: EdgeInsets.zero,
@@ -764,28 +765,64 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     }
   }
 
-  void _downloadDocument(String? blobUrl, String? filename) async {
-    if (blobUrl == null || blobUrl.isEmpty) {
+  Future<void> _downloadDocument(String? documentId, String? filename) async {
+    if (documentId == null || documentId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+        const SnackBar(content: Text('Document not available for download'), backgroundColor: Colors.orange),
       );
       return;
     }
     try {
-      html.window.open(blobUrl, '_blank');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Opening ${filename ?? 'document'}...'),
-            backgroundColor: AppColors.approvedText,
-            duration: const Duration(seconds: 2),
-          ),
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+
+        final bytes = base64.decode(base64Content);
+
+        final blob = web.Blob(
+          [bytes.toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
         );
+        final url = web.URL.createObjectURL(blob);
+
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+
+        web.URL.revokeObjectURL(url);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Downloading $name...'),
+              backgroundColor: AppColors.approvedText,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to open document: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Failed to download: $e'), backgroundColor: Colors.red),
         );
       }
     }
