@@ -4,7 +4,7 @@ Console.WriteLine("Creating BajajDocumentProcessing Database...");
 Console.WriteLine();
 
 // Connection string to master database
-var masterConnectionString = @"Server=.\SQLEXPRESS;Database=master;Trusted_Connection=True;TrustServerCertificate=true";
+var masterConnectionString = @"Server=localhost\SQLEXPRESS;Database=master;Trusted_Connection=True;TrustServerCertificate=true";
 
 try
 {

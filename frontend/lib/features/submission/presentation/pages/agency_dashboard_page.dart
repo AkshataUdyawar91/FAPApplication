@@ -772,6 +772,8 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         bgColor = const Color(0xFFFEF3C7); textColor = const Color(0xFF92400E); label = 'Pending with RA'; break;
       case 'reuploadrequested':
         bgColor = const Color(0xFFFEE2E2); textColor = const Color(0xFF991B1B); label = 'Re-upload Requested'; break;
+      case 'processingfailed':
+        bgColor = const Color(0xFFFEF3C7); textColor = const Color(0xFF92400E); label = 'Processing Failed'; break;
       case 'onhold':
         bgColor = const Color(0xFFF3F4F6); textColor = const Color(0xFF374151); label = 'On Hold'; break;
       default:
@@ -828,6 +830,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     if (state == 'rejectedbyasm') return 'rejected_by_asm';
     if (['rejectedbyhq', 'rejectedbyra'].contains(state)) return 'rejected_by_hq';
     if (['rejected', 'validationfailed', 'reuploadrequested'].contains(state)) return 'rejected';
+    if (state == 'processingfailed') return 'processing_failed';
     
     return 'pending';
   }

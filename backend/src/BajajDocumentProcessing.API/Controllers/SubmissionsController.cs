@@ -811,9 +811,10 @@ public class SubmissionsController : ControllerBase
             }
 
             // Can only resubmit if rejected by ASM or rejected by RA
-            if (package.State != PackageState.RejectedByASM && package.State != PackageState.RejectedByRA)
+            if (package.State != PackageState.RejectedByASM && 
+                package.State != PackageState.RejectedByRA)
             {
-                return BadRequest(new { error = $"Can only resubmit rejected packages. Current state: {package.State}" });
+                return BadRequest(new { error = $"Can only resubmit packages rejected by ASM or RA. Current state: {package.State}" });
             }
 
             // Verify the package belongs to the user

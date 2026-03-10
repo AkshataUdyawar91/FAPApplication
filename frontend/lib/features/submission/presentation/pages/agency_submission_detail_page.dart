@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:web/web.dart' as web;
@@ -354,6 +355,10 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
               reviewNotes: _submission!['hqReviewNotes']?.toString(),
             ),
           ],
+          if (state.toLowerCase() == 'processingfailed') ...[
+            const SizedBox(height: 16),
+            _buildProcessingFailedCard(),
+          ],
           const SizedBox(height: 24),
           _buildPOSection(),
           const SizedBox(height: 24),
@@ -546,6 +551,33 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
 
   bool _isResubmitting = false;
 
+  void _enterEditMode() {
+    Navigator.pushNamed(context, '/agency/upload', arguments: {
+      'token': widget.token,
+      'userName': widget.userName,
+      'submissionId': widget.submissionId,
+    });
+  }
+
+  Future<bool> _showDeleteConfirmation(String title, String message) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        content: Text(message, style: const TextStyle(fontSize: 14)),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.rejectedText, foregroundColor: Colors.white),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   Widget _buildRejectionCard({required String rejectedBy, String? reviewNotes}) {
     return Card(
       elevation: 2,
@@ -598,11 +630,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: _isResubmitting ? null : _resubmitPackage,
-                icon: _isResubmitting
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.refresh),
-                label: const Text('Edit & Resubmit'),
+                onPressed: _enterEditMode,
+                icon: const Icon(Icons.edit),
+                label: const Text('Edit Submission'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
@@ -616,28 +646,54 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     );
   }
 
-  Future<void> _resubmitPackage() async {
-    setState(() => _isResubmitting = true);
-    try {
-      final response = await _dio.patch(
-        '/submissions/${widget.submissionId}/resubmit',
-        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-      );
-      if (response.statusCode == 200 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Request resubmitted successfully'), backgroundColor: Color(0xFF10B981)),
-        );
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to resubmit: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isResubmitting = false);
-    }
+  Widget _buildProcessingFailedCard() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFFF59E0B))),
+      color: const Color(0xFFFEF3C7),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.warning_amber, color: Color(0xFFF59E0B), size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Processing Failed',
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF92400E),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Document processing encountered an error. You can edit and resubmit.',
+              style: AppTextStyles.bodySmall.copyWith(color: const Color(0xFF92400E)),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _enterEditMode,
+                icon: const Icon(Icons.edit),
+                label: const Text('Edit & Resubmit'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildCampaignsSection() {
@@ -687,6 +743,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     final costSummaryFile = campaign['costSummaryFileName']?.toString();
     final activitySummaryUrl = campaign['activitySummaryBlobUrl']?.toString();
     final activitySummaryFile = campaign['activitySummaryFileName']?.toString();
+    final campaignId = campaign['id']?.toString() ?? campaign['campaignId']?.toString() ?? '';
 
     return ExpansionTile(
       leading: CircleAvatar(
@@ -719,11 +776,19 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
 
               // Cost Summary
               if (costSummaryUrl != null && costSummaryUrl.isNotEmpty)
-                _buildDocumentRow(Icons.summarize, costSummaryFile ?? 'Cost Summary', costSummaryUrl),
+                _buildDocumentRow(
+                  Icons.summarize,
+                  costSummaryFile ?? 'Cost Summary',
+                  costSummaryUrl,
+                ),
 
               // Activity Summary
               if (activitySummaryUrl != null && activitySummaryUrl.isNotEmpty)
-                _buildDocumentRow(Icons.assignment, activitySummaryFile ?? 'Activity Summary', activitySummaryUrl),
+                _buildDocumentRow(
+                  Icons.assignment,
+                  activitySummaryFile ?? 'Activity Summary',
+                  activitySummaryUrl,
+                ),
 
               // Invoices
               if (invoices.isNotEmpty) ...[
@@ -765,6 +830,56 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildEditableDocumentRow(IconData icon, String label, String? blobUrl, {VoidCallback? onDelete}) {
+    final hasUrl = blobUrl != null && blobUrl.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: hasUrl ? AppColors.primary : AppColors.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(label, style: AppTextStyles.bodyMedium, overflow: TextOverflow.ellipsis),
+          ),
+          if (hasUrl)
+            IconButton(
+              icon: const Icon(Icons.download, size: 18),
+              onPressed: () => _downloadDocument(blobUrl, label),
+              tooltip: 'Download',
+              color: AppColors.primary,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          if (onDelete != null)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, size: 18),
+              onPressed: onDelete,
+              tooltip: 'Delete',
+              color: AppColors.rejectedText,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUploadButton(String label, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        icon: const Icon(Icons.upload_file, size: 16),
+        label: Text(label, style: const TextStyle(fontSize: 12)),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.primary,
+          side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        ),
+      ),
     );
   }
 
@@ -1028,6 +1143,14 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         'bgColor': const Color(0xFFDBEAFE),
         'borderColor': const Color(0xFF93C5FD),
         'icon': Icons.hourglass_empty,
+      };
+    } else if (stateLower == 'processingfailed') {
+      return {
+        'label': 'Processing Failed',
+        'color': const Color(0xFFF59E0B),
+        'bgColor': const Color(0xFFFEF3C7),
+        'borderColor': const Color(0xFFFCD34D),
+        'icon': Icons.warning_amber,
       };
     } else if (stateLower.contains('pendingasm') || stateLower.contains('pendingapproval')) {
       return {

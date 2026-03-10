@@ -20,15 +20,21 @@ public class HierarchicalSubmissionController : ControllerBase
 {
     private readonly IApplicationDbContext _context;
     private readonly IFileStorageService _fileStorage;
+    private readonly IDocumentAgent _documentAgent;
+    private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<HierarchicalSubmissionController> _logger;
 
     public HierarchicalSubmissionController(
         IApplicationDbContext context,
         IFileStorageService fileStorage,
+        IDocumentAgent documentAgent,
+        IServiceProvider serviceProvider,
         ILogger<HierarchicalSubmissionController> logger)
     {
         _context = context;
         _fileStorage = fileStorage;
+        _documentAgent = documentAgent;
+        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -137,7 +143,60 @@ public class HierarchicalSubmissionController : ControllerBase
 
             _logger.LogInformation("Invoice {InvoiceId} added to campaign {CampaignId}", invoice.Id, campaignId);
 
-            return Ok(new { invoiceId = invoice.Id, message = "Invoice added successfully" });
+            // Trigger extraction in background if file was uploaded
+            if (!string.IsNullOrEmpty(blobUrl))
+            {
+                var invoiceId = invoice.Id;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        _logger.LogInformation("Starting background extraction for invoice {InvoiceId}", invoiceId);
+                        var invoiceData = await _documentAgent.ExtractInvoiceAsync(blobUrl, CancellationToken.None);
+                        
+                        // Update invoice with extracted data
+                        using var scope = _serviceProvider.CreateScope();
+                        var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+                        var invoiceToUpdate = await context.CampaignInvoices
+                            .FirstOrDefaultAsync(i => i.Id == invoiceId, CancellationToken.None);
+                        
+                        if (invoiceToUpdate != null)
+                        {
+                            // Only update fields that are empty or zero (don't overwrite user input)
+                            if (string.IsNullOrEmpty(invoiceToUpdate.InvoiceNumber) && !string.IsNullOrEmpty(invoiceData.InvoiceNumber))
+                                invoiceToUpdate.InvoiceNumber = invoiceData.InvoiceNumber;
+                            
+                            if (invoiceToUpdate.InvoiceDate == null && invoiceData.InvoiceDate != default)
+                                invoiceToUpdate.InvoiceDate = invoiceData.InvoiceDate;
+                            
+                            if (string.IsNullOrEmpty(invoiceToUpdate.VendorName) && !string.IsNullOrEmpty(invoiceData.VendorName))
+                                invoiceToUpdate.VendorName = invoiceData.VendorName;
+                            
+                            if (string.IsNullOrEmpty(invoiceToUpdate.GSTNumber) && !string.IsNullOrEmpty(invoiceData.GSTNumber))
+                                invoiceToUpdate.GSTNumber = invoiceData.GSTNumber;
+                            
+                            if ((invoiceToUpdate.TotalAmount == null || invoiceToUpdate.TotalAmount == 0) && invoiceData.TotalAmount > 0)
+                                invoiceToUpdate.TotalAmount = invoiceData.TotalAmount;
+                            
+                            invoiceToUpdate.UpdatedAt = DateTime.UtcNow;
+                            await context.SaveChangesAsync(CancellationToken.None);
+                            
+                            _logger.LogInformation("Invoice {InvoiceId} updated with extracted data: Number={Number}, Amount={Amount}", 
+                                invoiceId, invoiceData.InvoiceNumber, invoiceData.TotalAmount);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Invoice {InvoiceId} not found for update after extraction", invoiceId);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Background extraction failed for invoice {InvoiceId}", invoiceId);
+                    }
+                });
+            }
+
+            return Ok(new { invoiceId = invoice.Id, message = "Invoice added successfully. Extraction in progress." });
         }
         catch (Exception ex)
         {
@@ -517,6 +576,161 @@ public class HierarchicalSubmissionController : ControllerBase
     }
 
     /// <summary>
+    /// Batch delete photos from a campaign (multi-select)
+    /// </summary>
+    [HttpPost("{packageId}/campaigns/{campaignId}/photos/batch-delete")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> BatchDeletePhotos(
+        Guid packageId,
+        Guid campaignId,
+        [FromBody] BatchDeleteRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+
+            var campaign = await _context.Campaigns
+                .Include(c => c.Package)
+                .FirstOrDefaultAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+
+            if (campaign == null || campaign.Package.SubmittedByUserId != userId)
+                return NotFound(new { error = "Campaign not found" });
+
+            if (request.Ids == null || request.Ids.Count == 0)
+                return BadRequest(new { error = "No photo IDs provided" });
+
+            var photos = await _context.CampaignPhotos
+                .Where(p => request.Ids.Contains(p.Id) && p.CampaignId == campaignId && p.PackageId == packageId && !p.IsDeleted)
+                .ToListAsync(cancellationToken);
+
+            foreach (var photo in photos)
+            {
+                photo.IsDeleted = true;
+                photo.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("{Count} photos batch-deleted from campaign {CampaignId}", photos.Count, campaignId);
+
+            return Ok(new { deletedCount = photos.Count, message = $"{photos.Count} photo(s) deleted successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error batch-deleting photos from campaign {CampaignId}", campaignId);
+            return StatusCode(500, new { error = "Failed to delete photos" });
+        }
+    }
+
+    /// <summary>
+    /// Batch delete invoices from a campaign (multi-select)
+    /// </summary>
+    [HttpPost("{packageId}/campaigns/{campaignId}/invoices/batch-delete")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> BatchDeleteInvoices(
+        Guid packageId,
+        Guid campaignId,
+        [FromBody] BatchDeleteRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+
+            var campaign = await _context.Campaigns
+                .Include(c => c.Package)
+                .FirstOrDefaultAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+
+            if (campaign == null || campaign.Package.SubmittedByUserId != userId)
+                return NotFound(new { error = "Campaign not found" });
+
+            if (request.Ids == null || request.Ids.Count == 0)
+                return BadRequest(new { error = "No invoice IDs provided" });
+
+            var invoices = await _context.CampaignInvoices
+                .Where(i => request.Ids.Contains(i.Id) && i.CampaignId == campaignId && i.PackageId == packageId && !i.IsDeleted)
+                .ToListAsync(cancellationToken);
+
+            foreach (var invoice in invoices)
+            {
+                invoice.IsDeleted = true;
+                invoice.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("{Count} invoices batch-deleted from campaign {CampaignId}", invoices.Count, campaignId);
+
+            return Ok(new { deletedCount = invoices.Count, message = $"{invoices.Count} invoice(s) deleted successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error batch-deleting invoices from campaign {CampaignId}", campaignId);
+            return StatusCode(500, new { error = "Failed to delete invoices" });
+        }
+    }
+
+    /// <summary>
+    /// Remove cost summary or activity summary from a campaign
+    /// </summary>
+    [HttpDelete("{packageId}/campaigns/{campaignId}/{docType}")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> RemoveCampaignDocument(
+        Guid packageId,
+        Guid campaignId,
+        string docType,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+
+            var campaign = await _context.Campaigns
+                .Include(c => c.Package)
+                .FirstOrDefaultAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+
+            if (campaign == null || campaign.Package.SubmittedByUserId != userId)
+                return NotFound(new { error = "Campaign not found" });
+
+            if (docType.Equals("cost-summary", StringComparison.OrdinalIgnoreCase))
+            {
+                campaign.CostSummaryFileName = null;
+                campaign.CostSummaryBlobUrl = null;
+                campaign.CostSummaryContentType = null;
+                campaign.CostSummaryFileSizeBytes = null;
+                campaign.CostSummaryExtractedDataJson = null;
+                campaign.CostSummaryExtractionConfidence = null;
+            }
+            else if (docType.Equals("activity-summary", StringComparison.OrdinalIgnoreCase))
+            {
+                campaign.ActivitySummaryFileName = null;
+                campaign.ActivitySummaryBlobUrl = null;
+                campaign.ActivitySummaryContentType = null;
+                campaign.ActivitySummaryFileSizeBytes = null;
+                campaign.ActivitySummaryExtractedDataJson = null;
+                campaign.ActivitySummaryExtractionConfidence = null;
+            }
+            else
+            {
+                return BadRequest(new { error = "Invalid document type. Use 'cost-summary' or 'activity-summary'." });
+            }
+
+            campaign.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("{DocType} removed from campaign {CampaignId}", docType, campaignId);
+
+            return Ok(new { message = $"{docType} removed successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing {DocType} from campaign {CampaignId}", docType, campaignId);
+            return StatusCode(500, new { error = $"Failed to remove {docType}" });
+        }
+    }
+
+    /// <summary>
     /// Download a campaign invoice file
     /// </summary>
     [HttpGet("invoices/{invoiceId}/download")]
@@ -650,6 +864,11 @@ public class HierarchicalSubmissionController : ControllerBase
 }
 
 // Request DTOs
+public class BatchDeleteRequest
+{
+    public List<Guid> Ids { get; set; } = new();
+}
+
 public class AddInvoiceRequest
 {
     public IFormFile? File { get; set; }
