@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
@@ -345,12 +346,24 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                                       const SizedBox(height: 24),
                                       InvoiceDocumentsTable(
                                         documents: _invoiceDocuments,
-                                        onDocumentTap: (doc) => _downloadDocument(doc.documentId, doc.documentName),
+                                        onDocumentTap: (doc) {
+                                          if (doc.documentId != null && doc.documentId!.isNotEmpty) {
+                                            _downloadDocument(doc.documentId, doc.documentName);
+                                          } else {
+                                            _downloadDocumentByUrl(doc.blobUrl, doc.documentName);
+                                          }
+                                        },
                                       ),
                                       const SizedBox(height: 24),
                                       CampaignDetailsTable(
                                         campaignDetails: _campaignDetails,
-                                        onPhotoTap: (detail) => _downloadDocument(detail.documentId, detail.documentName),
+                                        onPhotoTap: (detail) {
+                                          if (detail.documentId != null && detail.documentId!.isNotEmpty) {
+                                            _downloadDocument(detail.documentId, detail.documentName);
+                                          } else {
+                                            _downloadDocumentByUrl(detail.blobUrl, detail.documentName);
+                                          }
+                                        },
                                       ),
                                       const SizedBox(height: 80),
                                     ],
@@ -716,6 +729,292 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
             content: Text('Failed to resubmit to HQ: ${e.toString()}'),
             backgroundColor: Colors.red,
           ),
+        );
+      }
+    }
+  }
+
+  Widget _buildPOSection() {
+    if (_submission == null) return const SizedBox();
+    final documents = _submission!['documents'] as List? ?? [];
+    final poDocs = documents.where((d) => d['type'] == 'PO').toList();
+    if (poDocs.isEmpty) return const SizedBox();
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: ExpansionTile(
+        leading: const Icon(Icons.description, color: Color(0xFF3B82F6), size: 32),
+        title: Text('Purchase Order', style: AppTextStyles.h3),
+        subtitle: Text('${poDocs.length} document(s)'),
+        children: poDocs.map((doc) {
+          Map<String, dynamic>? data;
+          final extractedData = doc['extractedData'];
+          if (extractedData != null) {
+            try {
+              if (extractedData is String && extractedData.isNotEmpty) {
+                data = Map<String, dynamic>.from(jsonDecode(extractedData));
+              } else if (extractedData is Map) {
+                data = Map<String, dynamic>.from(extractedData);
+              }
+            } catch (_) {}
+          }
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: AppColors.border)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.insert_drive_file, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        doc['filename'] ?? 'Unknown',
+                        style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.download, size: 20),
+                      onPressed: () => _downloadDocument(doc['id']?.toString(), doc['filename']),
+                      tooltip: 'Download',
+                      color: AppColors.primary,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+                if (data != null) ...[
+                  const SizedBox(height: 12),
+                  const Divider(),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 24,
+                    runSpacing: 12,
+                    children: data.entries.map((entry) {
+                      return SizedBox(
+                        width: 200,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _formatFieldName(entry.key),
+                              style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              entry.value?.toString() ?? '-',
+                              style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  String _formatFieldName(String key) {
+    return key.replaceAllMapped(
+      RegExp(r'([A-Z])'),
+      (match) => ' ${match.group(0)}',
+    ).trim().split(' ').map((word) =>
+      word[0].toUpperCase() + word.substring(1),
+    ).join(' ');
+  }
+
+  Widget _buildCampaignsSection() {
+    if (_submission == null) return const SizedBox();
+    final campaigns = _submission!['campaigns'] as List? ?? [];
+    if (campaigns.isEmpty) return const SizedBox();
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                const Icon(Icons.campaign, color: Color(0xFF3B82F6), size: 28),
+                const SizedBox(width: 12),
+                Text('Campaigns (${campaigns.length})', style: AppTextStyles.h3),
+              ],
+            ),
+          ),
+          ...campaigns.asMap().entries.map((entry) {
+            final campaign = entry.value as Map<String, dynamic>;
+            return _buildCampaignTile(campaign, entry.key);
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCampaignTile(Map<String, dynamic> campaign, int index) {
+    final name = campaign['campaignName']?.toString() ?? 'Campaign ${index + 1}';
+    final teamCode = campaign['teamCode']?.toString() ?? '';
+    final dealership = campaign['dealershipName']?.toString() ?? '';
+    final startDate = _formatDisplayDate(campaign['startDate']);
+    final endDate = _formatDisplayDate(campaign['endDate']);
+    final workingDays = campaign['workingDays']?.toString() ?? '';
+    final totalCost = campaign['totalCost'];
+    final invoices = campaign['invoices'] as List? ?? [];
+    final photos = campaign['photos'] as List? ?? [];
+    final costSummaryUrl = campaign['costSummaryBlobUrl']?.toString();
+    final costSummaryFile = campaign['costSummaryFileName']?.toString();
+    final activitySummaryUrl = campaign['activitySummaryBlobUrl']?.toString();
+    final activitySummaryFile = campaign['activitySummaryFileName']?.toString();
+
+    return ExpansionTile(
+      leading: CircleAvatar(
+        backgroundColor: const Color(0xFF3B82F6).withOpacity(0.1),
+        child: Text('${index + 1}', style: const TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold)),
+      ),
+      title: Text(name, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+      subtitle: Text(
+        [if (teamCode.isNotEmpty) 'Team: $teamCode', if (dealership.isNotEmpty) dealership].join(' • '),
+        style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
+      ),
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 24,
+                runSpacing: 12,
+                children: [
+                  if (startDate.isNotEmpty) _buildDetailChip('Start', startDate),
+                  if (endDate.isNotEmpty) _buildDetailChip('End', endDate),
+                  if (workingDays.isNotEmpty) _buildDetailChip('Working Days', workingDays),
+                  if (totalCost != null) _buildDetailChip('Total Cost', '₹$totalCost'),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (costSummaryUrl != null && costSummaryUrl.isNotEmpty)
+                _buildCampaignDocRow(Icons.summarize, costSummaryFile ?? 'Cost Summary', costSummaryUrl),
+              if (activitySummaryUrl != null && activitySummaryUrl.isNotEmpty)
+                _buildCampaignDocRow(Icons.assignment, activitySummaryFile ?? 'Activity Summary', activitySummaryUrl),
+              if (invoices.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('Invoices (${invoices.length})', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                ...invoices.map((inv) {
+                  final invMap = inv as Map<String, dynamic>;
+                  final invNum = invMap['invoiceNumber']?.toString() ?? '';
+                  final vendor = invMap['vendorName']?.toString() ?? '';
+                  final amount = invMap['totalAmount'];
+                  final fileName = invMap['fileName']?.toString() ?? 'Invoice';
+                  final blobUrl = invMap['blobUrl']?.toString() ?? '';
+                  final label = [
+                    fileName,
+                    if (invNum.isNotEmpty) '(#$invNum)',
+                    if (vendor.isNotEmpty) '- $vendor',
+                    if (amount != null) '- ₹$amount',
+                  ].join(' ');
+                  return _buildCampaignDocRow(Icons.receipt, label, blobUrl);
+                }),
+              ],
+              if (photos.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('Photos (${photos.length})', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                ...photos.map((photo) {
+                  final photoMap = photo as Map<String, dynamic>;
+                  final fileName = photoMap['fileName']?.toString() ?? 'Photo';
+                  final blobUrl = photoMap['blobUrl']?.toString() ?? '';
+                  final caption = photoMap['caption']?.toString() ?? '';
+                  final label = caption.isNotEmpty ? '$fileName - $caption' : fileName;
+                  return _buildCampaignDocRow(Icons.image, label, blobUrl);
+                }),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailChip(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text(value, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+
+  Widget _buildCampaignDocRow(IconData icon, String label, String? blobUrl) {
+    final hasUrl = blobUrl != null && blobUrl.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: hasUrl ? AppColors.primary : AppColors.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(label, style: AppTextStyles.bodyMedium, overflow: TextOverflow.ellipsis),
+          ),
+          if (hasUrl)
+            IconButton(
+              icon: const Icon(Icons.download, size: 18),
+              onPressed: () => _downloadDocumentByUrl(blobUrl, label),
+              tooltip: 'Download',
+              color: AppColors.primary,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _downloadDocumentByUrl(String? blobUrl, String? filename) {
+    if (blobUrl == null || blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    try {
+      final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+      anchor.href = blobUrl;
+      anchor.target = '_blank';
+      anchor.click();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Opening ${filename ?? 'document'}...'),
+            backgroundColor: AppColors.approvedText,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to open document: $e'), backgroundColor: Colors.red),
         );
       }
     }
