@@ -14,12 +14,12 @@ import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../data/models/invoice_summary_data.dart';
 import '../../data/models/invoice_document_row.dart';
-import '../../data/models/campaign_detail_row.dart';
 import '../utils/submission_data_transformer.dart';
 import '../widgets/invoice_summary_section.dart';
 import '../widgets/invoice_documents_table.dart';
-import '../widgets/campaign_details_table.dart';
 import '../widgets/ai_analysis_section.dart';
+import '../widgets/campaign_details_table.dart';
+import '../../data/models/campaign_detail_row.dart';
 
 class HQReviewDetailPage extends StatefulWidget {
   final String submissionId;
@@ -96,11 +96,28 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
         final campaignDetails =
             SubmissionDataTransformer.transformToCampaignDetails(submissionData);
 
+        // Fetch hierarchical campaign data for photos, cost summary, activity summary
+        List<CampaignDetailRow> hierRows = [];
+        try {
+          final hierResponse = await _dio.get(
+            '/hierarchical/${widget.submissionId}/structure',
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+          if (hierResponse.statusCode == 200 && hierResponse.data != null) {
+            final campaigns = hierResponse.data['campaigns'] as List? ?? [];
+            hierRows = _buildHierarchicalRows(campaigns, submissionData);
+          }
+        } catch (e) {
+          debugPrint('Failed to load hierarchical data: $e');
+        }
+
+        final allCampaignDetails = _mergeCampaignDetails(campaignDetails, hierRows);
+
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
           _invoiceDocuments = invoiceDocuments;
-          _campaignDetails = campaignDetails;
+          _campaignDetails = allCampaignDetails;
           _isLoading = false;
         });
       }
@@ -387,7 +404,13 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                                       const SizedBox(height: 24),
                                       CampaignDetailsTable(
                                         campaignDetails: _campaignDetails,
-                                        onPhotoTap: (detail) => _downloadDocument(detail.documentId, detail.documentName),
+                                        onPhotoTap: (detail) {
+                                          if (detail.downloadPath != null && detail.downloadPath!.isNotEmpty) {
+                                            _downloadHierarchicalDocument(detail.downloadPath!, detail.documentName);
+                                          } else {
+                                            _downloadDocument(detail.documentId, detail.documentName);
+                                          }
+                                        },
                                       ),
                                       const SizedBox(height: 80),
                                     ],
@@ -725,6 +748,141 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
     return state == 'pendinghqapproval';
+  }
+
+  List<CampaignDetailRow> _buildHierarchicalRows(
+    List<dynamic> campaigns,
+    Map<String, dynamic> submissionData,
+  ) {
+    final failureReason =
+        submissionData['validationResult']?['failureReason']?.toString() ?? '';
+    final allPassed =
+        submissionData['validationResult']?['allValidationsPassed'] == true;
+    final rows = <CampaignDetailRow>[];
+    int serial = 1;
+
+    for (final campaign in campaigns) {
+      final photos = (campaign['photos'] as List?) ?? [];
+      final costFile = campaign['costSummaryFileName']?.toString();
+      final activityFile = campaign['activitySummaryFileName']?.toString();
+
+      for (final photo in photos) {
+        final fileName = photo['fileName']?.toString() ?? '-';
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('Photo', failureReason, allPassed);
+        rows.add(CampaignDetailRow(
+          serialNumber: serial++,
+          dealerName: 'Photo',
+          campaignDate: '',
+          documentName: fileName,
+          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          remarks: remarks,
+          documentId: photo['photoId']?.toString(),
+        ));
+      }
+
+      if (costFile != null && costFile.isNotEmpty) {
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('CostSummary', failureReason, allPassed);
+        rows.add(CampaignDetailRow(
+          serialNumber: serial++,
+          dealerName: 'CostSummary',
+          campaignDate: '',
+          documentName: costFile,
+          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          remarks: remarks,
+        ));
+      }
+
+      if (activityFile != null && activityFile.isNotEmpty) {
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('Activity', failureReason, allPassed);
+        rows.add(CampaignDetailRow(
+          serialNumber: serial++,
+          dealerName: 'Activity',
+          campaignDate: '',
+          documentName: activityFile,
+          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          remarks: remarks,
+        ));
+      }
+    }
+
+    return rows;
+  }
+
+  List<CampaignDetailRow> _mergeCampaignDetails(
+    List<CampaignDetailRow> fromSubmission,
+    List<CampaignDetailRow> fromHierarchical,
+  ) {
+    final existingNames = fromSubmission.map((r) => r.documentName.toLowerCase()).toSet();
+    final merged = List<CampaignDetailRow>.from(fromSubmission);
+    
+    for (final row in fromHierarchical) {
+      if (!existingNames.contains(row.documentName.toLowerCase())) {
+        merged.add(row.copyWith(serialNumber: merged.length + 1));
+        existingNames.add(row.documentName.toLowerCase());
+      }
+    }
+    
+    return merged;
+  }
+
+  Future<void> _downloadHierarchicalDocument(String path, String? filename) async {
+    try {
+      final response = await _dio.get(
+        path,
+        options: Options(
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+
+        final bytes = base64.decode(base64Content);
+
+        final blob = web.Blob(
+          [bytes.toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final url = web.URL.createObjectURL(blob);
+
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+
+        web.URL.revokeObjectURL(url);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Downloading $name...'),
+              backgroundColor: AppColors.approvedText,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to download: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _downloadDocument(String? documentId, String? filename) async {

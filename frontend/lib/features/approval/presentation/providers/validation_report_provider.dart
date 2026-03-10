@@ -21,7 +21,10 @@ class ValidationReportNotifier
 
   ValidationReportNotifier(this._dataSource, this._packageId)
       : super(const AsyncValue.loading()) {
-    loadReport();
+    // Delay initial load to allow auth token to be set
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) loadReport();
+    });
   }
 
   Future<void> loadReport() async {

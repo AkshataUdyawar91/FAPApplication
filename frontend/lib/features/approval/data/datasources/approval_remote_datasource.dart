@@ -22,7 +22,7 @@ class ApprovalRemoteDataSourceImpl implements ApprovalRemoteDataSource {
 
   @override
   Future<DocumentPackageModel> getPackageDetails(String packageId) async {
-    final response = await dio.get('/api/submissions/$packageId');
+    final response = await dio.get('/submissions/$packageId');
     return DocumentPackageModel.fromJson(response.data as Map<String, dynamic>);
   }
 
@@ -30,20 +30,20 @@ class ApprovalRemoteDataSourceImpl implements ApprovalRemoteDataSource {
   Future<EnhancedValidationReportModel> getValidationReport(
       String packageId) async {
     final response =
-        await dio.get('/api/submissions/$packageId/validation-report');
+        await dio.get('/submissions/$packageId/validation-report');
     return EnhancedValidationReportModel.fromJson(
         response.data as Map<String, dynamic>);
   }
 
   @override
   Future<void> approvePackage(String packageId) async {
-    await dio.patch('/api/submissions/$packageId/approve');
+    await dio.patch('/submissions/$packageId/approve');
   }
 
   @override
   Future<void> rejectPackage(String packageId, String reason) async {
     await dio.patch(
-      '/api/submissions/$packageId/reject',
+      '/submissions/$packageId/reject',
       data: {'reason': reason},
     );
   }
@@ -55,7 +55,7 @@ class ApprovalRemoteDataSourceImpl implements ApprovalRemoteDataSource {
     String reason,
   ) async {
     await dio.patch(
-      '/api/submissions/$packageId/request-reupload',
+      '/submissions/$packageId/request-reupload',
       data: {
         'fields': fields,
         'reason': reason,
@@ -66,7 +66,7 @@ class ApprovalRemoteDataSourceImpl implements ApprovalRemoteDataSource {
   @override
   Future<List<DocumentPackageModel>> getPendingPackages() async {
     final response = await dio.get(
-      '/api/submissions',
+      '/submissions',
       queryParameters: {'state': 'PENDING_APPROVAL'},
     );
     final data = response.data as List<dynamic>;

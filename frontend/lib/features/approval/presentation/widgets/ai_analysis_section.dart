@@ -47,25 +47,19 @@ class AiAnalysisSection extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
-        initiallyExpanded: true, // Show expanded by default for visibility
+        initiallyExpanded: false, // Collapsed by default
         tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
         childrenPadding:
             const EdgeInsets.only(left: 20, right: 20, bottom: 20),
         backgroundColor: const Color(0xFFEFF6FF),
         collapsedBackgroundColor: const Color(0xFFEFF6FF),
         leading: Icon(Icons.psychology, color: AppColors.primary, size: 22),
-        title: Row(
-          children: [
-            Text(
-              'AI Analysis',
-              style: AppTextStyles.h3.copyWith(
-                color: AppColors.primary,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(width: 12),
-            _buildConfidenceBadge(confidencePercent),
-          ],
+        title: Text(
+          'AI Recommendation',
+          style: AppTextStyles.h3.copyWith(
+            color: AppColors.primary,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         children: [
           const Divider(height: 1),
@@ -124,110 +118,108 @@ class AiAnalysisSection extends StatelessWidget {
         _buildRecommendationCard(recommendationType, confidencePercent, allPassed),
         const SizedBox(height: 20),
 
-        // Quick Summary - what ASM needs to know
-        _buildQuickSummary(confidencePercent, allPassed, recommendationType, validationResult),
-        const SizedBox(height: 20),
-
-        // Confidence breakdown with visual bars
-        if (confidenceScore != null) ...[
-          _buildConfidenceSection(confidenceScore),
-          const SizedBox(height: 20),
-        ],
-
-        // Validation Checklist - easy to scan
-        if (validationResult != null) ...[
-          _buildValidationChecklist(validationResult),
-          const SizedBox(height: 20),
-        ],
-
-        // Detailed findings (collapsible for advanced users)
-        if (evidence.isNotEmpty)
-          _buildDetailedFindings(evidence),
-
-        // Validation failure details
-        if (!allPassed && failureReason.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _buildValidationIssues(failureReason),
-        ],
+        // Compact validation status per document type
+        _buildCompactStatus(validationResult, allPassed, failureReason),
       ],
     );
+  }
+
+  /// Builds a concise natural-language summary from validation results and failureReason
+  Widget _buildCompactStatus(dynamic validationResult, bool allPassed, String failureReason) {
+    final summary = allPassed
+        ? 'All validations passed. PO, Invoice, Cost Summary, Activity and Photo documents have been verified successfully.'
+        : _buildNaturalSummary(validationResult, failureReason);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text(
+        summary,
+        style: TextStyle(
+          fontSize: 16,
+          color: Colors.grey[800],
+          height: 1.5,
+        ),
+      ),
+    );
+  }
+
+  String _buildNaturalSummary(dynamic validationResult, String failureReason) {
+    if (failureReason.isEmpty) {
+      return 'The submitted documents have been reviewed but could not be fully validated. Please check the remarks for details.';
+    }
+
+    final reasons = failureReason
+        .split(';')
+        .map((r) => r.trim())
+        .where((r) => r.isNotEmpty)
+        .toList();
+
+    // Identify which document areas have issues
+    final areas = <String>{};
+    for (final r in reasons) {
+      final lower = r.toLowerCase();
+      if (lower.contains('po') || lower.contains('sap')) areas.add('PO');
+      if (lower.contains('invoice') || lower.contains('gst') || lower.contains('hsn') || lower.contains('vendor')) areas.add('Invoice');
+      if (lower.contains('cost')) areas.add('Cost Summary');
+      if (lower.contains('photo') || lower.contains('image')) areas.add('Photos');
+      if (lower.contains('activity')) areas.add('Activity Summary');
+      if (lower.contains('missing required')) areas.add('required fields');
+    }
+
+    if (areas.isEmpty) {
+      return 'The submitted documents have not passed validation. Please review the remarks column for specific details.';
+    }
+
+    final areaList = areas.toList();
+    String areaText;
+    if (areaList.length == 1) {
+      areaText = areaList[0];
+    } else {
+      areaText = '${areaList.sublist(0, areaList.length - 1).join(", ")} and ${areaList.last}';
+    }
+
+    return 'The submitted documents have failed validation with ${reasons.length} issue${reasons.length > 1 ? "s" : ""} found across $areaText. Please review the remarks for details.';
   }
 
   /// Prominent recommendation card with clear action guidance
   Widget _buildRecommendationCard(String type, int confidence, bool allPassed) {
     final normalizedType = type.toLowerCase();
     
-    Color bgColor;
-    Color borderColor;
+    Color iconColor;
     Color textColor;
     IconData icon;
     String title;
-    String subtitle;
 
     if (normalizedType == 'approve') {
-      bgColor = const Color(0xFFD1FAE5);
-      borderColor = const Color(0xFF10B981);
+      iconColor = const Color(0xFF10B981);
       textColor = const Color(0xFF065F46);
       icon = Icons.check_circle_rounded;
-      title = '✓ Recommended for Approval';
-      subtitle = 'High confidence score and all validations passed. This submission meets quality standards.';
+      title = 'Recommended for Approval';
     } else if (normalizedType == 'reject') {
-      bgColor = const Color(0xFFFEE2E2);
-      borderColor = const Color(0xFFEF4444);
+      iconColor = const Color(0xFFEF4444);
       textColor = const Color(0xFF991B1B);
       icon = Icons.cancel_rounded;
-      title = '✗ Recommended for Rejection';
-      subtitle = allPassed 
-          ? 'Low confidence score indicates potential data quality issues. Manual review recommended.'
-          : 'Validation failures detected. Please review the issues below before proceeding.';
+      title = 'Recommended for Rejection';
     } else {
-      bgColor = const Color(0xFFFEF3C7);
-      borderColor = const Color(0xFFF59E0B);
+      iconColor = const Color(0xFFF59E0B);
       textColor = const Color(0xFF92400E);
       icon = Icons.visibility_rounded;
-      title = '⚠ Manual Review Recommended';
-      subtitle = 'Moderate confidence score. Please review the details carefully before making a decision.';
+      title = 'Manual Review Recommended';
     }
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: borderColor, width: 2),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: borderColor, size: 32),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: textColor,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: textColor.withOpacity(0.9),
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
+    return Row(
+      children: [
+        Icon(icon, color: iconColor, size: 28),
+        const SizedBox(width: 12),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: textColor,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

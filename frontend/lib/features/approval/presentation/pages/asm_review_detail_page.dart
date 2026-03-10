@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
-import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
@@ -14,12 +13,14 @@ import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../data/models/invoice_summary_data.dart';
 import '../../data/models/invoice_document_row.dart';
-import '../../data/models/campaign_detail_row.dart';
 import '../utils/submission_data_transformer.dart';
 import '../widgets/invoice_summary_section.dart';
 import '../widgets/invoice_documents_table.dart';
 import '../widgets/campaign_details_table.dart';
+import '../widgets/hq_rejection_section.dart';
 import '../widgets/ai_analysis_section.dart';
+import '../widgets/campaign_details_table.dart';
+import '../../data/models/campaign_detail_row.dart';
 
 class ASMReviewDetailPage extends StatefulWidget {
   final String submissionId;
@@ -91,16 +92,35 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       if (response.statusCode == 200 && mounted) {
         final submissionData = response.data as Map<String, dynamic>;
         
-        // Transform data for new layout
+        // Transform data for new layout (uses failureReason from submission directly)
         final invoiceSummary = SubmissionDataTransformer.extractInvoiceSummary(submissionData);
         final invoiceDocuments = SubmissionDataTransformer.transformToInvoiceDocuments(submissionData);
         final campaignDetails = SubmissionDataTransformer.transformToCampaignDetails(submissionData);
+        
+        // Fetch hierarchical campaign data for photos, cost summary, activity summary
+        // These docs aren't in the submission's documents array
+        List<CampaignDetailRow> hierRows = [];
+        try {
+          final hierResponse = await _dio.get(
+            '/hierarchical/${widget.submissionId}/structure',
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+          if (hierResponse.statusCode == 200 && hierResponse.data != null) {
+            final campaigns = hierResponse.data['campaigns'] as List? ?? [];
+            hierRows = _buildHierarchicalRows(campaigns, submissionData);
+          }
+        } catch (e) {
+          debugPrint('Failed to load hierarchical data: $e');
+        }
+        
+        // Merge: submission docs + hierarchical docs (avoid duplicates by filename)
+        final allCampaignDetails = _mergeCampaignDetails(campaignDetails, hierRows);
         
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
           _invoiceDocuments = invoiceDocuments;
-          _campaignDetails = campaignDetails;
+          _campaignDetails = allCampaignDetails;
           _isLoading = false;
         });
       }
@@ -371,7 +391,9 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                                       CampaignDetailsTable(
                                         campaignDetails: _campaignDetails,
                                         onPhotoTap: (detail) {
-                                          if (detail.documentId != null && detail.documentId!.isNotEmpty) {
+                                          if (detail.downloadPath != null && detail.downloadPath!.isNotEmpty) {
+                                            _downloadHierarchicalDocument(detail.downloadPath!, detail.documentName);
+                                          } else if (detail.documentId != null && detail.documentId!.isNotEmpty) {
                                             _downloadDocument(detail.documentId, detail.documentName);
                                           } else {
                                             _downloadDocumentByUrl(detail.blobUrl, detail.documentName);
@@ -653,260 +675,82 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
            state == 'pendingasmapproval';
   }
 
-  Widget _buildPOSection() {
-    if (_submission == null) return const SizedBox();
-    final documents = _submission!['documents'] as List? ?? [];
-    final poDocs = documents.where((d) => d['type'] == 'PO').toList();
-    if (poDocs.isEmpty) return const SizedBox();
+  /// Builds CampaignDetailRow list from hierarchical campaign data.
+  List<CampaignDetailRow> _buildHierarchicalRows(
+    List<dynamic> campaigns,
+    Map<String, dynamic> submissionData,
+  ) {
+    final failureReason =
+        submissionData['validationResult']?['failureReason']?.toString() ?? '';
+    final allPassed =
+        submissionData['validationResult']?['allValidationsPassed'] == true;
+    final rows = <CampaignDetailRow>[];
+    int serial = 1;
 
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: AppColors.border),
-      ),
-      child: ExpansionTile(
-        leading: const Icon(Icons.description, color: Color(0xFF3B82F6), size: 32),
-        title: Text('Purchase Order', style: AppTextStyles.h3),
-        subtitle: Text('${poDocs.length} document(s)'),
-        children: poDocs.map((doc) {
-          Map<String, dynamic>? data;
-          final extractedData = doc['extractedData'];
-          if (extractedData != null) {
-            try {
-              if (extractedData is String && extractedData.isNotEmpty) {
-                data = Map<String, dynamic>.from(jsonDecode(extractedData));
-              } else if (extractedData is Map) {
-                data = Map<String, dynamic>.from(extractedData);
-              }
-            } catch (_) {}
-          }
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: AppColors.border)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.insert_drive_file, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        doc['filename'] ?? 'Unknown',
-                        style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.download, size: 20),
-                      onPressed: () => _downloadDocument(doc['id']?.toString(), doc['filename']),
-                      tooltip: 'Download',
-                      color: AppColors.primary,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  ],
-                ),
-                if (data != null) ...[
-                  const SizedBox(height: 12),
-                  const Divider(),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 24,
-                    runSpacing: 12,
-                    children: data.entries.map((entry) {
-                      return SizedBox(
-                        width: 200,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _formatFieldName(entry.key),
-                              style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              entry.value?.toString() ?? '-',
-                              style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
-                            ),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ],
-            ),
-          );
-        }).toList(),
-      ),
-    );
+    for (final campaign in campaigns) {
+      final photos = (campaign['photos'] as List?) ?? [];
+      final costFile = campaign['costSummaryFileName']?.toString();
+      final activityFile = campaign['activitySummaryFileName']?.toString();
+
+      for (final photo in photos) {
+        final fileName = photo['fileName']?.toString() ?? '-';
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('Photo', failureReason, allPassed);
+        rows.add(CampaignDetailRow(
+          serialNumber: serial++,
+          dealerName: 'Photo',
+          campaignDate: '',
+          documentName: fileName,
+          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          remarks: remarks,
+          documentId: photo['photoId']?.toString(),
+        ));
+      }
+
+      if (costFile != null && costFile.isNotEmpty) {
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('CostSummary', failureReason, allPassed);
+        rows.add(CampaignDetailRow(
+          serialNumber: serial++,
+          dealerName: 'CostSummary',
+          campaignDate: '',
+          documentName: costFile,
+          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          remarks: remarks,
+        ));
+      }
+
+      if (activityFile != null && activityFile.isNotEmpty) {
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('Activity', failureReason, allPassed);
+        rows.add(CampaignDetailRow(
+          serialNumber: serial++,
+          dealerName: 'Activity',
+          campaignDate: '',
+          documentName: activityFile,
+          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          remarks: remarks,
+        ));
+      }
+    }
+
+    return rows;
   }
 
-  String _formatFieldName(String key) {
-    return key.replaceAllMapped(
-      RegExp(r'([A-Z])'),
-      (match) => ' ${match.group(0)}',
-    ).trim().split(' ').map((word) =>
-      word[0].toUpperCase() + word.substring(1),
-    ).join(' ');
-  }
-
-  Widget _buildCampaignsSection() {
-    if (_submission == null) return const SizedBox();
-    final campaigns = _submission!['campaigns'] as List? ?? [];
-    if (campaigns.isEmpty) return const SizedBox();
-
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                const Icon(Icons.campaign, color: Color(0xFF3B82F6), size: 28),
-                const SizedBox(width: 12),
-                Text('Campaigns (${campaigns.length})', style: AppTextStyles.h3),
-              ],
-            ),
-          ),
-          ...campaigns.asMap().entries.map((entry) {
-            final campaign = entry.value as Map<String, dynamic>;
-            return _buildCampaignTile(campaign, entry.key);
-          }),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCampaignTile(Map<String, dynamic> campaign, int index) {
-    final name = campaign['campaignName']?.toString() ?? 'Campaign ${index + 1}';
-    final teamCode = campaign['teamCode']?.toString() ?? '';
-    final dealership = campaign['dealershipName']?.toString() ?? '';
-    final startDate = _formatDisplayDate(campaign['startDate']);
-    final endDate = _formatDisplayDate(campaign['endDate']);
-    final workingDays = campaign['workingDays']?.toString() ?? '';
-    final totalCost = campaign['totalCost'];
-    final invoices = campaign['invoices'] as List? ?? [];
-    final photos = campaign['photos'] as List? ?? [];
-    final costSummaryUrl = campaign['costSummaryBlobUrl']?.toString();
-    final costSummaryFile = campaign['costSummaryFileName']?.toString();
-    final activitySummaryUrl = campaign['activitySummaryBlobUrl']?.toString();
-    final activitySummaryFile = campaign['activitySummaryFileName']?.toString();
-
-    return ExpansionTile(
-      leading: CircleAvatar(
-        backgroundColor: const Color(0xFF3B82F6).withOpacity(0.1),
-        child: Text('${index + 1}', style: const TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold)),
-      ),
-      title: Text(name, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
-      subtitle: Text(
-        [if (teamCode.isNotEmpty) 'Team: $teamCode', if (dealership.isNotEmpty) dealership].join(' • '),
-        style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
-      ),
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Wrap(
-                spacing: 24,
-                runSpacing: 12,
-                children: [
-                  if (startDate.isNotEmpty) _buildDetailChip('Start', startDate),
-                  if (endDate.isNotEmpty) _buildDetailChip('End', endDate),
-                  if (workingDays.isNotEmpty) _buildDetailChip('Working Days', workingDays),
-                  if (totalCost != null) _buildDetailChip('Total Cost', '₹$totalCost'),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (costSummaryUrl != null && costSummaryUrl.isNotEmpty)
-                _buildCampaignDocRow(Icons.summarize, costSummaryFile ?? 'Cost Summary', costSummaryUrl),
-              if (activitySummaryUrl != null && activitySummaryUrl.isNotEmpty)
-                _buildCampaignDocRow(Icons.assignment, activitySummaryFile ?? 'Activity Summary', activitySummaryUrl),
-              if (invoices.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text('Invoices (${invoices.length})', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                ...invoices.map((inv) {
-                  final invMap = inv as Map<String, dynamic>;
-                  final invNum = invMap['invoiceNumber']?.toString() ?? '';
-                  final vendor = invMap['vendorName']?.toString() ?? '';
-                  final amount = invMap['totalAmount'];
-                  final fileName = invMap['fileName']?.toString() ?? 'Invoice';
-                  final blobUrl = invMap['blobUrl']?.toString() ?? '';
-                  final label = [
-                    fileName,
-                    if (invNum.isNotEmpty) '(#$invNum)',
-                    if (vendor.isNotEmpty) '- $vendor',
-                    if (amount != null) '- ₹$amount',
-                  ].join(' ');
-                  return _buildCampaignDocRow(Icons.receipt, label, blobUrl);
-                }),
-              ],
-              if (photos.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text('Photos (${photos.length})', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                ...photos.map((photo) {
-                  final photoMap = photo as Map<String, dynamic>;
-                  final fileName = photoMap['fileName']?.toString() ?? 'Photo';
-                  final blobUrl = photoMap['blobUrl']?.toString() ?? '';
-                  final caption = photoMap['caption']?.toString() ?? '';
-                  final label = caption.isNotEmpty ? '$fileName - $caption' : fileName;
-                  return _buildCampaignDocRow(Icons.image, label, blobUrl);
-                }),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDetailChip(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary, fontSize: 11)),
-        const SizedBox(height: 2),
-        Text(value, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
-      ],
-    );
-  }
-
-  Widget _buildCampaignDocRow(IconData icon, String label, String? blobUrl) {
-    final hasUrl = blobUrl != null && blobUrl.isNotEmpty;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: hasUrl ? AppColors.primary : AppColors.textSecondary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(label, style: AppTextStyles.bodyMedium, overflow: TextOverflow.ellipsis),
-          ),
-          if (hasUrl)
-            IconButton(
-              icon: const Icon(Icons.download, size: 18),
-              onPressed: () => _downloadDocumentByUrl(blobUrl, label),
-              tooltip: 'Download',
-              color: AppColors.primary,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-        ],
-      ),
-    );
+  /// Merges submission-based campaign details with hierarchical rows.
+  /// Avoids duplicates by checking document names.
+  List<CampaignDetailRow> _mergeCampaignDetails(
+    List<CampaignDetailRow> fromSubmission,
+    List<CampaignDetailRow> fromHierarchical,
+  ) {
+    final existingNames = fromSubmission.map((r) => r.documentName.toLowerCase()).toSet();
+    final merged = List<CampaignDetailRow>.from(fromSubmission);
+    
+    for (final row in fromHierarchical) {
+      if (!existingNames.contains(row.documentName.toLowerCase())) {
+        merged.add(row.copyWith(serialNumber: merged.length + 1));
+        existingNames.add(row.documentName.toLowerCase());
+      }
+    }
+    
+    return merged;
   }
 
   void _downloadDocumentByUrl(String? blobUrl, String? filename) {
@@ -934,6 +778,67 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to open document: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+
+  Future<void> _downloadHierarchicalDocument(String path, String? filename) async {
+    try {
+      final response = await _dio.get(
+        path,
+        options: Options(
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+
+        final bytes = base64.decode(base64Content);
+
+        final blob = web.Blob(
+          [bytes.toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final url = web.URL.createObjectURL(blob);
+
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+
+        web.URL.revokeObjectURL(url);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Downloading $name...'),
+              backgroundColor: AppColors.approvedText,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to download: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:dio/dio.dart';
+import 'dart:convert';
 import '../../../../core/theme/app_colors.dart';
 
 /// Data class for an invoice (child of campaign)
@@ -11,6 +13,7 @@ class InvoiceItemData {
   String invoiceDate;
   String totalAmount;
   String gstNumber;
+  bool isExtracting;
 
   InvoiceItemData({
     required this.id,
@@ -19,6 +22,7 @@ class InvoiceItemData {
     this.invoiceDate = '',
     this.totalAmount = '',
     this.gstNumber = '',
+    this.isExtracting = false,
   });
 }
 
@@ -58,11 +62,15 @@ class CampaignItemData {
 class CampaignListSection extends StatefulWidget {
   final List<CampaignItemData> campaigns;
   final Function(List<CampaignItemData>) onCampaignsChanged;
+  final String? token;
+  final String? packageId;
 
   const CampaignListSection({
     super.key,
     required this.campaigns,
     required this.onCampaignsChanged,
+    this.token,
+    this.packageId,
   });
 
   @override
@@ -128,12 +136,195 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         allowedExtensions: ['pdf'],
       );
       if (result != null && result.files.isNotEmpty) {
-        setState(() => _campaigns[campaignIndex].invoices[invoiceIndex].file = result.files.first);
+        final file = result.files.first;
+        setState(() => _campaigns[campaignIndex].invoices[invoiceIndex].file = file);
         widget.onCampaignsChanged(_campaigns);
+        
+        // Upload and extract invoice data
+        await _uploadAndExtractInvoice(campaignIndex, invoiceIndex, file);
       }
     } catch (e) {
       debugPrint('Error picking invoice file: $e');
     }
+  }
+
+  Future<void> _uploadAndExtractInvoice(int campaignIndex, int invoiceIndex, PlatformFile file) async {
+    if (file.bytes == null || widget.token == null) {
+      print('Invoice extract skipped: bytes=${file.bytes != null}, token=${widget.token != null}');
+      return;
+    }
+    
+    final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
+    if (mounted) setState(() => invoice.isExtracting = true);
+    
+    print('Invoice upload starting: file=${file.name}, packageId=${widget.packageId}');
+    
+    try {
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      
+      // Upload invoice document
+      final uploadResponse = await dio.post(
+        '/documents/upload',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
+          'documentType': 'Invoice',
+          if (widget.packageId != null) 'packageId': widget.packageId,
+        }),
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      
+      print('Invoice upload response: status=${uploadResponse.statusCode}, data=${uploadResponse.data}');
+      
+      if (uploadResponse.statusCode == 200) {
+        final packageId = uploadResponse.data['packageId']?.toString();
+        final documentId = uploadResponse.data['documentId']?.toString();
+        
+        print('Invoice upload success: packageId=$packageId, documentId=$documentId');
+        
+        if (packageId != null && documentId != null) {
+          // Poll for extraction results
+          await _pollForInvoiceExtraction(packageId, documentId, campaignIndex, invoiceIndex);
+        } else {
+          print('Invoice upload: missing packageId or documentId in response');
+        }
+      }
+    } catch (e) {
+      print('Error uploading/extracting invoice: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (campaignIndex < _campaigns.length && invoiceIndex < _campaigns[campaignIndex].invoices.length) {
+            _campaigns[campaignIndex].invoices[invoiceIndex].isExtracting = false;
+          }
+        });
+      }
+    }
+  }
+
+  Future<void> _pollForInvoiceExtraction(String packageId, String documentId, int campaignIndex, int invoiceIndex) async {
+    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+    const maxAttempts = 25;
+    
+    print('Invoice polling started: packageId=$packageId, documentId=$documentId');
+    
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) {
+        print('Invoice polling stopped: widget disposed at attempt $attempt');
+        return;
+      }
+      
+      try {
+        final response = await dio.get(
+          '/submissions/$packageId',
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+        
+        if (!mounted) return;
+        
+        if (response.statusCode == 200 && response.data != null) {
+          final documents = response.data['documents'] as List?;
+          if (documents != null) {
+            // Find the invoice document by ID
+            final invoiceDoc = documents.firstWhere(
+              (doc) => doc['id']?.toString() == documentId,
+              orElse: () => null,
+            );
+            
+            if (invoiceDoc == null) {
+              print('Invoice poll attempt $attempt: doc $documentId not found in ${documents.length} docs');
+              print('Invoice poll attempt $attempt: available doc ids: ${documents.map((d) => d['id']).toList()}');
+              print('Invoice poll attempt $attempt: available doc types: ${documents.map((d) => d['type']).toList()}');
+            } else if (invoiceDoc['extractedData'] == null) {
+              print('Invoice poll attempt $attempt: doc found but extractedData is null, status=${invoiceDoc['status']}');
+            }
+            
+            if (invoiceDoc != null && invoiceDoc['extractedData'] != null) {
+              var extractedData = invoiceDoc['extractedData'];
+              print('Invoice extractedData type=${extractedData.runtimeType}');
+              print('Invoice extractedData keys: ${extractedData is Map ? extractedData.keys.toList() : "N/A"}');
+              print('Invoice extractedData: $extractedData');
+              
+              if (extractedData is String && extractedData.isNotEmpty) {
+                try {
+                  extractedData = jsonDecode(extractedData);
+                  print('Invoice extractedData parsed from string, keys: ${extractedData is Map ? extractedData.keys.toList() : "N/A"}');
+                } catch (e) {
+                  print('Invoice extractedData JSON parse failed: $e');
+                }
+              }
+              
+              if (extractedData is Map) {
+                final invNumber = extractedData['InvoiceNumber'] ?? extractedData['invoiceNumber'] ?? '';
+                final invDate = extractedData['InvoiceDate'] ?? extractedData['invoiceDate'] ?? '';
+                final amount = extractedData['TotalAmount'] ?? extractedData['totalAmount'] ?? '';
+                final gst = extractedData['GSTNumber'] ?? extractedData['gstNumber'] ?? 
+                             extractedData['GSTIN'] ?? extractedData['gstin'] ?? 
+                             extractedData['VendorGSTIN'] ?? extractedData['vendorGSTIN'] ??
+                             extractedData['SellerGSTIN'] ?? extractedData['sellerGSTIN'] ?? '';
+                
+                print('Invoice extraction parsed: invNumber=$invNumber, invDate=$invDate, amount=$amount, gst=$gst');
+                
+                if (invNumber.toString().isNotEmpty || amount.toString().isNotEmpty) {
+                  if (!mounted) return;
+                  
+                  // Bounds check before accessing campaigns/invoices
+                  if (campaignIndex < _campaigns.length && invoiceIndex < _campaigns[campaignIndex].invoices.length) {
+                    final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
+                    setState(() {
+                      if (invNumber.toString().isNotEmpty) invoice.invoiceNumber = invNumber.toString();
+                      if (invDate.toString().isNotEmpty) invoice.invoiceDate = _formatExtractedDate(invDate.toString());
+                      if (amount.toString().isNotEmpty) {
+                        // Format amount like PO does
+                        final amountNum = double.tryParse(amount.toString());
+                        if (amountNum != null) {
+                          invoice.totalAmount = _formatCurrency(amountNum);
+                        } else {
+                          invoice.totalAmount = amount.toString();
+                        }
+                      }
+                      if (gst.toString().isNotEmpty) invoice.gstNumber = gst.toString();
+                      invoice.isExtracting = false;
+                    });
+                    widget.onCampaignsChanged(_campaigns);
+                    print('Invoice extraction successful: invNumber=${invoice.invoiceNumber}, amount=${invoice.totalAmount}, date=${invoice.invoiceDate}, gst=${invoice.gstNumber}');
+                    return;
+                  } else {
+                    print('Invoice extraction: campaign/invoice index out of bounds');
+                  }
+                } else {
+                  print('Invoice extraction: No meaningful data found in extractedData');
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        if (!mounted) return;
+        print('Invoice polling attempt $attempt failed: $e');
+      }
+    }
+    
+    print('Invoice extraction polling timed out after $maxAttempts attempts');
+  }
+
+  String _formatExtractedDate(String dateStr) {
+    if (dateStr.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(dateStr);
+      return '${dt.day.toString().padLeft(2, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.year}';
+    } catch (_) {
+      return dateStr;
+    }
+  }
+
+  String _formatCurrency(double amount) {
+    final formatter = NumberFormat.currency(
+      symbol: '₹ ',
+      decimalDigits: 2,
+      locale: 'en_IN',
+    );
+    return formatter.format(amount);
   }
 
   Future<void> _pickCostSummaryFile(int campaignIndex) async {
@@ -650,64 +841,167 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               ),
             ),
           const SizedBox(height: 8),
-          // Invoice fields - responsive layout
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final isNarrow = constraints.maxWidth < 400;
-              final fields = [
-                _buildSmallField('Invoice No.', invoice.invoiceNumber, (v) {
-                  invoice.invoiceNumber = v;
-                  widget.onCampaignsChanged(_campaigns);
-                }, fieldKey: 'inv_num_${invoice.id}', fullWidth: isNarrow),
-                _buildSmallField('Date', invoice.invoiceDate, (v) {
-                  invoice.invoiceDate = v;
-                  widget.onCampaignsChanged(_campaigns);
-                }, hint: 'dd-mm-yyyy', fieldKey: 'inv_date_${invoice.id}', fullWidth: isNarrow),
-                _buildSmallField('Amount (₹)', invoice.totalAmount, (v) {
-                  invoice.totalAmount = v;
-                  widget.onCampaignsChanged(_campaigns);
-                }, fieldKey: 'inv_amt_${invoice.id}', fullWidth: isNarrow),
-                _buildSmallField('GST No.', invoice.gstNumber, (v) {
-                  invoice.gstNumber = v;
-                  widget.onCampaignsChanged(_campaigns);
-                }, fieldKey: 'inv_gst_${invoice.id}', fullWidth: isNarrow),
-              ];
-              if (isNarrow) {
-                return Column(
-                  children: fields.map((f) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: f,
-                  )).toList(),
-                );
-              }
-              return Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: fields,
-              );
-            },
-          ),
+          // Invoice fields
+          if (invoice.isExtracting)
+            Center(
+              child: Card(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Extracting Invoice details...',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.primary),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'AI is analyzing your Invoice document',
+                        style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Fields will auto-populate when extraction completes.\nYou can also enter details manually.',
+                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary.withValues(alpha: 0.8)),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else
+            _buildInvoiceFieldsGrid(invoice),
         ],
       ),
     );
   }
 
-  Widget _buildSmallField(String label, String value, Function(String) onChanged, {String? hint, String? fieldKey, bool fullWidth = false}) {
-    return SizedBox(
-      width: fullWidth ? double.infinity : 140,
-      child: TextFormField(
-        key: fieldKey != null ? Key(fieldKey) : null,
-        initialValue: value,
-        onChanged: onChanged,
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          border: const OutlineInputBorder(),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          isDense: true,
+  Widget _buildInvoiceFieldsGrid(InvoiceItemData invoice) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _buildInvoiceField(
+                label: 'Invoice No.',
+                value: invoice.invoiceNumber,
+                icon: Icons.numbers,
+                placeholder: 'Enter invoice number',
+                onChanged: (v) {
+                  invoice.invoiceNumber = v;
+                  widget.onCampaignsChanged(_campaigns);
+                },
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: _buildInvoiceField(
+                label: 'Date',
+                value: invoice.invoiceDate,
+                icon: Icons.calendar_today,
+                placeholder: 'dd-mm-yyyy',
+                onChanged: (v) {
+                  invoice.invoiceDate = v;
+                  widget.onCampaignsChanged(_campaigns);
+                },
+              ),
+            ),
+          ],
         ),
-        style: const TextStyle(fontSize: 12),
-      ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildInvoiceField(
+                label: 'Amount (₹)',
+                value: invoice.totalAmount,
+                icon: Icons.currency_rupee,
+                placeholder: 'Enter amount',
+                onChanged: (v) {
+                  invoice.totalAmount = v;
+                  widget.onCampaignsChanged(_campaigns);
+                },
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: _buildInvoiceField(
+                label: 'GST No.',
+                value: invoice.gstNumber,
+                icon: Icons.business,
+                placeholder: 'Enter GST number',
+                onChanged: (v) {
+                  invoice.gstNumber = v;
+                  widget.onCampaignsChanged(_campaigns);
+                },
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInvoiceField({
+    required String label,
+    required String value,
+    required IconData icon,
+    required String placeholder,
+    required Function(String) onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppColors.primary,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: TextEditingController(text: value),
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            hintText: placeholder,
+            hintStyle: const TextStyle(color: Color(0xFF9E9E9E)),
+            prefixIcon: Icon(icon, color: AppColors.primary, size: 20),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: AppColors.border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: AppColors.border),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: AppColors.primary, width: 2),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          ),
+          style: const TextStyle(fontSize: 16),
+        ),
+      ],
     );
   }
 

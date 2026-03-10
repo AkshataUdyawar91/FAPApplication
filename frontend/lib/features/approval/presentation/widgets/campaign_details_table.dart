@@ -4,17 +4,10 @@ import '../../../../core/theme/app_text_styles.dart';
 import '../../data/models/invoice_document_row.dart';
 import '../../data/models/campaign_detail_row.dart';
 
-/// Table widget displaying campaign details (photos) grouped by dealer.
-/// 
-/// Shows photos in a table with columns: S.No, Dealer Name, Campaign Date,
-/// Document Name, Status, Remarks. Visual grouping for dealer rows.
-/// 
-/// Requirements: 4.1, 4.2, 4.5, 4.6, 4.7, 4.8, 4.9
+/// Table widget displaying campaign details (Invoice, Photo, CostSummary, Activity).
+/// Matches the PO table layout exactly: S.No, Category, Document Name, Status, Remarks.
 class CampaignDetailsTable extends StatelessWidget {
-  /// List of campaign detail rows to display.
   final List<CampaignDetailRow> campaignDetails;
-  
-  /// Callback when a photo row is tapped.
   final void Function(CampaignDetailRow detail)? onPhotoTap;
 
   const CampaignDetailsTable({
@@ -38,27 +31,14 @@ class CampaignDetailsTable extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Section header
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(
-              'Campaign Name',
-              style: AppTextStyles.h3.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+              'Campaign Details',
+              style: AppTextStyles.h3.copyWith(fontWeight: FontWeight.bold),
             ),
           ),
-          
-          // Table with horizontal scroll support
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minWidth: MediaQuery.of(context).size.width - 48,
-              ),
-              child: _buildTable(),
-            ),
-          ),
+          _buildTable(),
         ],
       ),
     );
@@ -71,22 +51,17 @@ class CampaignDetailsTable extends StatelessWidget {
         top: BorderSide(color: AppColors.border),
       ),
       columnWidths: const {
-        0: FixedColumnWidth(60),   // S.No
-        1: FlexColumnWidth(0.75),  // Campaign/Team
-        2: FlexColumnWidth(0.75),  // Campaign Date
-        3: FlexColumnWidth(2),     // Document Name
-        4: FixedColumnWidth(100),  // Status
-        5: FlexColumnWidth(2),     // Remarks
+        0: FixedColumnWidth(60),   // S. No
+        1: FlexColumnWidth(1.2),   // Category
+        2: FlexColumnWidth(2),     // Document Name
+        3: FixedColumnWidth(120),  // Status
+        4: FlexColumnWidth(3),     // Remarks
       },
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       children: [
-        // Header row
         _buildHeaderRow(),
-        // Data rows
         ...campaignDetails.asMap().entries.map((entry) {
-          final index = entry.key;
-          final detail = entry.value;
-          return _buildDataRow(detail, index);
+          return _buildDataRow(entry.value, entry.key);
         }),
       ],
     );
@@ -94,13 +69,10 @@ class CampaignDetailsTable extends StatelessWidget {
 
   TableRow _buildHeaderRow() {
     return TableRow(
-      decoration: BoxDecoration(
-        color: AppColors.primary,
-      ),
+      decoration: BoxDecoration(color: AppColors.primary),
       children: [
-        _buildHeaderCell('S.No'),
-        _buildHeaderCell('Campaign/Team'),
-        _buildHeaderCell('Campaign Date'),
+        _buildHeaderCell('S. No'),
+        _buildHeaderCell('Category'),
         _buildHeaderCell('Document Name'),
         _buildHeaderCell('Status'),
         _buildHeaderCell('Remarks'),
@@ -122,27 +94,15 @@ class CampaignDetailsTable extends StatelessWidget {
   }
 
   TableRow _buildDataRow(CampaignDetailRow detail, int index) {
-    // Alternating row colors: even = white, odd = background
     final isEven = index % 2 == 0;
     final backgroundColor = isEven ? Colors.white : AppColors.background;
+    final category = _displayCategory(detail.dealerName);
 
     return TableRow(
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        // Add top border for first row of each dealer group
-        border: detail.isFirstInGroup && index > 0
-            ? Border(
-                top: BorderSide(
-                  color: AppColors.primary.withOpacity(0.3),
-                  width: 2,
-                ),
-              )
-            : null,
-      ),
+      decoration: BoxDecoration(color: backgroundColor),
       children: [
         _buildDataCell(detail.serialNumber.toString()),
-        _buildDealerCell(detail),
-        _buildDataCell(detail.campaignDate),
+        _buildDataCell(category),
         _buildDocumentNameCell(detail),
         _buildStatusCell(detail.status),
         _buildDataCell(detail.remarks),
@@ -156,39 +116,35 @@ class CampaignDetailsTable extends StatelessWidget {
       child: Text(
         text,
         style: AppTextStyles.bodyMedium,
+        softWrap: true,
       ),
     );
   }
 
-  Widget _buildDealerCell(CampaignDetailRow detail) {
-    // Show dealer name with visual emphasis for first row in group
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Text(
-        detail.dealerName,
-        style: AppTextStyles.bodyMedium.copyWith(
-          fontWeight: detail.isFirstInGroup ? FontWeight.w600 : FontWeight.normal,
-          color: detail.isFirstInGroup ? AppColors.primary : AppColors.textPrimary,
-        ),
-      ),
-    );
+  String _displayCategory(String type) {
+    switch (type) {
+      case 'CostSummary':
+        return 'Cost Summary';
+      case 'Activity':
+        return 'Activity Summary';
+      default:
+        return type;
+    }
   }
 
   Widget _buildDocumentNameCell(CampaignDetailRow detail) {
     final hasUrl = (detail.documentId != null && detail.documentId!.isNotEmpty) ||
         (detail.blobUrl != null && detail.blobUrl!.isNotEmpty);
-    
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: InkWell(
-        onTap: hasUrl && onPhotoTap != null 
-            ? () => onPhotoTap!(detail) 
-            : null,
+        onTap: hasUrl && onPhotoTap != null ? () => onPhotoTap!(detail) : null,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.image,
+              Icons.description,
               size: 16,
               color: hasUrl ? AppColors.primary : AppColors.textSecondary,
             ),
@@ -210,32 +166,32 @@ class CampaignDetailsTable extends StatelessWidget {
   }
 
   Widget _buildStatusCell(ValidationStatus status) {
-    // If status is unknown, show empty space
     if (status == ValidationStatus.unknown) {
       return const Padding(
         padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: SizedBox.shrink(),
       );
     }
-    
     final isOk = status == ValidationStatus.ok;
-    
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             isOk ? Icons.check_circle : Icons.cancel,
-            size: 16,
+            size: 14,
             color: isOk ? const Color(0xFF10B981) : const Color(0xFFEF4444),
           ),
           const SizedBox(width: 4),
-          Text(
-            status.displayText,
-            style: AppTextStyles.bodySmall.copyWith(
-              color: isOk ? const Color(0xFF10B981) : const Color(0xFFEF4444),
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              status.displayText,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: isOk ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
             ),
           ),
         ],

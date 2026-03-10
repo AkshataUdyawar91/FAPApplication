@@ -98,15 +98,26 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   }
 
   Future<void> _pollForPOExtraction(String packageId, String documentId) async {
-    const maxAttempts = 15;
+    const maxAttempts = 25;
     const delayBetweenAttempts = Duration(seconds: 2);
+    
+    print('PO polling started: packageId=$packageId, documentId=$documentId');
+    
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
       await Future.delayed(delayBetweenAttempts);
+      if (!mounted) {
+        print('PO polling stopped: widget disposed at attempt $attempt');
+        return;
+      }
+      
       try {
         final response = await _dio.get(
           '/submissions/$packageId',
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
+        
+        if (!mounted) return;
+        
         if (response.statusCode == 200 && response.data != null) {
           final documents = response.data['documents'] as List?;
           if (documents != null) {
@@ -114,6 +125,13 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
               (doc) => doc['type']?.toString().toLowerCase() == 'po',
               orElse: () => null,
             );
+            
+            if (poDoc == null) {
+              print('PO poll attempt $attempt: PO doc not found in ${documents.length} docs');
+            } else if (poDoc['extractedData'] == null) {
+              print('PO poll attempt $attempt: doc found but extractedData is null');
+            }
+            
             if (poDoc != null) {
               var extractedData = poDoc['extractedData'];
               if (extractedData != null) {
@@ -126,6 +144,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                   final vendorName = extractedData['VendorName'] ?? extractedData['vendorName'];
                   final date = extractedData['PODate'] ?? extractedData['poDate'] ?? extractedData['Date'] ?? extractedData['date'];
                   if (poNumber != null || totalAmount != null || vendorName != null || date != null) {
+                    if (!mounted) return;
                     setState(() {
                       _poData = {
                         'poNumber': poNumber,
@@ -134,7 +153,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                         'vendorName': vendorName,
                       };
                     });
-                    return;
+                    print('PO extraction successful: $_poData');
+                    return; // Success - exit polling
+                  } else {
+                    print('PO extraction attempt $attempt: No meaningful data found in extractedData');
                   }
                 }
               }
@@ -693,7 +715,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       case 2:
         content = CampaignListSection(
           campaigns: _campaigns,
-          onCampaignsChanged: (campaigns) => setState(() => _campaigns = campaigns),
+          onCampaignsChanged: (campaigns) {
+            setState(() => _campaigns = campaigns);
+          },
+          token: widget.token,
+          packageId: _currentPackageId,
         );
         break;
       case 3:

@@ -516,6 +516,130 @@ public class HierarchicalSubmissionController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Download a campaign invoice file
+    /// </summary>
+    [HttpGet("invoices/{invoiceId}/download")]
+    public async Task<IActionResult> DownloadInvoice(Guid invoiceId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var invoice = await _context.CampaignInvoices
+                .AsNoTracking()
+                .FirstOrDefaultAsync(i => i.Id == invoiceId, cancellationToken);
+
+            if (invoice == null || string.IsNullOrEmpty(invoice.BlobUrl))
+                return NotFound(new { message = "Invoice not found" });
+
+            var fileBytes = await _fileStorage.GetFileBytesAsync(invoice.BlobUrl);
+            var base64Content = Convert.ToBase64String(fileBytes);
+
+            return Ok(new
+            {
+                base64Content,
+                filename = invoice.FileName,
+                contentType = !string.IsNullOrEmpty(invoice.ContentType) ? invoice.ContentType : "application/octet-stream",
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error downloading invoice {InvoiceId}", invoiceId);
+            return StatusCode(500, new { message = "Failed to download invoice" });
+        }
+    }
+
+    /// <summary>
+    /// Download a campaign photo file
+    /// </summary>
+    [HttpGet("photos/{photoId}/download")]
+    public async Task<IActionResult> DownloadPhoto(Guid photoId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var photo = await _context.CampaignPhotos
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == photoId, cancellationToken);
+
+            if (photo == null || string.IsNullOrEmpty(photo.BlobUrl))
+                return NotFound(new { message = "Photo not found" });
+
+            var fileBytes = await _fileStorage.GetFileBytesAsync(photo.BlobUrl);
+            var base64Content = Convert.ToBase64String(fileBytes);
+
+            return Ok(new
+            {
+                base64Content,
+                filename = photo.FileName,
+                contentType = !string.IsNullOrEmpty(photo.ContentType) ? photo.ContentType : "application/octet-stream",
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error downloading photo {PhotoId}", photoId);
+            return StatusCode(500, new { message = "Failed to download photo" });
+        }
+    }
+
+    /// <summary>
+    /// Download cost summary or activity summary for a campaign
+    /// </summary>
+    [HttpGet("campaigns/{campaignId}/download/{docType}")]
+    public async Task<IActionResult> DownloadCampaignSummary(
+        Guid campaignId,
+        string docType,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var campaign = await _context.Campaigns
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == campaignId, cancellationToken);
+
+            if (campaign == null)
+                return NotFound(new { message = "Campaign not found" });
+
+            string? blobUrl;
+            string? fileName;
+            string? contentType;
+
+            if (docType.Equals("cost-summary", StringComparison.OrdinalIgnoreCase))
+            {
+                blobUrl = campaign.CostSummaryBlobUrl;
+                fileName = campaign.CostSummaryFileName;
+                contentType = campaign.CostSummaryContentType;
+            }
+            else if (docType.Equals("activity-summary", StringComparison.OrdinalIgnoreCase))
+            {
+                blobUrl = campaign.ActivitySummaryBlobUrl;
+                fileName = campaign.ActivitySummaryFileName;
+                contentType = campaign.ActivitySummaryContentType;
+            }
+            else
+            {
+                return BadRequest(new { message = "Invalid document type. Use 'cost-summary' or 'activity-summary'." });
+            }
+
+            if (string.IsNullOrEmpty(blobUrl))
+                return NotFound(new { message = $"{docType} not found for this campaign" });
+
+            var fileBytes = await _fileStorage.GetFileBytesAsync(blobUrl);
+            var base64Content = Convert.ToBase64String(fileBytes);
+
+            return Ok(new
+            {
+                base64Content,
+                filename = fileName ?? "document",
+                contentType = !string.IsNullOrEmpty(contentType) ? contentType : "application/octet-stream",
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error downloading {DocType} for campaign {CampaignId}", docType, campaignId);
+            return StatusCode(500, new { message = $"Failed to download {docType}" });
+        }
+    }
+
+
     private Guid GetUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
