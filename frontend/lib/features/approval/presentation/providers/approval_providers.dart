@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/network/dio_client.dart';
 import '../../data/datasources/approval_remote_datasource.dart';
+import '../../data/models/approval_action_model.dart';
 import '../../data/repositories/approval_repository_impl.dart';
 import '../../domain/repositories/approval_repository.dart';
 import '../../domain/usecases/approve_package_usecase.dart';
@@ -36,4 +37,9 @@ final approvalNotifierProvider =
     ref.watch(rejectPackageUseCaseProvider),
     ref.watch(requestReuploadUseCaseProvider),
   ),
+);
+
+/// Provider that exposes the approval history from the notifier state.
+final approvalHistoryProvider = Provider<List<ApprovalActionModel>>(
+  (ref) => ref.watch(approvalNotifierProvider).approvalHistory,
 );

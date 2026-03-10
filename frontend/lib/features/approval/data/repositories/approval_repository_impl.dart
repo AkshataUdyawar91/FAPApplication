@@ -4,6 +4,8 @@ import '../../../../core/error/failures.dart';
 import '../../../submission/domain/entities/document_package.dart';
 import '../../domain/repositories/approval_repository.dart';
 import '../datasources/approval_remote_datasource.dart';
+import '../models/approval_action_model.dart';
+import '../models/approval_result_model.dart';
 
 class ApprovalRepositoryImpl implements ApprovalRepository {
   final ApprovalRemoteDataSource remoteDataSource;
@@ -90,7 +92,16 @@ class ApprovalRepositoryImpl implements ApprovalRepository {
         if (statusCode == 401) {
           return const AuthFailure('Unauthorized');
         } else if (statusCode == 403) {
-          return const AuthFailure('Forbidden');
+          return const AuthFailure(
+            "You don't have permission to perform this action.",
+          );
+        } else if (statusCode == 404) {
+          return const NotFoundFailure('Submission not found.');
+        } else if (statusCode == 409) {
+          return ServerFailure(
+            error.response?.data?['message'] ??
+                'This submission is not in the correct state for this action.',
+          );
         }
         return ServerFailure(
           error.response?.data?['message'] ?? 'Server error',
@@ -99,6 +110,95 @@ class ApprovalRepositoryImpl implements ApprovalRepository {
         return const ServerFailure('Request cancelled');
       default:
         return const NetworkFailure('Network error');
+    }
+  }
+
+  @override
+  Future<Either<Failure, ApprovalResultModel>> asmApprove(
+    String id,
+    String comment,
+  ) async {
+    try {
+      final result = await remoteDataSource.asmApprove(id, comment);
+      return Right(result);
+    } on DioException catch (e) {
+      return Left(_handleDioError(e));
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, ApprovalResultModel>> asmReject(
+    String id,
+    String comment,
+  ) async {
+    try {
+      final result = await remoteDataSource.asmReject(id, comment);
+      return Right(result);
+    } on DioException catch (e) {
+      return Left(_handleDioError(e));
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, ApprovalResultModel>> raApprove(
+    String id,
+    String comment,
+  ) async {
+    try {
+      final result = await remoteDataSource.raApprove(id, comment);
+      return Right(result);
+    } on DioException catch (e) {
+      return Left(_handleDioError(e));
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, ApprovalResultModel>> raReject(
+    String id,
+    String comment,
+  ) async {
+    try {
+      final result = await remoteDataSource.raReject(id, comment);
+      return Right(result);
+    } on DioException catch (e) {
+      return Left(_handleDioError(e));
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, ApprovalResultModel>> resubmit(
+    String id,
+    String comment,
+  ) async {
+    try {
+      final result = await remoteDataSource.resubmit(id, comment);
+      return Right(result);
+    } on DioException catch (e) {
+      return Left(_handleDioError(e));
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, List<ApprovalActionModel>>> getApprovalHistory(
+    String id,
+  ) async {
+    try {
+      final result = await remoteDataSource.getApprovalHistory(id);
+      return Right(result);
+    } on DioException catch (e) {
+      return Left(_handleDioError(e));
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
     }
   }
 }

@@ -31,6 +31,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<CampaignInvoice> CampaignInvoices => Set<CampaignInvoice>();
     public DbSet<CampaignPhoto> CampaignPhotos => Set<CampaignPhoto>();
 
+    // Approval workflow audit trail
+    public DbSet<ApprovalAction> ApprovalActions => Set<ApprovalAction>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -55,6 +58,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<Campaign>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CampaignInvoice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CampaignPhoto>().HasQueryFilter(e => !e.IsDeleted);
+        
+        // Approval workflow
+        modelBuilder.Entity<ApprovalAction>().HasQueryFilter(e => !e.IsDeleted);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

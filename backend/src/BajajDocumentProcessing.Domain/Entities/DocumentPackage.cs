@@ -200,4 +200,9 @@ public class DocumentPackage : BaseEntity
     /// Gets or sets the collection of campaign invoices in this package (for easier querying)
     /// </summary>
     public ICollection<CampaignInvoice> CampaignInvoices { get; set; } = new List<CampaignInvoice>();
+    
+    /// <summary>
+    /// Gets or sets the collection of approval workflow actions (approve, reject, resubmit) for this package's audit trail
+    /// </summary>
+    public ICollection<ApprovalAction> ApprovalActions { get; set; } = new List<ApprovalAction>();
 }

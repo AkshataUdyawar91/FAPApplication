@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 import '../../../submission/data/models/document_package_model.dart';
+import '../models/approval_action_model.dart';
+import '../models/approval_result_model.dart';
 import '../models/enhanced_validation_report_model.dart';
 
 abstract class ApprovalRemoteDataSource {
@@ -13,6 +15,12 @@ abstract class ApprovalRemoteDataSource {
     String reason,
   );
   Future<List<DocumentPackageModel>> getPendingPackages();
+  Future<ApprovalResultModel> asmApprove(String id, String comment);
+  Future<ApprovalResultModel> asmReject(String id, String comment);
+  Future<ApprovalResultModel> raApprove(String id, String comment);
+  Future<ApprovalResultModel> raReject(String id, String comment);
+  Future<ApprovalResultModel> resubmit(String id, String comment);
+  Future<List<ApprovalActionModel>> getApprovalHistory(String id);
 }
 
 class ApprovalRemoteDataSourceImpl implements ApprovalRemoteDataSource {
@@ -72,6 +80,72 @@ class ApprovalRemoteDataSourceImpl implements ApprovalRemoteDataSource {
     final data = response.data as List<dynamic>;
     return data
         .map((e) => DocumentPackageModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  @override
+  Future<ApprovalResultModel> asmApprove(String id, String comment) async {
+    final response = await dio.patch(
+      '/submissions/$id/asm-approve',
+      data: {'comment': comment},
+    );
+    return ApprovalResultModel.fromJson(
+      response.data as Map<String, dynamic>,
+    );
+  }
+
+  @override
+  Future<ApprovalResultModel> asmReject(String id, String comment) async {
+    final response = await dio.patch(
+      '/submissions/$id/asm-reject',
+      data: {'comment': comment},
+    );
+    return ApprovalResultModel.fromJson(
+      response.data as Map<String, dynamic>,
+    );
+  }
+
+  @override
+  Future<ApprovalResultModel> raApprove(String id, String comment) async {
+    final response = await dio.patch(
+      '/submissions/$id/hq-approve',
+      data: {'comment': comment},
+    );
+    return ApprovalResultModel.fromJson(
+      response.data as Map<String, dynamic>,
+    );
+  }
+
+  @override
+  Future<ApprovalResultModel> raReject(String id, String comment) async {
+    final response = await dio.patch(
+      '/submissions/$id/hq-reject',
+      data: {'comment': comment},
+    );
+    return ApprovalResultModel.fromJson(
+      response.data as Map<String, dynamic>,
+    );
+  }
+
+  @override
+  Future<ApprovalResultModel> resubmit(String id, String comment) async {
+    final response = await dio.patch(
+      '/submissions/$id/resubmit',
+      data: {'comment': comment},
+    );
+    return ApprovalResultModel.fromJson(
+      response.data as Map<String, dynamic>,
+    );
+  }
+
+  @override
+  Future<List<ApprovalActionModel>> getApprovalHistory(String id) async {
+    final response = await dio.get('/submissions/$id/approval-history');
+    final data = response.data as List<dynamic>;
+    return data
+        .map(
+          (e) => ApprovalActionModel.fromJson(e as Map<String, dynamic>),
+        )
         .toList();
   }
 }

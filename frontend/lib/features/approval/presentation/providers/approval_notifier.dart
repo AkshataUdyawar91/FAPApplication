@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:equatable/equatable.dart';
 import '../../../submission/domain/entities/document_package.dart';
+import '../../data/models/approval_action_model.dart';
 import '../../domain/repositories/approval_repository.dart';
 import '../../domain/usecases/approve_package_usecase.dart';
 import '../../domain/usecases/reject_package_usecase.dart';
@@ -12,6 +13,9 @@ class ApprovalState extends Equatable {
   final DocumentPackage? currentPackage;
   final List<DocumentPackage> pendingPackages;
   final bool actionSuccess;
+  final List<ApprovalActionModel> approvalHistory;
+  final bool isHistoryLoading;
+  final String? historyError;
 
   const ApprovalState({
     this.isLoading = false,
@@ -19,6 +23,9 @@ class ApprovalState extends Equatable {
     this.currentPackage,
     this.pendingPackages = const [],
     this.actionSuccess = false,
+    this.approvalHistory = const [],
+    this.isHistoryLoading = false,
+    this.historyError,
   });
 
   ApprovalState copyWith({
@@ -27,6 +34,9 @@ class ApprovalState extends Equatable {
     DocumentPackage? currentPackage,
     List<DocumentPackage>? pendingPackages,
     bool? actionSuccess,
+    List<ApprovalActionModel>? approvalHistory,
+    bool? isHistoryLoading,
+    String? historyError,
   }) {
     return ApprovalState(
       isLoading: isLoading ?? this.isLoading,
@@ -34,6 +44,9 @@ class ApprovalState extends Equatable {
       currentPackage: currentPackage ?? this.currentPackage,
       pendingPackages: pendingPackages ?? this.pendingPackages,
       actionSuccess: actionSuccess ?? this.actionSuccess,
+      approvalHistory: approvalHistory ?? this.approvalHistory,
+      isHistoryLoading: isHistoryLoading ?? this.isHistoryLoading,
+      historyError: historyError,
     );
   }
 
@@ -44,6 +57,9 @@ class ApprovalState extends Equatable {
         currentPackage,
         pendingPackages,
         actionSuccess,
+        approvalHistory,
+        isHistoryLoading,
+        historyError,
       ];
 }
 
@@ -148,6 +164,124 @@ class ApprovalNotifier extends StateNotifier<ApprovalState> {
       (_) => state = state.copyWith(
         isLoading: false,
         actionSuccess: true,
+      ),
+    );
+  }
+
+  /// ASM approves a package. Transitions to PendingHQApproval.
+  Future<void> asmApprove(String packageId, String comment) async {
+    state = state.copyWith(isLoading: true, error: null, actionSuccess: false);
+
+    final result = await repository.asmApprove(packageId, comment);
+
+    result.fold(
+      (failure) => state = state.copyWith(
+        isLoading: false,
+        error: failure.message,
+        actionSuccess: false,
+      ),
+      (_) {
+        state = state.copyWith(isLoading: false, actionSuccess: true);
+        loadPackageDetails(packageId);
+        fetchApprovalHistory(packageId);
+      },
+    );
+  }
+
+  /// ASM rejects a package. Transitions to RejectedByASM.
+  Future<void> asmReject(String packageId, String comment) async {
+    state = state.copyWith(isLoading: true, error: null, actionSuccess: false);
+
+    final result = await repository.asmReject(packageId, comment);
+
+    result.fold(
+      (failure) => state = state.copyWith(
+        isLoading: false,
+        error: failure.message,
+        actionSuccess: false,
+      ),
+      (_) {
+        state = state.copyWith(isLoading: false, actionSuccess: true);
+        loadPackageDetails(packageId);
+        fetchApprovalHistory(packageId);
+      },
+    );
+  }
+
+  /// RA approves a package. Transitions to Approved.
+  Future<void> raApprove(String packageId, String comment) async {
+    state = state.copyWith(isLoading: true, error: null, actionSuccess: false);
+
+    final result = await repository.raApprove(packageId, comment);
+
+    result.fold(
+      (failure) => state = state.copyWith(
+        isLoading: false,
+        error: failure.message,
+        actionSuccess: false,
+      ),
+      (_) {
+        state = state.copyWith(isLoading: false, actionSuccess: true);
+        loadPackageDetails(packageId);
+        fetchApprovalHistory(packageId);
+      },
+    );
+  }
+
+  /// RA rejects a package. Transitions to RejectedByRA.
+  Future<void> raReject(String packageId, String comment) async {
+    state = state.copyWith(isLoading: true, error: null, actionSuccess: false);
+
+    final result = await repository.raReject(packageId, comment);
+
+    result.fold(
+      (failure) => state = state.copyWith(
+        isLoading: false,
+        error: failure.message,
+        actionSuccess: false,
+      ),
+      (_) {
+        state = state.copyWith(isLoading: false, actionSuccess: true);
+        loadPackageDetails(packageId);
+        fetchApprovalHistory(packageId);
+      },
+    );
+  }
+
+  /// Agency resubmits a rejected package. Transitions to PendingASMApproval.
+  Future<void> resubmit(String packageId, String comment) async {
+    state = state.copyWith(isLoading: true, error: null, actionSuccess: false);
+
+    final result = await repository.resubmit(packageId, comment);
+
+    result.fold(
+      (failure) => state = state.copyWith(
+        isLoading: false,
+        error: failure.message,
+        actionSuccess: false,
+      ),
+      (_) {
+        state = state.copyWith(isLoading: false, actionSuccess: true);
+        loadPackageDetails(packageId);
+        fetchApprovalHistory(packageId);
+      },
+    );
+  }
+
+  /// Fetches the approval history for a package.
+  Future<void> fetchApprovalHistory(String packageId) async {
+    state = state.copyWith(isHistoryLoading: true, historyError: null);
+
+    final result = await repository.getApprovalHistory(packageId);
+
+    result.fold(
+      (failure) => state = state.copyWith(
+        isHistoryLoading: false,
+        historyError: failure.message,
+      ),
+      (history) => state = state.copyWith(
+        isHistoryLoading: false,
+        approvalHistory: history,
       ),
     );
   }

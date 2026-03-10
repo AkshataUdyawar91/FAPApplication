@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
-import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
@@ -18,20 +18,20 @@ import '../../data/models/approval_action_model.dart';
 import '../utils/submission_data_transformer.dart';
 import '../widgets/invoice_summary_section.dart';
 import '../widgets/invoice_documents_table.dart';
-import '../widgets/ai_analysis_section.dart';
 import '../widgets/campaign_details_table.dart';
+import '../widgets/ai_analysis_section.dart';
 import '../widgets/bifurcated_review_layout.dart';
 import '../widgets/workflow_stage_indicator.dart';
 import '../widgets/approval_history_timeline.dart';
 import '../widgets/approval_action_panel.dart';
 import '../../data/models/campaign_detail_row.dart';
 
-class HQReviewDetailPage extends StatefulWidget {
+class AgencyReviewDetailPage extends StatefulWidget {
   final String submissionId;
   final String token;
   final String userName;
 
-  const HQReviewDetailPage({
+  const AgencyReviewDetailPage({
     super.key,
     required this.submissionId,
     required this.token,
@@ -39,10 +39,10 @@ class HQReviewDetailPage extends StatefulWidget {
   });
 
   @override
-  State<HQReviewDetailPage> createState() => _HQReviewDetailPageState();
+  State<AgencyReviewDetailPage> createState() => _AgencyReviewDetailPageState();
 }
 
-class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
+class _AgencyReviewDetailPageState extends State<AgencyReviewDetailPage> {
   final _dio = Dio(BaseOptions(
     baseUrl: 'http://localhost:5000/api',
     headers: {
@@ -50,7 +50,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
       'Pragma': 'no-cache',
       'Expires': '0',
     },
-  ),);
+  ));
 
   bool _isLoading = true;
   Map<String, dynamic>? _submission;
@@ -63,6 +63,20 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
   List<InvoiceDocumentRow> _invoiceDocuments = [];
   List<CampaignDetailRow> _campaignDetails = [];
   List<ApprovalActionModel> _approvalHistory = [];
+
+  String? get _lastRejectionReason {
+    final rejections = _approvalHistory.where((a) =>
+        a.actionType == 'ASMRejected' || a.actionType == 'RARejected');
+    return rejections.isNotEmpty ? rejections.last.comment : null;
+  }
+
+  String? get _lastRejectedBy {
+    final rejections = _approvalHistory.where((a) =>
+        a.actionType == 'ASMRejected' || a.actionType == 'RARejected');
+    return rejections.isNotEmpty
+        ? '${rejections.last.actorName} (${rejections.last.actorRole})'
+        : null;
+  }
 
   @override
   void initState() {
@@ -96,16 +110,19 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
         final invoiceSummary =
             SubmissionDataTransformer.extractInvoiceSummary(submissionData);
         final invoiceDocuments =
-            SubmissionDataTransformer.transformToInvoiceDocuments(submissionData);
+            SubmissionDataTransformer.transformToInvoiceDocuments(
+                submissionData);
         final campaignDetails =
-            SubmissionDataTransformer.transformToCampaignDetails(submissionData);
+            SubmissionDataTransformer.transformToCampaignDetails(
+                submissionData);
 
-        // Fetch hierarchical campaign data for photos, cost summary, activity summary
+        // Fetch hierarchical campaign data
         List<CampaignDetailRow> hierRows = [];
         try {
           final hierResponse = await _dio.get(
             '/hierarchical/${widget.submissionId}/structure',
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            options:
+                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
           if (hierResponse.statusCode == 200 && hierResponse.data != null) {
             final campaigns = hierResponse.data['campaigns'] as List? ?? [];
@@ -115,7 +132,8 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           debugPrint('Failed to load hierarchical data: $e');
         }
 
-        final allCampaignDetails = _mergeCampaignDetails(campaignDetails, hierRows);
+        final allCampaignDetails =
+            _mergeCampaignDetails(campaignDetails, hierRows);
 
         setState(() {
           _submission = submissionData;
@@ -155,7 +173,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
         setState(() {
           _approvalHistory = list
               .map((json) =>
-                  ApprovalActionModel.fromJson(Map<String, dynamic>.from(json)),)
+                  ApprovalActionModel.fromJson(Map<String, dynamic>.from(json)))
               .toList();
         });
       }
@@ -164,12 +182,12 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     }
   }
 
-  Future<void> _approveSubmission(String comment) async {
+  Future<void> _resubmitSubmission(String comment) async {
     setState(() => _isProcessing = true);
 
     try {
       final response = await _dio.patch(
-        '/submissions/${widget.submissionId}/hq-approve',
+        '/submissions/${widget.submissionId}/resubmit',
         data: {'comment': comment},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
@@ -177,7 +195,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
       if (response.statusCode == 200 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('FAP approved successfully (Final Approval)'),
+            content: Text('Submission resubmitted for ASM review'),
             backgroundColor: AppColors.approvedText,
           ),
         );
@@ -187,7 +205,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to approve: ${e.toString()}'),
+            content: Text('Failed to resubmit: ${e.toString()}'),
             backgroundColor: AppColors.rejectedText,
           ),
         );
@@ -199,56 +217,36 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     }
   }
 
-  Future<void> _rejectSubmission(String comment) async {
-    setState(() => _isProcessing = true);
-
-    try {
-      final response = await _dio.patch(
-        '/submissions/${widget.submissionId}/hq-reject',
-        data: {'comment': comment},
-        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-      );
-
-      if (response.statusCode == 200 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('FAP rejected (sent back to Agency)'),
-            backgroundColor: AppColors.rejectedText,
-          ),
-        );
-        Navigator.pop(context, true);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to reject: ${e.toString()}'),
-            backgroundColor: AppColors.rejectedText,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-      }
-    }
-  }
-
-  bool _isSubmissionActionable() {
+  bool _isSubmissionRejected() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
-    return state == 'pendinghqapproval';
+    return state == 'rejectedbyasm' || state == 'rejectedbyra';
   }
 
   List<NavItem> _getNavItems(BuildContext context) {
     return [
-      NavItem(icon: Icons.dashboard, label: 'Dashboard', onTap: () => Navigator.pop(context)),
-      NavItem(icon: Icons.rate_review, label: 'Review', isActive: true, onTap: () {}),
-      NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon'),),);
-      },),
-      NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon'),),);
-      },),
+      NavItem(
+          icon: Icons.dashboard,
+          label: 'Dashboard',
+          onTap: () => Navigator.pop(context)),
+      NavItem(
+          icon: Icons.upload_file,
+          label: 'Submissions',
+          isActive: true,
+          onTap: () {}),
+      NavItem(
+          icon: Icons.notifications,
+          label: 'Notifications',
+          onTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Notifications coming soon')));
+          }),
+      NavItem(
+          icon: Icons.settings,
+          label: 'Settings',
+          onTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Settings coming soon')));
+          }),
     ];
   }
 
@@ -263,15 +261,24 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           const SizedBox(width: 8),
           const Text(
             'Bajaj',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
+            style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                letterSpacing: 0.5),
           ),
           const Spacer(),
           CircleAvatar(
             backgroundColor: Colors.white,
             radius: 18,
             child: Text(
-              widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
-              style: const TextStyle(color: Color(0xFF003087), fontWeight: FontWeight.bold, fontSize: 14),
+              widget.userName.isNotEmpty
+                  ? widget.userName[0].toUpperCase()
+                  : '?',
+              style: const TextStyle(
+                  color: Color(0xFF003087),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14),
             ),
           ),
           const SizedBox(width: 12),
@@ -279,9 +286,16 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
+              Text(widget.userName,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white)),
               const SizedBox(height: 2),
-              Text('HQ/RA', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
+              Text('Agency',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.7))),
             ],
           ),
           const SizedBox(width: 12),
@@ -303,7 +317,9 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           appBar: isMobile
               ? AppBar(
                   backgroundColor: const Color(0xFF1E3A8A),
-                  title: const Text('Bajaj', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  title: const Text('Bajaj',
+                      style: TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
                   actions: [
                     IconButton(
@@ -317,7 +333,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           drawer: isMobile
               ? AppDrawer(
                   userName: widget.userName,
-                  userRole: 'HQ/RA',
+                  userRole: 'Agency',
                   navItems: _getNavItems(context),
                   onLogout: () => Navigator.pushReplacementNamed(context, '/'),
                 )
@@ -331,17 +347,20 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                     if (!isMobile)
                       AppSidebar(
                         userName: widget.userName,
-                        userRole: 'HQ/RA',
+                        userRole: 'Agency',
                         navItems: _getNavItems(context),
-                        onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                        onLogout: () =>
+                            Navigator.pushReplacementNamed(context, '/'),
                         isCollapsed: _isSidebarCollapsed,
-                        onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                        onToggleCollapse: () => setState(
+                            () => _isSidebarCollapsed = !_isSidebarCollapsed),
                       ),
                     Expanded(
                       child: _isLoading
                           ? const Center(child: CircularProgressIndicator())
                           : _submission == null
-                              ? const Center(child: Text('Submission not found'))
+                              ? const Center(
+                                  child: Text('Submission not found'))
                               : BifurcatedReviewLayout(
                                   leftChild: _buildLeftSection(),
                                   rightChild: _buildRightSection(),
@@ -383,7 +402,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     );
   }
 
-  /// Left section: header, invoice summary, ASM review, AI analysis, documents, campaign details.
+  /// Left section: header, invoice summary, AI analysis, documents, campaign details.
   Widget _buildLeftSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -393,22 +412,31 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
         if (_invoiceSummary != null)
           InvoiceSummarySection(data: _invoiceSummary!),
         const SizedBox(height: 24),
-        _buildASMReviewSection(),
-        const SizedBox(height: 24),
         AiAnalysisSection(submission: _submission!),
         const SizedBox(height: 24),
         InvoiceDocumentsTable(
           documents: _invoiceDocuments,
-          onDocumentTap: (doc) => _downloadDocument(doc.documentId, doc.documentName),
+          onDocumentTap: (doc) {
+            if (doc.documentId != null && doc.documentId!.isNotEmpty) {
+              _downloadDocument(doc.documentId, doc.documentName);
+            } else {
+              _downloadDocumentByUrl(doc.blobUrl, doc.documentName);
+            }
+          },
         ),
         const SizedBox(height: 24),
         CampaignDetailsTable(
           campaignDetails: _campaignDetails,
           onPhotoTap: (detail) {
-            if (detail.downloadPath != null && detail.downloadPath!.isNotEmpty) {
-              _downloadHierarchicalDocument(detail.downloadPath!, detail.documentName);
-            } else {
+            if (detail.downloadPath != null &&
+                detail.downloadPath!.isNotEmpty) {
+              _downloadHierarchicalDocument(
+                  detail.downloadPath!, detail.documentName);
+            } else if (detail.documentId != null &&
+                detail.documentId!.isNotEmpty) {
               _downloadDocument(detail.documentId, detail.documentName);
+            } else {
+              _downloadDocumentByUrl(detail.blobUrl, detail.documentName);
             }
           },
         ),
@@ -441,12 +469,13 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
         const SizedBox(height: 12),
         ApprovalHistoryTimeline(actions: _approvalHistory),
         const SizedBox(height: 24),
-        if (_isSubmissionActionable())
+        if (_isSubmissionRejected())
           ApprovalActionPanel(
-            userRole: 'HQ',
+            userRole: 'Agency',
             currentState: state,
-            onApprove: _approveSubmission,
-            onReject: _rejectSubmission,
+            onResubmit: _resubmitSubmission,
+            rejectionReason: _lastRejectionReason,
+            rejectedBy: _lastRejectedBy,
             isLoading: _isProcessing,
           ),
         const SizedBox(height: 80),
@@ -479,11 +508,11 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     );
   }
 
-  /// Simplified header: title, status badge, dates. No approve/reject buttons.
+  /// Simplified header: title, status badge, dates.
   Widget _buildHeaderSection() {
     final documents = _submission!['documents'] as List? ?? [];
     String invoiceNumber = '';
-    final reqNumber =
+    String reqNumber =
         'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
 
     for (var doc in documents) {
@@ -501,7 +530,9 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                 data['InvoiceNumber'] ?? data['invoiceNumber'] ?? '';
             break;
           }
-        } catch (_) {}
+        } catch (e) {
+          // Keep default empty string
+        }
       }
     }
 
@@ -525,7 +556,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                 IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.arrow_back),
-                  tooltip: 'Back to review list',
+                  tooltip: 'Back to submissions',
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -539,7 +570,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                                 ? invoiceNumber
                                 : agencyName.isNotEmpty
                                     ? agencyName
-                                    : 'HQ Final Review',
+                                    : 'Submission Details',
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -557,7 +588,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                           ),
                           const SizedBox(width: 16),
                           Icon(Icons.calendar_today,
-                              size: 14, color: Colors.grey[600],),
+                              size: 14, color: Colors.grey[600]),
                           const SizedBox(width: 4),
                           Text(
                             _formatDisplayDate(submittedDate),
@@ -587,23 +618,30 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     Color textColor;
     String displayText;
 
-    // RA role status labels
-    if (normalizedState == 'pendinghqapproval' || normalizedState == 'pendingwithra') {
+    if (normalizedState == 'pendingapproval' ||
+        normalizedState == 'pendingasmapproval') {
+      backgroundColor = const Color(0xFFDEEAFF);
+      textColor = const Color(0xFF0066FF);
+      displayText = 'Pending ASM Review';
+    } else if (normalizedState == 'asmapproved' ||
+        normalizedState == 'pendinghqapproval') {
       backgroundColor = const Color(0xFFFEF3C7);
       textColor = const Color(0xFFD97706);
-      displayText = 'Pending';
+      displayText = 'Pending RA Review';
     } else if (normalizedState == 'approved') {
       backgroundColor = const Color(0xFFD1FAE5);
       textColor = const Color(0xFF10B981);
       displayText = 'Approved';
-    } else if (normalizedState == 'rejectedbyhq' || normalizedState == 'rejectedbyra' || normalizedState == 'rejected') {
+    } else if (normalizedState == 'rejectedbyasm' ||
+        normalizedState == 'rejected') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
-      displayText = 'Rejected';
-    } else if (normalizedState == 'pendingapproval' || normalizedState == 'pendingasmapproval' || normalizedState == 'pendingwithasm') {
-      backgroundColor = const Color(0xFFDEEAFF);
-      textColor = const Color(0xFF0066FF);
-      displayText = 'Pending ASM Review';
+      displayText = 'Rejected by ASM';
+    } else if (normalizedState == 'rejectedbyhq' ||
+        normalizedState == 'rejectedbyra') {
+      backgroundColor = const Color(0xFFFEE2E2);
+      textColor = const Color(0xFFEF4444);
+      displayText = 'Rejected by RA';
     } else {
       backgroundColor = const Color(0xFFF3F4F6);
       textColor = const Color(0xFF6B7280);
@@ -627,82 +665,21 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     );
   }
 
-  Widget _buildASMReviewSection() {
-    final asmReviewedAt = _submission!['asmReviewedAt'];
-    final asmReviewNotes = _submission!['asmReviewNotes'];
-
-    if (asmReviewedAt == null) {
-      return const SizedBox.shrink();
-    }
-
-    return Card(
-      elevation: 0,
-      color: const Color(0xFFEFF6FF),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.2)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.check_circle,
-                    color: Color(0xFF10B981), size: 20,),
-                const SizedBox(width: 8),
-                Text(
-                  'ASM Review',
-                  style: AppTextStyles.h3.copyWith(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Reviewed on: ${_formatDisplayDate(asmReviewedAt)}',
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textSecondary,
-              ),
-            ),
-            if (asmReviewNotes != null &&
-                asmReviewNotes.toString().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                'ASM Notes:',
-                style: AppTextStyles.bodyMedium.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                asmReviewNotes.toString(),
-                style: AppTextStyles.bodyMedium,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
   String _formatDisplayDate(dynamic date) {
     if (date == null) return '';
     try {
       final dt = DateTime.parse(date.toString());
       const months = [
         'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
       ];
       return '${dt.day.toString().padLeft(2, '0')} ${months[dt.month - 1]} ${dt.year}';
-    } catch (_) {
+    } catch (e) {
       return '';
     }
   }
 
+  /// Builds CampaignDetailRow list from hierarchical campaign data.
   List<CampaignDetailRow> _buildHierarchicalRows(
     List<dynamic> campaigns,
     Map<String, dynamic> submissionData,
@@ -721,51 +698,68 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
 
       for (final photo in photos) {
         final fileName = photo['fileName']?.toString() ?? '-';
-        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('Photo', failureReason, allPassed);
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason(
+            'Photo', failureReason, allPassed);
         rows.add(CampaignDetailRow(
           serialNumber: serial++,
           dealerName: 'Photo',
           campaignDate: '',
           documentName: fileName,
-          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          status: allPassed
+              ? ValidationStatus.ok
+              : (remarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok),
           remarks: remarks,
           documentId: photo['photoId']?.toString(),
-        ),);
+        ));
       }
 
       if (costFile != null && costFile.isNotEmpty) {
-        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('CostSummary', failureReason, allPassed);
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason(
+            'CostSummary', failureReason, allPassed);
         rows.add(CampaignDetailRow(
           serialNumber: serial++,
           dealerName: 'CostSummary',
           campaignDate: '',
           documentName: costFile,
-          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          status: allPassed
+              ? ValidationStatus.ok
+              : (remarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok),
           remarks: remarks,
-        ),);
+        ));
       }
 
       if (activityFile != null && activityFile.isNotEmpty) {
-        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('Activity', failureReason, allPassed);
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason(
+            'Activity', failureReason, allPassed);
         rows.add(CampaignDetailRow(
           serialNumber: serial++,
           dealerName: 'Activity',
           campaignDate: '',
           documentName: activityFile,
-          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          status: allPassed
+              ? ValidationStatus.ok
+              : (remarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok),
           remarks: remarks,
-        ),);
+        ));
       }
     }
 
     return rows;
   }
 
+  /// Merges submission-based campaign details with hierarchical rows.
   List<CampaignDetailRow> _mergeCampaignDetails(
     List<CampaignDetailRow> fromSubmission,
     List<CampaignDetailRow> fromHierarchical,
   ) {
-    final existingNames = fromSubmission.map((r) => r.documentName.toLowerCase()).toSet();
+    final existingNames =
+        fromSubmission.map((r) => r.documentName.toLowerCase()).toSet();
     final merged = List<CampaignDetailRow>.from(fromSubmission);
 
     for (final row in fromHierarchical) {
@@ -778,7 +772,42 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     return merged;
   }
 
-  Future<void> _downloadHierarchicalDocument(String path, String? filename) async {
+  void _downloadDocumentByUrl(String? blobUrl, String? filename) {
+    if (blobUrl == null || blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Document URL not available'),
+            backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    try {
+      final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+      anchor.href = blobUrl;
+      anchor.target = '_blank';
+      anchor.click();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Opening ${filename ?? 'document'}...'),
+            backgroundColor: AppColors.approvedText,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Failed to open document: $e'),
+              backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadHierarchicalDocument(
+      String path, String? filename) async {
     try {
       final response = await _dio.get(
         path,
@@ -789,13 +818,17 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
 
       if (response.statusCode == 200) {
         final base64Content = response.data['base64Content']?.toString() ?? '';
-        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
-        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+        final contentType = response.data['contentType']?.toString() ??
+            'application/octet-stream';
+        final name =
+            filename ?? response.data['filename']?.toString() ?? 'document';
 
         if (base64Content.isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+              const SnackBar(
+                  content: Text('File content not available'),
+                  backgroundColor: Colors.orange),
             );
           }
           return;
@@ -859,8 +892,10 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
 
       if (response.statusCode == 200) {
         final base64Content = response.data['base64Content']?.toString() ?? '';
-        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
-        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+        final contentType = response.data['contentType']?.toString() ??
+            'application/octet-stream';
+        final name =
+            filename ?? response.data['filename']?.toString() ?? 'document';
 
         if (base64Content.isEmpty) {
           if (mounted) {
@@ -909,7 +944,8 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: const BoxDecoration(
                   color: AppColors.primary,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
@@ -921,12 +957,16 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                     Expanded(
                       child: Text(
                         name,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                      icon: const Icon(Icons.close,
+                          color: Colors.white, size: 20),
                       onPressed: () => Navigator.of(ctx).pop(),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
@@ -952,13 +992,18 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.insert_drive_file, size: 64, color: AppColors.textSecondary),
+                                  const Icon(Icons.insert_drive_file,
+                                      size: 64, color: AppColors.textSecondary),
                                   const SizedBox(height: 16),
-                                  Text(name, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                                  Text(name,
+                                      style: AppTextStyles.bodyMedium.copyWith(
+                                          fontWeight: FontWeight.w600)),
                                   const SizedBox(height: 8),
-                                  Text('Preview not available for this file type.\nClick "Download" to save.',
-                                    textAlign: TextAlign.center,
-                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),),
+                                  Text(
+                                      'Preview not available for this file type.\nClick "Download" to save.',
+                                      textAlign: TextAlign.center,
+                                      style: AppTextStyles.bodySmall.copyWith(
+                                          color: AppColors.textSecondary)),
                                 ],
                               ),
                             ),
@@ -980,7 +1025,8 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                           web.BlobPropertyBag(type: contentType),
                         );
                         final url = web.URL.createObjectURL(blob);
-                        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+                        final anchor = web.document.createElement('a')
+                            as web.HTMLAnchorElement;
                         anchor.href = url;
                         anchor.download = name;
                         anchor.click();

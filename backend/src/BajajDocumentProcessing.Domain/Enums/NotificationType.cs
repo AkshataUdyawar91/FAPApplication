@@ -9,5 +9,9 @@ public enum NotificationType
     FlaggedForReview = 2,
     Approved = 3,
     Rejected = 4,
-    ReuploadRequested = 5
+    ReuploadRequested = 5,
+    RejectedByASM = 6,
+    RejectedByRA = 7,
+    PendingRAReview = 8,
+    Resubmitted = 9
 }

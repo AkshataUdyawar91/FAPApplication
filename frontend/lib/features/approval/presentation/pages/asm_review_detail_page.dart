@@ -6,6 +6,7 @@ import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
@@ -13,13 +14,16 @@ import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../data/models/invoice_summary_data.dart';
 import '../../data/models/invoice_document_row.dart';
+import '../../data/models/approval_action_model.dart';
 import '../utils/submission_data_transformer.dart';
 import '../widgets/invoice_summary_section.dart';
 import '../widgets/invoice_documents_table.dart';
 import '../widgets/campaign_details_table.dart';
-import '../widgets/hq_rejection_section.dart';
 import '../widgets/ai_analysis_section.dart';
-import '../widgets/campaign_details_table.dart';
+import '../widgets/bifurcated_review_layout.dart';
+import '../widgets/workflow_stage_indicator.dart';
+import '../widgets/approval_history_timeline.dart';
+import '../widgets/approval_action_panel.dart';
 import '../../data/models/campaign_detail_row.dart';
 
 class ASMReviewDetailPage extends StatefulWidget {
@@ -41,25 +45,24 @@ class ASMReviewDetailPage extends StatefulWidget {
 class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
   final _dio = Dio(BaseOptions(
     baseUrl: 'http://localhost:5000/api',
-    // Disable caching
     headers: {
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
       'Expires': '0',
     },
   ));
-  final _commentsController = TextEditingController();
 
   bool _isLoading = true;
   Map<String, dynamic>? _submission;
   bool _isProcessing = false;
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
-  
-  // Transformed data for new layout
+
+  // Transformed data for layout
   InvoiceSummaryData? _invoiceSummary;
   List<InvoiceDocumentRow> _invoiceDocuments = [];
   List<CampaignDetailRow> _campaignDetails = [];
+  List<ApprovalActionModel> _approvalHistory = [];
 
   @override
   void initState() {
@@ -69,7 +72,6 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
   @override
   void dispose() {
-    _commentsController.dispose();
     super.dispose();
   }
 
@@ -77,7 +79,6 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     setState(() => _isLoading = true);
 
     try {
-      // Add timestamp to prevent caching
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final response = await _dio.get(
         '/submissions/${widget.submissionId}?_t=$timestamp',
@@ -91,19 +92,23 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
       if (response.statusCode == 200 && mounted) {
         final submissionData = response.data as Map<String, dynamic>;
-        
-        // Transform data for new layout (uses failureReason from submission directly)
-        final invoiceSummary = SubmissionDataTransformer.extractInvoiceSummary(submissionData);
-        final invoiceDocuments = SubmissionDataTransformer.transformToInvoiceDocuments(submissionData);
-        final campaignDetails = SubmissionDataTransformer.transformToCampaignDetails(submissionData);
-        
-        // Fetch hierarchical campaign data for photos, cost summary, activity summary
-        // These docs aren't in the submission's documents array
+
+        final invoiceSummary =
+            SubmissionDataTransformer.extractInvoiceSummary(submissionData);
+        final invoiceDocuments =
+            SubmissionDataTransformer.transformToInvoiceDocuments(
+                submissionData);
+        final campaignDetails =
+            SubmissionDataTransformer.transformToCampaignDetails(
+                submissionData);
+
+        // Fetch hierarchical campaign data
         List<CampaignDetailRow> hierRows = [];
         try {
           final hierResponse = await _dio.get(
             '/hierarchical/${widget.submissionId}/structure',
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            options:
+                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
           if (hierResponse.statusCode == 200 && hierResponse.data != null) {
             final campaigns = hierResponse.data['campaigns'] as List? ?? [];
@@ -112,10 +117,10 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
         } catch (e) {
           debugPrint('Failed to load hierarchical data: $e');
         }
-        
-        // Merge: submission docs + hierarchical docs (avoid duplicates by filename)
-        final allCampaignDetails = _mergeCampaignDetails(campaignDetails, hierRows);
-        
+
+        final allCampaignDetails =
+            _mergeCampaignDetails(campaignDetails, hierRows);
+
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
@@ -123,6 +128,9 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
           _campaignDetails = allCampaignDetails;
           _isLoading = false;
         });
+
+        // Fetch approval history after submission loads
+        _loadApprovalHistory();
       }
     } catch (e) {
       if (mounted) {
@@ -137,13 +145,36 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     }
   }
 
-  Future<void> _approveSubmission() async {
+  Future<void> _loadApprovalHistory() async {
+    try {
+      final response = await _dio.get(
+        '/submissions/${widget.submissionId}/approval-history',
+        options: Options(
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        final list = response.data as List? ?? [];
+        setState(() {
+          _approvalHistory = list
+              .map((json) =>
+                  ApprovalActionModel.fromJson(Map<String, dynamic>.from(json)))
+              .toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load approval history: $e');
+    }
+  }
+
+  Future<void> _approveSubmission(String comment) async {
     setState(() => _isProcessing = true);
 
     try {
       final response = await _dio.patch(
         '/submissions/${widget.submissionId}/asm-approve',
-        data: {'notes': _commentsController.text.trim()},
+        data: {'comment': comment},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
 
@@ -172,13 +203,13 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     }
   }
 
-  Future<void> _rejectSubmission(String reason) async {
+  Future<void> _rejectSubmission(String comment) async {
     setState(() => _isProcessing = true);
 
     try {
       final response = await _dio.patch(
         '/submissions/${widget.submissionId}/asm-reject',
-        data: {'Reason': reason}, // Capital R to match backend DTO
+        data: {'comment': comment},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
 
@@ -207,71 +238,36 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     }
   }
 
-  void _showRejectDialog() {
-    final reasonController = TextEditingController();
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Reject FAP'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Please provide a reason for rejection:',
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: reasonController,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                hintText: 'Enter rejection reason...',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final reason = reasonController.text.trim();
-              if (reason.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Please provide a rejection reason'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-              Navigator.pop(context);
-              _rejectSubmission(reason);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFEF4444),
-            ),
-            child: const Text('Reject'),
-          ),
-        ],
-      ),
-    );
+  bool _isSubmissionActionable() {
+    final state = _submission?['state']?.toString().toLowerCase() ?? '';
+    return state == 'pendingapproval' || state == 'pendingasmapproval';
   }
 
   List<NavItem> _getNavItems(BuildContext context) {
     return [
-      NavItem(icon: Icons.dashboard, label: 'Dashboard', onTap: () => Navigator.pop(context)),
-      NavItem(icon: Icons.rate_review, label: 'Review', isActive: true, onTap: () {}),
-      NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      }),
-      NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      }),
+      NavItem(
+          icon: Icons.dashboard,
+          label: 'Dashboard',
+          onTap: () => Navigator.pop(context)),
+      NavItem(
+          icon: Icons.rate_review,
+          label: 'Review',
+          isActive: true,
+          onTap: () {}),
+      NavItem(
+          icon: Icons.notifications,
+          label: 'Notifications',
+          onTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Notifications coming soon')));
+          }),
+      NavItem(
+          icon: Icons.settings,
+          label: 'Settings',
+          onTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Settings coming soon')));
+          }),
     ];
   }
 
@@ -286,15 +282,24 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
           const SizedBox(width: 8),
           const Text(
             'Bajaj',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
+            style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                letterSpacing: 0.5),
           ),
           const Spacer(),
           CircleAvatar(
             backgroundColor: Colors.white,
             radius: 18,
             child: Text(
-              widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
-              style: const TextStyle(color: Color(0xFF003087), fontWeight: FontWeight.bold, fontSize: 14),
+              widget.userName.isNotEmpty
+                  ? widget.userName[0].toUpperCase()
+                  : '?',
+              style: const TextStyle(
+                  color: Color(0xFF003087),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14),
             ),
           ),
           const SizedBox(width: 12),
@@ -302,9 +307,16 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
+              Text(widget.userName,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white)),
               const SizedBox(height: 2),
-              Text('ASM', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
+              Text('ASM',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.7))),
             ],
           ),
           const SizedBox(width: 12),
@@ -326,7 +338,9 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
           appBar: isMobile
               ? AppBar(
                   backgroundColor: const Color(0xFF1E3A8A),
-                  title: const Text('Bajaj', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  title: const Text('Bajaj',
+                      style: TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
                   actions: [
                     IconButton(
@@ -356,53 +370,21 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                         userName: widget.userName,
                         userRole: 'ASM',
                         navItems: _getNavItems(context),
-                        onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                        onLogout: () =>
+                            Navigator.pushReplacementNamed(context, '/'),
                         isCollapsed: _isSidebarCollapsed,
-                        onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                        onToggleCollapse: () => setState(
+                            () => _isSidebarCollapsed = !_isSidebarCollapsed),
                       ),
                     Expanded(
                       child: _isLoading
                           ? const Center(child: CircularProgressIndicator())
                           : _submission == null
-                              ? const Center(child: Text('Submission not found'))
-                              : SingleChildScrollView(
-                                  padding: const EdgeInsets.all(24),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      _buildHeaderSection(),
-                                      const SizedBox(height: 24),
-                                      if (_invoiceSummary != null)
-                                        InvoiceSummarySection(data: _invoiceSummary!),
-                                      const SizedBox(height: 24),
-                                      AiAnalysisSection(submission: _submission!),
-                                      const SizedBox(height: 24),
-                                      InvoiceDocumentsTable(
-                                        documents: _invoiceDocuments,
-                                        onDocumentTap: (doc) {
-                                          if (doc.documentId != null && doc.documentId!.isNotEmpty) {
-                                            _downloadDocument(doc.documentId, doc.documentName);
-                                          } else {
-                                            _downloadDocumentByUrl(doc.blobUrl, doc.documentName);
-                                          }
-                                        },
-                                      ),
-                                      const SizedBox(height: 24),
-                                      CampaignDetailsTable(
-                                        campaignDetails: _campaignDetails,
-                                        onPhotoTap: (detail) {
-                                          if (detail.downloadPath != null && detail.downloadPath!.isNotEmpty) {
-                                            _downloadHierarchicalDocument(detail.downloadPath!, detail.documentName);
-                                          } else if (detail.documentId != null && detail.documentId!.isNotEmpty) {
-                                            _downloadDocument(detail.documentId, detail.documentName);
-                                          } else {
-                                            _downloadDocumentByUrl(detail.blobUrl, detail.documentName);
-                                          }
-                                        },
-                                      ),
-                                      const SizedBox(height: 80),
-                                    ],
-                                  ),
+                              ? const Center(
+                                  child: Text('Submission not found'))
+                              : BifurcatedReviewLayout(
+                                  leftChild: _buildLeftSection(),
+                                  rightChild: _buildRightSection(),
                                 ),
                     ),
                     if (_isChatOpen && !isMobile)
@@ -441,12 +423,118 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     );
   }
 
+  /// Left section: header, invoice summary, AI analysis, documents, campaign details.
+  Widget _buildLeftSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildHeaderSection(),
+        const SizedBox(height: 24),
+        if (_invoiceSummary != null)
+          InvoiceSummarySection(data: _invoiceSummary!),
+        const SizedBox(height: 24),
+        AiAnalysisSection(submission: _submission!),
+        const SizedBox(height: 24),
+        InvoiceDocumentsTable(
+          documents: _invoiceDocuments,
+          onDocumentTap: (doc) {
+            if (doc.documentId != null && doc.documentId!.isNotEmpty) {
+              _downloadDocument(doc.documentId, doc.documentName);
+            } else {
+              _downloadDocumentByUrl(doc.blobUrl, doc.documentName);
+            }
+          },
+        ),
+        const SizedBox(height: 24),
+        CampaignDetailsTable(
+          campaignDetails: _campaignDetails,
+          onPhotoTap: (detail) {
+            if (detail.downloadPath != null &&
+                detail.downloadPath!.isNotEmpty) {
+              _downloadHierarchicalDocument(
+                  detail.downloadPath!, detail.documentName);
+            } else if (detail.documentId != null &&
+                detail.documentId!.isNotEmpty) {
+              _downloadDocument(detail.documentId, detail.documentName);
+            } else {
+              _downloadDocumentByUrl(detail.blobUrl, detail.documentName);
+            }
+          },
+        ),
+        const SizedBox(height: 80),
+      ],
+    );
+  }
+
+  /// Right section: workflow indicator, resubmission badge, history, action panel.
+  Widget _buildRightSection() {
+    final state = _submission!['state']?.toString() ?? 'Unknown';
+    final resubmissionCount = _submission!['resubmissionCount'] as int? ?? 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        WorkflowStageIndicator(currentState: state),
+        const SizedBox(height: 16),
+        if (resubmissionCount > 0) ...[
+          _buildResubmissionBadge(resubmissionCount),
+          const SizedBox(height: 16),
+        ],
+        const Text(
+          'Approval History',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 12),
+        ApprovalHistoryTimeline(actions: _approvalHistory),
+        const SizedBox(height: 24),
+        if (_isSubmissionActionable())
+          ApprovalActionPanel(
+            userRole: 'ASM',
+            currentState: state,
+            onApprove: _approveSubmission,
+            onReject: _rejectSubmission,
+            isLoading: _isProcessing,
+          ),
+        const SizedBox(height: 80),
+      ],
+    );
+  }
+
+  Widget _buildResubmissionBadge(int count) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFFDBA74)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.replay, size: 16, color: Color(0xFFEA580C)),
+          const SizedBox(width: 8),
+          Text(
+            'Resubmitted $count ${count == 1 ? 'time' : 'times'}',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFFEA580C),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Simplified header: title, status badge, dates. No approve/reject buttons.
   Widget _buildHeaderSection() {
     final documents = _submission!['documents'] as List? ?? [];
     String invoiceNumber = '';
-    String reqNumber = 'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
-    
-    // Extract invoice number from invoice document
+    String reqNumber =
+        'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
+
     for (var doc in documents) {
       if (doc['type'] == 'Invoice' && doc['extractedData'] != null) {
         try {
@@ -458,7 +546,8 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
             data = Map<String, dynamic>.from(extractedData);
           }
           if (data != null) {
-            invoiceNumber = data['InvoiceNumber'] ?? data['invoiceNumber'] ?? '';
+            invoiceNumber =
+                data['InvoiceNumber'] ?? data['invoiceNumber'] ?? '';
             break;
           }
         } catch (e) {
@@ -466,11 +555,11 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
         }
       }
     }
-    
+
     final agencyName = _invoiceSummary?.agencyName ?? '';
     final submittedDate = _submission!['createdAt'];
     final state = _submission!['state']?.toString() ?? 'Unknown';
-    
+
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -482,7 +571,6 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Back button and title row
             Row(
               children: [
                 IconButton(
@@ -519,7 +607,8 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                             ),
                           ),
                           const SizedBox(width: 16),
-                          Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
+                          Icon(Icons.calendar_today,
+                              size: 14, color: Colors.grey[600]),
                           const SizedBox(width: 4),
                           Text(
                             _formatDisplayDate(submittedDate),
@@ -536,72 +625,6 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                 _buildStatusBadge(state),
               ],
             ),
-            const SizedBox(height: 20),
-            
-            // Action buttons row - only show for actionable states
-            if (_isSubmissionActionable()) ...[
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  OutlinedButton(
-                    onPressed: _isProcessing ? null : _showRejectDialog,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFEF4444),
-                      side: const BorderSide(color: Color(0xFFEF4444)),
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    ),
-                    child: const Text('Reject'),
-                  ),
-                  ElevatedButton(
-                    onPressed: _isProcessing ? null : _approveSubmission,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF10B981),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    ),
-                    child: _isProcessing
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text('Approve Request'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              // Comments section in header
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Comments (Optional)',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _commentsController,
-                    maxLines: 3,
-                    decoration: InputDecoration(
-                      hintText: 'Add your review comments here...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      filled: true,
-                      fillColor: Colors.grey[50],
-                      contentPadding: const EdgeInsets.all(12),
-                    ),
-                  ),
-                ],
-              ),
-            ],
           ],
         ),
       ),
@@ -610,16 +633,18 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
   Widget _buildStatusBadge(String state) {
     final normalizedState = state.toLowerCase();
-    
+
     Color backgroundColor;
     Color textColor;
     String displayText;
-    
-    if (normalizedState == 'pendingapproval' || normalizedState == 'pendingasmapproval') {
+
+    if (normalizedState == 'pendingapproval' ||
+        normalizedState == 'pendingasmapproval') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending';
-    } else if (normalizedState == 'asmapproved' || normalizedState == 'pendinghqapproval') {
+    } else if (normalizedState == 'asmapproved' ||
+        normalizedState == 'pendinghqapproval') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending with RA';
@@ -627,11 +652,13 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       backgroundColor = const Color(0xFFD1FAE5);
       textColor = const Color(0xFF10B981);
       displayText = 'Approved';
-    } else if (normalizedState == 'rejectedbyhq' || normalizedState == 'rejectedbyra') {
+    } else if (normalizedState == 'rejectedbyhq' ||
+        normalizedState == 'rejectedbyra') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected by RA';
-    } else if (normalizedState == 'rejectedbyasm' || normalizedState == 'rejected') {
+    } else if (normalizedState == 'rejectedbyasm' ||
+        normalizedState == 'rejected') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected';
@@ -640,7 +667,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       textColor = const Color(0xFF6B7280);
       displayText = state;
     }
-    
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
@@ -662,17 +689,24 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     if (date == null) return '';
     try {
       final dt = DateTime.parse(date.toString());
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec'
+      ];
       return '${dt.day.toString().padLeft(2, '0')} ${months[dt.month - 1]} ${dt.year}';
     } catch (e) {
       return '';
     }
-  }
-
-  bool _isSubmissionActionable() {
-    final state = _submission?['state']?.toString().toLowerCase() ?? '';
-    return state == 'pendingapproval' || 
-           state == 'pendingasmapproval';
   }
 
   /// Builds CampaignDetailRow list from hierarchical campaign data.
@@ -694,38 +728,53 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
       for (final photo in photos) {
         final fileName = photo['fileName']?.toString() ?? '-';
-        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('Photo', failureReason, allPassed);
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason(
+            'Photo', failureReason, allPassed);
         rows.add(CampaignDetailRow(
           serialNumber: serial++,
           dealerName: 'Photo',
           campaignDate: '',
           documentName: fileName,
-          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          status: allPassed
+              ? ValidationStatus.ok
+              : (remarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok),
           remarks: remarks,
           documentId: photo['photoId']?.toString(),
         ));
       }
 
       if (costFile != null && costFile.isNotEmpty) {
-        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('CostSummary', failureReason, allPassed);
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason(
+            'CostSummary', failureReason, allPassed);
         rows.add(CampaignDetailRow(
           serialNumber: serial++,
           dealerName: 'CostSummary',
           campaignDate: '',
           documentName: costFile,
-          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          status: allPassed
+              ? ValidationStatus.ok
+              : (remarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok),
           remarks: remarks,
         ));
       }
 
       if (activityFile != null && activityFile.isNotEmpty) {
-        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason('Activity', failureReason, allPassed);
+        final remarks = SubmissionDataTransformer.buildRemarksFromFailureReason(
+            'Activity', failureReason, allPassed);
         rows.add(CampaignDetailRow(
           serialNumber: serial++,
           dealerName: 'Activity',
           campaignDate: '',
           documentName: activityFile,
-          status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
+          status: allPassed
+              ? ValidationStatus.ok
+              : (remarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok),
           remarks: remarks,
         ));
       }
@@ -735,28 +784,30 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
   }
 
   /// Merges submission-based campaign details with hierarchical rows.
-  /// Avoids duplicates by checking document names.
   List<CampaignDetailRow> _mergeCampaignDetails(
     List<CampaignDetailRow> fromSubmission,
     List<CampaignDetailRow> fromHierarchical,
   ) {
-    final existingNames = fromSubmission.map((r) => r.documentName.toLowerCase()).toSet();
+    final existingNames =
+        fromSubmission.map((r) => r.documentName.toLowerCase()).toSet();
     final merged = List<CampaignDetailRow>.from(fromSubmission);
-    
+
     for (final row in fromHierarchical) {
       if (!existingNames.contains(row.documentName.toLowerCase())) {
         merged.add(row.copyWith(serialNumber: merged.length + 1));
         existingNames.add(row.documentName.toLowerCase());
       }
     }
-    
+
     return merged;
   }
 
   void _downloadDocumentByUrl(String? blobUrl, String? filename) {
     if (blobUrl == null || blobUrl.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+        const SnackBar(
+            content: Text('Document URL not available'),
+            backgroundColor: Colors.orange),
       );
       return;
     }
@@ -777,14 +828,16 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to open document: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Failed to open document: $e'),
+              backgroundColor: Colors.red),
         );
       }
     }
   }
 
-
-  Future<void> _downloadHierarchicalDocument(String path, String? filename) async {
+  Future<void> _downloadHierarchicalDocument(
+      String path, String? filename) async {
     try {
       final response = await _dio.get(
         path,
@@ -795,13 +848,17 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
       if (response.statusCode == 200) {
         final base64Content = response.data['base64Content']?.toString() ?? '';
-        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
-        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+        final contentType = response.data['contentType']?.toString() ??
+            'application/octet-stream';
+        final name =
+            filename ?? response.data['filename']?.toString() ?? 'document';
 
         if (base64Content.isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+              const SnackBar(
+                  content: Text('File content not available'),
+                  backgroundColor: Colors.orange),
             );
           }
           return;
@@ -865,11 +922,10 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
       if (response.statusCode == 200) {
         final base64Content = response.data['base64Content']?.toString() ?? '';
-        final contentType =
-            response.data['contentType']?.toString() ?? 'application/octet-stream';
-        final name = filename ??
-            response.data['filename']?.toString() ??
-            'document';
+        final contentType = response.data['contentType']?.toString() ??
+            'application/octet-stream';
+        final name =
+            filename ?? response.data['filename']?.toString() ?? 'document';
 
         if (base64Content.isEmpty) {
           if (mounted) {
@@ -885,7 +941,6 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
         final bytes = base64.decode(base64Content);
 
-        // Show preview dialog for images and PDFs
         if (mounted) {
           _showDocumentPreview(bytes, contentType, name);
         }
@@ -918,9 +973,9 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Header
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: const BoxDecoration(
                   color: AppColors.primary,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
@@ -932,12 +987,16 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                     Expanded(
                       child: Text(
                         name,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                      icon: const Icon(Icons.close,
+                          color: Colors.white, size: 20),
                       onPressed: () => Navigator.of(ctx).pop(),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
@@ -945,7 +1004,6 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                   ],
                 ),
               ),
-              // Preview content
               Flexible(
                 child: isImage
                     ? InteractiveViewer(
@@ -964,19 +1022,23 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.insert_drive_file, size: 64, color: AppColors.textSecondary),
+                                  const Icon(Icons.insert_drive_file,
+                                      size: 64, color: AppColors.textSecondary),
                                   const SizedBox(height: 16),
-                                  Text(name, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                                  Text(name,
+                                      style: AppTextStyles.bodyMedium.copyWith(
+                                          fontWeight: FontWeight.w600)),
                                   const SizedBox(height: 8),
-                                  Text('Preview not available for this file type.\nClick "Download" to save.', 
-                                    textAlign: TextAlign.center,
-                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
+                                  Text(
+                                      'Preview not available for this file type.\nClick "Download" to save.',
+                                      textAlign: TextAlign.center,
+                                      style: AppTextStyles.bodySmall.copyWith(
+                                          color: AppColors.textSecondary)),
                                 ],
                               ),
                             ),
                           ),
               ),
-              // Action buttons
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: const BoxDecoration(
@@ -993,7 +1055,8 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                           web.BlobPropertyBag(type: contentType),
                         );
                         final url = web.URL.createObjectURL(blob);
-                        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+                        final anchor = web.document.createElement('a')
+                            as web.HTMLAnchorElement;
                         anchor.href = url;
                         anchor.download = name;
                         anchor.click();

@@ -9,6 +9,7 @@ import 'features/approval/presentation/pages/asm_review_page.dart';
 import 'features/approval/presentation/pages/asm_review_detail_page.dart';
 import 'features/approval/presentation/pages/hq_review_page.dart';
 import 'features/approval/presentation/pages/hq_review_detail_page.dart';
+import 'features/approval/presentation/pages/agency_review_detail_page.dart';
 import 'features/analytics/presentation/pages/hq_analytics_page.dart';
 import 'features/chat/presentation/pages/chat_page.dart';
 
@@ -90,6 +91,15 @@ class MyApp extends StatelessWidget {
             final args = settings.arguments as Map<String, dynamic>?;
             return MaterialPageRoute(
               builder: (context) => HQReviewDetailPage(
+                submissionId: args?['submissionId'] ?? '',
+                token: args?['token'] ?? '',
+                userName: args?['userName'] ?? 'User',
+              ),
+            );
+          case '/agency/review-detail':
+            final args = settings.arguments as Map<String, dynamic>?;
+            return MaterialPageRoute(
+              builder: (context) => AgencyReviewDetailPage(
                 submissionId: args?['submissionId'] ?? '',
                 token: args?['token'] ?? '',
                 userName: args?['userName'] ?? 'User',

@@ -1,4 +1,5 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Application.DTOs.Approval;
 using BajajDocumentProcessing.Application.DTOs.Common;
 using BajajDocumentProcessing.Application.DTOs.Submissions;
 using BajajDocumentProcessing.Domain.Enums;
@@ -22,17 +23,20 @@ public class SubmissionsController : ControllerBase
     private readonly IApplicationDbContext _context;
     private readonly IWorkflowOrchestrator _orchestrator;
     private readonly IBackgroundWorkflowQueue _backgroundQueue;
+    private readonly IApprovalWorkflowService _approvalWorkflowService;
     private readonly ILogger<SubmissionsController> _logger;
 
     public SubmissionsController(
         IApplicationDbContext context,
         IWorkflowOrchestrator orchestrator,
         IBackgroundWorkflowQueue backgroundQueue,
+        IApprovalWorkflowService approvalWorkflowService,
         ILogger<SubmissionsController> logger)
     {
         _context = context;
         _orchestrator = orchestrator;
         _backgroundQueue = backgroundQueue;
+        _approvalWorkflowService = approvalWorkflowService;
         _logger = logger;
     }
 
@@ -490,135 +494,55 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// Approve a submission at ASM level and move to HQ approval queue (ASM role only)
+    /// Approve a submission at ASM level and move to RA approval queue (ASM role only)
     /// </summary>
     /// <param name="id">Unique identifier of the submission</param>
-    /// <param name="request">Optional approval notes</param>
+    /// <param name="request">Approval comment (required)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>Updated submission status</returns>
-    /// <response code="200">Submission approved by ASM, moved to HQ approval</response>
-    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <returns>Approval result with new state</returns>
+    /// <response code="200">Submission approved by ASM, moved to RA approval</response>
+    /// <response code="400">Bad request - invalid comment</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - ASM role required</response>
     /// <response code="404">Not found - submission does not exist</response>
-    /// <response code="500">Internal server error</response>
+    /// <response code="409">Conflict - submission not in correct state</response>
     [HttpPatch("{id}/asm-approve")]
     [Authorize(Roles = "ASM")]
-    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApprovalResultDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> ASMApproveSubmission(
         Guid id,
-        [FromBody] ApproveSubmissionRequest? request,
+        [FromBody] ApprovalWorkflowRequest request,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
-            
-            var package = await _context.DocumentPackages
-                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
-
-            if (package == null)
-            {
-                return NotFound(new { error = "Submission not found" });
-            }
-
-            // Allow approval from PendingASMApproval, PendingApproval (legacy), or RejectedByRA states
-            if (package.State != PackageState.PendingASMApproval && 
-                package.State != PackageState.PendingApproval &&
-                package.State != PackageState.RejectedByRA)
-            {
-                return BadRequest(new { error = $"Submission is not in a state that can be approved by ASM. Current state: {package.State}" });
-            }
-
-            package.State = PackageState.PendingHQApproval;
-            package.ASMReviewedByUserId = userId;
-            package.ASMReviewedAt = DateTime.UtcNow;
-            package.ASMReviewNotes = request?.Notes ?? "Approved by ASM";
-            package.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Submission {Id} approved by ASM {UserId}, moved to HQ approval", id, userId);
-
-            var response = new SubmissionStatusResponse
-            {
-                Id = package.Id,
-                State = package.State.ToString(),
-                Message = "Approved by ASM, pending HQ approval"
-            };
-
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error approving submission {Id} by ASM", id);
-            return StatusCode(500, new { error = "An error occurred while approving the submission" });
-        }
+        var userId = GetAuthenticatedUserId();
+        var result = await _approvalWorkflowService.ASMApproveAsync(id, userId, request.Comment, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
     /// Reject a submission at ASM level and send back to Agency (ASM role only)
     /// </summary>
     /// <param name="id">Unique identifier of the submission</param>
-    /// <param name="request">Rejection reason (required)</param>
+    /// <param name="request">Rejection comment (required)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>Updated submission status</returns>
+    /// <returns>Approval result with new state</returns>
     /// <response code="200">Submission rejected by ASM</response>
-    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <response code="400">Bad request - invalid comment</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - ASM role required</response>
     /// <response code="404">Not found - submission does not exist</response>
-    /// <response code="500">Internal server error</response>
+    /// <response code="409">Conflict - submission not in correct state</response>
     [HttpPatch("{id}/asm-reject")]
     [Authorize(Roles = "ASM")]
-    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApprovalResultDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> ASMRejectSubmission(
         Guid id,
-        [FromBody] RejectSubmissionRequest request,
+        [FromBody] ApprovalWorkflowRequest request,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
-            
-            var package = await _context.DocumentPackages
-                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
-
-            if (package == null)
-            {
-                return NotFound(new { error = "Submission not found" });
-            }
-
-            // Allow rejection from PendingASMApproval, PendingApproval (legacy), or RejectedByRA states
-            if (package.State != PackageState.PendingASMApproval && 
-                package.State != PackageState.PendingApproval &&
-                package.State != PackageState.RejectedByRA)
-            {
-                return BadRequest(new { error = $"Submission is not in a state that can be rejected by ASM. Current state: {package.State}" });
-            }
-
-            package.State = PackageState.RejectedByASM;
-            package.ASMReviewedByUserId = userId;
-            package.ASMReviewedAt = DateTime.UtcNow;
-            package.ASMReviewNotes = request.Reason;
-            package.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Submission {Id} rejected by ASM {UserId} with reason: {Reason}", id, userId, request.Reason);
-
-            var response = new SubmissionStatusResponse
-            {
-                Id = package.Id,
-                State = package.State.ToString(),
-                Message = "Rejected by ASM"
-            };
-
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error rejecting submission {Id} by ASM", id);
-            return StatusCode(500, new { error = "An error occurred while rejecting the submission" });
-        }
+        var userId = GetAuthenticatedUserId();
+        var result = await _approvalWorkflowService.ASMRejectAsync(id, userId, request.Comment, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
@@ -633,149 +557,89 @@ public class SubmissionsController : ControllerBase
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - HQ role required</response>
     /// <response code="404">Not found - submission does not exist</response>
-    /// <response code="500">Internal server error</response>
-    [HttpPatch("{id}/hq-approve")]
-    [Authorize(Roles = "HQ")]
-    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> HQApproveSubmission(
-        Guid id,
-        [FromBody] ApproveSubmissionRequest? request,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
-            
-            var package = await _context.DocumentPackages
-                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
-
-            if (package == null)
-            {
-                return NotFound(new { error = "Submission not found" });
-            }
-
-            if (package.State != PackageState.PendingHQApproval)
-            {
-                return BadRequest(new { error = $"Submission is not in pending HQ approval state. Current state: {package.State}" });
-            }
-
-            package.State = PackageState.Approved;
-            package.HQReviewedByUserId = userId;
-            package.HQReviewedAt = DateTime.UtcNow;
-            package.HQReviewNotes = request?.Notes ?? "Approved by HQ";
-            package.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Submission {Id} approved by HQ {UserId} - final approval", id, userId);
-
-            var response = new SubmissionStatusResponse
-            {
-                Id = package.Id,
-                State = package.State.ToString(),
-                Message = "Final approval by HQ"
-            };
-
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error approving submission {Id} by HQ", id);
-            return StatusCode(500, new { error = "An error occurred while approving the submission" });
-        }
-    }
-
     /// <summary>
-    /// Reject a submission at HQ level and send back to ASM (HQ role only)
+    /// Approve a submission at RA/HQ level - final approval (HQ role only)
     /// </summary>
     /// <param name="id">Unique identifier of the submission</param>
-    /// <param name="request">Rejection reason (required)</param>
+    /// <param name="request">Approval comment (required)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>Updated submission status</returns>
-    /// <response code="200">Submission rejected by HQ, sent back to ASM</response>
-    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <returns>Approval result with new state</returns>
+    /// <response code="200">Submission approved by RA - final approval</response>
+    /// <response code="400">Bad request - invalid comment</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - HQ role required</response>
     /// <response code="404">Not found - submission does not exist</response>
-    /// <response code="500">Internal server error</response>
-    [HttpPatch("{id}/hq-reject")]
+    /// <response code="409">Conflict - submission not in correct state</response>
+    [HttpPatch("{id}/hq-approve")]
     [Authorize(Roles = "HQ")]
-    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> HQRejectSubmission(
+    [ProducesResponseType(typeof(ApprovalResultDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> HQApproveSubmission(
         Guid id,
-        [FromBody] RejectSubmissionRequest request,
+        [FromBody] ApprovalWorkflowRequest request,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
-            
-            var package = await _context.DocumentPackages
-                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+        var userId = GetAuthenticatedUserId();
+        var result = await _approvalWorkflowService.RAApproveAsync(id, userId, request.Comment, cancellationToken);
+        return Ok(result);
+    }
 
-            if (package == null)
-            {
-                return NotFound(new { error = "Submission not found" });
-            }
-
-            if (package.State != PackageState.PendingHQApproval)
-            {
-                return BadRequest(new { error = $"Submission is not in pending HQ approval state. Current state: {package.State}" });
-            }
-
-            package.State = PackageState.RejectedByRA;
-            package.HQReviewedByUserId = userId;
-            package.HQReviewedAt = DateTime.UtcNow;
-            package.HQReviewNotes = request.Reason;
-            package.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Submission {Id} rejected by HQ {UserId} with reason: {Reason}", id, userId, request.Reason);
-
-            var response = new SubmissionStatusResponse
-            {
-                Id = package.Id,
-                State = package.State.ToString(),
-                Message = "Rejected by RA, sent back to Agency"
-            };
-
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error rejecting submission {Id} by HQ", id);
-            return StatusCode(500, new { error = "An error occurred while rejecting the submission" });
-        }
+    /// <summary>
+    /// Reject a submission at RA/HQ level and send back to Agency (HQ role only)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Rejection comment (required)</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Approval result with new state</returns>
+    /// <response code="200">Submission rejected by RA</response>
+    /// <response code="400">Bad request - invalid comment</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - HQ role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="409">Conflict - submission not in correct state</response>
+    [HttpPatch("{id}/hq-reject")]
+    [Authorize(Roles = "HQ")]
+    [ProducesResponseType(typeof(ApprovalResultDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> HQRejectSubmission(
+        Guid id,
+        [FromBody] ApprovalWorkflowRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetAuthenticatedUserId();
+        var result = await _approvalWorkflowService.RARejectAsync(id, userId, request.Comment, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
     /// Legacy approve endpoint - redirects to ASM approve for backward compatibility (ASM role only)
     /// </summary>
     /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Approval comment</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Updated submission status</returns>
     [HttpPatch("{id}/approve")]
     [Authorize(Roles = "ASM")]
-    public async Task<IActionResult> ApproveSubmission(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> ApproveSubmission(
+        Guid id,
+        [FromBody] ApprovalWorkflowRequest request,
+        CancellationToken cancellationToken)
     {
-        // Redirect to ASM approve
-        return await ASMApproveSubmission(id, null, cancellationToken);
+        return await ASMApproveSubmission(id, request, cancellationToken);
     }
 
     /// <summary>
     /// Legacy reject endpoint - redirects to ASM reject for backward compatibility (ASM role only)
     /// </summary>
     /// <param name="id">Unique identifier of the submission</param>
-    /// <param name="request">Rejection reason</param>
+    /// <param name="request">Rejection comment</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Updated submission status</returns>
     [HttpPatch("{id}/reject")]
     [Authorize(Roles = "ASM")]
     public async Task<IActionResult> RejectSubmission(
         Guid id,
-        [FromBody] RejectSubmissionRequest request,
+        [FromBody] ApprovalWorkflowRequest request,
         CancellationToken cancellationToken)
     {
-        // Redirect to ASM reject
         return await ASMRejectSubmission(id, request, cancellationToken);
     }
 
@@ -783,91 +647,46 @@ public class SubmissionsController : ControllerBase
     /// Agency resubmits a rejected package for review after making corrections (Agency role only)
     /// </summary>
     /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Resubmission comment describing changes made (required)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
-    /// <returns>Updated submission status with resubmission count</returns>
-    /// <response code="200">Package resubmitted successfully and workflow triggered</response>
-    /// <response code="400">Bad request - can only resubmit packages rejected by ASM</response>
+    /// <returns>Approval result with new state</returns>
+    /// <response code="200">Package resubmitted successfully</response>
+    /// <response code="400">Bad request - invalid comment</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - Agency role required or user does not own package</response>
     /// <response code="404">Not found - submission does not exist</response>
-    /// <response code="500">Internal server error</response>
+    /// <response code="409">Conflict - submission not in correct state for resubmission</response>
     [HttpPatch("{id}/resubmit")]
     [Authorize(Roles = "Agency")]
-    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApprovalResultDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> ResubmitPackage(
+        Guid id,
+        [FromBody] ApprovalWorkflowRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetAuthenticatedUserId();
+        var result = await _approvalWorkflowService.ResubmitAsync(id, userId, request.Comment, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Get the full approval history for a submission (all authenticated roles)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Ordered list of approval action records</returns>
+    /// <response code="200">Returns approval history timeline</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    [HttpGet("{id}/approval-history")]
+    [Authorize]
+    [ProducesResponseType(typeof(List<ApprovalActionDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetApprovalHistory(
         Guid id,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
-            
-            var package = await _context.DocumentPackages
-                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
-
-            if (package == null)
-            {
-                return NotFound(new { error = "Submission not found" });
-            }
-
-            // Can only resubmit if rejected by ASM or rejected by RA
-            if (package.State != PackageState.RejectedByASM && package.State != PackageState.RejectedByRA)
-            {
-                return BadRequest(new { error = $"Can only resubmit rejected packages. Current state: {package.State}" });
-            }
-
-            // Verify the package belongs to the user
-            if (package.SubmittedByUserId != userId)
-            {
-                return Forbid();
-            }
-
-            // Track resubmission
-            package.ResubmissionCount = (package.ResubmissionCount ?? 0) + 1;
-            
-            // Reset to uploaded state to trigger workflow
-            package.State = PackageState.Uploaded;
-            package.ASMReviewNotes = null;
-            package.ASMReviewedAt = null;
-            package.ASMReviewedByUserId = null;
-            // Clear HQ review fields if resubmitting from RA rejection
-            package.HQReviewNotes = null;
-            package.HQReviewedAt = null;
-            package.HQReviewedByUserId = null;
-            package.UpdatedAt = DateTime.UtcNow;
-            
-            await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Package {Id} resubmitted by Agency user {UserId} (Resubmission #{Count})", 
-                id, userId, package.ResubmissionCount);
-
-            // Trigger workflow processing
-            try
-            {
-                await _orchestrator.ProcessSubmissionAsync(id, cancellationToken);
-                _logger.LogInformation("Workflow triggered for resubmitted package {Id}", id);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error triggering workflow for resubmitted package {Id}", id);
-                // Don't fail the resubmit if workflow fails - it can be triggered manually
-            }
-
-            var response = new SubmissionStatusResponse
-            {
-                Id = package.Id,
-                State = package.State.ToString(),
-                ResubmissionCount = package.ResubmissionCount,
-                Message = "Package resubmitted successfully and workflow triggered"
-            };
-
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error resubmitting package {Id}", id);
-            return StatusCode(500, new { error = "An error occurred while resubmitting the package" });
-        }
+        var history = await _approvalWorkflowService.GetApprovalHistoryAsync(id, cancellationToken);
+        return Ok(history);
     }
 
     /// <summary>
@@ -1394,6 +1213,24 @@ public class SubmissionsController : ControllerBase
             _logger.LogError(ex, "Error processing package {PackageId}", packageId);
             return StatusCode(500, new { error = "An error occurred while processing the package" });
         }
+    }
+
+    /// <summary>
+    /// Extracts the authenticated user ID from JWT claims.
+    /// </summary>
+    /// <returns>The authenticated user's GUID.</returns>
+    /// <exception cref="UnauthorizedAccessException">Thrown when user ID claim is not found.</exception>
+    private Guid GetAuthenticatedUserId()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? User.FindFirst("sub")?.Value;
+
+        if (string.IsNullOrEmpty(userIdClaim))
+        {
+            throw new System.UnauthorizedAccessException("User ID not found in token");
+        }
+
+        return Guid.Parse(userIdClaim);
     }
 
     // CHANGE: Added BuildValidationDetails to show all validation checks with meaningful messages

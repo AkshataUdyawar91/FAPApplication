@@ -25,5 +25,8 @@ public interface IApplicationDbContext
     DbSet<CampaignInvoice> CampaignInvoices { get; }
     DbSet<CampaignPhoto> CampaignPhotos { get; }
 
+    // Approval workflow audit trail
+    DbSet<ApprovalAction> ApprovalActions { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

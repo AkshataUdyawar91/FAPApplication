@@ -109,6 +109,9 @@ public static class DependencyInjection
             services.AddScoped<IAnalyticsAgent, NullAnalyticsAgent>();
         }
 
+        // Approval Workflow Service
+        services.AddScoped<IApprovalWorkflowService, ApprovalWorkflowService>();
+
         // Workflow Orchestrator
         services.AddScoped<IWorkflowOrchestrator, WorkflowOrchestrator>();
 
