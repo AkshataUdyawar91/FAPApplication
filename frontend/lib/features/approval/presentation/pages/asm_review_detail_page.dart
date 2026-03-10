@@ -18,7 +18,6 @@ import '../utils/submission_data_transformer.dart';
 import '../widgets/invoice_summary_section.dart';
 import '../widgets/invoice_documents_table.dart';
 import '../widgets/campaign_details_table.dart';
-import '../widgets/hq_rejection_section.dart';
 import '../widgets/ai_analysis_section.dart';
 
 class ASMReviewDetailPage extends StatefulWidget {
@@ -158,7 +157,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     try {
       final response = await _dio.patch(
         '/submissions/${widget.submissionId}/asm-reject',
-        data: {'reason': reason},
+        data: {'Reason': reason}, // Capital R to match backend DTO
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
 
@@ -337,13 +336,6 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                                       const SizedBox(height: 24),
                                       AiAnalysisSection(submission: _submission!),
                                       const SizedBox(height: 24),
-                                      HQRejectionSection(
-                                        state: _submission!['state']?.toString() ?? '',
-                                        hqReviewedAt: _submission!['hqReviewedAt'],
-                                        hqReviewNotes: _submission!['hqReviewNotes'],
-                                        onResubmit: _showResubmitToHQDialog,
-                                      ),
-                                      const SizedBox(height: 24),
                                       InvoiceDocumentsTable(
                                         documents: _invoiceDocuments,
                                         onDocumentTap: (doc) {
@@ -518,15 +510,6 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                     ),
                     child: const Text('Reject'),
                   ),
-                  OutlinedButton(
-                    onPressed: _isProcessing ? null : _showRejectDialog,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFF59E0B),
-                      side: const BorderSide(color: Color(0xFFF59E0B)),
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    ),
-                    child: const Text('Send Back'),
-                  ),
                   ElevatedButton(
                     onPressed: _isProcessing ? null : _approveSubmission,
                     style: ElevatedButton.styleFrom(
@@ -589,19 +572,23 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     Color textColor;
     String displayText;
     
-    if (normalizedState == 'pendingapproval' || normalizedState == 'pending') {
+    if (normalizedState == 'pendingapproval' || normalizedState == 'pendingasmapproval') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
-      displayText = 'Submitted';
+      displayText = 'Pending';
+    } else if (normalizedState == 'asmapproved' || normalizedState == 'pendinghqapproval') {
+      backgroundColor = const Color(0xFFDEEAFF);
+      textColor = const Color(0xFF0066FF);
+      displayText = 'Pending with RA';
     } else if (normalizedState == 'approved') {
       backgroundColor = const Color(0xFFD1FAE5);
       textColor = const Color(0xFF10B981);
       displayText = 'Approved';
-    } else if (normalizedState == 'rejectedbyhq') {
+    } else if (normalizedState == 'rejectedbyhq' || normalizedState == 'rejectedbyra') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
-      displayText = 'Rejected by HQ';
-    } else if (normalizedState == 'rejected') {
+      displayText = 'Rejected by RA';
+    } else if (normalizedState == 'rejectedbyasm' || normalizedState == 'rejected') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected';
@@ -641,97 +628,8 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
-    // Action buttons and comments should only be visible for PendingApproval, PendingASMApproval, or RejectedByHQ states
     return state == 'pendingapproval' || 
-           state == 'pendingasmapproval' || 
-           state == 'rejectedbyhq';
-  }
-
-  void _showResubmitToHQDialog() {
-    final notesController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Resubmit to HQ'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Please provide notes explaining what has been addressed or corrected:',
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: notesController,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                hintText: 'Enter your notes here...',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (notesController.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Please provide notes before resubmitting'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-              Navigator.pop(context);
-              _resubmitToHQ(notesController.text.trim());
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-            ),
-            child: const Text('Resubmit'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _resubmitToHQ(String notes) async {
-    try {
-      final response = await _dio.patch(
-        '/submissions/${widget.submissionId}/resubmit-to-hq',
-        data: {'notes': notes},
-        options: Options(
-          headers: {'Authorization': 'Bearer ${widget.token}'},
-        ),
-      );
-
-      if (response.statusCode == 200 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Package resubmitted to HQ successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        // Navigate back to review list
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to resubmit to HQ: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+           state == 'pendingasmapproval';
   }
 
   Widget _buildPOSection() {

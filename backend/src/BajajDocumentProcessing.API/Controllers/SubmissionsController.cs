@@ -243,7 +243,7 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// Get enhanced validation report for a submission (ASM and HQ roles only)
+    /// Get enhanced validation report for a submission (ASM and RA roles only)
     /// </summary>
     /// <param name="id">Submission package ID</param>
     /// <param name="enhancedValidationReportService">Enhanced validation report service</param>
@@ -251,7 +251,7 @@ public class SubmissionsController : ControllerBase
     /// <returns>Enhanced validation report with detailed evidence and recommendations</returns>
     /// <response code="200">Returns enhanced validation report</response>
     /// <response code="401">Unauthorized - authentication required</response>
-    /// <response code="403">Forbidden - ASM or HQ role required</response>
+    /// <response code="403">Forbidden - ASM or RA role required</response>
     /// <response code="404">Not found - submission does not exist</response>
     /// <response code="500">Internal server error</response>
     [HttpGet("{id}/validation-report")]
@@ -522,10 +522,10 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Allow approval from PendingASMApproval, PendingApproval (legacy), or RejectedByHQ states
+            // Allow approval from PendingASMApproval, PendingApproval (legacy), or RejectedByRA states
             if (package.State != PackageState.PendingASMApproval && 
                 package.State != PackageState.PendingApproval &&
-                package.State != PackageState.RejectedByHQ)
+                package.State != PackageState.RejectedByRA)
             {
                 return BadRequest(new { error = $"Submission is not in a state that can be approved by ASM. Current state: {package.State}" });
             }
@@ -588,10 +588,10 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Allow rejection from PendingASMApproval, PendingApproval (legacy), or RejectedByHQ states
+            // Allow rejection from PendingASMApproval, PendingApproval (legacy), or RejectedByRA states
             if (package.State != PackageState.PendingASMApproval && 
                 package.State != PackageState.PendingApproval &&
-                package.State != PackageState.RejectedByHQ)
+                package.State != PackageState.RejectedByRA)
             {
                 return BadRequest(new { error = $"Submission is not in a state that can be rejected by ASM. Current state: {package.State}" });
             }
@@ -722,7 +722,7 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = $"Submission is not in pending HQ approval state. Current state: {package.State}" });
             }
 
-            package.State = PackageState.RejectedByHQ;
+            package.State = PackageState.RejectedByRA;
             package.HQReviewedByUserId = userId;
             package.HQReviewedAt = DateTime.UtcNow;
             package.HQReviewNotes = request.Reason;
@@ -735,7 +735,7 @@ public class SubmissionsController : ControllerBase
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Rejected by HQ, sent back to ASM"
+                Message = "Rejected by RA, sent back to Agency"
             };
 
             return Ok(response);
@@ -810,10 +810,10 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Can only resubmit if rejected by ASM
-            if (package.State != PackageState.RejectedByASM)
+            // Can only resubmit if rejected by ASM or rejected by RA
+            if (package.State != PackageState.RejectedByASM && package.State != PackageState.RejectedByRA)
             {
-                return BadRequest(new { error = $"Can only resubmit packages rejected by ASM. Current state: {package.State}" });
+                return BadRequest(new { error = $"Can only resubmit rejected packages. Current state: {package.State}" });
             }
 
             // Verify the package belongs to the user
@@ -830,6 +830,10 @@ public class SubmissionsController : ControllerBase
             package.ASMReviewNotes = null;
             package.ASMReviewedAt = null;
             package.ASMReviewedByUserId = null;
+            // Clear HQ review fields if resubmitting from RA rejection
+            package.HQReviewNotes = null;
+            package.HQReviewedAt = null;
+            package.HQReviewedByUserId = null;
             package.UpdatedAt = DateTime.UtcNow;
             
             await _context.SaveChangesAsync(cancellationToken);
@@ -899,8 +903,8 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Can only resubmit if rejected by HQ
-            if (package.State != PackageState.RejectedByHQ)
+            // Can only resubmit if rejected by RA
+            if (package.State != PackageState.RejectedByRA)
             {
                 return BadRequest(new { error = $"Can only resubmit packages rejected by HQ. Current state: {package.State}" });
             }
@@ -941,6 +945,75 @@ public class SubmissionsController : ControllerBase
         {
             _logger.LogError(ex, "Error resubmitting package {Id} to HQ", id);
             return StatusCode(500, new { error = "An error occurred while resubmitting to HQ" });
+        }
+    }
+
+    /// <summary>
+    /// ASM sends an RA-rejected package back to Agency for corrections (ASM role only)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Reason for sending back to Agency</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Package sent back to Agency</response>
+    /// <response code="400">Bad request - can only send back packages rejected by HQ</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - ASM role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/send-back-to-agency")]
+    [Authorize(Roles = "ASM")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> SendBackToAgency(
+        Guid id,
+        [FromBody] RejectSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            if (package.State != PackageState.RejectedByRA)
+            {
+                return BadRequest(new { error = $"Can only send back packages rejected by RA. Current state: {package.State}" });
+            }
+
+            // Move to RejectedByASM so Agency can edit and resubmit
+            package.State = PackageState.RejectedByASM;
+            package.ASMReviewedByUserId = userId;
+            package.ASMReviewedAt = DateTime.UtcNow;
+            package.ASMReviewNotes = $"Sent back to Agency: {request.Reason}";
+
+            // Clear HQ review fields
+            package.HQReviewNotes = null;
+            package.HQReviewedAt = null;
+            package.HQReviewedByUserId = null;
+
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Package {Id} sent back to Agency by ASM {UserId}. Reason: {Reason}",
+                id, userId, request.Reason);
+
+            return Ok(new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Package sent back to Agency for corrections"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending package {Id} back to Agency", id);
+            return StatusCode(500, new { error = "An error occurred while sending back to Agency" });
         }
     }
 

@@ -57,6 +57,11 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
               ? List<Map<String, dynamic>>.from(data['items'])
               : [];
           _isLoading = false;
+          
+          // Reset filter to 'all' if current filter is not available in the new data
+          if (!_availableStatuses.contains(_statusFilter)) {
+            _statusFilter = 'all';
+          }
         });
       }
     } catch (e) {
@@ -69,6 +74,63 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     }
   }
 
+  List<String> get _availableStatuses {
+    final statuses = <String>{'all'}; // Always include 'all'
+    
+    for (var req in _requests) {
+      final state = req['state']?.toString().toLowerCase() ?? '';
+      
+      // Map backend states to dropdown values
+      if (['extracting', 'validating', 'validated', 'scoring', 'recommending'].contains(state)) {
+        statuses.add('extracting');
+      } else if (['pendingapproval', 'pendingasmapproval'].contains(state)) {
+        statuses.add('pending_with_asm');
+      } else if (['asmapproved', 'pendinghqapproval'].contains(state)) {
+        statuses.add('pending_with_ra');
+      } else if (state == 'approved') {
+        statuses.add('approved');
+      } else if (['rejected', 'rejectedbyasm', 'reuploadrequested'].contains(state)) {
+        statuses.add('rejected_by_asm');
+      } else if (['rejectedbyhq', 'rejectedbyra'].contains(state)) {
+        statuses.add('rejected_by_ra');
+      }
+    }
+    
+    return statuses.toList();
+  }
+
+  List<DropdownMenuItem<String>> _buildDropdownItems() {
+    final availableStatuses = _availableStatuses;
+    final statusLabels = {
+      'all': 'All Status',
+      'extracting': 'Extracting',
+      'pending_with_asm': 'Pending with ASM',
+      'pending_with_ra': 'Pending with RA',
+      'approved': 'Approved',
+      'rejected_by_asm': 'Rejected by ASM',
+      'rejected_by_ra': 'Rejected by RA',
+    };
+    
+    // Define the order we want statuses to appear
+    final orderedKeys = [
+      'all',
+      'extracting',
+      'pending_with_asm',
+      'pending_with_ra',
+      'approved',
+      'rejected_by_asm',
+      'rejected_by_ra',
+    ];
+    
+    return orderedKeys
+        .where((key) => availableStatuses.contains(key))
+        .map((key) => DropdownMenuItem<String>(
+              value: key,
+              child: Text(statusLabels[key]!),
+            ))
+        .toList();
+  }
+
   List<Map<String, dynamic>> get _filteredRequests {
     return _requests.where((req) {
       final matchesSearch = _searchController.text.isEmpty ||
@@ -77,17 +139,23 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       final state = req['state']?.toString().toLowerCase() ?? '';
       bool matchesStatus = false;
       switch (_statusFilter) {
-        case 'pending':
-          matchesStatus = ['uploaded', 'extracting', 'validating'].contains(state);
+        case 'extracting':
+          matchesStatus = ['extracting', 'validating', 'validated', 'scoring', 'recommending'].contains(state);
           break;
-        case 'under_review':
-          matchesStatus = ['validated', 'recommending', 'pendingapproval','pendingasmapproval','pendinghqapproval'].contains(state);
+        case 'pending_with_asm':
+          matchesStatus = ['pendingapproval', 'pendingasmapproval'].contains(state);
+          break;
+        case 'pending_with_ra':
+          matchesStatus = ['asmapproved', 'pendinghqapproval'].contains(state);
           break;
         case 'approved':
           matchesStatus = state == 'approved';
           break;
-        case 'rejected':
-          matchesStatus = ['rejected', 'validationfailed', 'reuploadrequested','rejectedbyasm','rejectedbyhq'].contains(state);
+        case 'rejected_by_asm':
+          matchesStatus = ['rejected', 'rejectedbyasm', 'reuploadrequested'].contains(state);
+          break;
+        case 'rejected_by_ra':
+          matchesStatus = ['rejectedbyhq', 'rejectedbyra'].contains(state);
           break;
       }
       return matchesSearch && matchesStatus;
@@ -97,18 +165,26 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Map<String, int> get _stats {
     return {
       'total': _requests.length,
-      'pending': _requests.where((r) {
+      'extracting': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['uploaded', 'extracting', 'validating'].contains(s);
+        return ['extracting', 'validating', 'validated', 'scoring', 'recommending'].contains(s);
       }).length,
-      'underReview': _requests.where((r) {
+      'pendingWithASM': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['validated', 'recommending', 'pendingapproval','pendingasmapproval','pendinghqapproval'].contains(s);
+        return ['pendingapproval', 'pendingasmapproval'].contains(s);
+      }).length,
+      'pendingWithRA': _requests.where((r) {
+        final s = r['state']?.toString().toLowerCase() ?? '';
+        return ['asmapproved', 'pendinghqapproval'].contains(s);
       }).length,
       'approved': _requests.where((r) => r['state']?.toString().toLowerCase() == 'approved').length,
-      'rejected': _requests.where((r) {
+      'rejectedByASM': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['rejected', 'validationfailed', 'reuploadrequested','rejectedbyasm','rejectedbyhq'].contains(s);
+        return ['rejected', 'rejectedbyasm', 'reuploadrequested'].contains(s);
+      }).length,
+      'rejectedByRA': _requests.where((r) {
+        final s = r['state']?.toString().toLowerCase() ?? '';
+        return ['rejectedbyhq', 'rejectedbyra'].contains(s);
       }).length,
     };
   }
@@ -313,8 +389,8 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Widget _buildStatsCards(DeviceType device) {
     final stats = _stats;
     final cards = [
-      _StatData('Pending Requests', stats['pending']!.toString(), Icons.schedule, const Color(0xFF3B82F6), 'pending'),
-      _StatData('Approved This Month', stats['approved']!.toString(), Icons.check_circle, const Color(0xFF10B981), 'approved'),
+      _StatData('Pending with ASM', stats['pendingWithASM']!.toString(), Icons.schedule, const Color(0xFF3B82F6), 'pending_with_asm'),
+      _StatData('Approved', stats['approved']!.toString(), Icons.check_circle, const Color(0xFF10B981), 'approved'),
     ];
 
     // Use LayoutBuilder so cards respond to actual available width, not screen width
@@ -470,14 +546,12 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   value: _statusFilter,
                   isExpanded: true,
                   decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8), isDense: true),
-                  items: const [
-                    DropdownMenuItem(value: 'all', child: Text('All Status')),
-                    DropdownMenuItem(value: 'pending', child: Text('Pending')),
-                    DropdownMenuItem(value: 'under_review', child: Text('Under Review')),
-                    DropdownMenuItem(value: 'approved', child: Text('Approved')),
-                    DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
-                  ],
-                  onChanged: (v) => setState(() => _statusFilter = v!),
+                  items: _buildDropdownItems(),
+                  onChanged: (v) {
+                    setState(() {
+                      _statusFilter = v!;
+                    });
+                  },
                 ),
               ),
               const SizedBox(width: 8),
@@ -505,14 +579,12 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
             value: _statusFilter,
             isExpanded: true,
             decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8), isDense: true),
-            items: const [
-              DropdownMenuItem(value: 'all', child: Text('All Status')),
-              DropdownMenuItem(value: 'pending', child: Text('Pending')),
-              DropdownMenuItem(value: 'under_review', child: Text('Under Review')),
-              DropdownMenuItem(value: 'approved', child: Text('Approved')),
-              DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
-            ],
-            onChanged: (v) => setState(() => _statusFilter = v!),
+            items: _buildDropdownItems(),
+            onChanged: (v) {
+              setState(() {
+                _statusFilter = v!;
+              });
+            },
           ),
         ),
       ],
@@ -663,18 +735,21 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       case 'rejectedbyasm':
         bgColor = const Color(0xFFFEE2E2); textColor = const Color(0xFF991B1B); label = 'Rejected by ASM'; break;
       case 'rejectedbyhq':
-        bgColor = const Color(0xFFFEE2E2); textColor = const Color(0xFF991B1B); label = 'Rejected by HQ/RA'; break;
+      case 'rejectedbyra':
+        bgColor = const Color(0xFFFEE2E2); textColor = const Color(0xFF991B1B); label = 'Rejected by RA'; break;
       case 'validated':
       case 'recommending':
       case 'pendingapproval':
       case 'submitted':
         bgColor = const Color(0xFFDBEAFE); textColor = const Color(0xFF1E40AF);
-        label = state == 'pendingapproval' ? 'Pending ASM Approval' : state == 'recommending' ? 'Recommending' : state == 'submitted' ? 'Submitted' : 'Validated';
+        label = state == 'pendingapproval' ? 'Pending with ASM' : state == 'recommending' ? 'Recommending' : state == 'submitted' ? 'Submitted' : 'Validated';
         break;
       case 'pendingasmapproval':
-        bgColor = const Color(0xFFDBEAFE); textColor = const Color(0xFF1E40AF); label = 'Pending ASM Approval'; break;
+      case 'pendingwithasm':
+        bgColor = const Color(0xFFDBEAFE); textColor = const Color(0xFF1E40AF); label = 'Pending with ASM'; break;
       case 'pendinghqapproval':
-        bgColor = const Color(0xFFFEF3C7); textColor = const Color(0xFF92400E); label = 'Pending HQ/RA Approval'; break;
+      case 'pendingwithra':
+        bgColor = const Color(0xFFFEF3C7); textColor = const Color(0xFF92400E); label = 'Pending with RA'; break;
       case 'reuploadrequested':
         bgColor = const Color(0xFFFEE2E2); textColor = const Color(0xFF991B1B); label = 'Re-upload Requested'; break;
       case 'onhold':
@@ -724,14 +799,14 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase();
     
-    // Map backend states to UI states
+    // Map backend states to UI states (simplified flow)
     if (['uploaded', 'extracting', 'validating'].contains(state)) return 'pending';
     if (['validated', 'recommending'].contains(state)) return 'pending';
-    if (['pendingasmapproval', 'pendingapproval'].contains(state)) return 'pending_asm';
-    if (state == 'pendinghqapproval') return 'pending_hq';
+    if (['pendingasmapproval', 'pendingapproval', 'pendingwithasm'].contains(state)) return 'pending_asm';
+    if (['pendinghqapproval', 'pendingwithra'].contains(state)) return 'pending_hq';
     if (state == 'approved') return 'approved';
     if (state == 'rejectedbyasm') return 'rejected_by_asm';
-    if (state == 'rejectedbyhq') return 'rejected_by_hq';
+    if (['rejectedbyhq', 'rejectedbyra'].contains(state)) return 'rejected_by_hq';
     if (['rejected', 'validationfailed', 'reuploadrequested'].contains(state)) return 'rejected';
     
     return 'pending';

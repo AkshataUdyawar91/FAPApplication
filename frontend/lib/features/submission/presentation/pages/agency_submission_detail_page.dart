@@ -338,9 +338,21 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             const SizedBox(height: 16),
           ],
           _buildStatusCard(state, fapNumber),
+          if (state.toLowerCase() == 'rejectedbyasm') ...[
+            const SizedBox(height: 16),
+            _buildRejectionCard(
+              rejectedBy: 'ASM',
+              reviewNotes: _submission!['asmReviewNotes']?.toString(),
+            ),
+          ],
+          if (state.toLowerCase() == 'rejectedbyhq' || state.toLowerCase() == 'rejectedbyra') ...[
+            const SizedBox(height: 16),
+            _buildRejectionCard(
+              rejectedBy: 'RA',
+              reviewNotes: _submission!['hqReviewNotes']?.toString(),
+            ),
+          ],
           const SizedBox(height: 24),
-
-          // PO Document Section (expansion tile)
           _buildPOSection(),
           const SizedBox(height: 24),
 
@@ -533,6 +545,102 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     ).trim().split(' ').map((word) =>
       word[0].toUpperCase() + word.substring(1),
     ).join(' ');
+  }
+
+  bool _isResubmitting = false;
+
+  Widget _buildRejectionCard({required String rejectedBy, String? reviewNotes}) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFFEF4444))),
+      color: const Color(0xFFFEE2E2),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.cancel, color: Color(0xFFEF4444), size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Rejected by $rejectedBy',
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFFEF4444),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (reviewNotes != null && reviewNotes.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Rejection Reason:',
+                style: AppTextStyles.bodySmall.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFFB91C1C),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  reviewNotes,
+                  style: AppTextStyles.bodyMedium.copyWith(color: const Color(0xFF7F1D1D)),
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isResubmitting ? null : _resubmitPackage,
+                icon: _isResubmitting
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.refresh),
+                label: const Text('Edit & Resubmit'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _resubmitPackage() async {
+    setState(() => _isResubmitting = true);
+    try {
+      final response = await _dio.patch(
+        '/submissions/${widget.submissionId}/resubmit',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Request resubmitted successfully'), backgroundColor: Color(0xFF10B981)),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to resubmit: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isResubmitting = false);
+    }
   }
 
   Widget _buildCampaignsSection() {
@@ -892,6 +1000,22 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         'borderColor': const Color(0xFF6EE7B7),
         'icon': Icons.check_circle,
       };
+    } else if (stateLower == 'rejectedbyasm') {
+      return {
+        'label': 'Rejected by ASM',
+        'color': const Color(0xFFDC2626),
+        'bgColor': const Color(0xFFFEE2E2),
+        'borderColor': const Color(0xFFFCA5A5),
+        'icon': Icons.cancel,
+      };
+    } else if (stateLower == 'rejectedbyhq' || stateLower == 'rejectedbyra') {
+      return {
+        'label': 'Rejected by RA',
+        'color': const Color(0xFFDC2626),
+        'bgColor': const Color(0xFFFEE2E2),
+        'borderColor': const Color(0xFFFCA5A5),
+        'icon': Icons.cancel,
+      };
     } else if (stateLower.contains('rejected')) {
       return {
         'label': 'Rejected',
@@ -900,9 +1024,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         'borderColor': const Color(0xFFFCA5A5),
         'icon': Icons.cancel,
       };
-    } else if (stateLower.contains('pendinghq')) {
+    } else if (stateLower.contains('pendinghq') || stateLower == 'asmapproved') {
       return {
-        'label': 'Pending HQ/RA Approval',
+        'label': 'Pending with RA',
         'color': const Color(0xFF3B82F6),
         'bgColor': const Color(0xFFDBEAFE),
         'borderColor': const Color(0xFF93C5FD),
@@ -910,7 +1034,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       };
     } else if (stateLower.contains('pendingasm') || stateLower.contains('pendingapproval')) {
       return {
-        'label': 'Pending ASM Approval',
+        'label': 'Pending with ASM',
         'color': const Color(0xFFF59E0B),
         'bgColor': const Color(0xFFFEF3C7),
         'borderColor': const Color(0xFFFCD34D),

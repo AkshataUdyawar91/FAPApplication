@@ -744,9 +744,10 @@ class _HQReviewPageState extends State<HQReviewPage> {
   Widget _buildStatusBadge(String? status) {
     Color bgColor, textColor, borderColor;
     String label;
+    // RA role status labels
     switch (status) {
       case 'hq-review':
-        bgColor = AppColors.pendingBackground; textColor = AppColors.pendingText; borderColor = AppColors.pendingBorder; label = 'Pending HQ/RA Review'; break;
+        bgColor = AppColors.pendingBackground; textColor = AppColors.pendingText; borderColor = AppColors.pendingBorder; label = 'Pending'; break;
       case 'approved':
         bgColor = AppColors.approvedBackground; textColor = AppColors.approvedText; borderColor = AppColors.approvedBorder; label = 'Approved'; break;
       case 'rejected':

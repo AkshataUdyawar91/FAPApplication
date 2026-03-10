@@ -83,8 +83,8 @@ builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AgencyOnly", policy => policy.RequireRole("Agency"));
     options.AddPolicy("ASMOnly", policy => policy.RequireRole("ASM"));
-    options.AddPolicy("HQOnly", policy => policy.RequireRole("HQ"));
-    options.AddPolicy("ASMOrHQ", policy => policy.RequireRole("ASM", "HQ"));
+    options.AddPolicy("RAOnly", policy => policy.RequireRole("HQ")); // HQ role name kept for DB compatibility
+    options.AddPolicy("ASMOrRA", policy => policy.RequireRole("ASM", "HQ")); // HQ role name kept for DB compatibility
 });
 
 // Configure CORS for Flutter frontend

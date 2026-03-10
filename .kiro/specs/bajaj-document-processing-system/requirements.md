@@ -741,3 +741,72 @@ Enhancements are required in the Campaign Details section to improve usability a
 | Capture GPS | Field + Button visible | Removed |
 | Calendar Widget | Not working properly | Opens on click, allows date selection |
 | Photo Limit | 20 photos | 50 photos with validation |
+
+
+### Requirement 25: Campaign Request Approval Workflow (Agency → ASM → RA)
+
+**User Story:** As an Agency user, I want to submit campaign requests that go through ASM and RA approval stages, so that the request can be reviewed, approved, rejected, and corrected if necessary.
+
+#### Description
+
+A simplified workflow where a request submitted by the Agency moves through two approval stages (ASM → RA) with defined status transitions. The system supports rejection flows where requests can be sent back to the Agency for corrections.
+
+#### Workflow Steps and Status Display
+
+##### 1. Agency Submission
+The Agency submits a request. Data extraction takes place (Extracting state). After extraction completes:
+
+| Action          | Agency Status       | ASM Status | RA Status |
+|-----------------|---------------------|------------|-----------|
+| Submits request | Extracting → Pending with ASM | Pending    | —         |
+
+##### 2. ASM Approval
+If ASM approves the request:
+
+| Action          | Agency Status       | ASM Status      | RA Status |
+|-----------------|---------------------|-----------------|-----------|
+| Approved By ASM | Pending with RA     | Pending with RA | Pending   |
+
+##### 3. RA Approval
+If RA approves the request:
+
+| Action          | Agency Status | ASM Status | RA Status |
+|-----------------|---------------|------------|-----------|
+| Approved by RA  | Approved      | Approved   | Approved  |
+
+##### 4. Rejected by ASM
+If ASM rejects the request:
+
+| Action          | Agency Status       | ASM Status | RA Status |
+|-----------------|---------------------|------------|-----------|
+| Rejected by ASM | Rejected by ASM     | Rejected   | —         |
+
+The request returns to Agency. Agency can edit and resubmit to ASM.
+
+##### 5. Rejected by RA
+If RA rejects the request:
+
+| Action          | Agency Status       | ASM Status      | RA Status      |
+|-----------------|---------------------|-----------------|----------------|
+| Rejected by RA  | Rejected by RA      | Rejected by RA  | Rejected       |
+
+The request goes directly to Agency. Agency can view RA rejection comments, edit the submission, and resubmit. Resubmission follows the normal flow: Agency → ASM → RA.
+
+#### Acceptance Criteria
+
+1. WHEN an Agency submits a request, THE System SHALL perform extraction (Extracting state) and change status to Pending with ASM (PendingWithASM) after completion
+2. WHEN ASM approves a request, THE System SHALL move the request to RA for approval (PendingWithRA) and display "Pending with RA" to Agency and ASM, "Pending" to RA
+3. WHEN RA approves a request, THE System SHALL set status to Approved for all roles
+4. WHEN ASM rejects a request, THE System SHALL set status to RejectedByASM and display "Rejected by ASM" to Agency, "Rejected" to ASM
+5. WHEN Agency receives a rejected request (RejectedByASM), THE System SHALL allow the Agency to edit and resubmit the request to ASM
+6. WHEN RA rejects a request, THE System SHALL set status to RejectedByRA and display "Rejected by RA" to Agency and ASM, "Rejected" to RA
+7. WHEN Agency receives an RA-rejected request (RejectedByRA), THE System SHALL display the RA rejection comments and allow the Agency to edit and resubmit
+8. WHEN Agency resubmits an RA-rejected request, THE System SHALL reset the workflow and follow the normal flow: Agency → ASM → RA
+9. WHEN Agency resubmits a corrected request, THE System SHALL increment the resubmission count and re-trigger the workflow
+10. WHEN displaying status to Agency, THE System SHALL show: "Extracting", "Pending with ASM", "Pending with RA", "Approved", "Rejected by ASM", "Rejected by RA"
+11. WHEN displaying status to ASM, THE System SHALL show: "Pending", "Pending with RA", "Approved", "Rejected", "Rejected by RA"
+12. WHEN displaying status to RA, THE System SHALL show: "Pending", "Approved", "Rejected"
+13. WHEN displaying rejection comments, THE System SHALL show ASMReviewNotes for RejectedByASM status and HQReviewNotes for RejectedByRA status
+14. WHEN the Agency detail page shows a rejected submission (RejectedByASM or RejectedByRA), THE System SHALL display the rejection comments and an "Edit & Resubmit" button
+15. WHEN the ASM detail page shows a submission, THE System SHALL display consistent Reject and Approve buttons regardless of previous rejection history
+16. THE System SHALL NOT display any other statuses beyond: Extracting, Pending with ASM, Pending with RA, Approved, Rejected by ASM, Rejected by RA

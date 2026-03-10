@@ -4252,3 +4252,81 @@ Step 2 endpoints now use Campaign as parent:
 - `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/photos` - Add photos
 - `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/cost-summary` - Upload cost summary
 - `POST /api/hierarchical/{packageId}/campaigns/{campaignId}/activity-summary` - Upload activity summary
+
+
+## Design: Requirement 25 — Campaign Request Approval Workflow (Simplified)
+
+### State Machine
+
+```
+Uploaded → Extracting → Validating → Validated → Scoring → Recommending → PendingWithASM
+PendingWithASM → PendingWithRA (ASM approves)
+PendingWithASM → RejectedByASM (ASM rejects)
+PendingWithRA → Approved (RA approves)
+PendingWithRA → RejectedByRA (RA rejects → goes to Agency)
+RejectedByASM → Uploaded (Agency resubmits — triggers workflow again)
+RejectedByRA → Uploaded (Agency resubmits — triggers workflow again)
+```
+
+### Key Design Decisions
+
+1. **RA rejection goes directly to Agency**: No ASM intermediary. Agency sees RA rejection comments and can edit & resubmit.
+2. **Agency resubmit follows normal flow**: After resubmit from either RejectedByASM or RejectedByRA, the request goes through ASM → RA again.
+3. **ASM view is always consistent**: Same Reject + Approve buttons for pending submissions. ASM does not handle RA rejections.
+4. **Rejection comments always visible**: ASMReviewNotes for ASM rejections, HQReviewNotes for RA rejections — shown on Agency detail page.
+
+### Backend Endpoints
+
+- `PATCH /api/submissions/{id}/asm-approve` — ASM approves, moves to PendingWithRA
+- `PATCH /api/submissions/{id}/asm-reject` — ASM rejects, moves to RejectedByASM
+- `PATCH /api/submissions/{id}/hq-approve` — RA approves, moves to Approved
+- `PATCH /api/submissions/{id}/hq-reject` — RA rejects, moves to RejectedByRA (goes to Agency)
+- `PATCH /api/submissions/{id}/resubmit` — Agency resubmits from RejectedByASM or RejectedByRA
+
+**Resubmit endpoint behavior:**
+- Accepts both `RejectedByASM` and `RejectedByRA` states
+- Resets state to `Uploaded`, clears ASM and HQ review fields
+- Increments `ResubmissionCount`
+- Triggers workflow processing
+
+### Status Display Labels by Role
+
+| PackageState        | Agency Label       | ASM Label          | RA Label       |
+|---------------------|--------------------|--------------------|----------------|
+| Extracting          | Extracting         | —                  | —              |
+| PendingWithASM      | Pending with ASM   | Pending            | —              |
+| PendingWithRA       | Pending with RA    | Pending with RA    | Pending        |
+| Approved            | Approved           | Approved           | Approved       |
+| RejectedByASM       | Rejected by ASM    | Rejected           | —              |
+| RejectedByRA        | Rejected by RA     | Rejected by RA     | Rejected       |
+
+### Rejection Comments Display
+
+| State           | Comments Field    | Visible To     | Action Available          |
+|-----------------|-------------------|----------------|---------------------------|
+| RejectedByASM   | ASMReviewNotes   | Agency         | Agency: Edit & Resubmit   |
+| RejectedByRA    | HQReviewNotes    | Agency         | Agency: Edit & Resubmit   |
+
+### Frontend Components
+
+1. **Agency Detail Page** (`agency_submission_detail_page.dart`):
+   - Consistent `_buildRejectionCard()` widget for both ASM and RA rejections
+   - Shows rejection reason in a white container within a red card
+   - "Edit & Resubmit" button calls `PATCH /api/submissions/{id}/resubmit`
+
+2. **ASM Detail Page** (`asm_review_detail_page.dart`):
+   - Consistent Reject + Approve buttons in header for PendingWithASM state only
+   - No special handling for RejectedByRA (ASM doesn't act on it)
+   - No HQRejectionSection widget
+
+3. **RA Detail Page** (`hq_review_detail_page.dart`):
+   - Reject + Final Approve buttons in header for PendingWithRA state
+   - Reject sends back to Agency (not ASM)
+
+4. **Agency Dashboard** (`agency_dashboard_page.dart`):
+   - Dynamic status dropdown showing only statuses present in data
+   - Grid refreshes on dropdown selection
+
+### No Schema Changes Required
+
+All required PackageState values and DB columns (ResubmissionCount, HQResubmissionCount, ASMReviewNotes, HQReviewNotes) already exist.

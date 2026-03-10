@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace BajajDocumentProcessing.API.Controllers;
 
 /// <summary>
-/// Analytics controller for HQ dashboard data, KPIs, and reporting
+/// Analytics controller for RA dashboard data, KPIs, and reporting
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]

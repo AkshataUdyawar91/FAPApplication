@@ -273,7 +273,7 @@ public class AnalyticsPlugin
         {
             var submissions = _context.DocumentPackages
                 .Where(p => p.State == Domain.Enums.PackageState.RejectedByASM || 
-                           p.State == Domain.Enums.PackageState.RejectedByHQ)
+                           p.State == Domain.Enums.PackageState.RejectedByRA)
                 .OrderByDescending(p => p.UpdatedAt ?? p.CreatedAt)
                 .Take(count)
                 .Select(p => new
@@ -330,7 +330,7 @@ public class AnalyticsPlugin
                 PendingHQ = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingHQApproval),
                 Approved = allPackages.Count(p => p.State == Domain.Enums.PackageState.Approved),
                 RejectedByASM = allPackages.Count(p => p.State == Domain.Enums.PackageState.RejectedByASM),
-                RejectedByHQ = allPackages.Count(p => p.State == Domain.Enums.PackageState.RejectedByHQ),
+                RejectedByRA = allPackages.Count(p => p.State == Domain.Enums.PackageState.RejectedByRA),
                 Processing = allPackages.Count(p => 
                     p.State == Domain.Enums.PackageState.Uploaded ||
                     p.State == Domain.Enums.PackageState.Extracting ||

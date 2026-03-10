@@ -48,11 +48,13 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
 
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
-    if (state == 'pendingasmapproval' || state == 'pendingapproval') return 'asm-review';
-    if (state == 'pendinghqapproval') return 'with-hq';
+    // ASM role status normalization
+    if (state == 'pendingasmapproval' || state == 'pendingapproval' || state == 'pendingwithasm') return 'asm-review';
+    if (state == 'pendinghqapproval' || state == 'pendingwithra') return 'with-hq';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyasm' || state == 'rejected' || state == 'rejectedbyhq' ||
-        state == 'validationfailed' || state == 'reuploadrequested') return 'rejected';
+    if (state == 'rejectedbyasm' || state == 'rejected') return 'rejected';
+    if (state == 'rejectedbyhq' || state == 'rejectedbyra') return 'rejected-by-hq';
+    if (state == 'validationfailed' || state == 'reuploadrequested') return 'rejected';
     if (state == 'uploaded' || state == 'extracting' || state == 'validating' ||
         state == 'scoring' || state == 'recommending') return 'processing';
     return 'processing';
@@ -745,13 +747,18 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   Widget _buildStatusBadge(String? status) {
     Color bgColor, textColor, borderColor;
     String label;
+    // ASM role status labels
     switch (status) {
       case 'asm-review':
-        bgColor = AppColors.pendingBackground; textColor = AppColors.pendingText; borderColor = AppColors.pendingBorder; label = 'Pending Review'; break;
+        bgColor = AppColors.pendingBackground; textColor = AppColors.pendingText; borderColor = AppColors.pendingBorder; label = 'Pending'; break;
+      case 'with-hq':
+        bgColor = const Color(0xFFFEF3C7); textColor = const Color(0xFF92400E); borderColor = const Color(0xFFF59E0B); label = 'Pending with RA'; break;
       case 'approved':
         bgColor = AppColors.approvedBackground; textColor = AppColors.approvedText; borderColor = AppColors.approvedBorder; label = 'Approved'; break;
       case 'rejected':
         bgColor = AppColors.rejectedBackground; textColor = AppColors.rejectedText; borderColor = AppColors.rejectedBorder; label = 'Rejected'; break;
+      case 'rejected-by-hq':
+        bgColor = AppColors.rejectedBackground; textColor = AppColors.rejectedText; borderColor = AppColors.rejectedBorder; label = 'Rejected by RA'; break;
       default:
         bgColor = AppColors.reviewBackground; textColor = AppColors.reviewText; borderColor = AppColors.reviewBorder; label = status ?? 'Unknown';
     }

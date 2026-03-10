@@ -82,7 +82,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 package.State == PackageState.PendingHQApproval ||
                 package.State == PackageState.Approved || 
                 package.State == PackageState.RejectedByASM ||
-                package.State == PackageState.RejectedByHQ)
+                package.State == PackageState.RejectedByRA)
             {
                 _logger.LogWarning("Package {PackageId} is in final/approval state {State}, skipping processing", packageId, package.State);
                 return true;

@@ -1174,3 +1174,31 @@ dev_dependencies:
   - [x] 32.3 Update validation logic (already implemented)
   - [x] 32.4 Update Flutter UI to use hierarchical API endpoints
   - _Requirements: 22.AC8, 22.AC9_
+
+
+- [ ] 33. Implement Campaign Request Approval Workflow (Requirement 25)
+  - [ ] 33.1 Add `PATCH /api/submissions/{id}/send-back-to-agency` endpoint
+    - ASM role only
+    - Precondition: state == RejectedByHQ
+    - Sets state to RejectedByASM
+    - Clears HQ review fields
+    - Logs the action
+    - _Requirements: 25.AC7, 25.AC8_
+
+  - [ ] 33.2 Add "Resubmit" button to Agency detail page
+    - Show button when state is RejectedByASM
+    - Calls `PATCH /api/submissions/{id}/resubmit`
+    - Shows success/error feedback
+    - Navigates back to dashboard on success
+    - _Requirements: 25.AC5, 25.AC13_
+
+  - [ ] 33.3 Add "Resubmit to RA" and "Send Back to Agency" buttons to ASM detail page
+    - Show buttons when state is RejectedByHQ
+    - "Resubmit to RA" calls `PATCH /api/submissions/{id}/resubmit-to-hq` with notes dialog
+    - "Send Back to Agency" calls `PATCH /api/submissions/{id}/send-back-to-agency` with reason dialog
+    - _Requirements: 25.AC7, 25.AC14_
+
+  - [ ] 33.4 Update status display labels for role-appropriate text
+    - Agency: "Pending with ASM", "Pending with RA", "Rejected by ASM", "Rejected by RA"
+    - ASM: "Pending", "Pending with RA", "Rejected", "Rejected by RA"
+    - _Requirements: 25.AC11, 25.AC12_

@@ -157,18 +157,30 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     try {
       final response = await _dio.patch(
         '/submissions/${widget.submissionId}/hq-reject',
-        data: {'reason': reason},
+        data: {'Reason': reason}, // Capital R to match backend DTO
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
 
       if (response.statusCode == 200 && mounted) {
+        // Update state immediately
+        setState(() {
+          _submission!['state'] = 'RejectedByRA';
+          _submission!['hqReviewedAt'] = DateTime.now().toIso8601String();
+          _submission!['hqReviewNotes'] = reason;
+        });
+        
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('FAP rejected (sent back to ASM)'),
+            content: Text('FAP rejected (sent back to Agency)'),
             backgroundColor: AppColors.rejectedText,
           ),
         );
-        Navigator.pop(context);
+        
+        // Optionally navigate back after a short delay to show updated status
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          Navigator.pop(context, true); // Return true to indicate refresh needed
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -197,14 +209,16 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Please provide a reason for rejection:'),
+            const Text('Please provide a reason for rejection (minimum 10 characters):'),
             const SizedBox(height: 16),
             TextField(
               controller: reasonController,
               maxLines: 4,
+              maxLength: 500,
               decoration: const InputDecoration(
-                hintText: 'Enter rejection reason...',
+                hintText: 'Enter rejection reason (minimum 10 characters)...',
                 border: OutlineInputBorder(),
+                helperText: 'Minimum 10 characters required',
               ),
             ),
           ],
@@ -221,6 +235,15 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('Please provide a rejection reason'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              if (reason.length < 10) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Rejection reason must be at least 10 characters'),
                     backgroundColor: Colors.orange,
                   ),
                 );
@@ -497,7 +520,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 20, vertical: 12),
                     ),
-                    child: const Text('Reject (Send to ASM)'),
+                    child: const Text('Reject'),
                   ),
                   ElevatedButton(
                     onPressed: _isProcessing ? null : _approveSubmission,
@@ -562,19 +585,20 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     Color textColor;
     String displayText;
 
-    if (normalizedState == 'pendinghqapproval') {
+    // RA role status labels
+    if (normalizedState == 'pendinghqapproval' || normalizedState == 'pendingwithra') {
       backgroundColor = const Color(0xFFFEF3C7);
       textColor = const Color(0xFFD97706);
-      displayText = 'Pending HQ/RA Review';
+      displayText = 'Pending';
     } else if (normalizedState == 'approved') {
       backgroundColor = const Color(0xFFD1FAE5);
       textColor = const Color(0xFF10B981);
       displayText = 'Approved';
-    } else if (normalizedState == 'rejectedbyhq' || normalizedState == 'rejected') {
+    } else if (normalizedState == 'rejectedbyhq' || normalizedState == 'rejectedbyra' || normalizedState == 'rejected') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
-      displayText = normalizedState == 'rejectedbyhq' ? 'Rejected by HQ' : 'Rejected';
-    } else if (normalizedState == 'pendingapproval') {
+      displayText = 'Rejected';
+    } else if (normalizedState == 'pendingapproval' || normalizedState == 'pendingasmapproval' || normalizedState == 'pendingwithasm') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending ASM Review';
