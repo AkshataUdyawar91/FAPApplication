@@ -488,3 +488,75 @@ This document specifies the requirements for the Bajaj Document Processing Syste
 3. WHEN validating photos, THE System SHALL verify that photo timestamps fall within the campaign date range
 4. WHEN validation issues are found, THE System SHALL display them at the appropriate hierarchy level (Invoice, Campaign, or Photo)
 
+
+### Requirement 23: Microsoft Teams Bot — Approval Actions, Proactive Notifications, and SSO
+
+**User Story:** As an ASM, I want to receive Teams notifications for new FAP submissions and approve or reject them directly from a Teams adaptive card without logging into the portal, so that I can act on submissions faster from my primary work tool. As an Agency user, I want to receive Teams notifications when a new PO arrives or when my submission is approved or rejected, so that I stay informed without checking the portal.
+
+#### Acceptance Criteria
+
+##### AC1: Teams Bot Registration and Infrastructure
+
+1. WHEN the system is deployed, THE System SHALL register a Teams Bot via Azure Bot Service with a valid App ID and App Secret
+2. WHEN the Teams Bot is registered, THE System SHALL configure the bot messaging endpoint to point to the backend API (e.g., `/api/teams/messages`)
+3. WHEN the Teams Bot is deployed, THE System SHALL publish the bot to the Bajaj organization's Teams App Catalog so ASM and Agency users can install it
+4. WHEN a user installs the Teams Bot, THE System SHALL store the user's Teams conversation reference (conversation ID, service URL, tenant ID) mapped to their portal user account (by email match)
+
+##### AC2: Proactive Notifications to ASM
+
+**ASM Assignment Logic**: The ASM who raised/owns the PO in SAP is the ASM assigned to all FAPs submitted against that PO. The PO record (from SAP sync, Story #20) carries the ASM identifier. This is used for all ASM notifications and approval routing.
+
+1. WHEN a new FAP submission is created by an Agency, THE System SHALL send a proactive Teams message to the ASM who owns the PO (derived from SAP PO data) within 60 seconds
+2. WHEN the ASM receives a new submission notification, THE message SHALL include: FAP Number, Agency Name, Submission Date, and a deep link to the FAP review page in the portal
+3. WHEN validation completes for a FAP, THE System SHALL send a proactive Teams message to the assigned ASM with: FAP Number, Validation Status (Passed/Failed), and count of validation issues (if any)
+4. WHEN confidence scoring completes for a FAP, THE System SHALL send a proactive Teams message to the assigned ASM with: FAP Number, Overall Confidence Score (%), AI Recommendation (APPROVE/REVIEW/REJECT), and a deep link to the review page
+5. WHEN sending proactive messages, THE System SHALL use the stored conversation reference and respect Teams API rate limits (max 4 messages per second per bot per conversation)
+
+##### AC3: Adaptive Card for ASM Approve/Reject
+
+1. WHEN the confidence score is ready for a FAP, THE System SHALL send an adaptive card (not just a text message) to the ASM in Teams
+2. WHEN the adaptive card is rendered, IT SHALL display: FAP Number, Agency Name, Overall AI Confidence Score (with color indicator: green >85%, amber 70-85%, red <70%), AI Recommendation (APPROVE/REVIEW/REJECT), Recommendation Summary (~100 chars), and two action buttons: "Approve" (green) and "Reject" (red)
+3. WHEN the ASM clicks "Approve" on the adaptive card, THE System SHALL update the FAP state to Approved (or ASM-Approved if RA/Finance approval follows), trigger downstream actions (email notification to Agency, move to RA queue if applicable), and update the adaptive card to show "Approved by [ASM Name] at [timestamp]" with buttons disabled
+4. WHEN the ASM clicks "Reject" on the adaptive card, THE System SHALL display an input field for rejection comments (required, minimum 10 characters), and upon submission update the FAP state to Rejected, trigger email notification to Agency with rejection reason, and update the adaptive card to show "Rejected by [ASM Name] at [timestamp]" with the reason displayed
+5. WHEN the ASM submits an approve/reject action, THE System SHALL validate that the ASM is authorized for this FAP (role check + assignment check) before processing
+6. WHEN the ASM submits an action on a FAP that has already been actioned, THE System SHALL display an error message "This FAP has already been [Approved/Rejected]" and not process the duplicate action
+7. WHEN the adaptive card action is processed, THE System SHALL log the action in the audit trail with: ASM identity, action taken, timestamp, and source ("Teams Bot")
+
+##### AC4: Proactive Notifications to Agency
+
+1. WHEN a new PO arrives from SAP and is assigned to an Agency, THE System SHALL send a proactive Teams message to the Agency user with: PO Number, PO Amount (₹ formatted), PO Date, and a deep link to the PO list page in the portal
+2. WHEN an ASM approves a FAP, THE System SHALL send a proactive Teams message to the submitting Agency user with: FAP Number, "Approved" status, Approver Name, and a deep link to the submission detail page
+3. WHEN an ASM rejects a FAP, THE System SHALL send a proactive Teams message to the submitting Agency user with: FAP Number, "Rejected" status, Rejection Reason, and a deep link to the submission detail page
+4. WHEN an RA/Finance user makes a final decision on a FAP, THE System SHALL send a proactive Teams message to the Agency user with: FAP Number, Final Status (RA-Approved/RA-Rejected), and a deep link
+
+##### AC5: Teams SSO — Azure AD/Entra ID to Portal JWT
+
+1. WHEN an ASM opens the portal from a deep link in a Teams message, THE System SHALL initiate the Teams SSO flow using the Teams JavaScript SDK (`microsoftTeams.authentication.getAuthToken`)
+2. WHEN the Teams SSO flow returns an Azure AD/Entra ID token, THE System SHALL exchange it for a portal JWT by validating the Azure AD token (issuer, audience, signature), matching the `preferred_username` or `email` claim to an existing portal user, and issuing a portal JWT with the matched user's role claims
+3. WHEN the token exchange succeeds, THE System SHALL store the portal JWT in flutter_secure_storage and navigate the user directly to the deep-linked page without showing a login screen
+4. WHEN the token exchange fails (user not found in portal, invalid Azure AD token, or network error), THE System SHALL fall back to the standard email/password login page with a message "Automatic sign-in failed. Please log in manually."
+5. WHEN an ASM is already authenticated via Teams SSO and the portal JWT expires, THE System SHALL silently re-initiate the Teams SSO flow to obtain a new portal JWT without user interaction
+6. WHEN the Teams SSO token exchange endpoint is called, THE System SHALL validate the Azure AD token's `tid` (tenant ID) matches the configured Bajaj tenant ID (placeholder: `BAJAJ_AZURE_AD_TENANT_ID` in appsettings.json) to prevent cross-tenant access
+
+##### AC6: Deep Links
+
+1. WHEN a Teams notification includes a deep link, THE link SHALL use the portal's base URL with a route path that go_router can resolve (e.g., `https://portal.bajaj.com/fap/{fapId}/review`)
+2. WHEN a user clicks a deep link in Teams on desktop, THE System SHALL open the portal in the default browser and navigate to the specified page
+3. WHEN a user clicks a deep link in Teams on mobile, THE System SHALL open the portal in the in-app browser or the installed mobile app (if available) and navigate to the specified page
+4. WHEN a deep link targets a resource the user is not authorized to view, THE System SHALL redirect to the home page with an "Access denied" message
+
+##### AC7: Error Handling and Resilience
+
+1. WHEN sending a proactive Teams message fails (network error, expired conversation reference, user uninstalled bot), THE System SHALL retry up to 3 times with exponential backoff (2s, 4s, 8s)
+2. WHEN all retries fail, THE System SHALL log the failure with: user email, conversation reference, error details, and correlation ID, and NOT block the primary workflow (FAP processing continues regardless)
+3. WHEN a conversation reference becomes invalid (HTTP 403 or 404 from Teams API), THE System SHALL mark the user's Teams mapping as inactive and stop sending messages until the user re-installs the bot
+4. WHEN the Teams Bot receives an unrecognized message from a user, THE System SHALL respond with a help message listing available commands and a link to the portal
+5. WHEN processing an adaptive card action fails (backend error), THE System SHALL display an error message on the card "Action failed. Please try again or use the portal." and log the error with correlation ID
+
+##### AC8: User-Teams Mapping
+
+1. WHEN a user installs the Teams Bot, THE System SHALL match the user's Teams email (from the `activity.from` object) to an existing portal user account
+2. WHEN the email match succeeds, THE System SHALL store the Teams conversation reference linked to the portal user ID
+3. WHEN the email match fails (no portal account found), THE System SHALL respond with "Your email is not registered in the Bajaj Document Processing portal. Please contact your administrator."
+4. WHEN a user uninstalls the Teams Bot, THE System SHALL mark their Teams mapping as inactive (soft delete) and stop sending proactive messages
+5. WHEN querying Teams mappings, THE System SHALL filter by `IsActive = true` to exclude uninstalled users

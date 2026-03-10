@@ -23,7 +23,7 @@ public class ActivityData
     /// <summary>
     /// List of activities at different locations
     /// </summary>
-    public List<LocationActivity> LocationActivities { get; set; } = new();
+    public List<ActivityRow> LocationActivities { get; set; } = new();
     
     /// <summary>
     /// Total number of days across all activities

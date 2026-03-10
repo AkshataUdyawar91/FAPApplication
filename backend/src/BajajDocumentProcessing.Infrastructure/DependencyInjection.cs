@@ -1,9 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Bot.Builder;
+using Microsoft.Bot.Builder.Integration.AspNet.Core;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Infrastructure.Persistence;
 using BajajDocumentProcessing.Infrastructure.Services;
+using BajajDocumentProcessing.Infrastructure.Services.Teams;
 
 namespace BajajDocumentProcessing.Infrastructure;
 
@@ -127,6 +130,18 @@ public static class DependencyInjection
         services.AddSingleton<BackgroundWorkflowProcessor>();
         services.AddHostedService(provider => provider.GetRequiredService<BackgroundWorkflowProcessor>());
         services.AddSingleton<IBackgroundWorkflowQueue, BackgroundWorkflowQueue>();
+
+        // Teams Bot Framework (Singleton — required by Bot Framework SDK)
+        services.AddSingleton<IBotFrameworkHttpAdapter, AdapterWithErrorHandler>();
+        services.AddSingleton<PilotTeamsConfig>(sp =>
+        {
+            var config = new PilotTeamsConfig
+            {
+                IsPilotMode = configuration.GetValue<bool>("TeamsBot:IsPilotMode", true)
+            };
+            return config;
+        });
+        services.AddSingleton<IBot, TeamsBotService>();
         
         return services;
     }
