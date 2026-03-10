@@ -361,11 +361,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       color: const Color(0xFF003087),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.business, color: Colors.white, size: 22),
-          SizedBox(width: 8),
-          Text(
+          const Icon(Icons.business, color: Colors.white, size: 22),
+          const SizedBox(width: 8),
+          const Text(
             'Bajaj',
             style: TextStyle(
               fontSize: 18,
@@ -374,6 +374,26 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
               letterSpacing: 0.5,
             ),
           ),
+          const Spacer(),
+          CircleAvatar(
+            backgroundColor: Colors.white,
+            radius: 18,
+            child: Text(
+              widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
+              style: const TextStyle(color: Color(0xFF003087), fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
+              const SizedBox(height: 2),
+              Text('Agency', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
+            ],
+          ),
+          const SizedBox(width: 12),
         ],
       ),
     );

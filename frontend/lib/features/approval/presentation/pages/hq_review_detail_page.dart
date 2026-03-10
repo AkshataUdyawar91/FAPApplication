@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
@@ -280,14 +281,34 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       color: const Color(0xFF003087),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.business, color: Colors.white, size: 22),
-          SizedBox(width: 8),
-          Text(
+          const Icon(Icons.business, color: Colors.white, size: 22),
+          const SizedBox(width: 8),
+          const Text(
             'Bajaj',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
           ),
+          const Spacer(),
+          CircleAvatar(
+            backgroundColor: Colors.white,
+            radius: 18,
+            child: Text(
+              widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
+              style: const TextStyle(color: Color(0xFF003087), fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
+              const SizedBox(height: 2),
+              Text('HQ/RA', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
+            ],
+          ),
+          const SizedBox(width: 12),
         ],
       ),
     );
@@ -747,28 +768,9 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
         }
 
         final bytes = base64.decode(base64Content);
-        final blob = web.Blob(
-          [bytes.toJS].toJS,
-          web.BlobPropertyBag(type: contentType),
-        );
-        final url = web.URL.createObjectURL(blob);
-
-        final anchor =
-            web.document.createElement('a') as web.HTMLAnchorElement;
-        anchor.href = url;
-        anchor.download = name;
-        anchor.click();
-
-        web.URL.revokeObjectURL(url);
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Downloading $name...'),
-              backgroundColor: AppColors.approvedText,
-              duration: const Duration(seconds: 2),
-            ),
-          );
+          _showDocumentPreview(bytes, contentType, name);
         }
       }
     } catch (e) {
@@ -781,5 +783,147 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
         );
       }
     }
+  }
+
+  void _showDocumentPreview(List<int> bytes, String contentType, String name) {
+    final isImage = contentType.startsWith('image/');
+    final isPdf = contentType == 'application/pdf';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.preview, color: Colors.white, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        name,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: isImage
+                    ? InteractiveViewer(
+                        minScale: 0.5,
+                        maxScale: 4.0,
+                        child: Image.memory(
+                          Uint8List.fromList(bytes),
+                          fit: BoxFit.contain,
+                        ),
+                      )
+                    : isPdf
+                        ? _buildPdfPreview(bytes, contentType)
+                        : Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(32),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.insert_drive_file, size: 64, color: AppColors.textSecondary),
+                                  const SizedBox(height: 16),
+                                  Text(name, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                                  const SizedBox(height: 8),
+                                  Text('Preview not available for this file type.\nClick "Download" to save.',
+                                    textAlign: TextAlign.center,
+                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
+                                ],
+                              ),
+                            ),
+                          ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: AppColors.border)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        final blob = web.Blob(
+                          [Uint8List.fromList(bytes).toJS].toJS,
+                          web.BlobPropertyBag(type: contentType),
+                        );
+                        final url = web.URL.createObjectURL(blob);
+                        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+                        anchor.href = url;
+                        anchor.download = name;
+                        anchor.click();
+                        web.URL.revokeObjectURL(url);
+                        Navigator.of(ctx).pop();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Downloading $name...'),
+                            backgroundColor: AppColors.approvedText,
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.download, size: 18),
+                      label: const Text('Download'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPdfPreview(List<int> bytes, String contentType) {
+    final blob = web.Blob(
+      [Uint8List.fromList(bytes).toJS].toJS,
+      web.BlobPropertyBag(type: contentType),
+    );
+    final url = web.URL.createObjectURL(blob);
+
+    return SizedBox(
+      width: double.infinity,
+      height: 500,
+      child: HtmlElementView.fromTagName(
+        tagName: 'iframe',
+        onElementCreated: (element) {
+          final iframe = element as web.HTMLIFrameElement;
+          iframe.src = url;
+          iframe.style.border = 'none';
+          iframe.style.width = '100%';
+          iframe.style.height = '100%';
+        },
+      ),
+    );
   }
 }

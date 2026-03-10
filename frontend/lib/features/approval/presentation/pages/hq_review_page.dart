@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'dart:convert';
+import 'package:web/web.dart' as web;
+import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
@@ -294,7 +297,6 @@ class _HQReviewPageState extends State<HQReviewPage> {
     );
   }
 
-  /// Full-width top bar with Bajaj branding — spans sidebar + content.
   Widget _buildTopBar() {
     return Container(
       width: double.infinity,
@@ -313,6 +315,26 @@ class _HQReviewPageState extends State<HQReviewPage> {
               letterSpacing: 0.5,
             ),
           ),
+          const Spacer(),
+          CircleAvatar(
+            backgroundColor: Colors.white,
+            radius: 18,
+            child: Text(
+              widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
+              style: const TextStyle(color: Color(0xFF003087), fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
+              const SizedBox(height: 2),
+              Text('HQ/RA', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
+            ],
+          ),
+          const SizedBox(width: 12),
         ],
       ),
     );
@@ -400,6 +422,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                           ),
                           _buildCompactStatusDropdown(),
                           _buildCompactSortDropdown(),
+                          _buildExportButton(),
                         ],
                       ),
                     ],
@@ -412,6 +435,8 @@ class _HQReviewPageState extends State<HQReviewPage> {
                     _buildCompactStatusDropdown(),
                     const SizedBox(width: 12),
                     _buildCompactSortDropdown(),
+                    // const SizedBox(width: 12),
+                    // _buildExportButton(),
                     const SizedBox(width: 12),
                     QuarterYearFilter(
                       selectedQuarter: _selectedQuarter,
@@ -540,6 +565,73 @@ class _HQReviewPageState extends State<HQReviewPage> {
         },
       ),
     );
+  }
+
+  Widget _buildExportButton() {
+    return SizedBox(
+      height: 40,
+      child: ElevatedButton.icon(
+        onPressed: _exportToExcel,
+        icon: const Icon(Icons.download, size: 18),
+        label: const Text('Export'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+    );
+  }
+
+  void _exportToExcel() {
+    final filtered = _filteredDocuments;
+    if (filtered.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No data to export'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    final buffer = StringBuffer();
+    buffer.writeln('FAP Number,PO Number,PO Amount,Invoice Number,Invoice Amount,Submitted Date,AI Score,Status');
+
+    for (final doc in filtered) {
+      final fapNumber = 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
+      final poNumber = doc['poNumber']?.toString() ?? '-';
+      final poAmount = doc['poAmount']?.toString() ?? '';
+      final invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
+      final invoiceAmount = doc['invoiceAmount']?.toString() ?? '';
+      final createdAt = _formatDate(doc['createdAt']);
+      final confidence = doc['overallConfidence'];
+      final aiScore = confidence != null ? '${(confidence * 100).toStringAsFixed(0)}%' : '-';
+      final status = _normalizeStatus(doc['state']?.toString() ?? '');
+
+      buffer.writeln('"$fapNumber","$poNumber","$poAmount","$invoiceNumber","$invoiceAmount","$createdAt","$aiScore","$status"');
+    }
+
+    final csvContent = buffer.toString();
+    final bytes = utf8.encode(csvContent);
+    final blob = web.Blob(
+      [bytes.toJS].toJS,
+      web.BlobPropertyBag(type: 'text/csv'),
+    );
+    final url = web.URL.createObjectURL(blob);
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = url;
+    anchor.download = 'FAP_Report_${_selectedQuarter}_$_selectedYear.csv';
+    anchor.click();
+    web.URL.revokeObjectURL(url);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Exported ${filtered.length} records to CSV'),
+          backgroundColor: AppColors.approvedText,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   Widget _buildSearchBar() {
