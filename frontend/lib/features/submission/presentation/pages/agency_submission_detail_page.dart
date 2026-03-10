@@ -360,6 +360,10 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             campaignDetails: _campaignDetails,
             onPhotoTap: (detail) => _downloadDocument(detail.blobUrl, detail.documentName),
           ),
+          const SizedBox(height: 24),
+
+          // Hierarchical Campaign Data (Campaigns → Invoices, Photos, Cost/Activity Summaries)
+          _buildCampaignsSection(),
           const SizedBox(height: 80),
         ],
       ),
@@ -528,6 +532,174 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     ).trim().split(' ').map((word) =>
       word[0].toUpperCase() + word.substring(1),
     ).join(' ');
+  }
+
+  Widget _buildCampaignsSection() {
+    if (_submission == null) return const SizedBox();
+    final campaigns = _submission!['campaigns'] as List? ?? [];
+    if (campaigns.isEmpty) return const SizedBox();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                const Icon(Icons.campaign, color: Color(0xFF3B82F6), size: 28),
+                const SizedBox(width: 12),
+                Text('Campaigns (${campaigns.length})', style: AppTextStyles.h3),
+              ],
+            ),
+          ),
+          ...campaigns.asMap().entries.map((entry) {
+            final campaign = entry.value as Map<String, dynamic>;
+            return _buildCampaignTile(campaign, entry.key);
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCampaignTile(Map<String, dynamic> campaign, int index) {
+    final name = campaign['campaignName']?.toString() ?? 'Campaign ${index + 1}';
+    final teamCode = campaign['teamCode']?.toString() ?? '';
+    final dealership = campaign['dealershipName']?.toString() ?? '';
+    final startDate = _formatDate(campaign['startDate']);
+    final endDate = _formatDate(campaign['endDate']);
+    final workingDays = campaign['workingDays']?.toString() ?? '';
+    final totalCost = campaign['totalCost'];
+    final invoices = campaign['invoices'] as List? ?? [];
+    final photos = campaign['photos'] as List? ?? [];
+    final costSummaryUrl = campaign['costSummaryBlobUrl']?.toString();
+    final costSummaryFile = campaign['costSummaryFileName']?.toString();
+    final activitySummaryUrl = campaign['activitySummaryBlobUrl']?.toString();
+    final activitySummaryFile = campaign['activitySummaryFileName']?.toString();
+
+    return ExpansionTile(
+      leading: CircleAvatar(
+        backgroundColor: const Color(0xFF3B82F6).withOpacity(0.1),
+        child: Text('${index + 1}', style: const TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold)),
+      ),
+      title: Text(name, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+      subtitle: Text(
+        [if (teamCode.isNotEmpty) 'Team: $teamCode', if (dealership.isNotEmpty) dealership].join(' • '),
+        style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
+      ),
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Campaign details row
+              Wrap(
+                spacing: 24,
+                runSpacing: 12,
+                children: [
+                  if (startDate != 'N/A') _buildDetailChip('Start', startDate),
+                  if (endDate != 'N/A') _buildDetailChip('End', endDate),
+                  if (workingDays.isNotEmpty) _buildDetailChip('Working Days', workingDays),
+                  if (totalCost != null) _buildDetailChip('Total Cost', '₹$totalCost'),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Cost Summary
+              if (costSummaryUrl != null && costSummaryUrl.isNotEmpty)
+                _buildDocumentRow(Icons.summarize, costSummaryFile ?? 'Cost Summary', costSummaryUrl),
+
+              // Activity Summary
+              if (activitySummaryUrl != null && activitySummaryUrl.isNotEmpty)
+                _buildDocumentRow(Icons.assignment, activitySummaryFile ?? 'Activity Summary', activitySummaryUrl),
+
+              // Invoices
+              if (invoices.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('Invoices (${invoices.length})', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                ...invoices.map((inv) {
+                  final invMap = inv as Map<String, dynamic>;
+                  final invNum = invMap['invoiceNumber']?.toString() ?? '';
+                  final vendor = invMap['vendorName']?.toString() ?? '';
+                  final amount = invMap['totalAmount'];
+                  final fileName = invMap['fileName']?.toString() ?? 'Invoice';
+                  final blobUrl = invMap['blobUrl']?.toString() ?? '';
+                  final label = [
+                    fileName,
+                    if (invNum.isNotEmpty) '(#$invNum)',
+                    if (vendor.isNotEmpty) '- $vendor',
+                    if (amount != null) '- ₹$amount',
+                  ].join(' ');
+                  return _buildDocumentRow(Icons.receipt, label, blobUrl);
+                }),
+              ],
+
+              // Photos
+              if (photos.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('Photos (${photos.length})', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                ...photos.map((photo) {
+                  final photoMap = photo as Map<String, dynamic>;
+                  final fileName = photoMap['fileName']?.toString() ?? 'Photo';
+                  final blobUrl = photoMap['blobUrl']?.toString() ?? '';
+                  final caption = photoMap['caption']?.toString() ?? '';
+                  final label = caption.isNotEmpty ? '$fileName - $caption' : fileName;
+                  return _buildDocumentRow(Icons.image, label, blobUrl);
+                }),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailChip(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text(value, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+
+  Widget _buildDocumentRow(IconData icon, String label, String? blobUrl) {
+    final hasUrl = blobUrl != null && blobUrl.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: hasUrl ? AppColors.primary : AppColors.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: AppTextStyles.bodyMedium,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (hasUrl)
+            IconButton(
+              icon: const Icon(Icons.download, size: 18),
+              onPressed: () => _downloadDocument(blobUrl, label),
+              tooltip: 'Download',
+              color: AppColors.primary,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+        ],
+      ),
+    );
   }
 
   Widget _buildApprovalTimeline() {

@@ -49,7 +49,8 @@ class SubmissionDataTransformer {
 
   /// Transforms submission documents into invoice document rows.
   ///
-  /// Shows ALL non-Photo documents from the API response. Each document
+  /// Shows ALL non-Photo documents from the API response plus campaign-level
+  /// invoices, cost summaries, and activity summaries. Each document
   /// gets its own row with actual filename, blobUrl, and validation info.
   static List<InvoiceDocumentRow> transformToInvoiceDocuments(
     Map<String, dynamic> submission,
@@ -85,13 +86,72 @@ class SubmissionDataTransformer {
       serialNumber++;
     }
 
+    // Also include campaign-level invoices, cost summaries, activity summaries
+    final campaigns = submission['campaigns'] as List? ?? [];
+    for (var campaign in campaigns) {
+      final campaignMap = campaign as Map<String, dynamic>;
+      final campaignName = campaignMap['campaignName']?.toString() ?? '';
+
+      // Campaign invoices
+      final invoices = campaignMap['invoices'] as List? ?? [];
+      for (var inv in invoices) {
+        final invMap = inv as Map<String, dynamic>;
+        final fileName = invMap['fileName']?.toString() ?? 'Invoice';
+        final blobUrl = invMap['blobUrl']?.toString() ?? '';
+        final invNum = invMap['invoiceNumber']?.toString() ?? '';
+        final displayName = invNum.isNotEmpty ? '$fileName (#$invNum)' : fileName;
+        rows.add(InvoiceDocumentRow(
+          serialNumber: serialNumber,
+          category: 'Invoice',
+          documentName: campaignName.isNotEmpty ? '$displayName [$campaignName]' : displayName,
+          status: allPassed ? ValidationStatus.ok : ValidationStatus.unknown,
+          remarks: '',
+          blobUrl: blobUrl,
+          documentId: '',
+        ));
+        serialNumber++;
+      }
+
+      // Cost summary
+      final costUrl = campaignMap['costSummaryBlobUrl']?.toString() ?? '';
+      final costFile = campaignMap['costSummaryFileName']?.toString() ?? '';
+      if (costUrl.isNotEmpty) {
+        rows.add(InvoiceDocumentRow(
+          serialNumber: serialNumber,
+          category: 'Cost Summary',
+          documentName: campaignName.isNotEmpty ? '$costFile [$campaignName]' : costFile,
+          status: allPassed ? ValidationStatus.ok : ValidationStatus.unknown,
+          remarks: '',
+          blobUrl: costUrl,
+          documentId: '',
+        ));
+        serialNumber++;
+      }
+
+      // Activity summary
+      final actUrl = campaignMap['activitySummaryBlobUrl']?.toString() ?? '';
+      final actFile = campaignMap['activitySummaryFileName']?.toString() ?? '';
+      if (actUrl.isNotEmpty) {
+        rows.add(InvoiceDocumentRow(
+          serialNumber: serialNumber,
+          category: 'Activity Summary',
+          documentName: campaignName.isNotEmpty ? '$actFile [$campaignName]' : actFile,
+          status: allPassed ? ValidationStatus.ok : ValidationStatus.unknown,
+          remarks: '',
+          blobUrl: actUrl,
+          documentId: '',
+        ));
+        serialNumber++;
+      }
+    }
+
     return rows;
   }
 
   /// Transforms submission documents into campaign detail rows.
   ///
-  /// Shows ALL Photo-type documents from the API response. Uses actual
-  /// filenames from the API (not generated names like Pic1/Pic2).
+  /// Shows ALL Photo-type documents from the API response plus campaign-level
+  /// photos. Uses actual filenames from the API (not generated names).
   static List<CampaignDetailRow> transformToCampaignDetails(
     Map<String, dynamic> submission,
   ) {
@@ -127,6 +187,37 @@ class SubmissionDataTransformer {
         isFirstInGroup: serialNumber == 1,
       ));
       serialNumber++;
+    }
+
+    // Also include campaign-level photos
+    final campaigns = submission['campaigns'] as List? ?? [];
+    for (var campaign in campaigns) {
+      final campaignMap = campaign as Map<String, dynamic>;
+      final dealership = campaignMap['dealershipName']?.toString() ?? '';
+      final startDate = campaignMap['startDate'];
+      final photos = campaignMap['photos'] as List? ?? [];
+      final isFirstCampaign = serialNumber == 1 || (rows.isNotEmpty && rows.last.dealerName != dealership);
+
+      for (int i = 0; i < photos.length; i++) {
+        final photoMap = photos[i] as Map<String, dynamic>;
+        final fileName = photoMap['fileName']?.toString() ?? 'Photo';
+        final blobUrl = photoMap['blobUrl']?.toString() ?? '';
+        final caption = photoMap['caption']?.toString() ?? '';
+        final displayName = caption.isNotEmpty ? '$fileName - $caption' : fileName;
+
+        rows.add(CampaignDetailRow(
+          serialNumber: serialNumber,
+          dealerName: dealership,
+          campaignDate: startDate != null ? _formatDate(startDate) : '',
+          documentName: displayName,
+          status: allPassed ? ValidationStatus.ok : ValidationStatus.unknown,
+          remarks: '',
+          blobUrl: blobUrl,
+          documentId: '',
+          isFirstInGroup: i == 0 && isFirstCampaign,
+        ));
+        serialNumber++;
+      }
     }
 
     return rows;

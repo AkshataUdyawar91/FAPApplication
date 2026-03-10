@@ -56,8 +56,22 @@ GO
 
 -- ============================================
 -- Step 2: Update Campaigns table structure
--- Remove InvoiceId, add new fields
+-- Add missing BaseEntity columns and new fields
 -- ============================================
+
+-- Add CreatedBy column (from BaseEntity - was missing in original table creation)
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Campaigns' AND COLUMN_NAME = 'CreatedBy')
+BEGIN
+    ALTER TABLE Campaigns ADD CreatedBy NVARCHAR(100) NULL;
+    PRINT 'Added CreatedBy to Campaigns';
+END
+
+-- Add UpdatedBy column (from BaseEntity - was missing in original table creation)
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Campaigns' AND COLUMN_NAME = 'UpdatedBy')
+BEGIN
+    ALTER TABLE Campaigns ADD UpdatedBy NVARCHAR(100) NULL;
+    PRINT 'Added UpdatedBy to Campaigns';
+END
 
 -- Add TeamCode column
 IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Campaigns' AND COLUMN_NAME = 'TeamCode')

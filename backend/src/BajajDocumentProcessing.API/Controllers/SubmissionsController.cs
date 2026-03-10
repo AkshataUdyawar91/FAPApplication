@@ -137,6 +137,11 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
                 .Include(p => p.SubmittedBy)
+                .Include(p => p.Campaigns)
+                    .ThenInclude(c => c.Invoices)
+                .Include(p => p.Campaigns)
+                    .ThenInclude(c => c.Photos)
+                .AsSplitQuery()
                 .AsQueryable();
 
             // Agency users can only see their own submissions
@@ -172,6 +177,40 @@ public class SubmissionsController : ControllerBase
                     BlobUrl = d.BlobUrl,
                     ExtractionConfidence = d.ExtractionConfidence,
                     ExtractedData = d.ExtractedDataJson
+                }).ToList(),
+                Campaigns = package.Campaigns.Where(c => !c.IsDeleted).Select(c => new CampaignDto
+                {
+                    Id = c.Id,
+                    CampaignName = c.CampaignName,
+                    TeamCode = c.TeamCode,
+                    StartDate = c.StartDate,
+                    EndDate = c.EndDate,
+                    WorkingDays = c.WorkingDays,
+                    DealershipName = c.DealershipName,
+                    DealershipAddress = c.DealershipAddress,
+                    TotalCost = c.TotalCost,
+                    CostSummaryFileName = c.CostSummaryFileName,
+                    CostSummaryBlobUrl = c.CostSummaryBlobUrl,
+                    ActivitySummaryFileName = c.ActivitySummaryFileName,
+                    ActivitySummaryBlobUrl = c.ActivitySummaryBlobUrl,
+                    Invoices = c.Invoices.Where(i => !i.IsDeleted).Select(i => new CampaignInvoiceDto
+                    {
+                        Id = i.Id,
+                        InvoiceNumber = i.InvoiceNumber,
+                        InvoiceDate = i.InvoiceDate,
+                        VendorName = i.VendorName,
+                        GSTNumber = i.GSTNumber,
+                        TotalAmount = i.TotalAmount,
+                        FileName = i.FileName,
+                        BlobUrl = i.BlobUrl
+                    }).ToList(),
+                    Photos = c.Photos.Where(p2 => !p2.IsDeleted).OrderBy(p2 => p2.DisplayOrder).Select(p2 => new CampaignPhotoDto
+                    {
+                        Id = p2.Id,
+                        FileName = p2.FileName,
+                        BlobUrl = p2.BlobUrl,
+                        Caption = p2.Caption
+                    }).ToList()
                 }).ToList(),
                 ValidationResult = package.ValidationResult != null ? new ValidationResultDto
                 {
