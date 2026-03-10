@@ -41,7 +41,7 @@ class InvoiceDocumentsTable extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(
-              'PO and Additional Documents',
+              'PO and Additional Docs',
               style: AppTextStyles.h3.copyWith(
                 fontWeight: FontWeight.bold,
               ),
@@ -62,10 +62,10 @@ class InvoiceDocumentsTable extends StatelessWidget {
         top: BorderSide(color: AppColors.border),
       ),
       columnWidths: const {
-        0: FixedColumnWidth(50),   // S.No
+        0: FixedColumnWidth(60),   // S. No
         1: FlexColumnWidth(1.2),   // Category
         2: FlexColumnWidth(2),     // Document Name
-        3: FixedColumnWidth(80),   // Status
+        3: FixedColumnWidth(120),  // Status
         4: FlexColumnWidth(3),     // Remarks
       },
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
@@ -88,7 +88,7 @@ class InvoiceDocumentsTable extends StatelessWidget {
         color: AppColors.primary,
       ),
       children: [
-        _buildHeaderCell('S.No'),
+        _buildHeaderCell('S. No'),
         _buildHeaderCell('Category'),
         _buildHeaderCell('Document Name'),
         _buildHeaderCell('Status'),
@@ -187,21 +187,24 @@ class InvoiceDocumentsTable extends StatelessWidget {
     final isOk = status == ValidationStatus.ok;
     
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             isOk ? Icons.check_circle : Icons.cancel,
-            size: 16,
+            size: 14,
             color: isOk ? const Color(0xFF10B981) : const Color(0xFFEF4444),
           ),
           const SizedBox(width: 4),
-          Text(
-            status.displayText,
-            style: AppTextStyles.bodySmall.copyWith(
-              color: isOk ? const Color(0xFF10B981) : const Color(0xFFEF4444),
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              status.displayText,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: isOk ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
             ),
           ),
         ],

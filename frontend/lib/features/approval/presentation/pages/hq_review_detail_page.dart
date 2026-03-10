@@ -360,7 +360,13 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                                       const SizedBox(height: 24),
                                       CampaignDetailsTable(
                                         campaignDetails: _campaignDetails,
-                                        onPhotoTap: (detail) => _downloadDocument(detail.documentId, detail.documentName),
+                                        onPhotoTap: (detail) {
+                                          if (detail.downloadPath != null && detail.downloadPath!.isNotEmpty) {
+                                            _downloadHierarchicalDocument(detail.downloadPath!, detail.documentName);
+                                          } else {
+                                            _downloadDocument(detail.documentId, detail.documentName);
+                                          }
+                                        },
                                       ),
                                       const SizedBox(height: 80),
                                     ],
@@ -772,6 +778,66 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
     }
     
     return merged;
+  }
+
+  Future<void> _downloadHierarchicalDocument(String path, String? filename) async {
+    try {
+      final response = await _dio.get(
+        path,
+        options: Options(
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+
+        final bytes = base64.decode(base64Content);
+
+        final blob = web.Blob(
+          [bytes.toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final url = web.URL.createObjectURL(blob);
+
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+
+        web.URL.revokeObjectURL(url);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Downloading $name...'),
+              backgroundColor: AppColors.approvedText,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to download: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _downloadDocument(String? documentId, String? filename) async {

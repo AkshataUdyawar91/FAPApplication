@@ -74,6 +74,12 @@ public class SubmissionDetailResponse
     public required List<SubmissionDocumentDto> Documents { get; init; }
     
     /// <summary>
+    /// Hierarchical campaign data (teams with invoices, photos, cost/activity summaries)
+    /// </summary>
+    [JsonPropertyName("campaigns")]
+    public List<CampaignDto>? Campaigns { get; init; }
+    
+    /// <summary>
     /// Validation results
     /// </summary>
     [JsonPropertyName("validationResult")]
@@ -210,4 +216,103 @@ public class RecommendationDto
     /// </summary>
     [JsonPropertyName("evidence")]
     public string? Evidence { get; init; }
+}
+
+/// <summary>
+/// Campaign (team) data within a submission
+/// </summary>
+public class CampaignDto
+{
+    [JsonPropertyName("id")]
+    public Guid Id { get; init; }
+    
+    [JsonPropertyName("campaignName")]
+    public string? CampaignName { get; init; }
+    
+    [JsonPropertyName("teamCode")]
+    public string? TeamCode { get; init; }
+    
+    [JsonPropertyName("startDate")]
+    public DateTime? StartDate { get; init; }
+    
+    [JsonPropertyName("endDate")]
+    public DateTime? EndDate { get; init; }
+    
+    [JsonPropertyName("workingDays")]
+    public int? WorkingDays { get; init; }
+    
+    [JsonPropertyName("dealershipName")]
+    public string? DealershipName { get; init; }
+    
+    [JsonPropertyName("dealershipAddress")]
+    public string? DealershipAddress { get; init; }
+    
+    [JsonPropertyName("totalCost")]
+    public decimal? TotalCost { get; init; }
+    
+    [JsonPropertyName("costSummaryFileName")]
+    public string? CostSummaryFileName { get; init; }
+    
+    [JsonPropertyName("costSummaryBlobUrl")]
+    public string? CostSummaryBlobUrl { get; init; }
+    
+    [JsonPropertyName("activitySummaryFileName")]
+    public string? ActivitySummaryFileName { get; init; }
+    
+    [JsonPropertyName("activitySummaryBlobUrl")]
+    public string? ActivitySummaryBlobUrl { get; init; }
+    
+    [JsonPropertyName("invoices")]
+    public List<CampaignInvoiceDto> Invoices { get; init; } = new();
+    
+    [JsonPropertyName("photos")]
+    public List<CampaignPhotoDto> Photos { get; init; } = new();
+}
+
+/// <summary>
+/// Invoice within a campaign
+/// </summary>
+public class CampaignInvoiceDto
+{
+    [JsonPropertyName("id")]
+    public Guid Id { get; init; }
+    
+    [JsonPropertyName("invoiceNumber")]
+    public string? InvoiceNumber { get; init; }
+    
+    [JsonPropertyName("invoiceDate")]
+    public DateTime? InvoiceDate { get; init; }
+    
+    [JsonPropertyName("vendorName")]
+    public string? VendorName { get; init; }
+    
+    [JsonPropertyName("gstNumber")]
+    public string? GSTNumber { get; init; }
+    
+    [JsonPropertyName("totalAmount")]
+    public decimal? TotalAmount { get; init; }
+    
+    [JsonPropertyName("fileName")]
+    public string FileName { get; init; } = "";
+    
+    [JsonPropertyName("blobUrl")]
+    public string BlobUrl { get; init; } = "";
+}
+
+/// <summary>
+/// Photo within a campaign
+/// </summary>
+public class CampaignPhotoDto
+{
+    [JsonPropertyName("id")]
+    public Guid Id { get; init; }
+    
+    [JsonPropertyName("fileName")]
+    public string FileName { get; init; } = "";
+    
+    [JsonPropertyName("blobUrl")]
+    public string BlobUrl { get; init; } = "";
+    
+    [JsonPropertyName("caption")]
+    public string? Caption { get; init; }
 }

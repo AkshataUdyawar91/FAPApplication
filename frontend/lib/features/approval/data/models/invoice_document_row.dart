@@ -19,9 +19,9 @@ extension ValidationStatusExtension on ValidationStatus {
   String get displayText {
     switch (this) {
       case ValidationStatus.ok:
-        return 'ok';
+        return 'Validated';
       case ValidationStatus.failed:
-        return 'failed';
+        return 'Failed';
       case ValidationStatus.unknown:
         return '';
     }

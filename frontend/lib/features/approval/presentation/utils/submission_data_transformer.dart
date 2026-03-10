@@ -51,6 +51,9 @@ class SubmissionDataTransformer {
   ///
   /// Shows only PO documents. Maps validation failure messages from
   /// failureReason to each document type based on keywords.
+  /// Shows ALL non-Photo documents from the API response plus campaign-level
+  /// invoices, cost summaries, and activity summaries. Each document
+  /// gets its own row with actual filename, blobUrl, and validation info.
   static List<InvoiceDocumentRow> transformToInvoiceDocuments(
     Map<String, dynamic> submission,
   ) {
@@ -93,50 +96,149 @@ class SubmissionDataTransformer {
     return rows;
   }
 
-  /// Transforms submission documents into campaign detail rows.
+  /// Transforms submission data into campaign detail rows.
   ///
-  /// Shows ALL Photo-type documents from the API response. Uses actual
-  /// filenames from the API (not generated names like Pic1/Pic2).
+  /// Uses the campaigns structure as the single source of truth for
+  /// Invoice, Cost Summary, Activity Summary, and Photo documents.
+  /// The documents array is NOT used here (it duplicates campaign data).
+  /// Validation remarks come from failureReason parsing.
   static List<CampaignDetailRow> transformToCampaignDetails(
     Map<String, dynamic> submission,
   ) {
-    final documents = submission['documents'] as List? ?? [];
     final failureReason =
         submission['validationResult']?['failureReason']?.toString() ?? '';
     final allPassed =
         submission['validationResult']?['allValidationsPassed'] == true;
 
+    // Build a filename -> documentId lookup from the documents array
+    final documents = submission['documents'] as List? ?? [];
+    final docIdByFilename = <String, String>{};
+    for (var doc in documents) {
+      final filename = doc['filename']?.toString() ?? '';
+      final docId = doc['id']?.toString() ?? '';
+      if (filename.isNotEmpty && docId.isNotEmpty) {
+        docIdByFilename[filename.toLowerCase()] = docId;
+      }
+    }
+
     final rows = <CampaignDetailRow>[];
     int serialNumber = 1;
 
-    for (var doc in documents) {
-      final type = doc['type']?.toString() ?? '';
-      // Campaign Details shows everything except PO (Invoice, Photo, CostSummary, Activity, etc.)
-      if (type == 'PO') continue;
+    final campaigns = submission['campaigns'] as List? ?? [];
+    for (var campaign in campaigns) {
+      final campaignMap = campaign as Map<String, dynamic>;
+      final campaignId = campaignMap['id']?.toString() ?? '';
+      final startDate = campaignMap['startDate'];
 
-      final filename = doc['filename']?.toString() ?? '';
-      final blobUrl = doc['blobUrl']?.toString() ?? '';
-      final docId = doc['id']?.toString() ?? '';
-      final campaignDate = _formatCampaignDate(doc['extractedData']);
-      final remarks = buildRemarksFromFailureReason(type, failureReason, allPassed);
-      final status = allPassed
-          ? ValidationStatus.ok
-          : remarks.isNotEmpty
-              ? ValidationStatus.failed
-              : ValidationStatus.ok;
+      // Campaign invoices
+      final invoices = campaignMap['invoices'] as List? ?? [];
+      for (var inv in invoices) {
+        final invMap = inv as Map<String, dynamic>;
+        final fileName = invMap['fileName']?.toString() ?? 'Invoice';
+        final blobUrl = invMap['blobUrl']?.toString() ?? '';
+        final invoiceId = invMap['id']?.toString() ?? '';
+        final docId = docIdByFilename[fileName.toLowerCase()] ?? '';
+        final invRemarks = buildRemarksFromFailureReason('Invoice', failureReason, allPassed);
 
-      rows.add(CampaignDetailRow(
-        serialNumber: serialNumber,
-        dealerName: type,
-        campaignDate: campaignDate,
-        documentName: filename,
-        status: status,
-        remarks: remarks,
-        blobUrl: blobUrl,
-        documentId: docId,
-        isFirstInGroup: serialNumber == 1,
-      ));
-      serialNumber++;
+        rows.add(CampaignDetailRow(
+          serialNumber: serialNumber,
+          dealerName: 'Invoice',
+          campaignDate: startDate != null ? _formatDate(startDate) : '',
+          documentName: fileName,
+          status: allPassed
+              ? ValidationStatus.ok
+              : invRemarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok,
+          remarks: invRemarks,
+          blobUrl: blobUrl,
+          documentId: docId,
+          downloadPath: invoiceId.isNotEmpty ? '/hierarchical/invoices/$invoiceId/download' : null,
+          isFirstInGroup: false,
+        ));
+        serialNumber++;
+      }
+
+      // Cost summary
+      final costUrl = campaignMap['costSummaryBlobUrl']?.toString() ?? '';
+      final costFile = campaignMap['costSummaryFileName']?.toString() ?? '';
+      if (costUrl.isNotEmpty || costFile.isNotEmpty) {
+        final costRemarks = buildRemarksFromFailureReason('CostSummary', failureReason, allPassed);
+        final costDocId = docIdByFilename[costFile.toLowerCase()] ?? '';
+        rows.add(CampaignDetailRow(
+          serialNumber: serialNumber,
+          dealerName: 'CostSummary',
+          campaignDate: '',
+          documentName: costFile.isNotEmpty ? costFile : 'Cost Summary',
+          status: allPassed
+              ? ValidationStatus.ok
+              : costRemarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok,
+          remarks: costRemarks,
+          blobUrl: costUrl,
+          documentId: costDocId,
+          downloadPath: campaignId.isNotEmpty ? '/hierarchical/campaigns/$campaignId/download/cost-summary' : null,
+          isFirstInGroup: false,
+        ));
+        serialNumber++;
+      }
+
+      // Activity summary
+      final actUrl = campaignMap['activitySummaryBlobUrl']?.toString() ?? '';
+      final actFile = campaignMap['activitySummaryFileName']?.toString() ?? '';
+      if (actUrl.isNotEmpty || actFile.isNotEmpty) {
+        final actRemarks = buildRemarksFromFailureReason('Activity', failureReason, allPassed);
+        final actDocId = docIdByFilename[actFile.toLowerCase()] ?? '';
+        rows.add(CampaignDetailRow(
+          serialNumber: serialNumber,
+          dealerName: 'Activity',
+          campaignDate: '',
+          documentName: actFile.isNotEmpty ? actFile : 'Activity Summary',
+          status: allPassed
+              ? ValidationStatus.ok
+              : actRemarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok,
+          remarks: actRemarks,
+          blobUrl: actUrl,
+          documentId: actDocId,
+          downloadPath: campaignId.isNotEmpty ? '/hierarchical/campaigns/$campaignId/download/activity-summary' : null,
+          isFirstInGroup: false,
+        ));
+        serialNumber++;
+      }
+
+      // Campaign photos
+      final photos = campaignMap['photos'] as List? ?? [];
+      for (int i = 0; i < photos.length; i++) {
+        final photoMap = photos[i] as Map<String, dynamic>;
+        final fileName = photoMap['fileName']?.toString() ?? 'Photo';
+        final blobUrl = photoMap['blobUrl']?.toString() ?? '';
+        final caption = photoMap['caption']?.toString() ?? '';
+        final displayName = caption.isNotEmpty ? '$fileName - $caption' : fileName;
+        final photoId = photoMap['id']?.toString() ?? '';
+        final photoDocId = docIdByFilename[fileName.toLowerCase()] ?? '';
+        final photoRemarks = buildRemarksFromFailureReason('Photo', failureReason, allPassed);
+
+        rows.add(CampaignDetailRow(
+          serialNumber: serialNumber,
+          dealerName: 'Photo',
+          campaignDate: startDate != null ? _formatDate(startDate) : '',
+          documentName: displayName,
+          status: allPassed
+              ? ValidationStatus.ok
+              : photoRemarks.isNotEmpty
+                  ? ValidationStatus.failed
+                  : ValidationStatus.ok,
+          remarks: photoRemarks,
+          blobUrl: blobUrl,
+          documentId: photoDocId,
+          downloadPath: photoId.isNotEmpty ? '/hierarchical/photos/$photoId/download' : null,
+          isFirstInGroup: false,
+        ));
+        serialNumber++;
+      }
     }
 
     return rows;

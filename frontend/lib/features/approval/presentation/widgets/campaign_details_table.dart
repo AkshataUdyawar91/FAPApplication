@@ -5,7 +5,7 @@ import '../../data/models/invoice_document_row.dart';
 import '../../data/models/campaign_detail_row.dart';
 
 /// Table widget displaying campaign details (Invoice, Photo, CostSummary, Activity).
-/// Matches the PO table layout: S.No, Category, Document Name, Status, Remarks.
+/// Matches the PO table layout exactly: S.No, Category, Document Name, Status, Remarks.
 class CampaignDetailsTable extends StatelessWidget {
   final List<CampaignDetailRow> campaignDetails;
   final void Function(CampaignDetailRow detail)? onPhotoTap;
@@ -26,7 +26,7 @@ class CampaignDetailsTable extends StatelessWidget {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: AppColors.border),
+        side: BorderSide(color: AppColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -46,16 +46,16 @@ class CampaignDetailsTable extends StatelessWidget {
 
   Widget _buildTable() {
     return Table(
-      border: const TableBorder(
+      border: TableBorder(
         horizontalInside: BorderSide(color: AppColors.border),
         top: BorderSide(color: AppColors.border),
       ),
       columnWidths: const {
-        0: FixedColumnWidth(50),
-        1: FlexColumnWidth(1.2),
-        2: FlexColumnWidth(2),
-        3: FixedColumnWidth(80),
-        4: FlexColumnWidth(3),
+        0: FixedColumnWidth(60),   // S. No
+        1: FlexColumnWidth(1.2),   // Category
+        2: FlexColumnWidth(2),     // Document Name
+        3: FixedColumnWidth(120),  // Status
+        4: FlexColumnWidth(3),     // Remarks
       },
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       children: [
@@ -68,32 +68,56 @@ class CampaignDetailsTable extends StatelessWidget {
   }
 
   TableRow _buildHeaderRow() {
-    return const TableRow(
+    return TableRow(
       decoration: BoxDecoration(color: AppColors.primary),
       children: [
-        _HeaderCell('S.No'),
-        _HeaderCell('Category'),
-        _HeaderCell('Document Name'),
-        _HeaderCell('Status'),
-        _HeaderCell('Remarks'),
+        _buildHeaderCell('S. No'),
+        _buildHeaderCell('Category'),
+        _buildHeaderCell('Document Name'),
+        _buildHeaderCell('Status'),
+        _buildHeaderCell('Remarks'),
       ],
     );
   }
 
+  Widget _buildHeaderCell(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Text(
+        text,
+        style: AppTextStyles.bodySmall.copyWith(
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
   TableRow _buildDataRow(CampaignDetailRow detail, int index) {
-    final bg = index % 2 == 0 ? Colors.white : AppColors.background;
-    // Use dealerName field as category (set by transformer)
+    final isEven = index % 2 == 0;
+    final backgroundColor = isEven ? Colors.white : AppColors.background;
     final category = _displayCategory(detail.dealerName);
 
     return TableRow(
-      decoration: BoxDecoration(color: bg),
+      decoration: BoxDecoration(color: backgroundColor),
       children: [
-        _DataCell(detail.serialNumber.toString()),
-        _DataCell(category),
+        _buildDataCell(detail.serialNumber.toString()),
+        _buildDataCell(category),
         _buildDocumentNameCell(detail),
         _buildStatusCell(detail.status),
-        _DataCell(detail.remarks),
+        _buildDataCell(detail.remarks),
       ],
+    );
+  }
+
+  Widget _buildDataCell(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Text(
+        text,
+        style: AppTextStyles.bodyMedium,
+        softWrap: true,
+      ),
     );
   }
 
@@ -150,60 +174,27 @@ class CampaignDetailsTable extends StatelessWidget {
     }
     final isOk = status == ValidationStatus.ok;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             isOk ? Icons.check_circle : Icons.cancel,
-            size: 16,
+            size: 14,
             color: isOk ? const Color(0xFF10B981) : const Color(0xFFEF4444),
           ),
           const SizedBox(width: 4),
-          Text(
-            status.displayText,
-            style: AppTextStyles.bodySmall.copyWith(
-              color: isOk ? const Color(0xFF10B981) : const Color(0xFFEF4444),
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              status.displayText,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: isOk ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _HeaderCell extends StatelessWidget {
-  final String text;
-  const _HeaderCell(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      child: Text(
-        text,
-        style: AppTextStyles.bodySmall.copyWith(
-          fontWeight: FontWeight.w600,
-          color: Colors.white,
-        ),
-      ),
-    );
-  }
-}
-
-class _DataCell extends StatelessWidget {
-  final String text;
-  const _DataCell(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Text(
-        text,
-        style: AppTextStyles.bodyMedium,
-        softWrap: true,
       ),
     );
   }

@@ -5,6 +5,11 @@ import 'package:file_picker/file_picker.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/widgets/app_sidebar.dart';
+import '../../../../core/widgets/app_drawer.dart';
+import '../../../../core/widgets/chat_side_panel.dart';
+import '../../../../core/widgets/chat_end_drawer.dart';
+import '../../../../core/widgets/nav_item.dart';
 import '../widgets/po_fields_section.dart';
 import '../widgets/campaign_list_section.dart';
 
@@ -27,23 +32,15 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
 
   int _currentStep = 1;
   bool _isUploading = false;
-  
-  // Loading states for extraction
   bool _isExtractingPO = false;
-  
-  // Package ID for the current submission
-  String? _currentPackageId;
+  bool _isChatOpen = false;
+  bool _isSidebarCollapsed = true;
 
+  String? _currentPackageId;
   PlatformFile? _purchaseOrder;
   List<PlatformFile> _additionalDocs = [];
-  
-  // PO extracted data
   Map<String, dynamic>? _poData;
-  
-  // User-entered field values
   Map<String, String> _poFields = {};
-  
-  // Hierarchical campaign data (multiple campaigns with invoices and photos)
   List<CampaignItemData> _campaigns = [];
 
   final List<Map<String, dynamic>> _steps = [
@@ -58,12 +55,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   Future<void> _pickFile(Function(PlatformFile?) setter, {bool isPO = false}) async {
     try {
       final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
-
       if (result != null && result.files.isNotEmpty) {
         setter(result.files.first);
         setState(() {});
-        
-        // After file is selected, upload it and fetch extracted data
         if (isPO) {
           await _uploadAndExtractPO(result.files.first);
         }
@@ -72,15 +66,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       _showError('Failed to pick file');
     }
   }
-  
-  // ─── UPLOAD AND EXTRACT PO ───────────────────────────────────────────
+
   Future<void> _uploadAndExtractPO(PlatformFile file) async {
     if (file.bytes == null) return;
-    
     setState(() => _isExtractingPO = true);
-    
     try {
-      // Upload PO document
       final uploadResponse = await _dio.post(
         '/documents/upload',
         data: FormData.fromMap({
@@ -89,29 +79,24 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         }),
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
-      
       if (uploadResponse.statusCode == 200) {
         final packageId = uploadResponse.data['packageId']?.toString();
         final documentId = uploadResponse.data['documentId']?.toString();
-        
         if (packageId != null) {
           _currentPackageId = packageId;
-          
           if (documentId != null) {
-            // Poll for extraction results (up to 15 seconds)
             await _pollForPOExtraction(packageId, documentId);
           }
         }
       }
     } catch (e) {
-      print('Error uploading/extracting PO: $e');
+      debugPrint('Error uploading/extracting PO: $e');
       _showError('Failed to extract PO data. You can enter details manually.');
     } finally {
       if (mounted) setState(() => _isExtractingPO = false);
     }
   }
-  
-  // ─── POLL FOR PO EXTRACTION ──────────────────────────────────────────
+
   Future<void> _pollForPOExtraction(String packageId, String documentId) async {
     const maxAttempts = 25;
     const delayBetweenAttempts = Duration(seconds: 2);
@@ -148,26 +133,16 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             }
             
             if (poDoc != null) {
-              // ExtractedData is returned as a JSON string, need to parse it
               var extractedData = poDoc['extractedData'];
               if (extractedData != null) {
-                // If it's a string, parse it as JSON
                 if (extractedData is String && extractedData.isNotEmpty) {
                   extractedData = _parseJsonString(extractedData);
                 }
-                
                 if (extractedData is Map) {
-                  print('PO extractedData keys: ${extractedData.keys.toList()}');
-                  print('PO extractedData: $extractedData');
-                  
-                  // Check if we have meaningful data - try PascalCase first (backend format)
                   final poNumber = extractedData['PONumber'] ?? extractedData['poNumber'];
                   final totalAmount = extractedData['TotalAmount'] ?? extractedData['totalAmount'];
                   final vendorName = extractedData['VendorName'] ?? extractedData['vendorName'];
-                  // Backend uses PODate, not Date
                   final date = extractedData['PODate'] ?? extractedData['poDate'] ?? extractedData['Date'] ?? extractedData['date'];
-                  
-                  // Accept data even if only some fields are present
                   if (poNumber != null || totalAmount != null || vendorName != null || date != null) {
                     if (!mounted) return;
                     setState(() {
@@ -189,28 +164,23 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           }
         }
       } catch (e) {
-        print('Polling attempt $attempt failed: $e');
+        debugPrint('Polling attempt $attempt failed: $e');
       }
     }
-    
-    print('PO extraction polling timed out after $maxAttempts attempts');
   }
-  
-  // Helper to parse JSON string
+
   Map<String, dynamic> _parseJsonString(String jsonString) {
     try {
       if (jsonString.isEmpty) return {};
       final decoded = jsonDecode(jsonString);
-      if (decoded is Map) {
-        return Map<String, dynamic>.from(decoded);
-      }
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
       return {};
     } catch (e) {
-      print('JSON parse error: $e');
+      debugPrint('JSON parse error: $e');
       return {};
     }
   }
-  
+
   Future<void> _pickAdditionalDocs() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -230,10 +200,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   void _handleNext() {
     if (_currentStep == 1 && _purchaseOrder == null) { _showError('Please upload Purchase Order'); return; }
     if (_currentStep == 2) {
-      // Validate campaigns - at least one campaign with name and one invoice
       if (_campaigns.isEmpty) { _showError('Please add at least one campaign'); return; }
-      final hasValidCampaign = _campaigns.any((camp) => 
-        camp.campaignName.isNotEmpty && 
+      final hasValidCampaign = _campaigns.any((camp) =>
+        camp.campaignName.isNotEmpty &&
         camp.invoices.any((inv) => inv.file != null) &&
         camp.photos.isNotEmpty &&
         camp.costSummaryFile != null);
@@ -253,23 +222,14 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
     });
   }
 
-
   Future<void> _handleSubmit() async {
-    // Validate
-    if (_purchaseOrder == null) {
-      _showError('Please upload Purchase Order');
-      return;
-    }
+    if (_purchaseOrder == null) { _showError('Please upload Purchase Order'); return; }
     if (_campaigns.isEmpty || !_campaigns.any((camp) => camp.invoices.any((inv) => inv.file != null))) {
-      _showError('Please add at least one campaign with invoice');
-      return;
+      _showError('Please add at least one campaign with invoice'); return;
     }
-    
     setState(() => _isUploading = true);
     try {
       String? packageId = _currentPackageId;
-      
-      // Step 1: Create package with PO if not exists
       if (packageId == null && _purchaseOrder?.bytes != null) {
         final poResponse = await _dio.post('/documents/upload',
             data: FormData.fromMap({
@@ -281,17 +241,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           packageId = poResponse.data['packageId']?.toString();
         }
       }
-      
-      if (packageId == null) {
-        _showError('Failed to create package');
-        return;
-      }
-      
+      if (packageId == null) { _showError('Failed to create package'); return; }
       _showSuccess('Uploading campaigns and documents...');
-      
-      // Step 2: Create campaigns and upload files using hierarchical API
+
       for (final campaign in _campaigns) {
-        // 2a: Create campaign via hierarchical API
         final campaignResponse = await _dio.post(
           '/hierarchical/$packageId/campaigns',
           data: {
@@ -304,14 +257,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           },
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
-        
         final campaignId = campaignResponse.data['campaignId']?.toString();
-        if (campaignId == null) {
-          debugPrint('Failed to create campaign: ${campaign.campaignName}');
-          continue;
-        }
-        
-        // 2b: Add invoices to campaign (Invoice is child of Campaign)
+        if (campaignId == null) { debugPrint('Failed to create campaign: ${campaign.campaignName}'); continue; }
+
         for (final invoice in campaign.invoices) {
           if (invoice.file?.bytes != null) {
             await _dio.post(
@@ -327,14 +275,12 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             );
           }
         }
-        
-        // 2c: Add photos to campaign
+
         if (campaign.photos.isNotEmpty) {
           final photoFiles = campaign.photos
               .where((p) => p.bytes != null)
               .map((p) => MultipartFile.fromBytes(p.bytes!, filename: p.name))
               .toList();
-          
           if (photoFiles.isNotEmpty) {
             await _dio.post(
               '/hierarchical/$packageId/campaigns/$campaignId/photos',
@@ -343,8 +289,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             );
           }
         }
-        
-        // 2d: Upload cost summary (1 per campaign)
+
         if (campaign.costSummaryFile?.bytes != null) {
           await _dio.post(
             '/hierarchical/$packageId/campaigns/$campaignId/cost-summary',
@@ -354,8 +299,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
         }
-        
-        // 2e: Upload activity summary (1 per campaign)
+
         if (campaign.activitySummaryFile?.bytes != null) {
           await _dio.post(
             '/hierarchical/$packageId/campaigns/$campaignId/activity-summary',
@@ -366,8 +310,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           );
         }
       }
-      
-      // Step 3: Upload enquiry document (at PO level - Additional Documents)
+
       final enquiryDoc = _additionalDocs.isNotEmpty ? _additionalDocs.first : null;
       if (enquiryDoc?.bytes != null) {
         await _dio.post(
@@ -378,8 +321,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
       }
-      
-      // Step 4: Upload remaining additional documents via flat API
+
       for (int i = 1; i < _additionalDocs.length; i++) {
         final doc = _additionalDocs[i];
         if (doc.bytes != null) {
@@ -392,12 +334,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
               options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
         }
       }
-      
-      // Step 5: Queue for background processing (fast - returns immediately)
+
       _showSuccess('Submission complete! Processing in background...');
       await _dio.post('/submissions/$packageId/process-async',
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
-      
       if (mounted) _navigateToDashboard();
     } catch (e) {
       _showError('Failed to submit: $e');
@@ -405,7 +345,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       if (mounted) setState(() => _isUploading = false);
     }
   }
-  
+
   DateTime? _parseDate(String dateStr) {
     try {
       if (dateStr.isEmpty) return null;
@@ -414,9 +354,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
       }
       return null;
-    } catch (e) {
-      return null;
-    }
+    } catch (e) { return null; }
   }
 
   void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(
@@ -425,6 +363,43 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   void _showSuccess(String msg) => ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), backgroundColor: AppColors.approvedText));
 
+  // ─── SHARED NAV ITEMS ────────────────────────────────────────────────
+  List<NavItem> _getNavItems(BuildContext context) {
+    return [
+      NavItem(icon: Icons.dashboard, label: 'Dashboard', onTap: _navigateToDashboard),
+      NavItem(icon: Icons.upload_file, label: 'Upload', isActive: true, onTap: () {}),
+      NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
+      }),
+      NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
+      }),
+    ];
+  }
+
+  /// Full-width top bar with Bajaj branding — spans sidebar + content.
+  Widget _buildTopBar() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: const Color(0xFF003087),
+      child: const Row(
+        children: [
+          Icon(Icons.business, color: Colors.white, size: 22),
+          SizedBox(width: 8),
+          Text(
+            'Bajaj',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   // ─── BUILD ───────────────────────────────────────────────────────────
   @override
@@ -434,7 +409,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         final width = constraints.maxWidth;
         final device = getDeviceType(width);
         final isMobile = device == DeviceType.mobile;
-        final isTablet = device == DeviceType.tablet;
 
         return Scaffold(
           appBar: isMobile
@@ -446,230 +420,80 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                     icon: const Icon(Icons.arrow_back),
                     onPressed: _navigateToDashboard,
                   ),
+                  actions: [
+                    Builder(
+                      builder: (ctx) => IconButton(
+                        icon: const Icon(Icons.menu),
+                        onPressed: () => Scaffold.of(ctx).openDrawer(),
+                      ),
+                    ),
+                  ],
                 )
               : null,
-          drawer: isMobile ? _buildDrawer() : null,
-          body: Row(
+          drawer: isMobile
+              ? AppDrawer(
+                  userName: widget.userName,
+                  userRole: 'Agency',
+                  navItems: _getNavItems(context),
+                  onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                )
+              : null,
+          body: Column(
             children: [
-              if (!isMobile) _buildSidebar(isTablet),
+              if (!isMobile) _buildTopBar(),
               Expanded(
-                child: Column(
-                  children: [
-                    if (!isMobile) _buildHeader(device),
-                    Flexible(
-                      child: _buildContentArea(device, width),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  // ─── CONTENT AREA (no-scroll layout) ────────────────────────────────
-  Widget _buildContentArea(DeviceType device, double width) {
-    final pad = responsiveValue<double>(width, mobile: 10, tablet: 14, desktop: 16);
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: pad, vertical: pad * 0.4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildProgressCard(device),
-          const SizedBox(height: 10),
-          Expanded(child: _buildStepContent(device)),
-          const SizedBox(height: 6),
-          _buildActionButtons(device),
-        ],
-      ),
-    );
-  }
-
-
-  // ─── DRAWER (mobile) ─────────────────────────────────────────────────
-  Widget _buildDrawer() {
-    return Drawer(
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF1E3A8A), Color(0xFF1E40AF)],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(20),
                 child: Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                      child: const Icon(Icons.business, color: Colors.white, size: 24),
+                    if (!isMobile)
+                      AppSidebar(
+                        userName: widget.userName,
+                        userRole: 'Agency',
+                        navItems: _getNavItems(context),
+                        onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                        isCollapsed: _isSidebarCollapsed,
+                        onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                      ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          if (!isMobile) _buildHeader(device),
+                          Expanded(child: _buildContentArea(device, width)),
+                        ],
+                      ),
                     ),
-                    const SizedBox(width: 12),
-                    const Text('Bajaj', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                    if (_isChatOpen && !isMobile)
+                      ChatSidePanel(
+                        token: widget.token,
+                        deviceType: device,
+                        onClose: () => setState(() => _isChatOpen = false),
+                      ),
                   ],
                 ),
               ),
-              Divider(height: 1, color: Colors.white.withOpacity(0.2)),
-              _buildNavItem(Icons.dashboard, 'Dashboard', false, () { Navigator.pop(context); _navigateToDashboard(); }),
-              _buildNavItem(Icons.upload_file, 'Upload', true, () => Navigator.pop(context)),
-              _buildNavItem(Icons.notifications, 'Notifications', false, () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-              }),
-              _buildNavItem(Icons.settings, 'Settings', false, () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-              }),
-              const Spacer(),
-              _buildUserInfo(),
-              _buildLogoutButton(),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-
-  // ─── SIDEBAR (tablet/desktop) ─────────────────────────────────────────
-  Widget _buildSidebar(bool collapsed) {
-    return Container(
-      width: collapsed ? 72.0 : 250.0,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF1E3A8A), Color(0xFF1E40AF)],
-        ),
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.all(collapsed ? 16 : 24),
-            child: collapsed
-                ? Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                    child: const Icon(Icons.business, color: Colors.white, size: 24),
-                  )
-                : Row(children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                      child: const Icon(Icons.business, color: Colors.white, size: 24),
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          floatingActionButton: (_isChatOpen && !isMobile)
+              ? null
+              : Builder(
+                  builder: (scaffoldContext) => Padding(
+                    padding: const EdgeInsets.only(bottom: 16, right: 4),
+                    child: FloatingActionButton(
+                      onPressed: () {
+                        if (isMobile) {
+                          Scaffold.of(scaffoldContext).openEndDrawer();
+                        } else {
+                          setState(() => _isChatOpen = !_isChatOpen);
+                        }
+                      },
+                      backgroundColor: AppColors.primary,
+                      child: const Icon(Icons.smart_toy, color: Colors.white),
                     ),
-                    const SizedBox(width: 12),
-                    const Text('Bajaj', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                  ]),
-          ),
-          Divider(height: 1, color: Colors.white.withOpacity(0.2)),
-          if (collapsed) ...[
-            _buildCollapsedNavItem(Icons.dashboard, 'Dashboard', false, _navigateToDashboard),
-            _buildCollapsedNavItem(Icons.upload_file, 'Upload', true, () {}),
-            _buildCollapsedNavItem(Icons.notifications, 'Notifications', false, () =>
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')))),
-            _buildCollapsedNavItem(Icons.settings, 'Settings', false, () =>
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')))),
-          ] else ...[
-            _buildNavItem(Icons.dashboard, 'Dashboard', false, _navigateToDashboard),
-            _buildNavItem(Icons.upload_file, 'Upload', true, () {}),
-            _buildNavItem(Icons.notifications, 'Notifications', false, () =>
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')))),
-            _buildNavItem(Icons.settings, 'Settings', false, () =>
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')))),
-          ],
-          const Spacer(),
-          if (!collapsed) _buildUserInfo(),
-          _buildLogoutButton(collapsed: collapsed),
-        ],
-      ),
-    );
-  }
-
-
-  Widget _buildNavItem(IconData icon, String label, bool isActive, VoidCallback onTap) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: isActive ? Colors.white.withOpacity(0.2) : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: ListTile(
-        leading: Icon(icon, color: Colors.white, size: 20),
-        title: Text(label, style: TextStyle(fontSize: 14, color: Colors.white, fontWeight: isActive ? FontWeight.w600 : FontWeight.normal)),
-        dense: true,
-        onTap: onTap,
-      ),
-    );
-  }
-
-  Widget _buildCollapsedNavItem(IconData icon, String tooltip, bool isActive, VoidCallback onTap) {
-    return Tooltip(
-      message: tooltip,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: isActive ? Colors.white.withOpacity(0.2) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: IconButton(icon: Icon(icon, color: Colors.white, size: 20), onPressed: onTap),
-      ),
-    );
-  }
-
-  Widget _buildUserInfo() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: Colors.white,
-            radius: 16,
-            child: Text(widget.userName[0].toUpperCase(), style: const TextStyle(color: Color(0xFF1E3A8A), fontWeight: FontWeight.bold, fontSize: 14)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white), overflow: TextOverflow.ellipsis),
-                Text('Agency', style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.7))),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-
-  Widget _buildLogoutButton({bool collapsed = false}) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: collapsed
-          ? Tooltip(
-              message: 'Logout',
-              child: IconButton(
-                onPressed: () => Navigator.pushReplacementNamed(context, '/'),
-                icon: const Icon(Icons.logout, size: 18, color: Colors.white),
-              ),
-            )
-          : OutlinedButton.icon(
-              onPressed: () => Navigator.pushReplacementNamed(context, '/'),
-              icon: const Icon(Icons.logout, size: 18),
-              label: const Text('Logout'),
-              style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: BorderSide(color: Colors.white.withOpacity(0.5))),
-            ),
+                  ),
+                ),
+          floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+        );
+      },
     );
   }
 
@@ -689,19 +513,35 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
     );
   }
 
-  // ─── PROGRESS CARD (clean & spacious) ─────────────────────────────────
+  // ─── CONTENT AREA ────────────────────────────────────────────────────
+  Widget _buildContentArea(DeviceType device, double width) {
+    final pad = responsiveValue<double>(width, mobile: 10, tablet: 14, desktop: 16);
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: pad, vertical: pad * 0.4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildProgressCard(device),
+          const SizedBox(height: 10),
+          Expanded(child: _buildStepContent(device)),
+          const SizedBox(height: 6),
+          _buildActionButtons(device),
+        ],
+      ),
+    );
+  }
+
+  // ─── PROGRESS CARD ────────────────────────────────────────────────────
   Widget _buildProgressCard(DeviceType device) {
     final isMobile = device == DeviceType.mobile;
-
     return Container(
       padding: EdgeInsets.all(isMobile ? 12 : 14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border.withOpacity(0.5), width: 1),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -710,28 +550,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Step $_currentStep of 3',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textSecondary,
-                ),
-              ),
+              Text('Step $_currentStep of 3', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '${_progressPercentage.round()}%',
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ),
+                decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(10)),
+                child: Text('${_progressPercentage.round()}%', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white)),
               ),
             ],
           ),
@@ -742,7 +565,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
               value: _progressPercentage / 100,
               minHeight: 6,
               backgroundColor: const Color(0xFFE5E7EB),
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+              valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
             ),
           ),
           const SizedBox(height: 12),
@@ -752,7 +575,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
     );
   }
 
-
   Widget _buildMobileProgressLayout() {
     return Row(
       children: _steps.asMap().entries.map((entry) {
@@ -761,7 +583,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         final stepNumber = step['number'] as int;
         final isComplete = _currentStep > stepNumber;
         final isCurrent = _currentStep == stepNumber;
-        
         return Expanded(
           child: Row(
             children: [
@@ -772,8 +593,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
-                        width: 28,
-                        height: 28,
+                        width: 28, height: 28,
                         decoration: BoxDecoration(
                           color: isComplete || isCurrent ? AppColors.primary : const Color(0xFFF3F4F6),
                           shape: BoxShape.circle,
@@ -782,47 +602,23 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                         child: Center(
                           child: isComplete
                               ? const Icon(Icons.check, color: Colors.white, size: 14)
-                              : Text(
-                                  '$stepNumber',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: isCurrent ? Colors.white : const Color(0xFF9CA3AF),
-                                  ),
-                                ),
+                              : Text('$stepNumber', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: isCurrent ? Colors.white : const Color(0xFF9CA3AF))),
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        step['title'] as String,
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w500,
-                          color: isCurrent ? AppColors.primary : AppColors.textSecondary,
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      Text(step['title'] as String, style: TextStyle(fontSize: 9, fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w500, color: isCurrent ? AppColors.primary : AppColors.textSecondary), textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis),
                     ],
                   ),
                 ),
               ),
               if (index < _steps.length - 1)
-                Expanded(
-                  child: Container(
-                    height: 2,
-                    margin: const EdgeInsets.only(bottom: 20, left: 2, right: 2),
-                    color: isComplete ? AppColors.primary : const Color(0xFFE5E7EB),
-                  ),
-                ),
+                Expanded(child: Container(height: 2, margin: const EdgeInsets.only(bottom: 20, left: 2, right: 2), color: isComplete ? AppColors.primary : const Color(0xFFE5E7EB))),
             ],
           ),
         );
       }).toList(),
     );
   }
-
 
   Widget _buildDesktopProgressLayout() {
     return Row(
@@ -832,7 +628,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         final stepNumber = step['number'] as int;
         final isComplete = _currentStep > stepNumber;
         final isCurrent = _currentStep == stepNumber;
-        
         return Expanded(
           child: Row(
             children: [
@@ -843,8 +638,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
-                        width: 32,
-                        height: 32,
+                        width: 32, height: 32,
                         decoration: BoxDecoration(
                           color: isComplete || isCurrent ? AppColors.primary : const Color(0xFFF3F4F6),
                           shape: BoxShape.circle,
@@ -853,48 +647,23 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                         child: Center(
                           child: isComplete
                               ? const Icon(Icons.check, color: Colors.white, size: 16)
-                              : Text(
-                                  '$stepNumber',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                    color: isCurrent ? Colors.white : const Color(0xFF9CA3AF),
-                                  ),
-                                ),
+                              : Text('$stepNumber', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: isCurrent ? Colors.white : const Color(0xFF9CA3AF))),
                         ),
                       ),
                       const SizedBox(height: 6),
-                      Text(
-                        step['title'] as String,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w500,
-                          color: isCurrent ? AppColors.primary : AppColors.textSecondary,
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      Text(step['title'] as String, style: TextStyle(fontSize: 11, fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w500, color: isCurrent ? AppColors.primary : AppColors.textSecondary), textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis),
                     ],
                   ),
                 ),
               ),
               if (index < _steps.length - 1)
-                Expanded(
-                  flex: 1,
-                  child: Container(
-                    height: 2,
-                    margin: const EdgeInsets.only(bottom: 24),
-                    color: isComplete ? AppColors.primary : const Color(0xFFE5E7EB),
-                  ),
-                ),
+                Expanded(flex: 1, child: Container(height: 2, margin: const EdgeInsets.only(bottom: 24), color: isComplete ? AppColors.primary : const Color(0xFFE5E7EB))),
             ],
           ),
         );
       }).toList(),
     );
   }
-
 
   // ─── STEP CONTENT ─────────────────────────────────────────────────────
   Widget _buildStepContent(DeviceType device) {
@@ -909,11 +678,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
               Icons.description,
               _purchaseOrder,
               () => _pickFile((f) => _purchaseOrder = f, isPO: true),
-              () => setState(() {
-                _purchaseOrder = null;
-                _poData = null;
-                _poFields = {};
-              }),
+              () => setState(() { _purchaseOrder = null; _poData = null; _poFields = {}; }),
               device,
             ),
             const SizedBox(height: 16),
@@ -922,15 +687,12 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             else
               POFieldsSection(
                 poData: _poData,
-                onFieldsChanged: (fields) {
-                  setState(() => _poFields = fields);
-                },
+                onFieldsChanged: (fields) => setState(() => _poFields = fields),
               ),
           ],
         );
         break;
       case 2:
-        // Hierarchical: Multiple Campaigns → Multiple Invoices → Multiple Photos
         content = CampaignListSection(
           campaigns: _campaigns,
           onCampaignsChanged: (campaigns) {
@@ -946,13 +708,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       default:
         content = const SizedBox();
     }
-    
-    return SingleChildScrollView(
-      child: content,
-    );
+    return SingleChildScrollView(child: content);
   }
 
-  // ─── EXTRACTION LOADING CARD ─────────────────────────────────────────
   Widget _buildExtractionLoadingCard(String title, String subtitle) {
     return Card(
       elevation: 0,
@@ -965,41 +723,13 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(
-              width: 48,
-              height: 48,
-              child: CircularProgressIndicator(
-                strokeWidth: 3,
-                valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-              ),
-            ),
+            const SizedBox(width: 48, height: 48, child: CircularProgressIndicator(strokeWidth: 3, valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary))),
             const SizedBox(height: 16),
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.primary,
-              ),
-            ),
+            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.primary)),
             const SizedBox(height: 8),
-            Text(
-              subtitle,
-              style: TextStyle(
-                fontSize: 14,
-                color: AppColors.textSecondary,
-              ),
-              textAlign: TextAlign.center,
-            ),
+            Text(subtitle, style: TextStyle(fontSize: 14, color: AppColors.textSecondary), textAlign: TextAlign.center),
             const SizedBox(height: 12),
-            Text(
-              'Fields will auto-populate when extraction completes.\nYou can also enter details manually.',
-              style: TextStyle(
-                fontSize: 12,
-                color: AppColors.textSecondary.withOpacity(0.8),
-              ),
-              textAlign: TextAlign.center,
-            ),
+            Text('Fields will auto-populate when extraction completes.\nYou can also enter details manually.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary.withOpacity(0.8)), textAlign: TextAlign.center),
           ],
         ),
       ),
@@ -1016,9 +746,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border.withOpacity(0.5), width: 1),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1028,10 +756,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             children: [
               Container(
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
                 child: Icon(icon, color: AppColors.primary, size: 24),
               ),
               const SizedBox(width: 16),
@@ -1057,7 +782,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                 height: device == DeviceType.mobile ? 120 : 140,
                 decoration: BoxDecoration(
                   color: AppColors.primary.withOpacity(0.03),
-                  border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 2, style: BorderStyle.solid),
+                  border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(
@@ -1084,10 +809,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                 children: [
                   Container(
                     padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
                     child: const Icon(Icons.check_circle, color: AppColors.approvedText, size: 24),
                   ),
                   const SizedBox(width: 16),
@@ -1101,11 +823,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                       ],
                     ),
                   ),
-                  IconButton(
-                    onPressed: onRemove,
-                    icon: const Icon(Icons.close, color: AppColors.rejectedText, size: 24),
-                    tooltip: 'Remove file',
-                  ),
+                  IconButton(onPressed: onRemove, icon: const Icon(Icons.close, color: AppColors.rejectedText, size: 24), tooltip: 'Remove file'),
                 ],
               ),
             ),
@@ -1182,7 +900,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       ),
     );
   }
-
 
   // ─── ACTION BUTTONS ───────────────────────────────────────────────────
   Widget _buildActionButtons(DeviceType device) {

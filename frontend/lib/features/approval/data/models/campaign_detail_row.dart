@@ -32,6 +32,9 @@ class CampaignDetailRow {
 
   /// Document ID from the API for authenticated download.
   final String? documentId;
+
+  /// Full API download path for hierarchical documents (e.g., /hierarchical/photos/{id}/download).
+  final String? downloadPath;
   
   /// Indicates if this is the first row in a dealer group.
   final bool isFirstInGroup;
@@ -46,6 +49,7 @@ class CampaignDetailRow {
     required this.remarks,
     this.blobUrl,
     this.documentId,
+    this.downloadPath,
     this.isFirstInGroup = false,
   });
 
@@ -59,6 +63,7 @@ class CampaignDetailRow {
     String? remarks,
     String? blobUrl,
     String? documentId,
+    String? downloadPath,
     bool? isFirstInGroup,
   }) {
     return CampaignDetailRow(
@@ -70,6 +75,7 @@ class CampaignDetailRow {
       remarks: remarks ?? this.remarks,
       blobUrl: blobUrl ?? this.blobUrl,
       documentId: documentId ?? this.documentId,
+      downloadPath: downloadPath ?? this.downloadPath,
       isFirstInGroup: isFirstInGroup ?? this.isFirstInGroup,
     );
   }
@@ -86,13 +92,14 @@ class CampaignDetailRow {
         other.remarks == remarks &&
         other.blobUrl == blobUrl &&
         other.documentId == documentId &&
+        other.downloadPath == downloadPath &&
         other.isFirstInGroup == isFirstInGroup;
   }
 
   @override
   int get hashCode {
     return Object.hash(serialNumber, dealerName, campaignDate, documentName,
-        status, remarks, blobUrl, documentId, isFirstInGroup);
+        status, remarks, blobUrl, documentId, downloadPath, isFirstInGroup);
   }
 
   @override
