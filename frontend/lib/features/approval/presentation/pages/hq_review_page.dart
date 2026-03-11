@@ -51,7 +51,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
 
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
-    if (state == 'pendinghqapproval') return 'hq-review';
+    if (state == 'pendinghqapproval') return 'pending';
     if (state == 'approved') return 'approved';
     if (state == 'rejectedbyhq') return 'rejected';
     if (state == 'pendingasmapproval' || state == 'uploaded' || state == 'extracting' ||
@@ -519,9 +519,9 @@ class _HQReviewPageState extends State<HQReviewPage> {
           isDense: true,
         ),
         items: const [
-          DropdownMenuItem(value: 'all', child: Text('All Status')),
-          DropdownMenuItem(value: 'hq-review', child: Text('Pending Review')),
+          DropdownMenuItem(value: 'all', child: Text('All')),
           DropdownMenuItem(value: 'approved', child: Text('Approved')),
+          DropdownMenuItem(value: 'pending', child: Text('Pending')),
           DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
         ],
         onChanged: (value) {
@@ -838,7 +838,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
     String label;
     // RA role status labels
     switch (status) {
-      case 'hq-review':
+      case 'pending':
         bgColor = AppColors.pendingBackground; textColor = AppColors.pendingText; borderColor = AppColors.pendingBorder; label = 'Pending'; break;
       case 'approved':
         bgColor = AppColors.approvedBackground; textColor = AppColors.approvedText; borderColor = AppColors.approvedBorder; label = 'Approved'; break;
