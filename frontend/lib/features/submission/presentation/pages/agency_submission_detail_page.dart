@@ -212,6 +212,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                     if (_isChatOpen && !isMobile)
                       ChatSidePanel(
                         token: widget.token,
+                        userName: widget.userName,
                         deviceType: device,
                         onClose: () => setState(() => _isChatOpen = false),
                       ),
@@ -220,7 +221,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
           floatingActionButton: (_isChatOpen && !isMobile)
               ? null
               : Builder(
@@ -375,8 +376,6 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
           ),
           const SizedBox(height: 24),
 
-          // Hierarchical Campaign Data (Campaigns → Invoices, Photos, Cost/Activity Summaries)
-          _buildCampaignsSection(),
           const SizedBox(height: 80),
         ],
       ),

@@ -23,6 +23,7 @@ public class ChatService : IChatService
     private readonly IEmbeddingService _embeddingService;
     private readonly ILogger<ChatService> _logger;
     private readonly Kernel _kernel;
+    private readonly AnalyticsPlugin _analyticsPlugin;
     private readonly ICorrelationIdService _correlationIdService;
     private const int MaxConversationMessages = 10;
 
@@ -55,9 +56,11 @@ public class ChatService : IChatService
         builder.AddAzureOpenAIChatCompletion(deploymentName, endpoint, apiKey);
         
         // Add analytics plugin
-        builder.Plugins.AddFromObject(new AnalyticsPlugin(context, vectorSearchService, embeddingService));
+        var analyticsPlugin = new AnalyticsPlugin(context, vectorSearchService, embeddingService);
+        builder.Plugins.AddFromObject(analyticsPlugin);
         
         _kernel = builder.Build();
+        _analyticsPlugin = analyticsPlugin;
     }
 
     /// <summary>
@@ -82,6 +85,13 @@ public class ChatService : IChatService
             _logger.LogInformation(
                 "Processing chat query for user {UserId}. CorrelationId: {CorrelationId}",
                 userId, correlationId);
+
+            // Set current user context for analytics queries
+            _analyticsPlugin.SetCurrentUser(userId);
+
+            // Look up user role for role-based data scoping
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+            var userRole = user?.Role.ToString() ?? "Agency";
 
             // Step 1: Input Guardrails
             await _inputGuardrail.ValidateInputAsync(query, userId, cancellationToken);
@@ -141,19 +151,140 @@ public class ChatService : IChatService
             // Step 6: Build chat history
             var chatHistory = new ChatHistory();
             
+            // Query user's submission data — match dashboard behavior per role
+            // Agency: only their own submissions. ASM/HQ: all submissions (they're reviewers).
+            var packagesQuery = _context.DocumentPackages
+                .Include(p => p.Documents)
+                .Include(p => p.ConfidenceScore)
+                .AsQueryable();
+
+            if (userRole == "Agency")
+            {
+                packagesQuery = packagesQuery.Where(p => p.SubmittedByUserId == userId);
+            }
+
+            var userPackages = packagesQuery
+                .OrderByDescending(p => p.CreatedAt)
+                .Take(20)
+                .ToList();
+
+            _logger.LogInformation("ChatService - UserId: {UserId}, Role: {Role}, Packages count: {Count}", userId, userRole, userPackages.Count);
+
+            var userPendingASM = userPackages.Count(p => p.State == Domain.Enums.PackageState.PendingASMApproval);
+            var userPendingHQ = userPackages.Count(p => p.State == Domain.Enums.PackageState.PendingHQApproval);
+            var userApproved = userPackages.Count(p => p.State == Domain.Enums.PackageState.Approved);
+            var userRejected = userPackages.Count(p => 
+                p.State == Domain.Enums.PackageState.RejectedByASM || 
+                p.State == Domain.Enums.PackageState.RejectedByRA);
+            var userUploaded = userPackages.Count(p => p.State == Domain.Enums.PackageState.Uploaded);
+            var userProcessing = userPackages.Count(p => 
+                p.State == Domain.Enums.PackageState.Extracting ||
+                p.State == Domain.Enums.PackageState.Validating ||
+                p.State == Domain.Enums.PackageState.Scoring ||
+                p.State == Domain.Enums.PackageState.Recommending);
+
+            var userSubmissionsList = userPackages
+                .OrderByDescending(p => p.CreatedAt)
+                .Take(20)
+                .Select(p => {
+                    var fapId = $"FAP-{p.Id.ToString().Substring(0, 8).ToUpper()}";
+                    var confidence = p.ConfidenceScore != null ? $"{(p.ConfidenceScore.OverallConfidence * 100):F0}%" : "N/A";
+                    
+                    // Extract invoice details and document IDs from documents
+                    string invoiceNumber = "N/A";
+                    string invoiceAmount = "N/A";
+                    string poNumber = "N/A";
+                    string poDocId = "";
+                    
+                    foreach (var doc in p.Documents)
+                    {
+                        if (doc.Type == Domain.Enums.DocumentType.PO)
+                        {
+                            poDocId = doc.Id.ToString();
+                        }
+                        
+                        if (!string.IsNullOrEmpty(doc.ExtractedDataJson))
+                        {
+                            try
+                            {
+                                var data = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(doc.ExtractedDataJson);
+                                
+                                if (doc.Type == Domain.Enums.DocumentType.Invoice)
+                                {
+                                    if (data.TryGetProperty("InvoiceNumber", out var invNum))
+                                        invoiceNumber = invNum.GetString() ?? "N/A";
+                                    else if (data.TryGetProperty("invoiceNumber", out var invNum2))
+                                        invoiceNumber = invNum2.GetString() ?? "N/A";
+                                    
+                                    if (data.TryGetProperty("TotalAmount", out var amt))
+                                        invoiceAmount = amt.ValueKind == System.Text.Json.JsonValueKind.Number ? $"₹{amt.GetDecimal()}" : $"₹{amt.GetString()}";
+                                    else if (data.TryGetProperty("totalAmount", out var amt2))
+                                        invoiceAmount = amt2.ValueKind == System.Text.Json.JsonValueKind.Number ? $"₹{amt2.GetDecimal()}" : $"₹{amt2.GetString()}";
+                                    else if (data.TryGetProperty("InvoiceAmount", out var amt3))
+                                        invoiceAmount = amt3.ValueKind == System.Text.Json.JsonValueKind.Number ? $"₹{amt3.GetDecimal()}" : $"₹{amt3.GetString()}";
+                                }
+                                else if (doc.Type == Domain.Enums.DocumentType.PO)
+                                {
+                                    if (data.TryGetProperty("PONumber", out var po))
+                                        poNumber = po.GetString() ?? "N/A";
+                                    else if (data.TryGetProperty("poNumber", out var po2))
+                                        poNumber = po2.GetString() ?? "N/A";
+                                    else if (data.TryGetProperty("PurchaseOrderNumber", out var po3))
+                                        poNumber = po3.GetString() ?? "N/A";
+                                }
+                            }
+                            catch { /* skip parsing errors */ }
+                        }
+                    }
+                    
+                    var poDocPart = !string.IsNullOrEmpty(poDocId) ? $", PODocId={poDocId}" : "";
+                    return $"- {fapId} (FullId={p.Id}): Status={p.State}, Submitted={p.CreatedAt:yyyy-MM-dd}, PO={poNumber}, InvoiceNo={invoiceNumber}, InvoiceAmount={invoiceAmount}, Confidence={confidence}, Documents={p.Documents.Count}{poDocPart}";
+                })
+                .ToList();
+
+            var roleDescription = userRole switch
+            {
+                "Agency" => "You are helping an Agency user who submits FAP documents for approval.",
+                "ASM" => "You are helping an ASM (Area Sales Manager) who reviews and approves/rejects FAP submissions from agencies.",
+                "HQ" => "You are helping an HQ/RA (Regional Approver) who gives final approval on FAP submissions after ASM approval.",
+                _ => "You are helping a user of the FAP system."
+            };
+
+            var userDataContext = $@"
+CURRENT USER: Role={userRole}
+{roleDescription}
+
+SUBMISSION DATA (most recent 20):
+Total: {userPackages.Count}
+Uploaded (not yet processed): {userUploaded}
+Pending with ASM: {userPendingASM}
+Pending with HQ/RA: {userPendingHQ}
+Approved: {userApproved}
+Rejected: {userRejected}
+Processing (extracting/validating/scoring): {userProcessing}
+
+Submissions:
+{string.Join("\n", userSubmissionsList)}";
+
             // Add system message with database query capabilities
-            var systemMessage = @"You are an analytics assistant for the Bajaj Document Processing System.
+            var systemMessage = @"You are a friendly analytics assistant for the Bajaj FAP (Field Activity Plan) Document Processing System.
 
-You have access to database query functions to retrieve real-time submission data:
-- GetPendingSubmissions: Show pending submissions (ASM/HQ/all)
-- GetApprovedSubmissions: List approved requests
-- GetRejectedSubmissions: Show rejected with reasons
-- GetSubmissionsSummary: Overall status summary
-- GetKPIs: Performance metrics
-
-When users ask about submissions, approvals, rejections, or statistics, USE THESE FUNCTIONS to get accurate data.
-Always cite specific data sources, time ranges, and metrics in your response.
-Be concise and focus on the key insights.";
+IMPORTANT RULES:
+1. ONLY use the CURRENT USER'S DATA section below to answer questions. This is the user's real, accurate data.
+2. NEVER make up numbers or guess. If the data is not in the CURRENT USER'S DATA section, say you don't have that information.
+3. NEVER expose internal details, error messages, or technical information to the user.
+4. Always respond in a clean, conversational, user-friendly tone.
+5. Keep responses SHORT and DIRECT — only answer what the user asked. Do NOT dump extra details they didn't ask for.
+6. When user asks about status, just say the status in plain English (e.g. 'Pending with ASM' not 'PendingASMApproval'). Do NOT list submitted date, confidence, documents, PO, invoice etc unless specifically asked.
+7. When user asks about invoice amount, just give the amount. When they ask about PO, just give the PO number. Only provide what was asked.
+8. Use friendly status names: PendingASMApproval = 'Pending with ASM', PendingHQApproval = 'Pending with RA', Uploaded = 'Uploaded', Approved = 'Approved', RejectedByASM = 'Rejected by ASM', RejectedByRA = 'Rejected by RA'.
+9. Do NOT show [PHONE_REDACTED] or any redacted labels — if a value looks redacted, just say the value is not available.
+10. CRITICAL: When the user asks to 'show', 'view', 'open', or 'see' a PO, they want to VIEW THE ACTUAL PO DOCUMENT — NOT the PO number. You MUST respond with a clickable link using the PODocId: 'You can view your PO here: [View PO](doc://{PODocId})'. NEVER respond with just the PO number when the user asks to show/view/open a PO. The PO number is only shown when the user explicitly asks 'what is the PO number?'.
+11. If a submission does not have a PODocId, say 'The PO document is not available for this submission.'
+12. For ASM users: when the user asks to approve, reject, review, or see validations for a submission, provide a navigation link: 'You can review and take action here: [Review Submission](nav://asm-review/{FullId})'. Use the FullId (the full GUID) from the submission data, NOT the short FAP ID.
+13. For HQ/RA users: same as above but use: [Review Submission](nav://hq-review/{FullId})
+14. For Agency users: when they ask to view details of a submission, use: [View Submission](nav://agency-detail/{FullId})
+15. NEVER show the FullId as text to the user — only use it inside nav:// links.";
 
             if (!string.IsNullOrEmpty(context))
             {
@@ -162,6 +293,9 @@ Be concise and focus on the key insights.";
 Additional context from analytics database:
 {context}";
             }
+
+            // Always append user-specific data
+            systemMessage += userDataContext;
             
             chatHistory.AddSystemMessage(systemMessage);
 
@@ -184,18 +318,19 @@ Additional context from analytics database:
             // Add current query
             chatHistory.AddUserMessage(query);
 
-            // Step 7: Semantic Kernel Processing with function calling
+            // Step 7: Semantic Kernel Processing — no function calling
+            // User-specific data is already injected into the system prompt context.
+            // Plugin functions query ALL users and cannot be scoped, so we disable them.
             var chatCompletionService = _kernel.GetRequiredService<IChatCompletionService>();
             var executionSettings = new OpenAIPromptExecutionSettings
             {
-                // GPT-5-mini only supports default values for temperature and top_p
-                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions // Enable function calling
+                ToolCallBehavior = null // Disable function calling — use system prompt data only
             };
 
             var result = await chatCompletionService.GetChatMessageContentAsync(
                 chatHistory,
                 executionSettings,
-                _kernel,
+                kernel: null, // Don't pass kernel to prevent function discovery
                 cancellationToken);
 
             var response = result.Content ?? "I apologize, but I couldn't generate a response.";

@@ -22,6 +22,14 @@ class CampaignDetailsTable extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
+    // Group rows by campaign name
+    final grouped = <String, List<CampaignDetailRow>>{};
+    for (var row in campaignDetails) {
+      final key = row.campaignName ?? '';
+      grouped.putIfAbsent(key, () => []);
+      grouped[key]!.add(row);
+    }
+
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -38,13 +46,35 @@ class CampaignDetailsTable extends StatelessWidget {
               style: AppTextStyles.h3.copyWith(fontWeight: FontWeight.bold),
             ),
           ),
-          _buildTable(),
+          ...grouped.entries.map((entry) {
+            final campaignName = entry.key;
+            final rows = entry.value;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (campaignName.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Text(
+                      'Campaign Name - $campaignName',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                _buildTable(rows),
+                const SizedBox(height: 12),
+              ],
+            );
+          }),
         ],
       ),
     );
   }
 
-  Widget _buildTable() {
+  Widget _buildTable(List<CampaignDetailRow> rows) {
     return Table(
       border: TableBorder(
         horizontalInside: BorderSide(color: AppColors.border),
@@ -60,8 +90,8 @@ class CampaignDetailsTable extends StatelessWidget {
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       children: [
         _buildHeaderRow(),
-        ...campaignDetails.asMap().entries.map((entry) {
-          return _buildDataRow(entry.value, entry.key);
+        ...rows.asMap().entries.map((entry) {
+          return _buildDataRow(entry.value, entry.key, entry.key + 1);
         }),
       ],
     );
@@ -93,7 +123,7 @@ class CampaignDetailsTable extends StatelessWidget {
     );
   }
 
-  TableRow _buildDataRow(CampaignDetailRow detail, int index) {
+  TableRow _buildDataRow(CampaignDetailRow detail, int index, int displayNumber) {
     final isEven = index % 2 == 0;
     final backgroundColor = isEven ? Colors.white : AppColors.background;
     final category = _displayCategory(detail.dealerName);
@@ -101,7 +131,7 @@ class CampaignDetailsTable extends StatelessWidget {
     return TableRow(
       decoration: BoxDecoration(color: backgroundColor),
       children: [
-        _buildDataCell(detail.serialNumber.toString()),
+        _buildDataCell(displayNumber.toString()),
         _buildDataCell(category),
         _buildDocumentNameCell(detail),
         _buildStatusCell(detail.status),

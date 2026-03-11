@@ -129,6 +129,7 @@ class SubmissionDataTransformer {
       final campaignMap = campaign as Map<String, dynamic>;
       final campaignId = campaignMap['id']?.toString() ?? '';
       final startDate = campaignMap['startDate'];
+      final campaignName = campaignMap['campaignName']?.toString() ?? campaignMap['name']?.toString() ?? '';
 
       // Campaign invoices
       final invoices = campaignMap['invoices'] as List? ?? [];
@@ -142,6 +143,7 @@ class SubmissionDataTransformer {
 
         rows.add(CampaignDetailRow(
           serialNumber: serialNumber,
+          campaignName: campaignName,
           dealerName: 'Invoice',
           campaignDate: startDate != null ? _formatDate(startDate) : '',
           documentName: fileName,
@@ -167,6 +169,7 @@ class SubmissionDataTransformer {
         final costDocId = docIdByFilename[costFile.toLowerCase()] ?? '';
         rows.add(CampaignDetailRow(
           serialNumber: serialNumber,
+          campaignName: campaignName,
           dealerName: 'CostSummary',
           campaignDate: '',
           documentName: costFile.isNotEmpty ? costFile : 'Cost Summary',
@@ -192,6 +195,7 @@ class SubmissionDataTransformer {
         final actDocId = docIdByFilename[actFile.toLowerCase()] ?? '';
         rows.add(CampaignDetailRow(
           serialNumber: serialNumber,
+          campaignName: campaignName,
           dealerName: 'Activity',
           campaignDate: '',
           documentName: actFile.isNotEmpty ? actFile : 'Activity Summary',
@@ -215,17 +219,16 @@ class SubmissionDataTransformer {
         final photoMap = photos[i] as Map<String, dynamic>;
         final fileName = photoMap['fileName']?.toString() ?? 'Photo';
         final blobUrl = photoMap['blobUrl']?.toString() ?? '';
-        final caption = photoMap['caption']?.toString() ?? '';
-        final displayName = caption.isNotEmpty ? '$fileName - $caption' : fileName;
         final photoId = photoMap['id']?.toString() ?? '';
         final photoDocId = docIdByFilename[fileName.toLowerCase()] ?? '';
         final photoRemarks = buildRemarksFromFailureReason('Photo', failureReason, allPassed);
 
         rows.add(CampaignDetailRow(
           serialNumber: serialNumber,
+          campaignName: campaignName,
           dealerName: 'Photo',
           campaignDate: startDate != null ? _formatDate(startDate) : '',
-          documentName: displayName,
+          documentName: fileName,
           status: allPassed
               ? ValidationStatus.ok
               : photoRemarks.isNotEmpty

@@ -266,6 +266,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                     ),
                     if (_isChatOpen && !isMobile) ChatSidePanel(
                       token: widget.token,
+                      userName: widget.userName,
                       deviceType: device,
                       onClose: () => setState(() => _isChatOpen = false),
                     ),
@@ -274,7 +275,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
           floatingActionButton: (_isChatOpen && !isMobile) ? null : Builder(
             builder: (scaffoldContext) => Padding(
               padding: const EdgeInsets.only(bottom: 16, right: 4),

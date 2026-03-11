@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:web/web.dart' as web;
+import 'dart:js_interop';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../responsive/responsive.dart';
@@ -8,12 +12,14 @@ import '../responsive/responsive.dart';
 /// Manages its own chat state internally.
 class ChatSidePanel extends StatefulWidget {
   final String token;
+  final String userName;
   final DeviceType deviceType;
   final VoidCallback onClose;
 
   const ChatSidePanel({
     super.key,
     required this.token,
+    this.userName = 'User',
     required this.deviceType,
     required this.onClose,
   });
@@ -27,6 +33,7 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
   final _chatController = TextEditingController();
   List<Map<String, dynamic>> _chatMessages = [];
   bool _isSendingMessage = false;
+  String? _conversationId;
 
   @override
   void dispose() {
@@ -235,14 +242,153 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
           color: isUser ? AppColors.primary : AppColors.background,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Text(
-          text,
-          style: AppTextStyles.bodyMedium.copyWith(
-            color: isUser ? Colors.white : AppColors.textPrimary,
-          ),
-        ),
+        child: isUser
+            ? Text(
+                text,
+                style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
+              )
+            : _buildRichText(text),
       ),
     );
+  }
+
+  /// Parses markdown-style links [text](url) and renders them as clickable spans.
+  /// Supports both https:// links (open in browser) and doc:// links (download via API then open).
+  Widget _buildRichText(String text) {
+    // Match http(s), doc://, and nav:// protocol links
+    final linkPattern = RegExp(r'\[([^\]]+)\]\(((https?|doc|nav)://[^\)]+)\)');
+    final spans = <InlineSpan>[];
+    int lastEnd = 0;
+
+    for (final match in linkPattern.allMatches(text)) {
+      // Add text before the link
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(
+          text: text.substring(lastEnd, match.start),
+          style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
+        ));
+      }
+      // Add the clickable link
+      final linkText = match.group(1)!;
+      final linkUrl = match.group(2)!;
+      spans.add(WidgetSpan(
+        child: GestureDetector(
+          onTap: () => _handleLinkTap(linkUrl),
+          child: Text(
+            linkText,
+            style: AppTextStyles.bodyMedium.copyWith(
+              color: const Color(0xFF2563EB),
+              decoration: TextDecoration.underline,
+            ),
+          ),
+        ),
+      ));
+      lastEnd = match.end;
+    }
+
+    // Add remaining text
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(lastEnd),
+        style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
+      ));
+    }
+
+    // If no links found, return simple text
+    if (spans.isEmpty) {
+      return Text(
+        text,
+        style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
+      );
+    }
+
+    return RichText(text: TextSpan(children: spans));
+  }
+
+  /// Handles link taps — doc:// downloads via API, nav:// navigates in-app, https:// opens directly.
+  Future<void> _handleLinkTap(String url) async {
+    if (url.startsWith('doc://')) {
+      final docId = url.replaceFirst('doc://', '');
+      await _openDocumentById(docId);
+    } else if (url.startsWith('nav://')) {
+      // In-app navigation: nav://asm-review/{id} or nav://hq-review/{id}
+      final path = url.replaceFirst('nav://', '');
+      final parts = path.split('/');
+      if (parts.length >= 2) {
+        final route = parts[0]; // e.g. "asm-review" or "hq-review"
+        final submissionId = parts[1];
+        String routePath;
+        if (route == 'asm-review') {
+          routePath = '/asm/review-detail';
+        } else if (route == 'hq-review') {
+          routePath = '/hq/review-detail';
+        } else if (route == 'agency-detail') {
+          routePath = '/agency/submission-detail';
+        } else {
+          routePath = '/agency/submission-detail';
+        }
+        if (mounted) {
+          Navigator.pushNamed(context, routePath, arguments: {
+            'submissionId': submissionId,
+            'token': widget.token,
+            'userName': widget.userName,
+          });
+        }
+      }
+    } else {
+      try {
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.target = '_blank';
+        anchor.click();
+      } catch (_) {}
+    }
+  }
+
+  /// Downloads a document by ID via the API and opens it in a new browser tab.
+  /// Uses the same logic as _downloadDocument in agency_submission_detail_page.
+  Future<void> _openDocumentById(String docId) async {
+    try {
+      final response = await _dio.get(
+        '/documents/$docId/download',
+        options: Options(
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+
+        if (base64Content.isEmpty) {
+          _showSnackBar('Document content is empty.');
+          return;
+        }
+
+        // Decode base64 and create a Blob URL — same approach as detail page
+        final bytes = base64.decode(base64Content);
+        final blob = web.Blob(
+          [Uint8List.fromList(bytes).toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final url = web.URL.createObjectURL(blob);
+
+        // Open in new tab
+        web.window.open(url, '_blank');
+      } else {
+        _showSnackBar('Failed to download document.');
+      }
+    } catch (e) {
+      _showSnackBar('Error opening document: $e');
+    }
+  }
+
+  void _showSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
   }
 
   Future<void> _sendMessage() async {
@@ -254,16 +400,25 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
       _isSendingMessage = true;
     });
     try {
+      final requestData = <String, dynamic>{'message': userMessage};
+      if (_conversationId != null) {
+        requestData['conversationId'] = _conversationId;
+      }
       final response = await _dio.post(
         '/chat/message',
-        data: {'message': userMessage},
+        data: requestData,
         options: Options(
           headers: {'Authorization': 'Bearer ${widget.token}'},
         ),
       );
       if (response.statusCode == 200 && mounted) {
+        // Store conversationId for subsequent messages
+        final convId = response.data['conversationId']?.toString();
+        if (convId != null && convId.isNotEmpty) {
+          _conversationId = convId;
+        }
         setState(() => _chatMessages.add({
-              'text': response.data['response'] ?? 'I received your message.',
+              'text': response.data['message'] ?? 'I received your message.',
               'isUser': false,
             }));
       }
