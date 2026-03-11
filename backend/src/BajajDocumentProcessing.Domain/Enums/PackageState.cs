@@ -19,6 +19,7 @@ public enum PackageState
     RejectedByASM = 12,           // Rejected by ASM, goes back to Agency
     RejectedByRA = 13,            // Rejected by RA, goes back to ASM
     ReuploadRequested = 14,       // Agency needs to reupload
+    ProcessingFailed = 15,        // Workflow processing failed (extraction/validation/scoring error)
     
     // Legacy states for backward compatibility
     PendingApproval = 8,          // Alias for PendingASMApproval

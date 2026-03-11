@@ -63,10 +63,15 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
         try
         {
-            // Load package with documents
+            // Load package with hierarchical structure (Campaigns → Invoices, Photos)
             var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.Documents)  // Keep for backward compatibility with old submissions
+                .Include(p => p.Campaigns)
+                    .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
+                .Include(p => p.Campaigns)
+                    .ThenInclude(c => c.Photos.Where(p => !p.IsDeleted))
                 .Include(p => p.SubmittedBy)
+                .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
@@ -169,93 +174,179 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            // CHANGE: Separate photo documents from non-photo documents for batch processing
-            var nonPhotoDocuments = package.Documents.Where(d => d.Type != Domain.Enums.DocumentType.Photo).ToList();
-            var photoDocuments = package.Documents.Where(d => d.Type == Domain.Enums.DocumentType.Photo).ToList();
-
-            // Process non-photo documents sequentially (PO, Invoice, CostSummary, Activity, EnquiryDump — one each)
-            foreach (var document in nonPhotoDocuments)
+            // HIERARCHICAL MODEL: Extract from Campaigns → Invoices and Photos
+            if (package.Campaigns != null && package.Campaigns.Any())
             {
-                if (document.Type == Domain.Enums.DocumentType.AdditionalDocument)
+                _logger.LogInformation("Processing hierarchical structure: {CampaignCount} campaigns for package {PackageId}", 
+                    package.Campaigns.Count, package.Id);
+
+                foreach (var campaign in package.Campaigns.Where(c => !c.IsDeleted))
                 {
-                    var classification = await _documentAgent.ClassifyAsync(
-                        document.BlobUrl,
-                        cancellationToken);
-                    
-                    document.Type = classification.Type;
-                    document.ExtractionConfidence = classification.Confidence;
-                    document.IsFlaggedForReview = classification.IsFlaggedForReview;
-                }
-                else
-                {
-                    _logger.LogInformation("Document type already set to {Type}, skipping classification", document.Type);
-                }
-
-                string extractedDataJson = document.Type switch
-                {
-                    Domain.Enums.DocumentType.PO => 
-                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractPOAsync(document.BlobUrl, cancellationToken)),
-                    Domain.Enums.DocumentType.Invoice => 
-                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractInvoiceAsync(document.BlobUrl, cancellationToken)),
-                    Domain.Enums.DocumentType.CostSummary => 
-                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractCostSummaryAsync(document.BlobUrl, cancellationToken)),
-                    Domain.Enums.DocumentType.Activity => 
-                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractActivityAsync(document.BlobUrl, cancellationToken)),
-                    Domain.Enums.DocumentType.EnquiryDump => 
-                        System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractEnquiryDumpAsync(document.BlobUrl, cancellationToken)),
-                    _ => "{}"
-                };
-                
-                document.ExtractedDataJson = extractedDataJson;
-                document.UpdatedAt = DateTime.UtcNow;
-            }
-
-            // CHANGE: Process photo documents in batches of 5 concurrently for faster processing
-            if (photoDocuments.Any())
-            {
-                _logger.LogInformation("Processing {Count} photos in batches of {BatchSize} for package {PackageId}",
-                    photoDocuments.Count, PhotoBatchSize, package.Id);
-
-                var batches = photoDocuments
-                    .Select((doc, index) => new { doc, index })
-                    .GroupBy(x => x.index / PhotoBatchSize)
-                    .Select(g => g.Select(x => x.doc).ToList())
-                    .ToList();
-
-                for (int batchNum = 0; batchNum < batches.Count; batchNum++)
-                {
-                    var batch = batches[batchNum];
-                    _logger.LogInformation("Processing photo batch {BatchNum}/{TotalBatches} ({Count} photos) for package {PackageId}",
-                        batchNum + 1, batches.Count, batch.Count, package.Id);
-
-                    // Process all photos in this batch concurrently
-                    var tasks = batch.Select(async photoDoc =>
+                    // Extract invoices
+                    foreach (var invoice in campaign.Invoices.Where(i => !i.IsDeleted && !string.IsNullOrEmpty(i.BlobUrl)))
                     {
                         try
                         {
-                            var metadata = await _documentAgent.ExtractPhotoMetadataAsync(photoDoc.BlobUrl, cancellationToken);
-                            photoDoc.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(metadata);
-                            photoDoc.UpdatedAt = DateTime.UtcNow;
-                            _logger.LogInformation("Photo {FileName} extraction completed", photoDoc.FileName);
+                            _logger.LogInformation("Extracting invoice {InvoiceId} from campaign {CampaignId}", 
+                                invoice.Id, campaign.Id);
+                            
+                            var invoiceData = await _documentAgent.ExtractInvoiceAsync(invoice.BlobUrl, cancellationToken);
+                            
+                            // Update invoice with extracted data (only if fields are empty)
+                            if (string.IsNullOrEmpty(invoice.InvoiceNumber) && !string.IsNullOrEmpty(invoiceData.InvoiceNumber))
+                                invoice.InvoiceNumber = invoiceData.InvoiceNumber;
+                            
+                            if (invoice.InvoiceDate == null && invoiceData.InvoiceDate != default)
+                                invoice.InvoiceDate = invoiceData.InvoiceDate;
+                            
+                            if (string.IsNullOrEmpty(invoice.VendorName) && !string.IsNullOrEmpty(invoiceData.VendorName))
+                                invoice.VendorName = invoiceData.VendorName;
+                            
+                            if (string.IsNullOrEmpty(invoice.GSTNumber) && !string.IsNullOrEmpty(invoiceData.GSTNumber))
+                                invoice.GSTNumber = invoiceData.GSTNumber;
+                            
+                            if ((invoice.TotalAmount == null || invoice.TotalAmount == 0) && invoiceData.TotalAmount > 0)
+                                invoice.TotalAmount = invoiceData.TotalAmount;
+                            
+                            invoice.UpdatedAt = DateTime.UtcNow;
+                            
+                            _logger.LogInformation("Invoice {InvoiceId} extracted: Number={Number}, Amount={Amount}", 
+                                invoice.Id, invoiceData.InvoiceNumber, invoiceData.TotalAmount);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "Error extracting photo {FileName}, setting empty metadata", photoDoc.FileName);
-                            photoDoc.ExtractedDataJson = "{}";
-                            photoDoc.UpdatedAt = DateTime.UtcNow;
+                            _logger.LogError(ex, "Error extracting invoice {InvoiceId}, continuing with next", invoice.Id);
                         }
-                    });
+                    }
 
-                    await Task.WhenAll(tasks);
+                    // Extract photos in batches
+                    var photos = campaign.Photos.Where(p => !p.IsDeleted && !string.IsNullOrEmpty(p.BlobUrl)).ToList();
+                    if (photos.Any())
+                    {
+                        _logger.LogInformation("Processing {Count} photos in batches of {BatchSize} for campaign {CampaignId}",
+                            photos.Count, PhotoBatchSize, campaign.Id);
+
+                        var batches = photos
+                            .Select((photo, index) => new { photo, index })
+                            .GroupBy(x => x.index / PhotoBatchSize)
+                            .Select(g => g.Select(x => x.photo).ToList())
+                            .ToList();
+
+                        for (int batchNum = 0; batchNum < batches.Count; batchNum++)
+                        {
+                            var batch = batches[batchNum];
+                            _logger.LogInformation("Processing photo batch {BatchNum}/{TotalBatches} ({Count} photos)",
+                                batchNum + 1, batches.Count, batch.Count);
+
+                            var tasks = batch.Select(async photo =>
+                            {
+                                try
+                                {
+                                    var metadata = await _documentAgent.ExtractPhotoMetadataAsync(photo.BlobUrl, cancellationToken);
+                                    // Store metadata in Caption field as JSON for now
+                                    if (string.IsNullOrEmpty(photo.Caption))
+                                    {
+                                        photo.Caption = System.Text.Json.JsonSerializer.Serialize(metadata);
+                                    }
+                                    photo.UpdatedAt = DateTime.UtcNow;
+                                    _logger.LogInformation("Photo {FileName} extraction completed", photo.FileName);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "Error extracting photo {FileName}", photo.FileName);
+                                }
+                            });
+
+                            await Task.WhenAll(tasks);
+                        }
+                    }
                 }
 
-                _logger.LogInformation("All {Count} photos processed for package {PackageId}", photoDocuments.Count, package.Id);
+                await _context.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation("Hierarchical extraction completed for package {PackageId}", package.Id);
+                return true;
             }
 
-            await _context.SaveChangesAsync(cancellationToken);
-            
-            _logger.LogInformation("Extraction step completed for package {PackageId}", package.Id);
-            return true;
+            // OLD MODEL: Extract from Documents table (backward compatibility)
+            if (package.Documents != null && package.Documents.Any())
+            {
+                _logger.LogInformation("Processing old document model: {DocumentCount} documents for package {PackageId}", 
+                    package.Documents.Count, package.Id);
+
+                var nonPhotoDocuments = package.Documents.Where(d => d.Type != Domain.Enums.DocumentType.Photo).ToList();
+                var photoDocuments = package.Documents.Where(d => d.Type == Domain.Enums.DocumentType.Photo).ToList();
+
+                // Process non-photo documents sequentially
+                foreach (var document in nonPhotoDocuments)
+                {
+                    if (document.Type == Domain.Enums.DocumentType.AdditionalDocument)
+                    {
+                        var classification = await _documentAgent.ClassifyAsync(
+                            document.BlobUrl,
+                            cancellationToken);
+                        
+                        document.Type = classification.Type;
+                        document.ExtractionConfidence = classification.Confidence;
+                        document.IsFlaggedForReview = classification.IsFlaggedForReview;
+                    }
+
+                    string extractedDataJson = document.Type switch
+                    {
+                        Domain.Enums.DocumentType.PO => 
+                            System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractPOAsync(document.BlobUrl, cancellationToken)),
+                        Domain.Enums.DocumentType.Invoice => 
+                            System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractInvoiceAsync(document.BlobUrl, cancellationToken)),
+                        Domain.Enums.DocumentType.CostSummary => 
+                            System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractCostSummaryAsync(document.BlobUrl, cancellationToken)),
+                        Domain.Enums.DocumentType.Activity => 
+                            System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractActivityAsync(document.BlobUrl, cancellationToken)),
+                        Domain.Enums.DocumentType.EnquiryDump => 
+                            System.Text.Json.JsonSerializer.Serialize(await _documentAgent.ExtractEnquiryDumpAsync(document.BlobUrl, cancellationToken)),
+                        _ => "{}"
+                    };
+                    
+                    document.ExtractedDataJson = extractedDataJson;
+                    document.UpdatedAt = DateTime.UtcNow;
+                }
+
+                // Process photos in batches
+                if (photoDocuments.Any())
+                {
+                    var batches = photoDocuments
+                        .Select((doc, index) => new { doc, index })
+                        .GroupBy(x => x.index / PhotoBatchSize)
+                        .Select(g => g.Select(x => x.doc).ToList())
+                        .ToList();
+
+                    foreach (var batch in batches)
+                    {
+                        var tasks = batch.Select(async photoDoc =>
+                        {
+                            try
+                            {
+                                var metadata = await _documentAgent.ExtractPhotoMetadataAsync(photoDoc.BlobUrl, cancellationToken);
+                                photoDoc.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(metadata);
+                                photoDoc.UpdatedAt = DateTime.UtcNow;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error extracting photo {FileName}", photoDoc.FileName);
+                                photoDoc.ExtractedDataJson = "{}";
+                            }
+                        });
+
+                        await Task.WhenAll(tasks);
+                    }
+                }
+
+                await _context.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation("Old model extraction completed for package {PackageId}", package.Id);
+                return true;
+            }
+
+            // No documents or campaigns found
+            _logger.LogWarning("No documents or campaigns found for package {PackageId}", package.Id);
+            return false;
         }
         catch (Exception ex)
         {
@@ -448,8 +539,8 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             _logger.LogWarning("Compensating workflow for package {PackageId}, Reason: {Reason}", 
                 package.Id, reason);
 
-            // Set package to error state
-            package.State = PackageState.Rejected;
+            // Set package to processing failed state (NOT Rejected — that's for ASM rejection)
+            package.State = PackageState.ProcessingFailed;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 

@@ -109,9 +109,12 @@ public class ValidationAgent : IValidationAgent
 
         try
         {
-            // Load package with documents
+            // Load package with documents AND hierarchical campaign data
             var package = await _context.DocumentPackages
                 .Include(p => p.Documents)
+                .Include(p => p.Campaigns).ThenInclude(c => c.Invoices)
+                .Include(p => p.Campaigns).ThenInclude(c => c.Photos)
+                .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
@@ -135,18 +138,37 @@ public class ValidationAgent : IValidationAgent
             // CHANGE: Added EnquiryDump document loading
             var enquiryDumpDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.EnquiryDump);
 
+            // Hierarchical data: get first campaign invoice/photo/cost summary/activity
+            var firstCampaignInvoice = package.Campaigns.SelectMany(c => c.Invoices).FirstOrDefault();
+            var firstCampaignWithCostSummary = package.Campaigns.FirstOrDefault(c => !string.IsNullOrEmpty(c.CostSummaryBlobUrl));
+            var firstCampaignWithActivity = package.Campaigns.FirstOrDefault(c => !string.IsNullOrEmpty(c.ActivitySummaryBlobUrl));
+            var allCampaignPhotos = package.Campaigns.SelectMany(c => c.Photos).ToList();
+
             // CHANGE: Populate FileNames dictionary so validation output shows which file each check refers to
             result.FileNames = new Dictionary<string, string>();
             if (poDoc != null) result.FileNames["PO"] = poDoc.FileName ?? "PO document";
             if (invoiceDoc != null) result.FileNames["Invoice"] = invoiceDoc.FileName ?? "Invoice document";
+            else if (firstCampaignInvoice != null) result.FileNames["Invoice"] = firstCampaignInvoice.FileName ?? "Invoice document";
             if (costSummaryDoc != null) result.FileNames["CostSummary"] = costSummaryDoc.FileName ?? "Cost Summary document";
+            else if (firstCampaignWithCostSummary != null) result.FileNames["CostSummary"] = firstCampaignWithCostSummary.CostSummaryFileName ?? "Cost Summary document";
             if (activityDoc != null) result.FileNames["Activity"] = activityDoc.FileName ?? "Activity document";
+            else if (firstCampaignWithActivity != null) result.FileNames["Activity"] = firstCampaignWithActivity.ActivitySummaryFileName ?? "Activity document";
             if (enquiryDumpDoc != null) result.FileNames["EnquiryDump"] = enquiryDumpDoc.FileName ?? "Enquiry Dump document";
-            // CHANGE: Add each photo filename individually (Photo_0, Photo_1, etc.)
+            // Photo filenames: check old Documents table first, then CampaignPhotos
             var photoDocsList = package.Documents.Where(d => d.Type == DocumentType.Photo).ToList();
-            for (int i = 0; i < photoDocsList.Count; i++)
+            if (photoDocsList.Any())
             {
-                result.FileNames[$"Photo_{i}"] = photoDocsList[i].FileName ?? $"Photo {i + 1}";
+                for (int i = 0; i < photoDocsList.Count; i++)
+                {
+                    result.FileNames[$"Photo_{i}"] = photoDocsList[i].FileName ?? $"Photo {i + 1}";
+                }
+            }
+            else if (allCampaignPhotos.Any())
+            {
+                for (int i = 0; i < allCampaignPhotos.Count; i++)
+                {
+                    result.FileNames[$"Photo_{i}"] = allCampaignPhotos[i].FileName ?? $"Photo {i + 1}";
+                }
             }
 
             POData? poData = null;
@@ -161,19 +183,34 @@ public class ValidationAgent : IValidationAgent
                 poData = JsonSerializer.Deserialize<POData>(poDoc.ExtractedDataJson);
             }
 
+            // Invoice data: check old Documents table first, then CampaignInvoices
             if (invoiceDoc?.ExtractedDataJson != null)
             {
                 invoiceData = JsonSerializer.Deserialize<InvoiceData>(invoiceDoc.ExtractedDataJson);
             }
+            else if (firstCampaignInvoice?.ExtractedDataJson != null)
+            {
+                invoiceData = JsonSerializer.Deserialize<InvoiceData>(firstCampaignInvoice.ExtractedDataJson);
+            }
 
+            // Cost Summary data: check old Documents table first, then Campaign.CostSummaryExtractedDataJson
             if (costSummaryDoc?.ExtractedDataJson != null)
             {
                 costSummaryData = JsonSerializer.Deserialize<CostSummaryData>(costSummaryDoc.ExtractedDataJson);
             }
+            else if (firstCampaignWithCostSummary?.CostSummaryExtractedDataJson != null)
+            {
+                costSummaryData = JsonSerializer.Deserialize<CostSummaryData>(firstCampaignWithCostSummary.CostSummaryExtractedDataJson);
+            }
 
+            // Activity data: check old Documents table first, then Campaign.ActivitySummaryExtractedDataJson
             if (activityDoc?.ExtractedDataJson != null)
             {
                 activityData = JsonSerializer.Deserialize<ActivityData>(activityDoc.ExtractedDataJson);
+            }
+            else if (firstCampaignWithActivity?.ActivitySummaryExtractedDataJson != null)
+            {
+                activityData = JsonSerializer.Deserialize<ActivityData>(firstCampaignWithActivity.ActivitySummaryExtractedDataJson);
             }
 
             // CHANGE: Added EnquiryDump data deserialization
@@ -364,6 +401,7 @@ public class ValidationAgent : IValidationAgent
 
             // 13. Photo Proofs Field Presence Validation
             var photoDocuments = package.Documents.Where(d => d.Type == DocumentType.Photo).ToList();
+            var totalPhotoCount = photoDocuments.Count + allCampaignPhotos.Count;
             if (photoDocuments.Any())
             {
                 result.PhotoFieldPresence = ValidatePhotoFieldPresence(photoDocuments);
@@ -379,10 +417,10 @@ public class ValidationAgent : IValidationAgent
             }
 
             // 14. Photo Proofs Cross-Document Validation (3-way validation)
-            if (photoDocuments.Any())
+            if (totalPhotoCount > 0)
             {
                 result.PhotoCrossDocument = ValidatePhotoCrossDocument(
-                    photoDocuments.Count,
+                    totalPhotoCount,
                     activityData,
                     costSummaryData);
                 
@@ -673,6 +711,9 @@ public class ValidationAgent : IValidationAgent
     {
         var package = await _context.DocumentPackages
             .Include(p => p.Documents)
+            .Include(p => p.Campaigns).ThenInclude(c => c.Invoices)
+            .Include(p => p.Campaigns).ThenInclude(c => c.Photos)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
         if (package == null)
@@ -685,36 +726,45 @@ public class ValidationAgent : IValidationAgent
             };
         }
 
-        var requiredDocTypes = new List<DocumentType>
-        {
-            DocumentType.PO,
-            DocumentType.Invoice,
-            DocumentType.CostSummary
-        };
-
         var presentDocTypes = package.Documents.Select(d => d.Type).Distinct().ToList();
         var missingItems = new List<string>();
 
-        foreach (var requiredType in requiredDocTypes)
+        // PO is still in the old Documents table
+        if (!presentDocTypes.Contains(DocumentType.PO))
         {
-            if (!presentDocTypes.Contains(requiredType))
-            {
-                missingItems.Add(requiredType.ToString());
-            }
+            missingItems.Add("PO");
         }
 
-        // Check for photos (at least 1 required)
-        var photoCount = package.Documents.Count(d => d.Type == DocumentType.Photo);
-        if (photoCount == 0)
+        // Invoice: check both old Documents table AND hierarchical CampaignInvoices
+        var hasInvoiceInDocuments = presentDocTypes.Contains(DocumentType.Invoice);
+        var hasInvoiceInCampaigns = package.Campaigns.Any(c => c.Invoices.Any());
+        if (!hasInvoiceInDocuments && !hasInvoiceInCampaigns)
+        {
+            missingItems.Add("Invoice");
+        }
+
+        // Cost Summary: check both old Documents table AND Campaign.CostSummaryBlobUrl
+        var hasCostSummaryInDocuments = presentDocTypes.Contains(DocumentType.CostSummary);
+        var hasCostSummaryInCampaigns = package.Campaigns.Any(c => !string.IsNullOrEmpty(c.CostSummaryBlobUrl));
+        if (!hasCostSummaryInDocuments && !hasCostSummaryInCampaigns)
+        {
+            missingItems.Add("CostSummary");
+        }
+
+        // Photos: check both old Documents table AND hierarchical CampaignPhotos
+        var photoCountInDocuments = package.Documents.Count(d => d.Type == DocumentType.Photo);
+        var photoCountInCampaigns = package.Campaigns.Sum(c => c.Photos.Count);
+        if (photoCountInDocuments == 0 && photoCountInCampaigns == 0)
         {
             missingItems.Add("Photos (at least 1 required)");
         }
 
-        // Note: The 11 required items include:
-        // 1. PO, 2. Invoice, 3. Cost Summary, 4-11. Various activity records and photos
-        // For now, we're checking the core documents. Additional checks can be added based on business rules.
-
-        var presentItemCount = requiredDocTypes.Count(t => presentDocTypes.Contains(t)) + (photoCount > 0 ? 1 : 0);
+        // Count present items (PO + Invoice + CostSummary + Photos)
+        var presentItemCount = 0;
+        if (presentDocTypes.Contains(DocumentType.PO)) presentItemCount++;
+        if (hasInvoiceInDocuments || hasInvoiceInCampaigns) presentItemCount++;
+        if (hasCostSummaryInDocuments || hasCostSummaryInCampaigns) presentItemCount++;
+        if (photoCountInDocuments > 0 || photoCountInCampaigns > 0) presentItemCount++;
 
         return new CompletenessResult
         {

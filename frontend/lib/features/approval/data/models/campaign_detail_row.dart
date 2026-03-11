@@ -11,6 +11,9 @@ class CampaignDetailRow {
   /// Serial number for display in the table (1-based index).
   final int serialNumber;
   
+  /// Campaign name this document belongs to.
+  final String? campaignName;
+  
   /// Dealer name or code (e.g., "D1", "D2").
   final String dealerName;
   
@@ -42,6 +45,7 @@ class CampaignDetailRow {
   /// Creates a CampaignDetailRow instance.
   const CampaignDetailRow({
     required this.serialNumber,
+    this.campaignName,
     required this.dealerName,
     required this.campaignDate,
     required this.documentName,
@@ -56,6 +60,7 @@ class CampaignDetailRow {
   /// Creates a copy of this row with the given fields replaced.
   CampaignDetailRow copyWith({
     int? serialNumber,
+    String? campaignName,
     String? dealerName,
     String? campaignDate,
     String? documentName,
@@ -68,6 +73,7 @@ class CampaignDetailRow {
   }) {
     return CampaignDetailRow(
       serialNumber: serialNumber ?? this.serialNumber,
+      campaignName: campaignName ?? this.campaignName,
       dealerName: dealerName ?? this.dealerName,
       campaignDate: campaignDate ?? this.campaignDate,
       documentName: documentName ?? this.documentName,

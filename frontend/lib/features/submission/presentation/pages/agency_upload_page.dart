@@ -16,11 +16,13 @@ import '../widgets/campaign_list_section.dart';
 class AgencyUploadPage extends StatefulWidget {
   final String token;
   final String userName;
+  final String? submissionId; // If provided, we're in edit mode for an existing submission
 
   const AgencyUploadPage({
     super.key,
     required this.token,
     required this.userName,
+    this.submissionId,
   });
 
   @override
@@ -35,13 +37,18 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   bool _isExtractingPO = false;
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
+  bool _isLoadingExisting = false;
 
   String? _currentPackageId;
   PlatformFile? _purchaseOrder;
+  String? _existingPOFileName; // Server-side PO file name for edit mode
   List<PlatformFile> _additionalDocs = [];
+  Set<int> _selectedAdditionalDocIndices = {};
   Map<String, dynamic>? _poData;
   Map<String, String> _poFields = {};
   List<CampaignItemData> _campaigns = [];
+
+  bool get _isEditMode => widget.submissionId != null;
 
   final List<Map<String, dynamic>> _steps = [
     {'number': 1, 'title': 'Purchase Order', 'icon': Icons.description},
@@ -50,6 +57,112 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   ];
 
   double get _progressPercentage => (_currentStep / 3) * 100;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isEditMode) {
+      _currentPackageId = widget.submissionId;
+      _loadExistingSubmission();
+    }
+  }
+
+  /// Loads existing submission data for edit mode and pre-populates the wizard
+  Future<void> _loadExistingSubmission() async {
+    setState(() => _isLoadingExisting = true);
+    try {
+      final response = await _dio.get(
+        '/submissions/${widget.submissionId}',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200 && mounted) {
+        final data = response.data as Map<String, dynamic>;
+
+        // Extract PO data from documents
+        final documents = data['documents'] as List? ?? [];
+        final poDoc = documents.firstWhere(
+          (d) => d['type']?.toString() == 'PO',
+          orElse: () => null,
+        );
+        if (poDoc != null) {
+          _existingPOFileName = poDoc['filename']?.toString();
+          final extractedData = poDoc['extractedData'];
+          if (extractedData != null) {
+            Map<String, dynamic>? parsed;
+            if (extractedData is String && extractedData.isNotEmpty) {
+              parsed = _parseJsonString(extractedData);
+            } else if (extractedData is Map) {
+              parsed = Map<String, dynamic>.from(extractedData);
+            }
+            if (parsed != null) {
+              _poData = {
+                'poNumber': parsed['PONumber'] ?? parsed['poNumber'],
+                'totalAmount': parsed['TotalAmount'] ?? parsed['totalAmount'],
+                'date': parsed['PODate'] ?? parsed['poDate'] ?? parsed['Date'] ?? parsed['date'],
+                'vendorName': parsed['VendorName'] ?? parsed['vendorName'],
+              };
+            }
+          }
+        }
+
+        // Extract campaigns
+        final campaigns = data['campaigns'] as List? ?? [];
+        _campaigns = campaigns.map((c) {
+          final campaignId = c['id']?.toString() ?? UniqueKey().toString();
+
+          // Map invoices
+          final invoices = (c['invoices'] as List? ?? []).map((inv) {
+            return InvoiceItemData(
+              id: inv['id']?.toString() ?? UniqueKey().toString(),
+              invoiceNumber: inv['invoiceNumber']?.toString() ?? '',
+              invoiceDate: _formatDateForField(inv['invoiceDate']),
+              totalAmount: inv['totalAmount']?.toString() ?? '',
+              gstNumber: inv['gstNumber']?.toString() ?? '',
+              existingFileName: inv['fileName']?.toString(),
+            );
+          }).toList();
+
+          // Map photos
+          final photos = (c['photos'] as List? ?? []);
+          final existingPhotoNames = photos.map((p) => p['fileName']?.toString() ?? '').toList();
+
+          final campaign = CampaignItemData(
+            id: campaignId,
+            campaignName: c['campaignName']?.toString() ?? '',
+            startDate: _formatDateForField(c['startDate']),
+            endDate: _formatDateForField(c['endDate']),
+            workingDays: c['workingDays']?.toString() ?? '',
+            dealershipName: c['dealershipName']?.toString() ?? '',
+            dealershipAddress: c['dealershipAddress']?.toString() ?? '',
+            invoices: invoices.isNotEmpty ? invoices : null,
+          );
+          campaign.existingCostSummaryFileName = c['costSummaryFileName']?.toString();
+          campaign.existingActivitySummaryFileName = c['activitySummaryFileName']?.toString();
+          campaign.existingPhotoFileNames = existingPhotoNames.where((n) => n.isNotEmpty).toList();
+
+          return campaign;
+        }).toList();
+
+        setState(() => _isLoadingExisting = false);
+      }
+    } catch (e) {
+      debugPrint('Error loading existing submission: $e');
+      if (mounted) {
+        setState(() => _isLoadingExisting = false);
+        _showError('Failed to load submission data');
+      }
+    }
+  }
+
+  String _formatDateForField(dynamic dateValue) {
+    if (dateValue == null) return '';
+    try {
+      final dt = DateTime.parse(dateValue.toString());
+      return '${dt.day.toString().padLeft(2, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.year}';
+    } catch (_) {
+      return dateValue.toString();
+    }
+  }
 
   // ─── FILE PICKERS ────────────────────────────────────────────────────
   Future<void> _pickFile(Function(PlatformFile?) setter, {bool isPO = false}) async {
@@ -196,16 +309,71 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
     }
   }
 
+  Future<bool> _showDeleteConfirmation(String title, String message) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        content: Text(message, style: const TextStyle(fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.rejectedText, foregroundColor: Colors.white),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _deleteSelectedAdditionalDocs() async {
+    if (_selectedAdditionalDocIndices.isEmpty) return;
+    final count = _selectedAdditionalDocIndices.length;
+    final confirmed = await _showDeleteConfirmation(
+      'Delete Selected Documents',
+      'Are you sure you want to delete $count selected document${count > 1 ? 's' : ''}?',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      final sorted = _selectedAdditionalDocIndices.toList()..sort((a, b) => b.compareTo(a));
+      for (final i in sorted) {
+        if (i < _additionalDocs.length) _additionalDocs.removeAt(i);
+      }
+      _selectedAdditionalDocIndices = {};
+    });
+  }
+
+  Future<void> _removeSingleAdditionalDoc(int index) async {
+    final doc = _additionalDocs[index];
+    final confirmed = await _showDeleteConfirmation(
+      'Delete Document',
+      'Are you sure you want to delete "${doc.name}"?',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      _additionalDocs.removeAt(index);
+      _selectedAdditionalDocIndices.remove(index);
+      _selectedAdditionalDocIndices = _selectedAdditionalDocIndices
+          .map((i) => i > index ? i - 1 : i)
+          .toSet();
+    });
+  }
+
   // ─── NAVIGATION ──────────────────────────────────────────────────────
   void _handleNext() {
-    if (_currentStep == 1 && _purchaseOrder == null) { _showError('Please upload Purchase Order'); return; }
+    if (_currentStep == 1 && _purchaseOrder == null && _existingPOFileName == null) { _showError('Please upload Purchase Order'); return; }
     if (_currentStep == 2) {
       if (_campaigns.isEmpty) { _showError('Please add at least one campaign'); return; }
       final hasValidCampaign = _campaigns.any((camp) =>
         camp.campaignName.isNotEmpty &&
-        camp.invoices.any((inv) => inv.file != null) &&
-        camp.photos.isNotEmpty &&
-        camp.costSummaryFile != null);
+        (camp.invoices.any((inv) => inv.file != null || inv.existingFileName != null)) &&
+        (camp.photos.isNotEmpty || (camp.existingPhotoFileNames?.isNotEmpty ?? false)) &&
+        (camp.costSummaryFile != null || camp.existingCostSummaryFileName != null));
       if (!hasValidCampaign) { _showError('Please complete at least one campaign with name, invoice, photos, and cost summary'); return; }
     }
     if (_currentStep < 3) setState(() => _currentStep++);
@@ -223,43 +391,70 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   }
 
   Future<void> _handleSubmit() async {
-    if (_purchaseOrder == null) { _showError('Please upload Purchase Order'); return; }
-    if (_campaigns.isEmpty || !_campaigns.any((camp) => camp.invoices.any((inv) => inv.file != null))) {
+    if (_purchaseOrder == null && _existingPOFileName == null) { _showError('Please upload Purchase Order'); return; }
+    if (_campaigns.isEmpty || !_campaigns.any((camp) => camp.invoices.any((inv) => inv.file != null || inv.existingFileName != null))) {
       _showError('Please add at least one campaign with invoice'); return;
     }
     setState(() => _isUploading = true);
     try {
       String? packageId = _currentPackageId;
-      if (packageId == null && _purchaseOrder?.bytes != null) {
-        final poResponse = await _dio.post('/documents/upload',
-            data: FormData.fromMap({
-              'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!, filename: _purchaseOrder!.name),
-              'documentType': 'PO',
-            }),
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
-        if (poResponse.statusCode == 200) {
-          packageId = poResponse.data['packageId']?.toString();
+
+      if (!_isEditMode) {
+        // New submission: upload PO and create package
+        if (packageId == null && _purchaseOrder?.bytes != null) {
+          final poResponse = await _dio.post('/documents/upload',
+              data: FormData.fromMap({
+                'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!, filename: _purchaseOrder!.name),
+                'documentType': 'PO',
+              }),
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+          if (poResponse.statusCode == 200) {
+            packageId = poResponse.data['packageId']?.toString();
+          }
+        }
+        if (packageId == null) { _showError('Failed to create package'); return; }
+      } else {
+        // Edit mode: if a new PO was picked, upload it as replacement
+        if (_purchaseOrder?.bytes != null) {
+          await _dio.post('/documents/upload',
+              data: FormData.fromMap({
+                'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!, filename: _purchaseOrder!.name),
+                'documentType': 'PO',
+                'packageId': packageId,
+              }),
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
         }
       }
-      if (packageId == null) { _showError('Failed to create package'); return; }
+
       _showSuccess('Uploading campaigns and documents...');
 
       for (final campaign in _campaigns) {
-        final campaignResponse = await _dio.post(
-          '/hierarchical/$packageId/campaigns',
-          data: {
-            'campaignName': campaign.campaignName,
-            'startDate': campaign.startDate.isNotEmpty ? _parseDate(campaign.startDate)?.toIso8601String() : null,
-            'endDate': campaign.endDate.isNotEmpty ? _parseDate(campaign.endDate)?.toIso8601String() : null,
-            'workingDays': campaign.workingDays.isNotEmpty ? int.tryParse(campaign.workingDays) : null,
-            'dealershipName': campaign.dealershipName,
-            'dealershipAddress': campaign.dealershipAddress,
-          },
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-        );
-        final campaignId = campaignResponse.data['campaignId']?.toString();
-        if (campaignId == null) { debugPrint('Failed to create campaign: ${campaign.campaignName}'); continue; }
+        // In edit mode, campaigns already exist on server — only upload NEW files
+        // For new campaigns (no server-side data), create them
+        String? campaignId;
 
+        if (_isEditMode && campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_')) {
+          // Existing campaign — use its ID
+          campaignId = campaign.id;
+        } else {
+          // New campaign — create it
+          final campaignResponse = await _dio.post(
+            '/hierarchical/$packageId/campaigns',
+            data: {
+              'campaignName': campaign.campaignName,
+              'startDate': campaign.startDate.isNotEmpty ? _parseDate(campaign.startDate)?.toIso8601String() : null,
+              'endDate': campaign.endDate.isNotEmpty ? _parseDate(campaign.endDate)?.toIso8601String() : null,
+              'workingDays': campaign.workingDays.isNotEmpty ? int.tryParse(campaign.workingDays) : null,
+              'dealershipName': campaign.dealershipName,
+              'dealershipAddress': campaign.dealershipAddress,
+            },
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+          campaignId = campaignResponse.data['campaignId']?.toString();
+          if (campaignId == null) { debugPrint('Failed to create campaign: ${campaign.campaignName}'); continue; }
+        }
+
+        // Upload only NEW invoices (ones with file bytes, not existing server files)
         for (final invoice in campaign.invoices) {
           if (invoice.file?.bytes != null) {
             await _dio.post(
@@ -276,6 +471,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           }
         }
 
+        // Upload only NEW photos
         if (campaign.photos.isNotEmpty) {
           final photoFiles = campaign.photos
               .where((p) => p.bytes != null)
@@ -290,6 +486,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           }
         }
 
+        // Upload new cost summary only if a new file was picked
         if (campaign.costSummaryFile?.bytes != null) {
           await _dio.post(
             '/hierarchical/$packageId/campaigns/$campaignId/cost-summary',
@@ -300,6 +497,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           );
         }
 
+        // Upload new activity summary only if a new file was picked
         if (campaign.activitySummaryFile?.bytes != null) {
           await _dio.post(
             '/hierarchical/$packageId/campaigns/$campaignId/activity-summary',
@@ -311,6 +509,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         }
       }
 
+      // Additional docs (same for new and edit)
       final enquiryDoc = _additionalDocs.isNotEmpty ? _additionalDocs.first : null;
       if (enquiryDoc?.bytes != null) {
         await _dio.post(
@@ -335,9 +534,20 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         }
       }
 
-      _showSuccess('Submission complete! Processing in background...');
-      await _dio.post('/submissions/$packageId/process-async',
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+      if (_isEditMode) {
+        // Resubmit the package
+        await _dio.patch(
+          '/submissions/$packageId/resubmit',
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+        _showSuccess('Submission resubmitted successfully!');
+      } else {
+        // New submission: trigger processing
+        await _dio.post('/submissions/$packageId/process-async',
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+        _showSuccess('Submission complete! Processing in background...');
+      }
+
       if (mounted) _navigateToDashboard();
     } catch (e) {
       _showError('Failed to submit: $e');
@@ -434,7 +644,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           appBar: isMobile
               ? AppBar(
                   backgroundColor: const Color(0xFF1E3A8A),
-                  title: const Text('Create New Request', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                  title: Text(_isEditMode ? 'Edit Submission' : 'Create New Request', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                   iconTheme: const IconThemeData(color: Colors.white),
                   leading: IconButton(
                     icon: const Icon(Icons.arrow_back),
@@ -484,6 +694,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                     if (_isChatOpen && !isMobile)
                       ChatSidePanel(
                         token: widget.token,
+                        userName: widget.userName,
                         deviceType: device,
                         onClose: () => setState(() => _isChatOpen = false),
                       ),
@@ -492,7 +703,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
           floatingActionButton: (_isChatOpen && !isMobile)
               ? null
               : Builder(
@@ -529,7 +740,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         color: Colors.white,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
-      child: const Text('Create New Request', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF111827))),
+      child: Text(_isEditMode ? 'Edit Submission' : 'Create New Request', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF111827))),
     );
   }
 
@@ -687,20 +898,41 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
 
   // ─── STEP CONTENT ─────────────────────────────────────────────────────
   Widget _buildStepContent(DeviceType device) {
+    if (_isLoadingExisting) {
+      return const Center(child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text('Loading submission data...', style: TextStyle(color: AppColors.textSecondary)),
+        ],
+      ));
+    }
     Widget content;
     switch (_currentStep) {
       case 1:
         content = Column(
           children: [
-            _buildFileUploadCard(
-              'Upload Purchase Order',
-              'Upload the official Purchase Order document (PDF only)',
-              Icons.description,
-              _purchaseOrder,
-              () => _pickFile((f) => _purchaseOrder = f, isPO: true),
-              () => setState(() { _purchaseOrder = null; _poData = null; _poFields = {}; }),
-              device,
-            ),
+            // In edit mode with existing PO and no new PO picked, show existing file
+            if (_isEditMode && _existingPOFileName != null && _purchaseOrder == null)
+              _buildExistingFileCard(
+                'Purchase Order',
+                'Existing PO document',
+                Icons.description,
+                _existingPOFileName!,
+                () => _pickFile((f) => _purchaseOrder = f, isPO: true),
+                device,
+              )
+            else
+              _buildFileUploadCard(
+                'Upload Purchase Order',
+                'Upload the official Purchase Order document (PDF only)',
+                Icons.description,
+                _purchaseOrder,
+                () => _pickFile((f) => _purchaseOrder = f, isPO: true),
+                () => setState(() { _purchaseOrder = null; _poData = null; _poFields = {}; }),
+                device,
+              ),
             const SizedBox(height: 16),
             if (_isExtractingPO)
               _buildExtractionLoadingCard('Extracting PO details...', 'AI is analyzing your Purchase Order document')
@@ -852,8 +1084,86 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
     );
   }
 
+  /// Card showing an existing server-side file with option to replace
+  Widget _buildExistingFileCard(String title, String subtitle, IconData icon,
+      String existingFileName, VoidCallback onReplace, DeviceType device) {
+    final pad = device == DeviceType.mobile ? 20.0 : 24.0;
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(pad),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border.withOpacity(0.5), width: 1),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                child: Icon(icon, color: AppColors.primary, size: 24),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                    const SizedBox(height: 4),
+                    Text(subtitle, style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.approvedBackground,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.approvedBorder, width: 1),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
+                  child: const Icon(Icons.check_circle, color: AppColors.approvedText, size: 24),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(existingFileName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.approvedText), overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 4),
+                      Text('Already uploaded', style: TextStyle(fontSize: 12, color: AppColors.approvedText.withOpacity(0.7))),
+                    ],
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: onReplace,
+                  icon: const Icon(Icons.swap_horiz, size: 18),
+                  label: const Text('Replace'),
+                  style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAdditionalDocsStep(DeviceType device) {
     final pad = device == DeviceType.mobile ? 10.0 : 14.0;
+    final allSelected = _additionalDocs.isNotEmpty && _selectedAdditionalDocIndices.length == _additionalDocs.length;
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(pad),
@@ -889,32 +1199,99 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           ),
           if (_additionalDocs.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text('${_additionalDocs.length} document${_additionalDocs.length > 1 ? 's' : ''} selected', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
-            const SizedBox(height: 6),
-            ..._additionalDocs.asMap().entries.map((e) => Container(
-              margin: const EdgeInsets.only(bottom: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(6), border: Border.all(color: AppColors.border)),
-              child: Row(
-                children: [
-                  const Icon(Icons.insert_drive_file, color: AppColors.primary, size: 16),
+            Row(
+              children: [
+                SizedBox(
+                  height: 24,
+                  width: 24,
+                  child: Checkbox(
+                    value: allSelected,
+                    tristate: _selectedAdditionalDocIndices.isNotEmpty && !allSelected,
+                    onChanged: (val) {
+                      setState(() {
+                        if (allSelected) {
+                          _selectedAdditionalDocIndices = {};
+                        } else {
+                          _selectedAdditionalDocIndices = Set.from(List.generate(_additionalDocs.length, (i) => i));
+                        }
+                      });
+                    },
+                    activeColor: AppColors.primary,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  allSelected ? 'Deselect All' : 'Select All',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                ),
+                const Spacer(),
+                Text('${_additionalDocs.length} document${_additionalDocs.length > 1 ? 's' : ''}',
+                    style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
+                if (_selectedAdditionalDocIndices.isNotEmpty) ...[
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(e.value.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
-                        Text('${(e.value.size / 1024).toStringAsFixed(1)} KB', style: const TextStyle(fontSize: 9, color: AppColors.textSecondary)),
-                      ],
+                  TextButton.icon(
+                    onPressed: _deleteSelectedAdditionalDocs,
+                    icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.rejectedText),
+                    label: Text(
+                      'Delete Selected (${_selectedAdditionalDocIndices.length})',
+                      style: const TextStyle(fontSize: 12, color: AppColors.rejectedText),
                     ),
                   ),
-                  GestureDetector(
-                    onTap: () => setState(() => _additionalDocs.removeAt(e.key)),
-                    child: const Icon(Icons.close, color: AppColors.rejectedText, size: 16),
-                  ),
                 ],
-              ),
-            )),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ..._additionalDocs.asMap().entries.map((e) {
+              final isSelected = _selectedAdditionalDocIndices.contains(e.key);
+              return Container(
+                margin: const EdgeInsets.only(bottom: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isSelected ? AppColors.primary.withOpacity(0.05) : Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: isSelected ? AppColors.primary : AppColors.border),
+                ),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: Checkbox(
+                        value: isSelected,
+                        onChanged: (val) {
+                          setState(() {
+                            if (val == true) {
+                              _selectedAdditionalDocIndices.add(e.key);
+                            } else {
+                              _selectedAdditionalDocIndices.remove(e.key);
+                            }
+                          });
+                        },
+                        activeColor: AppColors.primary,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.insert_drive_file, color: AppColors.primary, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(e.value.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
+                          Text('${(e.value.size / 1024).toStringAsFixed(1)} KB', style: const TextStyle(fontSize: 9, color: AppColors.textSecondary)),
+                        ],
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => _removeSingleAdditionalDoc(e.key),
+                      child: const Icon(Icons.close, color: AppColors.rejectedText, size: 16),
+                    ),
+                  ],
+                ),
+              );
+            }),
           ],
         ],
       ),
@@ -967,7 +1344,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             icon: _isUploading
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)))
                 : const Icon(Icons.check_circle_rounded, size: 20),
-            label: Text(_isUploading ? 'Submitting...' : 'Submit for Review', style: const TextStyle(fontWeight: FontWeight.w700)),
+            label: Text(_isUploading ? 'Submitting...' : (_isEditMode ? 'Resubmit for Review' : 'Submit for Review'), style: const TextStyle(fontWeight: FontWeight.w700)),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.approvedText,
               foregroundColor: Colors.white,

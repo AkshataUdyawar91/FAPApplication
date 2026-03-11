@@ -267,6 +267,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                     ),
                     if (_isChatOpen && !isMobile) ChatSidePanel(
                       token: widget.token,
+                      userName: widget.userName,
                       deviceType: device,
                       onClose: () => setState(() => _isChatOpen = false),
                     ),
@@ -275,7 +276,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
           floatingActionButton: (_isChatOpen && !isMobile) ? null : Builder(
             builder: (scaffoldContext) => Padding(
               padding: const EdgeInsets.only(bottom: 16, right: 4),

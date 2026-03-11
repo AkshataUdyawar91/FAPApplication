@@ -50,6 +50,7 @@ class MyApp extends StatelessWidget {
               builder: (context) => AgencyUploadPage(
                 token: args?['token'] ?? '',
                 userName: args?['userName'] ?? 'User',
+                submissionId: args?['submissionId'],
               ),
             );
           case '/agency/submission-detail':

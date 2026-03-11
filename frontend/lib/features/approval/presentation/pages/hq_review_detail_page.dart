@@ -414,6 +414,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                     if (_isChatOpen && !isMobile)
                       ChatSidePanel(
                         token: widget.token,
+                        userName: widget.userName,
                         deviceType: device,
                         onClose: () => setState(() => _isChatOpen = false),
                       ),
@@ -422,7 +423,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
           floatingActionButton: (_isChatOpen && !isMobile)
               ? null
               : Builder(

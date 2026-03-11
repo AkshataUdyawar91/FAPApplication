@@ -14,6 +14,7 @@ class InvoiceItemData {
   String totalAmount;
   String gstNumber;
   bool isExtracting;
+  String? existingFileName; // Server-side file name for edit mode
 
   InvoiceItemData({
     required this.id,
@@ -23,6 +24,7 @@ class InvoiceItemData {
     this.totalAmount = '',
     this.gstNumber = '',
     this.isExtracting = false,
+    this.existingFileName,
   });
 }
 
@@ -39,6 +41,10 @@ class CampaignItemData {
   PlatformFile? activitySummaryFile;
   List<PlatformFile> photos;
   List<InvoiceItemData> invoices;
+  // Server-side file names for edit mode
+  String? existingCostSummaryFileName;
+  String? existingActivitySummaryFileName;
+  List<String>? existingPhotoFileNames;
 
   CampaignItemData({
     required this.id,
@@ -52,6 +58,9 @@ class CampaignItemData {
     this.activitySummaryFile,
     List<PlatformFile>? photos,
     List<InvoiceItemData>? invoices,
+    this.existingCostSummaryFileName,
+    this.existingActivitySummaryFileName,
+    this.existingPhotoFileNames,
   }) : photos = photos ?? [],
        invoices = invoices ?? [InvoiceItemData(id: '${id}_invoice_1')];
 
@@ -80,6 +89,8 @@ class CampaignListSection extends StatefulWidget {
 class _CampaignListSectionState extends State<CampaignListSection> {
   late List<CampaignItemData> _campaigns;
   int _expandedCampaignIndex = 0;
+  // Multi-select state for photos per campaign (campaignIndex -> set of photo indices)
+  final Map<int, Set<int>> _selectedPhotoIndices = {};
 
   @override
   void initState() {
@@ -97,10 +108,40 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     widget.onCampaignsChanged(_campaigns);
   }
 
-  void _removeCampaign(int index) {
+  Future<bool> _showConfirmationDialog(String title, String message) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        content: Text(message, style: const TextStyle(fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.rejectedText, foregroundColor: Colors.white),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _removeCampaign(int index) async {
     if (_campaigns.length > 1) {
+      final campaign = _campaigns[index];
+      final name = campaign.campaignName.isNotEmpty ? campaign.campaignName : 'Campaign ${index + 1}';
+      final confirmed = await _showConfirmationDialog(
+        'Delete Campaign',
+        'Are you sure you want to delete "$name"? This will also remove all its invoices, photos, and documents.',
+      );
+      if (!confirmed || !mounted) return;
       setState(() {
         _campaigns.removeAt(index);
+        _selectedPhotoIndices.remove(index);
         if (_expandedCampaignIndex >= _campaigns.length) {
           _expandedCampaignIndex = _campaigns.length - 1;
         }
@@ -119,8 +160,15 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     widget.onCampaignsChanged(_campaigns);
   }
 
-  void _removeInvoice(int campaignIndex, int invoiceIndex) {
+  Future<void> _removeInvoice(int campaignIndex, int invoiceIndex) async {
     if (_campaigns[campaignIndex].invoices.length > 1) {
+      final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
+      final label = invoice.invoiceNumber.isNotEmpty ? 'Invoice #${invoice.invoiceNumber}' : 'Invoice ${invoiceIndex + 1}';
+      final confirmed = await _showConfirmationDialog(
+        'Delete Invoice',
+        'Are you sure you want to delete "$label"?',
+      );
+      if (!confirmed || !mounted) return;
       setState(() {
         _campaigns[campaignIndex].invoices.removeAt(invoiceIndex);
       });
@@ -384,8 +432,45 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     }
   }
 
-  void _removePhoto(int campaignIndex, int photoIndex) {
-    setState(() => _campaigns[campaignIndex].photos.removeAt(photoIndex));
+  Future<void> _removePhoto(int campaignIndex, int photoIndex) async {
+    final photo = _campaigns[campaignIndex].photos[photoIndex];
+    final confirmed = await _showConfirmationDialog(
+      'Delete Photo',
+      'Are you sure you want to delete "${photo.name}"?',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      _campaigns[campaignIndex].photos.removeAt(photoIndex);
+      // Adjust selected indices after removal
+      final selected = _selectedPhotoIndices[campaignIndex];
+      if (selected != null) {
+        selected.remove(photoIndex);
+        _selectedPhotoIndices[campaignIndex] = selected
+            .map((i) => i > photoIndex ? i - 1 : i)
+            .toSet();
+      }
+    });
+    widget.onCampaignsChanged(_campaigns);
+  }
+
+  Future<void> _deleteSelectedPhotos(int campaignIndex) async {
+    final selected = _selectedPhotoIndices[campaignIndex];
+    if (selected == null || selected.isEmpty) return;
+    final count = selected.length;
+    final confirmed = await _showConfirmationDialog(
+      'Delete Selected Photos',
+      'Are you sure you want to delete $count selected photo${count > 1 ? 's' : ''}?',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      final sortedIndices = selected.toList()..sort((a, b) => b.compareTo(a));
+      for (final i in sortedIndices) {
+        if (i < _campaigns[campaignIndex].photos.length) {
+          _campaigns[campaignIndex].photos.removeAt(i);
+        }
+      }
+      _selectedPhotoIndices[campaignIndex] = {};
+    });
     widget.onCampaignsChanged(_campaigns);
   }
 
@@ -545,7 +630,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                           style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                         ),
                         Text(
-                          '${campaign.invoices.length} invoice${campaign.invoices.length > 1 ? 's' : ''} • ${campaign.photos.length} photo${campaign.photos.length != 1 ? 's' : ''}',
+                          '${campaign.invoices.length} invoice${campaign.invoices.length > 1 ? 's' : ''} • ${campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0)} photo${(campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0)) != 1 ? 's' : ''}',
                           style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                         ),
                       ],
@@ -767,6 +852,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   }
 
   Widget _buildInvoiceItem(InvoiceItemData invoice, int campaignIndex, int invoiceIndex) {
+    final hasExistingFile = invoice.existingFileName != null && invoice.existingFileName!.isNotEmpty;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -796,28 +882,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
             ],
           ),
           const SizedBox(height: 8),
-          // Invoice file upload
-          if (invoice.file == null)
-            InkWell(
-              onTap: () => _pickInvoiceFile(campaignIndex, invoiceIndex),
-              borderRadius: BorderRadius.circular(6),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  border: Border.all(color: AppColors.primary.withOpacity(0.3)),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.cloud_upload_outlined, color: AppColors.primary.withOpacity(0.6), size: 18),
-                    const SizedBox(width: 8),
-                    const Text('Upload Invoice (PDF)', style: TextStyle(color: AppColors.primary, fontSize: 12)),
-                  ],
-                ),
-              ),
-            )
-          else
+          // Invoice file upload or existing file indicator
+          if (invoice.file != null)
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -838,6 +904,55 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                     child: const Icon(Icons.close, size: 14),
                   ),
                 ],
+              ),
+            )
+          else if (hasExistingFile)
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.approvedBackground,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppColors.approvedBorder),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: AppColors.approvedText, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(invoice.existingFileName!, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+                        Text('Already uploaded', style: TextStyle(fontSize: 10, color: AppColors.approvedText.withOpacity(0.7))),
+                      ],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => _pickInvoiceFile(campaignIndex, invoiceIndex),
+                    style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                    child: const Text('Replace', style: TextStyle(fontSize: 11, color: AppColors.primary)),
+                  ),
+                ],
+              ),
+            )
+          else
+            InkWell(
+              onTap: () => _pickInvoiceFile(campaignIndex, invoiceIndex),
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.cloud_upload_outlined, color: AppColors.primary.withOpacity(0.6), size: 18),
+                    const SizedBox(width: 8),
+                    const Text('Upload Invoice (PDF)', style: TextStyle(color: AppColors.primary, fontSize: 12)),
+                  ],
+                ),
               ),
             ),
           const SizedBox(height: 8),
@@ -1007,15 +1122,53 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
   Widget _buildPhotosSection(CampaignItemData campaign, int campaignIndex) {
     final photoCount = campaign.photos.length;
-    final canAddMore = photoCount < CampaignItemData.maxPhotos;
+    final existingPhotoCount = campaign.existingPhotoFileNames?.length ?? 0;
+    final totalPhotoCount = photoCount + existingPhotoCount;
+    final canAddMore = totalPhotoCount < CampaignItemData.maxPhotos;
+    final selected = _selectedPhotoIndices[campaignIndex] ?? {};
+    final allSelected = photoCount > 0 && selected.length == photoCount;
     
     return _buildSectionCard(
-      'Photos ($photoCount/${CampaignItemData.maxPhotos})',
+      'Photos ($totalPhotoCount/${CampaignItemData.maxPhotos})',
       Icons.photo_library,
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (campaign.photos.isEmpty)
+          // Show existing server-side photos first
+          if (existingPhotoCount > 0) ...[
+            Text('Existing Photos ($existingPhotoCount)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: campaign.existingPhotoFileNames!.map((name) {
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.approvedBackground,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: AppColors.approvedBorder),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.image, size: 14, color: AppColors.approvedText),
+                      const SizedBox(width: 4),
+                      Text(
+                        name.length > 20 ? '${name.substring(0, 20)}...' : name,
+                        style: const TextStyle(fontSize: 11, color: AppColors.approvedText),
+                      ),
+                      const SizedBox(width: 4),
+                      Text('✓', style: TextStyle(fontSize: 10, color: AppColors.approvedText.withOpacity(0.7))),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+            if (photoCount > 0) const SizedBox(height: 12),
+          ],
+          // New photos section
+          if (campaign.photos.isEmpty && existingPhotoCount == 0)
             InkWell(
               onTap: canAddMore ? () => _pickPhotos(campaignIndex) : null,
               borderRadius: BorderRadius.circular(8),
@@ -1038,25 +1191,90 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                 ),
               ),
             )
-          else
+          else if (campaign.photos.isNotEmpty)
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (existingPhotoCount > 0)
+                  Text('New Photos ($photoCount)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                if (existingPhotoCount > 0) const SizedBox(height: 6),
+                // Select All + Delete Selected row
+                Row(
+                  children: [
+                    SizedBox(
+                      height: 24,
+                      width: 24,
+                      child: Checkbox(
+                        value: allSelected,
+                        tristate: selected.isNotEmpty && !allSelected,
+                        onChanged: (val) {
+                          setState(() {
+                            if (allSelected) {
+                              _selectedPhotoIndices[campaignIndex] = {};
+                            } else {
+                              _selectedPhotoIndices[campaignIndex] = Set.from(List.generate(photoCount, (i) => i));
+                            }
+                          });
+                        },
+                        activeColor: AppColors.primary,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      allSelected ? 'Deselect All' : 'Select All',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                    ),
+                    const Spacer(),
+                    if (selected.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: () => _deleteSelectedPhotos(campaignIndex),
+                        icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.rejectedText),
+                        label: Text(
+                          'Delete Selected (${selected.length})',
+                          style: const TextStyle(fontSize: 12, color: AppColors.rejectedText),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
                   children: List.generate(campaign.photos.length, (photoIndex) {
                     final photo = campaign.photos[photoIndex];
+                    final isSelected = selected.contains(photoIndex);
                     return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                       decoration: BoxDecoration(
-                        color: AppColors.approvedBackground,
+                        color: isSelected ? AppColors.primary.withOpacity(0.1) : AppColors.approvedBackground,
                         borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: AppColors.approvedBorder),
+                        border: Border.all(color: isSelected ? AppColors.primary : AppColors.approvedBorder),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: Checkbox(
+                              value: isSelected,
+                              onChanged: (val) {
+                                setState(() {
+                                  final s = _selectedPhotoIndices[campaignIndex] ?? {};
+                                  if (val == true) {
+                                    s.add(photoIndex);
+                                  } else {
+                                    s.remove(photoIndex);
+                                  }
+                                  _selectedPhotoIndices[campaignIndex] = s;
+                                });
+                              },
+                              activeColor: AppColors.primary,
+                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
                           const Icon(Icons.image, size: 14, color: AppColors.approvedText),
                           const SizedBox(width: 4),
                           Text(
@@ -1073,19 +1291,19 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                     );
                   }),
                 ),
-                const SizedBox(height: 8),
-                if (canAddMore)
-                  TextButton.icon(
-                    onPressed: () => _pickPhotos(campaignIndex),
-                    icon: const Icon(Icons.add_photo_alternate, size: 14),
-                    label: Text('Add More (${CampaignItemData.maxPhotos - photoCount} remaining)'),
-                  )
-                else
-                  Text(
-                    'Maximum ${CampaignItemData.maxPhotos} photos reached',
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                  ),
               ],
+            ),
+          const SizedBox(height: 8),
+          if (canAddMore)
+            TextButton.icon(
+              onPressed: () => _pickPhotos(campaignIndex),
+              icon: const Icon(Icons.add_photo_alternate, size: 14),
+              label: Text('Add ${campaign.photos.isEmpty && existingPhotoCount > 0 ? '' : 'More '}Photos (${CampaignItemData.maxPhotos - totalPhotoCount} remaining)'),
+            )
+          else
+            Text(
+              'Maximum ${CampaignItemData.maxPhotos} photos reached',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
             ),
         ],
       ),
@@ -1093,6 +1311,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   }
 
   Widget _buildCostSummarySection(CampaignItemData campaign, int campaignIndex) {
+    final hasExisting = campaign.existingCostSummaryFileName != null && campaign.existingCostSummaryFileName!.isNotEmpty;
     return _buildSectionCard(
       'Cost Summary',
       Icons.receipt,
@@ -1104,28 +1323,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
             style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 12),
-          if (campaign.costSummaryFile == null)
-            InkWell(
-              onTap: () => _pickCostSummaryFile(campaignIndex),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  border: Border.all(color: AppColors.primary.withOpacity(0.3)),
-                  borderRadius: BorderRadius.circular(8),
-                  color: AppColors.primary.withOpacity(0.02),
-                ),
-                child: Column(
-                  children: [
-                    Icon(Icons.cloud_upload_outlined, size: 28, color: AppColors.primary.withOpacity(0.6)),
-                    const SizedBox(height: 8),
-                    const Text('Click to upload', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w500)),
-                  ],
-                ),
-              ),
-            )
-          else
+          if (campaign.costSummaryFile != null)
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -1145,7 +1343,12 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                     ),
                   ),
                   IconButton(
-                    onPressed: () {
+                    onPressed: () async {
+                      final confirmed = await _showConfirmationDialog(
+                        'Remove Cost Summary',
+                        'Are you sure you want to remove "${campaign.costSummaryFile!.name}"?',
+                      );
+                      if (!confirmed || !mounted) return;
                       setState(() => campaign.costSummaryFile = null);
                       widget.onCampaignsChanged(_campaigns);
                     },
@@ -1155,27 +1358,38 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                   ),
                 ],
               ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActivitySummarySection(CampaignItemData campaign, int campaignIndex) {
-    return _buildSectionCard(
-      'Activity Summary',
-      Icons.summarize,
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Upload activity summary document (Excel/PDF)',
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 12),
-          if (campaign.activitySummaryFile == null)
+            )
+          else if (hasExisting)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.approvedBackground,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.approvedBorder),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: AppColors.approvedText, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(campaign.existingCostSummaryFileName!, style: const TextStyle(fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+                        Text('Already uploaded', style: TextStyle(fontSize: 11, color: AppColors.approvedText.withOpacity(0.7))),
+                      ],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => _pickCostSummaryFile(campaignIndex),
+                    child: const Text('Replace', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            )
+          else
             InkWell(
-              onTap: () => _pickActivitySummaryFile(campaignIndex),
+              onTap: () => _pickCostSummaryFile(campaignIndex),
               borderRadius: BorderRadius.circular(8),
               child: Container(
                 width: double.infinity,
@@ -1193,8 +1407,26 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                   ],
                 ),
               ),
-            )
-          else
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActivitySummarySection(CampaignItemData campaign, int campaignIndex) {
+    final hasExisting = campaign.existingActivitySummaryFileName != null && campaign.existingActivitySummaryFileName!.isNotEmpty;
+    return _buildSectionCard(
+      'Activity Summary',
+      Icons.summarize,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Upload activity summary document (Excel/PDF)',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 12),
+          if (campaign.activitySummaryFile != null)
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -1214,7 +1446,12 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                     ),
                   ),
                   IconButton(
-                    onPressed: () {
+                    onPressed: () async {
+                      final confirmed = await _showConfirmationDialog(
+                        'Remove Activity Summary',
+                        'Are you sure you want to remove "${campaign.activitySummaryFile!.name}"?',
+                      );
+                      if (!confirmed || !mounted) return;
                       setState(() => campaign.activitySummaryFile = null);
                       widget.onCampaignsChanged(_campaigns);
                     },
@@ -1223,6 +1460,55 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                     constraints: const BoxConstraints(),
                   ),
                 ],
+              ),
+            )
+          else if (hasExisting)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.approvedBackground,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.approvedBorder),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: AppColors.approvedText, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(campaign.existingActivitySummaryFileName!, style: const TextStyle(fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+                        Text('Already uploaded', style: TextStyle(fontSize: 11, color: AppColors.approvedText.withOpacity(0.7))),
+                      ],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => _pickActivitySummaryFile(campaignIndex),
+                    child: const Text('Replace', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            )
+          else
+            InkWell(
+              onTap: () => _pickActivitySummaryFile(campaignIndex),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                  borderRadius: BorderRadius.circular(8),
+                  color: AppColors.primary.withOpacity(0.02),
+                ),
+                child: Column(
+                  children: [
+                    Icon(Icons.cloud_upload_outlined, size: 28, color: AppColors.primary.withOpacity(0.6)),
+                    const SizedBox(height: 8),
+                    const Text('Click to upload', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w500)),
+                  ],
+                ),
               ),
             ),
         ],

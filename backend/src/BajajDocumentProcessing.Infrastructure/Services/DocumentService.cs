@@ -161,23 +161,75 @@ public class DocumentService : IDocumentService
             "Document uploaded: {DocumentId}, Type: {DocumentType}, Size: {Size} bytes, Package: {PackageId}",
             document.Id, documentType, file.Length, actualPackageId);
 
-        // Trigger extraction asynchronously (fire and forget)
-        _ = Task.Run(async () =>
+        // IMMEDIATE EXTRACTION: Extract critical UI fields synchronously for instant feedback
+        string? immediateExtractedData = null;
+        if (documentType == DocumentType.PO || documentType == DocumentType.Invoice)
         {
             try
             {
-                var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
-                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] Starting for doc {document.Id}, type: {documentType}, blob: {document.BlobUrl}\n");
-                await ExtractDocumentDataAsync(document.Id, document.BlobUrl, documentType);
-                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] Completed for doc {document.Id}\n");
+                _logger.LogInformation("Starting immediate extraction for {DocumentType} {DocumentId}", documentType, document.Id);
+                
+                if (documentType == DocumentType.PO)
+                {
+                    var poData = await _documentAgent.ExtractPOAsync(blobUrl);
+                    immediateExtractedData = System.Text.Json.JsonSerializer.Serialize(poData);
+                    
+                    // Save immediately to database
+                    document.ExtractedDataJson = immediateExtractedData;
+                    document.ExtractionConfidence = poData.FieldConfidences.Values.Any() 
+                        ? poData.FieldConfidences.Values.Average() 
+                        : 0.5;
+                    await _context.SaveChangesAsync();
+                    
+                    _logger.LogInformation("Immediate PO extraction completed: {PONumber}, Amount: {Amount}", 
+                        poData.PONumber, poData.TotalAmount);
+                }
+                else if (documentType == DocumentType.Invoice)
+                {
+                    var invoiceData = await _documentAgent.ExtractInvoiceAsync(blobUrl);
+                    immediateExtractedData = System.Text.Json.JsonSerializer.Serialize(invoiceData);
+                    
+                    // Save immediately to database
+                    document.ExtractedDataJson = immediateExtractedData;
+                    document.ExtractionConfidence = invoiceData.FieldConfidences.Values.Any() 
+                        ? invoiceData.FieldConfidences.Values.Average() 
+                        : 0.5;
+                    await _context.SaveChangesAsync();
+                    
+                    _logger.LogInformation("Immediate Invoice extraction completed: {InvoiceNumber}, Amount: {Amount}", 
+                        invoiceData.InvoiceNumber, invoiceData.TotalAmount);
+                }
             }
             catch (Exception ex)
             {
-                var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
-                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] FAILED for doc {document.Id}: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n");
-                _logger.LogError(ex, "Error extracting document {DocumentId}", document.Id);
+                _logger.LogError(ex, "Immediate extraction failed for {DocumentType} {DocumentId}, will retry in background", 
+                    documentType, document.Id);
+                // Continue - background extraction will retry
             }
-        });
+        }
+
+        // BACKGROUND EXTRACTION: For other document types or if immediate extraction failed
+        if (string.IsNullOrEmpty(immediateExtractedData) && 
+            (documentType == DocumentType.CostSummary || documentType == DocumentType.Activity || 
+             documentType == DocumentType.Photo || documentType == DocumentType.EnquiryDump))
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] Starting background for doc {document.Id}, type: {documentType}\n");
+                    await ExtractDocumentDataAsync(document.Id, document.BlobUrl, documentType);
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] Completed for doc {document.Id}\n");
+                }
+                catch (Exception ex)
+                {
+                    var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] FAILED for doc {document.Id}: {ex.GetType().Name}: {ex.Message}\n");
+                    _logger.LogError(ex, "Error extracting document {DocumentId}", document.Id);
+                }
+            });
+        }
 
         return new UploadDocumentResponse
         {
@@ -187,7 +239,8 @@ public class DocumentService : IDocumentService
             FileSizeBytes = document.FileSizeBytes,
             DocumentType = document.Type,
             BlobUrl = document.BlobUrl,
-            UploadedAt = document.CreatedAt
+            UploadedAt = document.CreatedAt,
+            ExtractedDataJson = immediateExtractedData  // Return immediately extracted data
         };
     }
 

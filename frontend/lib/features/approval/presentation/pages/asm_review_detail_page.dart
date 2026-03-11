@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
@@ -403,6 +404,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                     if (_isChatOpen && !isMobile)
                       ChatSidePanel(
                         token: widget.token,
+                        userName: widget.userName,
                         deviceType: device,
                         onClose: () => setState(() => _isChatOpen = false),
                       ),
@@ -411,7 +413,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
           floatingActionButton: (_isChatOpen && !isMobile)
               ? null
               : Builder(
