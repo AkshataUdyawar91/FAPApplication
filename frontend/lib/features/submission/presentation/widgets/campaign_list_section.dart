@@ -1,9 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
 import '../../../../core/theme/app_colors.dart';
+import '../../camera_photo_upload/presentation/widgets/photo_preview.dart';
+import '../../camera_photo_upload/presentation/widgets/web_camera_dialog.dart';
 
 /// Data class for an invoice (child of campaign)
 class InvoiceItemData {
@@ -429,6 +433,85 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       }
     } catch (e) {
       debugPrint('Error picking photos: $e');
+    }
+  }
+
+  /// Captures a photo using the device webcam via [WebCameraDialog].
+  ///
+  /// Opens a dialog with a live webcam preview using the browser's
+  /// getUserMedia API. Works on desktop browsers and mobile web views.
+  /// Shows a preview on success and adds the confirmed photo to the
+  /// campaign's photo list as a [PlatformFile].
+  Future<void> _capturePhotoWithCamera(int campaignIndex) async {
+    final campaign = _campaigns[campaignIndex];
+    final existingCount = campaign.existingPhotoFileNames?.length ?? 0;
+    final totalPhotos = campaign.photos.length + existingCount;
+    final remainingSlots = CampaignItemData.maxPhotos - totalPhotos;
+
+    if (remainingSlots <= 0) {
+      _showError(
+        'Maximum ${CampaignItemData.maxPhotos} photos allowed per campaign',
+      );
+      return;
+    }
+
+    try {
+      // Open webcam dialog — returns a map with imageData, width, height, mimeType.
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const WebCameraDialog(),
+      );
+
+      if (!mounted || result == null) return;
+
+      final imageData = result['imageData'] as Uint8List;
+
+      // Show preview dialog with confirm / retake / discard.
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => PhotoPreview(
+          imageData: imageData,
+          onConfirm: () => Navigator.of(ctx).pop(true),
+          onRetake: () => Navigator.of(ctx).pop(null),
+          onDiscard: () => Navigator.of(ctx).pop(false),
+        ),
+      );
+
+      if (!mounted) return;
+
+      if (confirmed == true) {
+        final fileName =
+            'camera_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final platformFile = PlatformFile(
+          name: fileName,
+          size: imageData.length,
+          bytes: imageData,
+        );
+
+        setState(() => campaign.photos.add(platformFile));
+        widget.onCampaignsChanged(_campaigns);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Photo captured and added successfully'),
+            backgroundColor: Color(0xFF10B981),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } else if (confirmed == null) {
+        // User chose retake — re-open camera.
+        await _capturePhotoWithCamera(campaignIndex);
+      }
+      // confirmed == false means discard — do nothing.
+    } catch (e) {
+      debugPrint('Error capturing photo: $e');
+      if (mounted) {
+        _showError(
+          'Failed to capture photo. Please try again or use file picker.',
+        );
+      }
     }
   }
 
@@ -1187,6 +1270,13 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                     const Text('Upload photos', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w500)),
                     const SizedBox(height: 4),
                     Text('Max ${CampaignItemData.maxPhotos} photos per campaign', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: () => _capturePhotoWithCamera(campaignIndex),
+                      icon: const Icon(Icons.camera_alt, size: 16),
+                      label: const Text('Or take a photo with camera'),
+                      style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+                    ),
                   ],
                 ),
               ),
@@ -1295,10 +1385,22 @@ class _CampaignListSectionState extends State<CampaignListSection> {
             ),
           const SizedBox(height: 8),
           if (canAddMore)
-            TextButton.icon(
-              onPressed: () => _pickPhotos(campaignIndex),
-              icon: const Icon(Icons.add_photo_alternate, size: 14),
-              label: Text('Add ${campaign.photos.isEmpty && existingPhotoCount > 0 ? '' : 'More '}Photos (${CampaignItemData.maxPhotos - totalPhotoCount} remaining)'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                TextButton.icon(
+                  onPressed: () => _pickPhotos(campaignIndex),
+                  icon: const Icon(Icons.add_photo_alternate, size: 14),
+                  label: Text('Add ${campaign.photos.isEmpty && existingPhotoCount > 0 ? '' : 'More '}Photos (${CampaignItemData.maxPhotos - totalPhotoCount} remaining)'),
+                ),
+                TextButton.icon(
+                  onPressed: () => _capturePhotoWithCamera(campaignIndex),
+                  icon: const Icon(Icons.camera_alt, size: 14),
+                  label: const Text('Take Photo'),
+                  style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+                ),
+              ],
             )
           else
             Text(
