@@ -142,6 +142,9 @@ public static class DependencyInjection
             return config;
         });
         services.AddSingleton<IBot, TeamsBotService>();
+
+        // Teams proactive notification service (Singleton — depends on Singleton adapter + PilotConfig)
+        services.AddSingleton<ITeamsNotificationService, TeamsNotificationService>();
         
         return services;
     }

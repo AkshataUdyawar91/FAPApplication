@@ -24,5 +24,8 @@ public interface IApplicationDbContext
     DbSet<Campaign> Campaigns { get; }
     DbSet<CampaignPhoto> CampaignPhotos { get; }
 
+    // Teams bot conversations
+    DbSet<TeamsConversation> TeamsConversations { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

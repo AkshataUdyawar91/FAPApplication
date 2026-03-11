@@ -16,6 +16,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
     private readonly IConfidenceScoreService _confidenceScoreService;
     private readonly IRecommendationAgent _recommendationAgent;
     private readonly INotificationAgent _notificationAgent;
+    private readonly ITeamsNotificationService _teamsNotificationService;
     private readonly ILogger<WorkflowOrchestrator> _logger;
     private readonly ICorrelationIdService _correlationIdService;
 
@@ -26,6 +27,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         IConfidenceScoreService confidenceScoreService,
         IRecommendationAgent recommendationAgent,
         INotificationAgent notificationAgent,
+        ITeamsNotificationService teamsNotificationService,
         ILogger<WorkflowOrchestrator> logger,
         ICorrelationIdService correlationIdService)
     {
@@ -35,6 +37,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         _confidenceScoreService = confidenceScoreService;
         _recommendationAgent = recommendationAgent;
         _notificationAgent = notificationAgent;
+        _teamsNotificationService = teamsNotificationService;
         _logger = logger;
         _correlationIdService = correlationIdService;
     }
@@ -126,6 +129,26 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
             // Send notification
             await _notificationAgent.NotifySubmissionReceivedAsync(package.SubmittedByUserId, package.Id, cancellationToken);
+
+            // Send Teams approval card (fire-and-forget style — don't fail workflow if Teams is unavailable)
+            try
+            {
+                if (_teamsNotificationService.IsAvailable)
+                {
+                    var teamsSent = await _teamsNotificationService.SendApprovalCardAsync(package.Id, cancellationToken);
+                    _logger.LogInformation(
+                        "Teams approval card for package {PackageId}: {Result}",
+                        packageId, teamsSent ? "sent" : "not sent");
+                }
+                else
+                {
+                    _logger.LogDebug("Teams notification service not available, skipping approval card for {PackageId}", packageId);
+                }
+            }
+            catch (Exception teamsEx)
+            {
+                _logger.LogWarning(teamsEx, "Failed to send Teams approval card for package {PackageId} — workflow continues", packageId);
+            }
 
             _logger.LogInformation("Workflow orchestration completed successfully for package {PackageId}", packageId);
             return true;

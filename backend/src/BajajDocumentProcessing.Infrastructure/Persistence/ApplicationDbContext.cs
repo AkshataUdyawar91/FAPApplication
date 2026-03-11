@@ -30,6 +30,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<Campaign> Campaigns => Set<Campaign>();
     public DbSet<CampaignPhoto> CampaignPhotos => Set<CampaignPhoto>();
 
+    // Teams bot conversations
+    public DbSet<TeamsConversation> TeamsConversations => Set<TeamsConversation>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -53,6 +56,15 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<Invoice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Campaign>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CampaignPhoto>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Teams bot
+        modelBuilder.Entity<TeamsConversation>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<TeamsConversation>().HasIndex(e => e.TeamsUserId);
+        modelBuilder.Entity<TeamsConversation>().HasIndex(e => e.ConversationId);
+        modelBuilder.Entity<TeamsConversation>().Property(e => e.TeamsUserId).HasMaxLength(256);
+        modelBuilder.Entity<TeamsConversation>().Property(e => e.ConversationId).HasMaxLength(256);
+        modelBuilder.Entity<TeamsConversation>().Property(e => e.ServiceUrl).HasMaxLength(512);
+        modelBuilder.Entity<TeamsConversation>().Property(e => e.ChannelId).HasMaxLength(64);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

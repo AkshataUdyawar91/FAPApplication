@@ -57,6 +57,7 @@ public class TeamsBotService : TeamsActivityHandler
 
     /// <summary>
     /// Handles bot installation — captures conversation reference for proactive messaging.
+    /// Persists to database so references survive app restarts.
     /// </summary>
     protected override async Task OnMembersAddedAsync(
         IList<ChannelAccount> membersAdded,
@@ -72,13 +73,17 @@ public class TeamsBotService : TeamsActivityHandler
                 "Bot installed by user {UserId} in conversation {ConversationId}",
                 member.Id, turnContext.Activity.Conversation.Id);
 
-            // In pilot mode, capture the conversation reference for proactive messaging
+            var reference = turnContext.Activity.GetConversationReference();
+
+            // In pilot mode, capture in-memory reference for immediate use
             if (_pilotConfig.IsPilotMode)
             {
-                var reference = turnContext.Activity.GetConversationReference();
                 _pilotConfig.CaptureReference(reference);
                 _logger.LogInformation("Pilot mode: captured conversation reference for proactive messaging");
             }
+
+            // Persist to database for durability across restarts
+            await PersistConversationReferenceAsync(member, reference, cancellationToken);
 
             await turnContext.SendActivityAsync(
                 MessageFactory.Text(
@@ -86,6 +91,130 @@ public class TeamsBotService : TeamsActivityHandler
                     "You'll receive adaptive cards here when FAPs are ready for review. " +
                     "You can approve or reject directly from the card."),
                 cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Handles bot uninstall — marks conversation as inactive in the database.
+    /// </summary>
+    protected override async Task OnMembersRemovedAsync(
+        IList<ChannelAccount> membersRemoved,
+        ITurnContext<IConversationUpdateActivity> turnContext,
+        CancellationToken cancellationToken)
+    {
+        foreach (var member in membersRemoved)
+        {
+            if (member.Id == turnContext.Activity.Recipient.Id)
+                continue; // Skip the bot itself
+
+            _logger.LogInformation(
+                "Bot uninstalled by user {UserId} from conversation {ConversationId}",
+                member.Id, turnContext.Activity.Conversation.Id);
+
+            await DeactivateConversationAsync(
+                turnContext.Activity.Conversation.Id, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Persists or updates a conversation reference in the database.
+    /// Uses upsert pattern: update if exists, insert if new.
+    /// </summary>
+    private async Task PersistConversationReferenceAsync(
+        ChannelAccount member,
+        ConversationReference reference,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+
+            var conversationId = reference.Conversation?.Id ?? "";
+            var teamsUserId = member.Id;
+
+            // Upsert: find existing or create new
+            var existing = await context.TeamsConversations
+                .FirstOrDefaultAsync(
+                    c => c.ConversationId == conversationId && c.TeamsUserId == teamsUserId,
+                    cancellationToken);
+
+            var referenceJson = Newtonsoft.Json.JsonConvert.SerializeObject(reference);
+
+            if (existing != null)
+            {
+                existing.ConversationReferenceJson = referenceJson;
+                existing.ServiceUrl = reference.ServiceUrl ?? "";
+                existing.IsActive = true;
+                existing.TeamsUserName = member.Name ?? "";
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                context.TeamsConversations.Add(new Domain.Entities.TeamsConversation
+                {
+                    Id = Guid.NewGuid(),
+                    TeamsUserId = teamsUserId,
+                    TeamsUserName = member.Name ?? "",
+                    ConversationId = conversationId,
+                    ServiceUrl = reference.ServiceUrl ?? "",
+                    ChannelId = reference.ChannelId ?? "msteams",
+                    BotId = reference.Bot?.Id ?? "",
+                    BotName = reference.Bot?.Name ?? "",
+                    TenantId = reference.Conversation?.TenantId,
+                    ConversationReferenceJson = referenceJson,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+
+            await context.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation(
+                "Persisted conversation reference for user {UserId} in conversation {ConversationId}",
+                teamsUserId, conversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to persist conversation reference for user {UserId}",
+                member.Id);
+        }
+    }
+
+    /// <summary>
+    /// Marks a conversation as inactive when the bot is uninstalled.
+    /// </summary>
+    private async Task DeactivateConversationAsync(
+        string conversationId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+
+            var conversations = await context.TeamsConversations
+                .Where(c => c.ConversationId == conversationId && c.IsActive)
+                .ToListAsync(cancellationToken);
+
+            foreach (var conv in conversations)
+            {
+                conv.IsActive = false;
+                conv.UpdatedAt = DateTime.UtcNow;
+            }
+
+            if (conversations.Count > 0)
+            {
+                await context.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation(
+                    "Deactivated {Count} conversation(s) for {ConversationId}",
+                    conversations.Count, conversationId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to deactivate conversation {ConversationId}", conversationId);
         }
     }
 
