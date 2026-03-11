@@ -202,7 +202,12 @@ public class DocumentsController : ControllerBase
                 document.FileSizeBytes,
                 document.Type,
                 document.BlobUrl,
-                document.CreatedAt
+                document.CreatedAt,
+                document.ExtractedDataJson,
+                document.ExtractionConfidence,
+                // Extraction status: if ExtractedDataJson is not empty, extraction is complete
+                extractionComplete = !string.IsNullOrEmpty(document.ExtractedDataJson) && 
+                                   document.ExtractedDataJson != "{}"
             });
         }
         catch (System.UnauthorizedAccessException ex)

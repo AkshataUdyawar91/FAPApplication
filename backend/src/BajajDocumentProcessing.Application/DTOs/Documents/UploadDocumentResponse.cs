@@ -41,4 +41,9 @@ public class UploadDocumentResponse
     /// UTC timestamp when the document was uploaded
     /// </summary>
     public DateTime UploadedAt { get; set; }
+    
+    /// <summary>
+    /// Immediately extracted data (for PO and Invoice only) - JSON string
+    /// </summary>
+    public string? ExtractedDataJson { get; set; }
 }

@@ -346,13 +346,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                   backgroundColor: const Color(0xFF1E3A8A),
                   title: const Text('Bajaj', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
-                  actions: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
-                      tooltip: 'Back',
-                    ),
-                  ],
+                  actions: const [],
                 )
               : null,
           drawer: isMobile
@@ -420,6 +414,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                     if (_isChatOpen && !isMobile)
                       ChatSidePanel(
                         token: widget.token,
+                        userName: widget.userName,
                         deviceType: device,
                         onClose: () => setState(() => _isChatOpen = false),
                       ),
@@ -428,7 +423,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
           floatingActionButton: (_isChatOpen && !isMobile)
               ? null
               : Builder(
@@ -520,7 +515,10 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Row(
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Text(
                             reqNumber,
@@ -529,16 +527,20 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                               color: Colors.grey[600],
                             ),
                           ),
-                          const SizedBox(width: 16),
-                          Icon(Icons.calendar_today,
-                              size: 14, color: Colors.grey[600]),
-                          const SizedBox(width: 4),
-                          Text(
-                            _formatDisplayDate(submittedDate),
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.calendar_today,
+                                  size: 14, color: Colors.grey[600]),
+                              const SizedBox(width: 4),
+                              Text(
+                                _formatDisplayDate(submittedDate),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

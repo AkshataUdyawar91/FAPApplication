@@ -51,7 +51,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
 
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
-    if (state == 'pendinghqapproval') return 'hq-review';
+    if (state == 'pendinghqapproval') return 'pending';
     if (state == 'approved') return 'approved';
     if (state == 'rejectedbyhq') return 'rejected';
     if (state == 'pendingasmapproval' || state == 'uploaded' || state == 'extracting' ||
@@ -230,6 +230,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                   backgroundColor: const Color(0xFF1E3A8A),
                   title: const Text('HQ/RA Review', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
+                  actions: const [],
                 )
               : null,
           drawer: isMobile ? AppDrawer(
@@ -266,6 +267,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                     ),
                     if (_isChatOpen && !isMobile) ChatSidePanel(
                       token: widget.token,
+                      userName: widget.userName,
                       deviceType: device,
                       onClose: () => setState(() => _isChatOpen = false),
                     ),
@@ -274,7 +276,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
           floatingActionButton: (_isChatOpen && !isMobile) ? null : Builder(
             builder: (scaffoldContext) => Padding(
               padding: const EdgeInsets.only(bottom: 16, right: 4),
@@ -422,7 +424,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                           ),
                           _buildCompactStatusDropdown(),
                           _buildCompactSortDropdown(),
-                          _buildExportButton(),
+                          // _buildExportButton(),
                         ],
                       ),
                     ],
@@ -518,9 +520,9 @@ class _HQReviewPageState extends State<HQReviewPage> {
           isDense: true,
         ),
         items: const [
-          DropdownMenuItem(value: 'all', child: Text('All Status')),
-          DropdownMenuItem(value: 'hq-review', child: Text('Pending Review')),
+          DropdownMenuItem(value: 'all', child: Text('All')),
           DropdownMenuItem(value: 'approved', child: Text('Approved')),
+          DropdownMenuItem(value: 'pending', child: Text('Pending')),
           DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
         ],
         onChanged: (value) {
@@ -761,39 +763,38 @@ class _HQReviewPageState extends State<HQReviewPage> {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: constraints.maxWidth),
-              child: DataTable(
-                sortColumnIndex: _sortColumnIndex,
-                sortAscending: _sortAscending,
-                headingRowColor: WidgetStateProperty.all(AppColors.background),
-                headingTextStyle: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, letterSpacing: 0.3),
-                dataTextStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
-                columnSpacing: 16,
-                horizontalMargin: 24,
-                dataRowMinHeight: 56,
-                dataRowMaxHeight: 72,
-                dividerThickness: 1,
-                columns: [
-                  const DataColumn(label: Text('FAP NUMBER')),
-                  DataColumn(label: const Text('PO NO.'), onSort: (_, asc) => _onColumnSort('poNo', asc)),
-                  DataColumn(label: const Text('PO AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
-                  DataColumn(label: const Text('INVOICE NO.'), onSort: (_, asc) => _onColumnSort('invoiceNo', asc)),
-                  DataColumn(label: const Text('INVOICE AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
-                  DataColumn(label: const Text('SUBMITTED DATE'), onSort: (_, asc) => _onColumnSort('date', asc)),
-                  DataColumn(label: const Text('AI SCORE'), onSort: (_, asc) => _onColumnSort('confidence', asc)),
-                  DataColumn(label: const Text('STATUS'), onSort: (_, asc) => _onColumnSort('status', asc)),
-                  const DataColumn(label: SizedBox.shrink()),
-                ],
-                rows: filtered.map((doc) => _buildDocumentDataRow(doc)).toList(),
-              ),
+      child: SizedBox(
+        width: double.infinity,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width * 0.95),
+            child: DataTable(
+              sortColumnIndex: _sortColumnIndex,
+              sortAscending: _sortAscending,
+              headingRowColor: WidgetStateProperty.all(AppColors.background),
+              headingTextStyle: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, letterSpacing: 0.3),
+              dataTextStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
+              columnSpacing: 16,
+              horizontalMargin: 24,
+              dataRowMinHeight: 56,
+              dataRowMaxHeight: 72,
+              dividerThickness: 1,
+              columns: [
+                const DataColumn(label: Text('FAP NUMBER')),
+                DataColumn(label: const Text('PO NO.'), onSort: (_, asc) => _onColumnSort('poNo', asc)),
+                DataColumn(label: const Text('PO AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
+                DataColumn(label: const Text('INVOICE NO.'), onSort: (_, asc) => _onColumnSort('invoiceNo', asc)),
+                DataColumn(label: const Text('INVOICE AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
+                DataColumn(label: const Text('SUBMITTED DATE'), onSort: (_, asc) => _onColumnSort('date', asc)),
+                DataColumn(label: const Text('AI SCORE'), onSort: (_, asc) => _onColumnSort('confidence', asc)),
+                DataColumn(label: const Text('STATUS'), onSort: (_, asc) => _onColumnSort('status', asc)),
+                const DataColumn(label: SizedBox.shrink()),
+              ],
+              rows: filtered.map((doc) => _buildDocumentDataRow(doc)).toList(),
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -838,7 +839,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
     String label;
     // RA role status labels
     switch (status) {
-      case 'hq-review':
+      case 'pending':
         bgColor = AppColors.pendingBackground; textColor = AppColors.pendingText; borderColor = AppColors.pendingBorder; label = 'Pending'; break;
       case 'approved':
         bgColor = AppColors.approvedBackground; textColor = AppColors.approvedText; borderColor = AppColors.approvedBorder; label = 'Approved'; break;

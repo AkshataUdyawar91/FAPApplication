@@ -16,24 +16,43 @@ class SubmissionDataTransformer {
     Map<String, dynamic> submission,
   ) {
     String invoiceAmount = '';
-    final documents = submission['documents'] as List? ?? [];
+    
+    // First try: get invoice amount from CampaignInvoices (hierarchical model)
+    final campaigns = submission['campaigns'] as List? ?? [];
+    for (var campaign in campaigns) {
+      final campaignMap = campaign as Map<String, dynamic>;
+      final invoices = campaignMap['invoices'] as List? ?? [];
+      for (var inv in invoices) {
+        final invMap = inv as Map<String, dynamic>;
+        final amount = invMap['totalAmount'];
+        if (amount != null && amount.toString().isNotEmpty && amount.toString() != '0') {
+          invoiceAmount = '₹$amount';
+          break;
+        }
+      }
+      if (invoiceAmount.isNotEmpty) break;
+    }
 
-    for (var doc in documents) {
-      final type = doc['type']?.toString() ?? '';
-      if (type == 'Invoice' && doc['extractedData'] != null) {
-        try {
-          final extractedData = _parseExtractedData(doc['extractedData']);
-          if (extractedData != null) {
-            final amount = extractedData['TotalAmount'] ??
-                extractedData['totalAmount'] ??
-                extractedData['InvoiceAmount'] ??
-                extractedData['invoiceAmount'];
-            if (amount != null) {
-              invoiceAmount = '₹$amount';
-              break;
+    // Fallback: check old Documents table
+    if (invoiceAmount.isEmpty) {
+      final documents = submission['documents'] as List? ?? [];
+      for (var doc in documents) {
+        final type = doc['type']?.toString() ?? '';
+        if (type == 'Invoice' && doc['extractedData'] != null) {
+          try {
+            final extractedData = _parseExtractedData(doc['extractedData']);
+            if (extractedData != null) {
+              final amount = extractedData['TotalAmount'] ??
+                  extractedData['totalAmount'] ??
+                  extractedData['InvoiceAmount'] ??
+                  extractedData['invoiceAmount'];
+              if (amount != null) {
+                invoiceAmount = '₹$amount';
+                break;
+              }
             }
-          }
-        } catch (_) {}
+          } catch (_) {}
+        }
       }
     }
 
@@ -129,6 +148,7 @@ class SubmissionDataTransformer {
       final campaignMap = campaign as Map<String, dynamic>;
       final campaignId = campaignMap['id']?.toString() ?? '';
       final startDate = campaignMap['startDate'];
+      final campaignName = campaignMap['campaignName']?.toString() ?? campaignMap['name']?.toString() ?? '';
 
       // Campaign invoices
       final invoices = campaignMap['invoices'] as List? ?? [];
@@ -142,6 +162,7 @@ class SubmissionDataTransformer {
 
         rows.add(CampaignDetailRow(
           serialNumber: serialNumber,
+          campaignName: campaignName,
           dealerName: 'Invoice',
           campaignDate: startDate != null ? _formatDate(startDate) : '',
           documentName: fileName,
@@ -167,6 +188,7 @@ class SubmissionDataTransformer {
         final costDocId = docIdByFilename[costFile.toLowerCase()] ?? '';
         rows.add(CampaignDetailRow(
           serialNumber: serialNumber,
+          campaignName: campaignName,
           dealerName: 'CostSummary',
           campaignDate: '',
           documentName: costFile.isNotEmpty ? costFile : 'Cost Summary',
@@ -192,6 +214,7 @@ class SubmissionDataTransformer {
         final actDocId = docIdByFilename[actFile.toLowerCase()] ?? '';
         rows.add(CampaignDetailRow(
           serialNumber: serialNumber,
+          campaignName: campaignName,
           dealerName: 'Activity',
           campaignDate: '',
           documentName: actFile.isNotEmpty ? actFile : 'Activity Summary',
@@ -215,17 +238,16 @@ class SubmissionDataTransformer {
         final photoMap = photos[i] as Map<String, dynamic>;
         final fileName = photoMap['fileName']?.toString() ?? 'Photo';
         final blobUrl = photoMap['blobUrl']?.toString() ?? '';
-        final caption = photoMap['caption']?.toString() ?? '';
-        final displayName = caption.isNotEmpty ? '$fileName - $caption' : fileName;
         final photoId = photoMap['id']?.toString() ?? '';
         final photoDocId = docIdByFilename[fileName.toLowerCase()] ?? '';
         final photoRemarks = buildRemarksFromFailureReason('Photo', failureReason, allPassed);
 
         rows.add(CampaignDetailRow(
           serialNumber: serialNumber,
+          campaignName: campaignName,
           dealerName: 'Photo',
           campaignDate: startDate != null ? _formatDate(startDate) : '',
-          documentName: displayName,
+          documentName: fileName,
           status: allPassed
               ? ValidationStatus.ok
               : photoRemarks.isNotEmpty

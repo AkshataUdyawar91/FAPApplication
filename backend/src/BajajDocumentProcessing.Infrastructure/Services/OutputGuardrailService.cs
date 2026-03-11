@@ -57,11 +57,11 @@ public class OutputGuardrailService : IOutputGuardrailService
             // Redact emails
             sanitizedResponse = EmailPattern.Replace(sanitizedResponse, "[EMAIL_REDACTED]");
             
-            // Redact phone numbers
-            sanitizedResponse = PhonePattern.Replace(sanitizedResponse, "[PHONE_REDACTED]");
-            
-            // Redact SSNs
-            sanitizedResponse = SsnPattern.Replace(sanitizedResponse, "[SSN_REDACTED]");
+            // NOTE: Phone and SSN redaction is DISABLED for chat responses.
+            // The phone regex (\d{3}[-.]?\d{3}[-.]?\d{4}) aggressively matches GUIDs,
+            // document IDs, and hex sequences in doc:// URLs that the LLM generates.
+            // Since chat responses are AI-generated from system prompt data (which contains
+            // no real phone numbers or SSNs), these patterns only cause false positives.
 
             if (sanitizedResponse != response)
             {

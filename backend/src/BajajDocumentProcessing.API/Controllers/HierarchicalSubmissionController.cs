@@ -143,60 +143,76 @@ public class HierarchicalSubmissionController : ControllerBase
 
             _logger.LogInformation("Invoice {InvoiceId} added to campaign {CampaignId}", invoice.Id, campaignId);
 
-            // Trigger extraction in background if file was uploaded
+            // IMMEDIATE EXTRACTION: Extract invoice fields synchronously for instant feedback
+            string? extractedInvoiceNumber = invoice.InvoiceNumber;
+            DateTime? extractedInvoiceDate = invoice.InvoiceDate;
+            string? extractedVendorName = invoice.VendorName;
+            string? extractedGSTNumber = invoice.GSTNumber;
+            decimal? extractedTotalAmount = invoice.TotalAmount;
+
             if (!string.IsNullOrEmpty(blobUrl))
             {
-                var invoiceId = invoice.Id;
-                _ = Task.Run(async () =>
+                try
                 {
-                    try
+                    _logger.LogInformation("Starting immediate extraction for invoice {InvoiceId}", invoice.Id);
+                    var invoiceData = await _documentAgent.ExtractInvoiceAsync(blobUrl, cancellationToken);
+                    
+                    // Update invoice with extracted data immediately
+                    if (string.IsNullOrEmpty(invoice.InvoiceNumber) && !string.IsNullOrEmpty(invoiceData.InvoiceNumber))
                     {
-                        _logger.LogInformation("Starting background extraction for invoice {InvoiceId}", invoiceId);
-                        var invoiceData = await _documentAgent.ExtractInvoiceAsync(blobUrl, CancellationToken.None);
-                        
-                        // Update invoice with extracted data
-                        using var scope = _serviceProvider.CreateScope();
-                        var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
-                        var invoiceToUpdate = await context.CampaignInvoices
-                            .FirstOrDefaultAsync(i => i.Id == invoiceId, CancellationToken.None);
-                        
-                        if (invoiceToUpdate != null)
-                        {
-                            // Only update fields that are empty or zero (don't overwrite user input)
-                            if (string.IsNullOrEmpty(invoiceToUpdate.InvoiceNumber) && !string.IsNullOrEmpty(invoiceData.InvoiceNumber))
-                                invoiceToUpdate.InvoiceNumber = invoiceData.InvoiceNumber;
-                            
-                            if (invoiceToUpdate.InvoiceDate == null && invoiceData.InvoiceDate != default)
-                                invoiceToUpdate.InvoiceDate = invoiceData.InvoiceDate;
-                            
-                            if (string.IsNullOrEmpty(invoiceToUpdate.VendorName) && !string.IsNullOrEmpty(invoiceData.VendorName))
-                                invoiceToUpdate.VendorName = invoiceData.VendorName;
-                            
-                            if (string.IsNullOrEmpty(invoiceToUpdate.GSTNumber) && !string.IsNullOrEmpty(invoiceData.GSTNumber))
-                                invoiceToUpdate.GSTNumber = invoiceData.GSTNumber;
-                            
-                            if ((invoiceToUpdate.TotalAmount == null || invoiceToUpdate.TotalAmount == 0) && invoiceData.TotalAmount > 0)
-                                invoiceToUpdate.TotalAmount = invoiceData.TotalAmount;
-                            
-                            invoiceToUpdate.UpdatedAt = DateTime.UtcNow;
-                            await context.SaveChangesAsync(CancellationToken.None);
-                            
-                            _logger.LogInformation("Invoice {InvoiceId} updated with extracted data: Number={Number}, Amount={Amount}", 
-                                invoiceId, invoiceData.InvoiceNumber, invoiceData.TotalAmount);
-                        }
-                        else
-                        {
-                            _logger.LogWarning("Invoice {InvoiceId} not found for update after extraction", invoiceId);
-                        }
+                        invoice.InvoiceNumber = invoiceData.InvoiceNumber;
+                        extractedInvoiceNumber = invoiceData.InvoiceNumber;
                     }
-                    catch (Exception ex)
+                    
+                    if (invoice.InvoiceDate == null && invoiceData.InvoiceDate != default)
                     {
-                        _logger.LogError(ex, "Background extraction failed for invoice {InvoiceId}", invoiceId);
+                        invoice.InvoiceDate = invoiceData.InvoiceDate;
+                        extractedInvoiceDate = invoiceData.InvoiceDate;
                     }
-                });
+                    
+                    if (string.IsNullOrEmpty(invoice.VendorName) && !string.IsNullOrEmpty(invoiceData.VendorName))
+                    {
+                        invoice.VendorName = invoiceData.VendorName;
+                        extractedVendorName = invoiceData.VendorName;
+                    }
+                    
+                    if (string.IsNullOrEmpty(invoice.GSTNumber) && !string.IsNullOrEmpty(invoiceData.GSTNumber))
+                    {
+                        invoice.GSTNumber = invoiceData.GSTNumber;
+                        extractedGSTNumber = invoiceData.GSTNumber;
+                    }
+                    
+                    if ((invoice.TotalAmount == null || invoice.TotalAmount == 0) && invoiceData.TotalAmount > 0)
+                    {
+                        invoice.TotalAmount = invoiceData.TotalAmount;
+                        extractedTotalAmount = invoiceData.TotalAmount;
+                    }
+                    
+                    invoice.UpdatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync(cancellationToken);
+                    
+                    _logger.LogInformation("Immediate invoice extraction completed: Number={Number}, Amount={Amount}", 
+                        invoiceData.InvoiceNumber, invoiceData.TotalAmount);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Immediate extraction failed for invoice {InvoiceId}", invoice.Id);
+                    // Continue - return what we have
+                }
             }
 
-            return Ok(new { invoiceId = invoice.Id, message = "Invoice added successfully. Extraction in progress." });
+            return Ok(new { 
+                invoiceId = invoice.Id, 
+                message = "Invoice added successfully",
+                // Return immediately extracted data for instant UI update
+                extractedData = new {
+                    invoiceNumber = extractedInvoiceNumber,
+                    invoiceDate = extractedInvoiceDate,
+                    vendorName = extractedVendorName,
+                    gstNumber = extractedGSTNumber,
+                    totalAmount = extractedTotalAmount
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -850,6 +866,48 @@ public class HierarchicalSubmissionController : ControllerBase
         {
             _logger.LogError(ex, "Error downloading {DocType} for campaign {CampaignId}", docType, campaignId);
             return StatusCode(500, new { message = $"Failed to download {docType}" });
+        }
+    }
+
+    /// <summary>
+    /// Get invoice details by ID (for polling after upload to check extraction status)
+    /// </summary>
+    [HttpGet("invoices/{invoiceId}")]
+    [Authorize(Roles = "Agency")]
+    public async Task<IActionResult> GetInvoiceDetails(Guid invoiceId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+            
+            var invoice = await _context.CampaignInvoices
+                .Include(i => i.Campaign)
+                    .ThenInclude(c => c.Package)
+                .FirstOrDefaultAsync(i => i.Id == invoiceId && !i.IsDeleted, cancellationToken);
+
+            if (invoice == null || invoice.Campaign?.Package?.SubmittedByUserId != userId)
+                return NotFound(new { error = "Invoice not found" });
+
+            return Ok(new
+            {
+                id = invoice.Id,
+                invoiceNumber = invoice.InvoiceNumber,
+                invoiceDate = invoice.InvoiceDate,
+                vendorName = invoice.VendorName,
+                gstNumber = invoice.GSTNumber,
+                totalAmount = invoice.TotalAmount,
+                fileName = invoice.FileName,
+                blobUrl = invoice.BlobUrl,
+                // Extraction status: if all fields are filled, extraction is complete
+                extractionComplete = !string.IsNullOrEmpty(invoice.InvoiceNumber) && 
+                                   invoice.TotalAmount != null && 
+                                   invoice.TotalAmount > 0
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting invoice details {InvoiceId}", invoiceId);
+            return StatusCode(500, new { error = "Failed to get invoice details" });
         }
     }
 

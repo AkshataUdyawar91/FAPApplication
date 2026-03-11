@@ -694,6 +694,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                     if (_isChatOpen && !isMobile)
                       ChatSidePanel(
                         token: widget.token,
+                        userName: widget.userName,
                         deviceType: device,
                         onClose: () => setState(() => _isChatOpen = false),
                       ),
@@ -702,7 +703,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token) : null,
+          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
           floatingActionButton: (_isChatOpen && !isMobile)
               ? null
               : Builder(

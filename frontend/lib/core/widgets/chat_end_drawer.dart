@@ -6,10 +6,12 @@ import 'chat_side_panel.dart';
 /// Wraps ChatSidePanel content in a Drawer widget.
 class ChatEndDrawer extends StatelessWidget {
   final String token;
+  final String userName;
 
   const ChatEndDrawer({
     super.key,
     required this.token,
+    this.userName = 'User',
   });
 
   @override
@@ -19,6 +21,7 @@ class ChatEndDrawer extends StatelessWidget {
       child: SafeArea(
         child: ChatSidePanel(
           token: token,
+          userName: userName,
           deviceType: DeviceType.mobile,
           onClose: () => Navigator.pop(context),
         ),

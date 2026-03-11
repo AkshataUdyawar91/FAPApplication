@@ -317,6 +317,11 @@ public class SubmissionsController : ControllerBase
             var query = _context.DocumentPackages
                 .Include(p => p.Documents)
                 .Include(p => p.ConfidenceScore)
+                .Include(p => p.Campaigns.Where(c => !c.IsDeleted))
+                    .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
+                .Include(p => p.Campaigns.Where(c => !c.IsDeleted))
+                    .ThenInclude(c => c.Photos.Where(ph => !ph.IsDeleted))
+                .AsSplitQuery()
                 .AsQueryable();
 
             // Agency users can only see their own submissions
@@ -351,58 +356,48 @@ public class SubmissionsController : ControllerBase
 
             var items = packages.Select(p =>
             {
-                // Extract invoice data from documents
-                var invoiceDoc = p.Documents.FirstOrDefault(d => d.Type == DocumentType.Invoice);
-                string? invoiceNumber = null;
-                decimal? invoiceAmount = null;
+                // Extract invoice data from CampaignInvoices (hierarchical model)
+                var firstInvoice = p.Campaigns
+                    .Where(c => !c.IsDeleted)
+                    .SelectMany(c => c.Invoices)
+                    .Where(i => !i.IsDeleted)
+                    .FirstOrDefault();
+                
+                string? invoiceNumber = firstInvoice?.InvoiceNumber;
+                decimal? invoiceAmount = firstInvoice?.TotalAmount;
 
-                if (invoiceDoc != null && !string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
+                // Fallback: check old Documents table if no CampaignInvoice found
+                if (string.IsNullOrEmpty(invoiceNumber) && invoiceAmount == null)
                 {
-                    try
+                    var invoiceDoc = p.Documents.FirstOrDefault(d => d.Type == DocumentType.Invoice);
+                    if (invoiceDoc != null && !string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
                     {
-                        var invoiceData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(invoiceDoc.ExtractedDataJson);
-                        
-                        // Try to get invoice number
-                        if (invoiceData.TryGetProperty("InvoiceNumber", out var invNum))
+                        try
                         {
-                            invoiceNumber = invNum.GetString();
-                        }
-                        else if (invoiceData.TryGetProperty("invoiceNumber", out var invNum2))
-                        {
-                            invoiceNumber = invNum2.GetString();
-                        }
+                            var invoiceData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(invoiceDoc.ExtractedDataJson);
+                            if (invoiceData.TryGetProperty("InvoiceNumber", out var invNum))
+                                invoiceNumber = invNum.GetString();
+                            else if (invoiceData.TryGetProperty("invoiceNumber", out var invNum2))
+                                invoiceNumber = invNum2.GetString();
 
-                        // Try to get invoice amount
-                        if (invoiceData.TryGetProperty("TotalAmount", out var amt))
-                        {
-                            if (amt.ValueKind == System.Text.Json.JsonValueKind.Number)
-                            {
+                            if (invoiceData.TryGetProperty("TotalAmount", out var amt) && amt.ValueKind == System.Text.Json.JsonValueKind.Number)
                                 invoiceAmount = amt.GetDecimal();
-                            }
-                            else if (amt.ValueKind == System.Text.Json.JsonValueKind.String)
-                            {
-                                decimal.TryParse(amt.GetString(), out var parsedAmount);
-                                invoiceAmount = parsedAmount;
-                            }
-                        }
-                        else if (invoiceData.TryGetProperty("totalAmount", out var amt2))
-                        {
-                            if (amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
-                            {
+                            else if (invoiceData.TryGetProperty("totalAmount", out var amt2) && amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
                                 invoiceAmount = amt2.GetDecimal();
-                            }
-                            else if (amt2.ValueKind == System.Text.Json.JsonValueKind.String)
-                            {
-                                decimal.TryParse(amt2.GetString(), out var parsedAmount);
-                                invoiceAmount = parsedAmount;
-                            }
                         }
-                    }
-                    catch
-                    {
-                        // If parsing fails, leave as null
+                        catch { }
                     }
                 }
+
+                // Calculate total invoice amount across all campaigns
+                var totalInvoiceAmount = p.Campaigns
+                    .Where(c => !c.IsDeleted)
+                    .SelectMany(c => c.Invoices)
+                    .Where(i => !i.IsDeleted && i.TotalAmount != null && i.TotalAmount > 0)
+                    .Sum(i => i.TotalAmount ?? 0);
+                
+                if (totalInvoiceAmount > 0)
+                    invoiceAmount = totalInvoiceAmount;
 
                 // Extract PO data from documents
                 var poDoc = p.Documents.FirstOrDefault(d => d.Type == DocumentType.PO);
@@ -415,47 +410,23 @@ public class SubmissionsController : ControllerBase
                     {
                         var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(poDoc.ExtractedDataJson);
                         
-                        // Try to get PO number
                         if (poData.TryGetProperty("PONumber", out var poNum))
-                        {
                             poNumber = poNum.GetString();
-                        }
                         else if (poData.TryGetProperty("poNumber", out var poNum2))
-                        {
                             poNumber = poNum2.GetString();
-                        }
 
-                        // Try to get PO amount
-                        if (poData.TryGetProperty("TotalAmount", out var amt))
-                        {
-                            if (amt.ValueKind == System.Text.Json.JsonValueKind.Number)
-                            {
-                                poAmount = amt.GetDecimal();
-                            }
-                            else if (amt.ValueKind == System.Text.Json.JsonValueKind.String)
-                            {
-                                decimal.TryParse(amt.GetString(), out var parsedAmount);
-                                poAmount = parsedAmount;
-                            }
-                        }
-                        else if (poData.TryGetProperty("totalAmount", out var amt2))
-                        {
-                            if (amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
-                            {
-                                poAmount = amt2.GetDecimal();
-                            }
-                            else if (amt2.ValueKind == System.Text.Json.JsonValueKind.String)
-                            {
-                                decimal.TryParse(amt2.GetString(), out var parsedAmount);
-                                poAmount = parsedAmount;
-                            }
-                        }
+                        if (poData.TryGetProperty("TotalAmount", out var amt) && amt.ValueKind == System.Text.Json.JsonValueKind.Number)
+                            poAmount = amt.GetDecimal();
+                        else if (poData.TryGetProperty("totalAmount", out var amt2) && amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
+                            poAmount = amt2.GetDecimal();
                     }
-                    catch
-                    {
-                        // If parsing fails, leave as null
-                    }
+                    catch { }
                 }
+
+                // Count documents: PO docs + campaign invoices + campaign photos
+                var campaignInvoiceCount = p.Campaigns.Where(c => !c.IsDeleted).SelectMany(c => c.Invoices).Count(i => !i.IsDeleted);
+                var campaignPhotoCount = p.Campaigns.Where(c => !c.IsDeleted).SelectMany(c => c.Photos).Count(ph => !ph.IsDeleted);
+                var totalDocCount = p.Documents.Count + campaignInvoiceCount + campaignPhotoCount;
 
                 return new SubmissionListItemDto
                 {
@@ -463,7 +434,7 @@ public class SubmissionsController : ControllerBase
                     State = p.State.ToString(),
                     CreatedAt = p.CreatedAt,
                     UpdatedAt = p.UpdatedAt,
-                    DocumentCount = p.Documents.Count,
+                    DocumentCount = totalDocCount,
                     InvoiceNumber = invoiceNumber,
                     InvoiceAmount = invoiceAmount,
                     PoNumber = poNumber,
@@ -1109,6 +1080,9 @@ public class SubmissionsController : ControllerBase
 
             var package = await _context.DocumentPackages
                 .Include(p => p.Documents)
+                .Include(p => p.Campaigns.Where(c => !c.IsDeleted))
+                    .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
+                .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
@@ -1133,11 +1107,15 @@ public class SubmissionsController : ControllerBase
 
             // Verify minimum required documents
             var hasPO = package.Documents.Any(d => d.Type == DocumentType.PO);
-            var hasInvoice = package.Documents.Any(d => d.Type == DocumentType.Invoice);
-            var hasCostSummary = package.Documents.Any(d => d.Type == DocumentType.CostSummary);
+            // Check both old Documents table and new CampaignInvoices table
+            var hasInvoice = package.Documents.Any(d => d.Type == DocumentType.Invoice) ||
+                             package.Campaigns.Any(c => c.Invoices.Any());
+            var hasCostSummary = package.Documents.Any(d => d.Type == DocumentType.CostSummary) ||
+                                 package.Campaigns.Any(c => !string.IsNullOrEmpty(c.CostSummaryBlobUrl));
 
-            _logger.LogInformation("Package {PackageId} document check: PO={HasPO}, Invoice={HasInvoice}, CostSummary={HasCostSummary}", 
-                packageId, hasPO, hasInvoice, hasCostSummary);
+            var campaignInvoiceCount = package.Campaigns.SelectMany(c => c.Invoices).Count();
+            _logger.LogInformation("Package {PackageId} document check: PO={HasPO}, Invoice={HasInvoice} (CampaignInvoices={CampaignInvCount}), CostSummary={HasCostSummary}", 
+                packageId, hasPO, hasInvoice, campaignInvoiceCount, hasCostSummary);
 
             if (!hasPO)
             {
