@@ -230,6 +230,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                   backgroundColor: const Color(0xFF1E3A8A),
                   title: const Text('HQ/RA Review', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
+                  actions: const [],
                 )
               : null,
           drawer: isMobile ? AppDrawer(
@@ -422,7 +423,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                           ),
                           _buildCompactStatusDropdown(),
                           _buildCompactSortDropdown(),
-                          _buildExportButton(),
+                          // _buildExportButton(),
                         ],
                       ),
                     ],
@@ -761,39 +762,38 @@ class _HQReviewPageState extends State<HQReviewPage> {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: constraints.maxWidth),
-              child: DataTable(
-                sortColumnIndex: _sortColumnIndex,
-                sortAscending: _sortAscending,
-                headingRowColor: WidgetStateProperty.all(AppColors.background),
-                headingTextStyle: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, letterSpacing: 0.3),
-                dataTextStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
-                columnSpacing: 16,
-                horizontalMargin: 24,
-                dataRowMinHeight: 56,
-                dataRowMaxHeight: 72,
-                dividerThickness: 1,
-                columns: [
-                  const DataColumn(label: Text('FAP NUMBER')),
-                  DataColumn(label: const Text('PO NO.'), onSort: (_, asc) => _onColumnSort('poNo', asc)),
-                  DataColumn(label: const Text('PO AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
-                  DataColumn(label: const Text('INVOICE NO.'), onSort: (_, asc) => _onColumnSort('invoiceNo', asc)),
-                  DataColumn(label: const Text('INVOICE AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
-                  DataColumn(label: const Text('SUBMITTED DATE'), onSort: (_, asc) => _onColumnSort('date', asc)),
-                  DataColumn(label: const Text('AI SCORE'), onSort: (_, asc) => _onColumnSort('confidence', asc)),
-                  DataColumn(label: const Text('STATUS'), onSort: (_, asc) => _onColumnSort('status', asc)),
-                  const DataColumn(label: SizedBox.shrink()),
-                ],
-                rows: filtered.map((doc) => _buildDocumentDataRow(doc)).toList(),
-              ),
+      child: SizedBox(
+        width: double.infinity,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width * 0.95),
+            child: DataTable(
+              sortColumnIndex: _sortColumnIndex,
+              sortAscending: _sortAscending,
+              headingRowColor: WidgetStateProperty.all(AppColors.background),
+              headingTextStyle: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, letterSpacing: 0.3),
+              dataTextStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
+              columnSpacing: 16,
+              horizontalMargin: 24,
+              dataRowMinHeight: 56,
+              dataRowMaxHeight: 72,
+              dividerThickness: 1,
+              columns: [
+                const DataColumn(label: Text('FAP NUMBER')),
+                DataColumn(label: const Text('PO NO.'), onSort: (_, asc) => _onColumnSort('poNo', asc)),
+                DataColumn(label: const Text('PO AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
+                DataColumn(label: const Text('INVOICE NO.'), onSort: (_, asc) => _onColumnSort('invoiceNo', asc)),
+                DataColumn(label: const Text('INVOICE AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
+                DataColumn(label: const Text('SUBMITTED DATE'), onSort: (_, asc) => _onColumnSort('date', asc)),
+                DataColumn(label: const Text('AI SCORE'), onSort: (_, asc) => _onColumnSort('confidence', asc)),
+                DataColumn(label: const Text('STATUS'), onSort: (_, asc) => _onColumnSort('status', asc)),
+                const DataColumn(label: SizedBox.shrink()),
+              ],
+              rows: filtered.map((doc) => _buildDocumentDataRow(doc)).toList(),
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }

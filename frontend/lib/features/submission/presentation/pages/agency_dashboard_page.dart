@@ -553,6 +553,12 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     final availableWidth = MediaQuery.of(context).size.width;
     final useColumnLayout = device == DeviceType.mobile || availableWidth < 500;
 
+    // Safety: reset filter if current value isn't in available items
+    final availableStatuses = _availableStatuses;
+    if (!availableStatuses.contains(_statusFilter)) {
+      _statusFilter = 'all';
+    }
+
     if (useColumnLayout) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -615,7 +621,126 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Widget _buildRequestsList(DeviceType device) {
     final filtered = _filteredRequests;
     if (filtered.isEmpty) return _buildEmptyState();
+    if (device == DeviceType.mobile) return _buildMobileCards(filtered);
     return _buildTable(filtered);
+  }
+
+  Widget _buildMobileCards(List<Map<String, dynamic>> requests) {
+    return Column(
+      children: requests.map((r) => _buildMobileCard(r)).toList(),
+    );
+  }
+
+  Widget _buildMobileCard(Map<String, dynamic> request) {
+    final rawState = request['state']?.toString() ?? 'pending';
+    final id = request['id']?.toString() ?? '';
+    final fapNumber = 'FAP-${id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase()}';
+    final poNumber = request['poNumber']?.toString() ?? request['poNo']?.toString() ?? '—';
+    final invoiceNumber = request['invoiceNumber']?.toString() ?? request['invoiceNo']?.toString() ?? '—';
+    final invoiceAmount = request['invoiceAmount'];
+    final invoiceAmountStr = invoiceAmount != null
+        ? '₹${double.tryParse(invoiceAmount.toString())?.toStringAsFixed(2) ?? '—'}'
+        : '—';
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // FAP number + status badge
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Flexible(
+                  child: Text(
+                    fapNumber,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1E40AF),
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildStatusBadge(_normalizeStatus(rawState), rawState),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // Key-value rows
+            _buildCardRow('PO Number', poNumber),
+            _buildCardRow('Invoice Number', invoiceNumber),
+            _buildCardRow('Invoice Amount', invoiceAmountStr),
+            _buildCardRow('Submitted', _formatDate(request['createdAt'])),
+            const SizedBox(height: 12),
+            // View Details button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pushNamed(
+                    context,
+                    '/agency/submission-detail',
+                    arguments: {
+                      'submissionId': request['id'],
+                      'token': widget.token,
+                      'userName': widget.userName,
+                    },
+                  );
+                },
+                icon: const Icon(Icons.visibility_outlined, size: 18),
+                label: const Text('View Details'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2563EB),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey[600],
+            ),
+          ),
+          Flexible(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF111827),
+              ),
+              textAlign: TextAlign.end,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildTable(List<Map<String, dynamic>> requests) {

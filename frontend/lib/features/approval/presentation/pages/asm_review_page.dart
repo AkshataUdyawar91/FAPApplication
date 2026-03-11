@@ -49,11 +49,11 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
     // ASM role status normalization
-    if (state == 'pendingasmapproval' || state == 'pendingapproval' || state == 'pendingwithasm') return 'asm-review';
-    if (state == 'pendinghqapproval' || state == 'pendingwithra') return 'with-hq';
+    if (state == 'pendingasmapproval' || state == 'pendingapproval' || state == 'pendingwithasm') return 'pending';
+    if (state == 'pendinghqapproval' || state == 'pendingwithra') return 'pending-with-ra';
     if (state == 'approved') return 'approved';
     if (state == 'rejectedbyasm' || state == 'rejected') return 'rejected';
-    if (state == 'rejectedbyhq' || state == 'rejectedbyra') return 'rejected-by-hq';
+    if (state == 'rejectedbyhq' || state == 'rejectedbyra') return 'rejected-by-ra';
     if (state == 'validationfailed' || state == 'reuploadrequested') return 'rejected';
     if (state == 'uploaded' || state == 'extracting' || state == 'validating' ||
         state == 'scoring' || state == 'recommending') return 'processing';
@@ -230,6 +230,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                   backgroundColor: const Color(0xFF1E3A8A),
                   title: const Text('ASM Review', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
+                  actions: const [],
                 )
               : null,
           drawer: isMobile ? AppDrawer(
@@ -527,11 +528,12 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
           isDense: true,
         ),
         items: const [
-          DropdownMenuItem(value: 'all', child: Text('All Status')),
-          DropdownMenuItem(value: 'asm-review', child: Text('Pending Review')),
-          DropdownMenuItem(value: 'with-hq', child: Text('With HQ/RA')),
-          DropdownMenuItem(value: 'approved', child: Text('Approved')),
+          DropdownMenuItem(value: 'all', child: Text('All')),
+          DropdownMenuItem(value: 'pending', child: Text('Pending')),
           DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
+          DropdownMenuItem(value: 'rejected-by-ra', child: Text('Rejected by RA')),
+          DropdownMenuItem(value: 'pending-with-ra', child: Text('Pending with RA')),
+          DropdownMenuItem(value: 'approved', child: Text('Approved')),
         ],
         onChanged: (value) {
           if (value != null) setState(() => _statusFilter = value);
@@ -699,37 +701,36 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: constraints.maxWidth),
-              child: DataTable(
-                sortColumnIndex: _sortColumnIndex,
-                sortAscending: _sortAscending,
-                headingRowColor: WidgetStateProperty.all(AppColors.background),
-                headingTextStyle: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, letterSpacing: 0.3),
-                dataTextStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
-                columnSpacing: 16,
-                horizontalMargin: 24,
-                dataRowMinHeight: 56,
-                dataRowMaxHeight: 72,
-                dividerThickness: 1,
-                columns: [
-                  const DataColumn(label: Text('FAP NUMBER')),
-                  DataColumn(label: const Text('PO NO.'), onSort: (_, asc) => _onColumnSort('poNo', asc)),
-                  DataColumn(label: const Text('INVOICE NO.'), onSort: (_, asc) => _onColumnSort('invoiceNo', asc)),
-                  DataColumn(label: const Text('INVOICE AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
-                  DataColumn(label: const Text('SUBMITTED DATE'), onSort: (_, asc) => _onColumnSort('date', asc)),
-                  DataColumn(label: const Text('STATUS'), onSort: (_, asc) => _onColumnSort('status', asc)),
-                  const DataColumn(label: SizedBox.shrink()),
-                ],
-                rows: filtered.map((doc) => _buildDocumentDataRow(doc)).toList(),
-              ),
+      child: SizedBox(
+        width: double.infinity,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width * 0.95),
+            child: DataTable(
+              sortColumnIndex: _sortColumnIndex,
+              sortAscending: _sortAscending,
+              headingRowColor: WidgetStateProperty.all(AppColors.background),
+              headingTextStyle: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, letterSpacing: 0.3),
+              dataTextStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
+              columnSpacing: 16,
+              horizontalMargin: 24,
+              dataRowMinHeight: 56,
+              dataRowMaxHeight: 72,
+              dividerThickness: 1,
+              columns: [
+                const DataColumn(label: Text('FAP NUMBER')),
+                DataColumn(label: const Text('PO NO.'), onSort: (_, asc) => _onColumnSort('poNo', asc)),
+                DataColumn(label: const Text('INVOICE NO.'), onSort: (_, asc) => _onColumnSort('invoiceNo', asc)),
+                DataColumn(label: const Text('INVOICE AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
+                DataColumn(label: const Text('SUBMITTED DATE'), onSort: (_, asc) => _onColumnSort('date', asc)),
+                DataColumn(label: const Text('STATUS'), onSort: (_, asc) => _onColumnSort('status', asc)),
+                const DataColumn(label: SizedBox.shrink()),
+              ],
+              rows: filtered.map((doc) => _buildDocumentDataRow(doc)).toList(),
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -768,15 +769,15 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     String label;
     // ASM role status labels
     switch (status) {
-      case 'asm-review':
+      case 'pending':
         bgColor = AppColors.pendingBackground; textColor = AppColors.pendingText; borderColor = AppColors.pendingBorder; label = 'Pending'; break;
-      case 'with-hq':
+      case 'pending-with-ra':
         bgColor = const Color(0xFFFEF3C7); textColor = const Color(0xFF92400E); borderColor = const Color(0xFFF59E0B); label = 'Pending with RA'; break;
       case 'approved':
         bgColor = AppColors.approvedBackground; textColor = AppColors.approvedText; borderColor = AppColors.approvedBorder; label = 'Approved'; break;
       case 'rejected':
         bgColor = AppColors.rejectedBackground; textColor = AppColors.rejectedText; borderColor = AppColors.rejectedBorder; label = 'Rejected'; break;
-      case 'rejected-by-hq':
+      case 'rejected-by-ra':
         bgColor = AppColors.rejectedBackground; textColor = AppColors.rejectedText; borderColor = AppColors.rejectedBorder; label = 'Rejected by RA'; break;
       default:
         bgColor = AppColors.reviewBackground; textColor = AppColors.reviewText; borderColor = AppColors.reviewBorder; label = status ?? 'Unknown';

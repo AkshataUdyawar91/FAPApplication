@@ -316,32 +316,38 @@ class _NewLoginPageState extends State<NewLoginPage> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: Checkbox(
-                                        value: _rememberMe,
-                                        onChanged: _isLoading
-                                            ? null
-                                            : (value) {
-                                                setState(() {
-                                                  _rememberMe = value ?? false;
-                                                });
-                                              },
-                                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                Flexible(
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: Checkbox(
+                                          value: _rememberMe,
+                                          onChanged: _isLoading
+                                              ? null
+                                              : (value) {
+                                                  setState(() {
+                                                    _rememberMe = value ?? false;
+                                                  });
+                                                },
+                                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'Remember me',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Colors.grey[700],
+                                      const SizedBox(width: 8),
+                                      Flexible(
+                                        child: Text(
+                                          'Remember me',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.grey[700],
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                                 TextButton(
                                   onPressed: _isLoading
@@ -494,12 +500,15 @@ class _NewLoginPageState extends State<NewLoginPage> {
                 color: isSelected ? const Color(0xFF2563EB) : Colors.grey[600],
               ),
               const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                  color: isSelected ? const Color(0xFF2563EB) : Colors.grey[600],
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                    color: isSelected ? const Color(0xFF2563EB) : Colors.grey[600],
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],

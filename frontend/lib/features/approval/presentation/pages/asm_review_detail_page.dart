@@ -329,13 +329,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                   backgroundColor: const Color(0xFF1E3A8A),
                   title: const Text('Bajaj', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
-                  actions: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
-                      tooltip: 'Back',
-                    ),
-                  ],
+                  actions: const [],
                 )
               : null,
           drawer: isMobile
@@ -510,7 +504,10 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Row(
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Text(
                             reqNumber,
@@ -519,15 +516,19 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                               color: Colors.grey[600],
                             ),
                           ),
-                          const SizedBox(width: 16),
-                          Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
-                          const SizedBox(width: 4),
-                          Text(
-                            _formatDisplayDate(submittedDate),
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
+                              const SizedBox(width: 4),
+                              Text(
+                                _formatDisplayDate(submittedDate),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

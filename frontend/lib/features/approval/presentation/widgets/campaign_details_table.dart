@@ -45,25 +45,35 @@ class CampaignDetailsTable extends StatelessWidget {
   }
 
   Widget _buildTable() {
-    return Table(
-      border: TableBorder(
-        horizontalInside: BorderSide(color: AppColors.border),
-        top: BorderSide(color: AppColors.border),
-      ),
-      columnWidths: const {
-        0: FixedColumnWidth(60),   // S. No
-        1: FlexColumnWidth(1.2),   // Category
-        2: FlexColumnWidth(2),     // Document Name
-        3: FixedColumnWidth(120),  // Status
-        4: FlexColumnWidth(3),     // Remarks
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: constraints.maxWidth < 600 ? 600 : constraints.maxWidth),
+            child: Table(
+          border: TableBorder(
+            horizontalInside: BorderSide(color: AppColors.border),
+            top: BorderSide(color: AppColors.border),
+          ),
+          columnWidths: const {
+            0: FixedColumnWidth(60),   // S. No
+            1: FlexColumnWidth(1.2),   // Category
+            2: FlexColumnWidth(2),     // Document Name
+            3: FixedColumnWidth(120),  // Status
+            4: FlexColumnWidth(3),     // Remarks
+          },
+          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          children: [
+            _buildHeaderRow(),
+            ...campaignDetails.asMap().entries.map((entry) {
+              return _buildDataRow(entry.value, entry.key);
+            }),
+          ],
+            ),
+          ),
+        );
       },
-      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-      children: [
-        _buildHeaderRow(),
-        ...campaignDetails.asMap().entries.map((entry) {
-          return _buildDataRow(entry.value, entry.key);
-        }),
-      ],
     );
   }
 
