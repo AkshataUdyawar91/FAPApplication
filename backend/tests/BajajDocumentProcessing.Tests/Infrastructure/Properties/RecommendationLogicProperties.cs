@@ -287,8 +287,7 @@ public class RecommendationLogicProperties
         {
             Id = packageId,
             State = PackageState.Validating,
-            CreatedAt = DateTime.UtcNow,
-            Documents = new List<Document>()
+            CreatedAt = DateTime.UtcNow
         };
 
         var packages = new List<DocumentPackage> { package };

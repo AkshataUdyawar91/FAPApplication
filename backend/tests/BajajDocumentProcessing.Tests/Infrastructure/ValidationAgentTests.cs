@@ -82,69 +82,85 @@ public class ValidationAgentTests : IDisposable
         ActivityData? activityData = null,
         int photoCount = 0)
     {
+        var packageId = Guid.NewGuid();
         var package = new DocumentPackage
         {
-            Id = Guid.NewGuid(),
+            Id = packageId,
             CreatedAt = DateTime.UtcNow,
             State = PackageState.Uploaded,
-            Documents = new List<Document>()
+            Teams = new List<Teams>()
         };
 
         if (poData != null)
         {
-            package.Documents.Add(new Document
+            package.PO = new PO
             {
                 Id = Guid.NewGuid(),
-                Type = DocumentType.PO,
+                PackageId = packageId,
                 ExtractedDataJson = JsonSerializer.Serialize(poData)
-            });
+            };
         }
 
         if (invoiceData != null)
         {
-            package.Documents.Add(new Document
+            package.Invoices = new List<Invoice>
             {
-                Id = Guid.NewGuid(),
-                Type = DocumentType.Invoice,
-                ExtractedDataJson = JsonSerializer.Serialize(invoiceData)
-            });
+                new Invoice
+                {
+                    Id = Guid.NewGuid(),
+                    PackageId = packageId,
+                    ExtractedDataJson = JsonSerializer.Serialize(invoiceData)
+                }
+            };
         }
 
         if (costSummaryData != null)
         {
-            package.Documents.Add(new Document
+            package.CostSummary = new CostSummary
             {
                 Id = Guid.NewGuid(),
-                Type = DocumentType.CostSummary,
+                PackageId = packageId,
                 ExtractedDataJson = JsonSerializer.Serialize(costSummaryData)
-            });
+            };
         }
 
         if (activityData != null)
         {
-            package.Documents.Add(new Document
+            package.ActivitySummary = new ActivitySummary
             {
                 Id = Guid.NewGuid(),
-                Type = DocumentType.ActivitySummary,
+                PackageId = packageId,
                 ExtractedDataJson = JsonSerializer.Serialize(activityData)
-            });
+            };
         }
 
-        for (int i = 0; i < photoCount; i++)
+        if (photoCount > 0)
         {
-            package.Documents.Add(new Document
+            var team = new Teams
             {
                 Id = Guid.NewGuid(),
-                Type = DocumentType.TeamPhoto,
-                ExtractedDataJson = JsonSerializer.Serialize(new PhotoMetadata
+                PackageId = packageId,
+                CampaignName = "Test Team",
+                Photos = new List<TeamPhotos>()
+            };
+            for (int i = 0; i < photoCount; i++)
+            {
+                team.Photos.Add(new TeamPhotos
                 {
-                    Timestamp = DateTime.UtcNow,
-                    Latitude = 19.0760,
-                    Longitude = 72.8777,
-                    HasBlueTshirtPerson = true,
-                    HasBajajVehicle = true
-                })
-            });
+                    Id = Guid.NewGuid(),
+                    TeamId = team.Id,
+                    PackageId = packageId,
+                    ExtractedMetadataJson = JsonSerializer.Serialize(new PhotoMetadata
+                    {
+                        Timestamp = DateTime.UtcNow,
+                        Latitude = 19.0760,
+                        Longitude = 72.8777,
+                        HasBlueTshirtPerson = true,
+                        HasBajajVehicle = true
+                    })
+                });
+            }
+            package.Teams.Add(team);
         }
 
         return package;

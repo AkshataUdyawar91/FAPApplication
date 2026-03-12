@@ -277,8 +277,7 @@ public class EmailAgentProperties
             SubmittedByUserId = user.Id,
             SubmittedBy = user,
             State = PackageState.Validating,
-            CreatedAt = DateTime.UtcNow,
-            Documents = new List<Document>()
+            CreatedAt = DateTime.UtcNow
         };
 
         var packages = new List<DocumentPackage> { package };

@@ -149,8 +149,8 @@ public class PhotoUploadLimitProperties
         }
 
         // Assert - All uploads should succeed
-        var orphanPhotos = await context.Documents
-            .Where(d => d.Type == DocumentType.TeamPhoto && d.PackageId == Guid.Empty)
+        var orphanPhotos = await context.TeamPhotos
+            .Where(tp => tp.PackageId == Guid.Empty)
             .CountAsync();
         
         Assert.Equal(25, orphanPhotos);

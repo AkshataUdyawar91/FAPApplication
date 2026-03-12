@@ -105,12 +105,6 @@ public class DocumentPackageConfiguration : IEntityTypeConfiguration<DocumentPac
         // NOTE: RequestApprovalHistory relationship is configured in RequestApprovalHistoryConfiguration
         // NOTE: RequestComments relationship is configured in RequestCommentsConfiguration
 
-        // Existing relationships (kept for backward compatibility during migration)
-        builder.HasMany(p => p.Documents)
-            .WithOne(d => d.Package)
-            .HasForeignKey(d => d.PackageId)
-            .OnDelete(DeleteBehavior.Cascade);
-
         // ValidationResult relationship (polymorphic - no direct FK relationship)
         // ValidationResult uses DocumentType and DocumentId for polymorphic relationships
         // Ignore the navigation property to prevent EF from creating shadow FKs

@@ -90,17 +90,16 @@ public class WorkflowOrchestratorTests : IDisposable
         };
         _context.DocumentPackages.Add(package);
 
-        var document = new Document
+        var po = new PO
         {
             Id = Guid.NewGuid(),
             PackageId = package.Id,
-            Type = DocumentType.PO,
             FileName = "test-po.pdf",
             BlobUrl = "https://storage/test-po.pdf",
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
-        _context.Documents.Add(document);
+        _context.POs.Add(po);
 
         await _context.SaveChangesAsync();
         return package;

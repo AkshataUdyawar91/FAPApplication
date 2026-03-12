@@ -103,7 +103,7 @@ public class EntityPersistenceProperties
         // Arrange
         var userId = Guid.NewGuid();
         var packageId = Guid.NewGuid();
-        var documentId = Guid.NewGuid();
+        var poId = Guid.NewGuid();
         
         await using var context = CreateInMemoryContext();
 
@@ -125,11 +125,10 @@ public class EntityPersistenceProperties
             CreatedAt = DateTime.UtcNow
         };
 
-        var document = new Document
+        var po = new PO
         {
-            Id = documentId,
+            Id = poId,
             PackageId = packageId,
-            Type = DocumentType.PO,
             FileName = "test.pdf",
             BlobUrl = "https://blob.com/test.pdf",
             FileSizeBytes = 1000,
@@ -141,7 +140,7 @@ public class EntityPersistenceProperties
         {
             Id = Guid.NewGuid(),
             DocumentType = DocumentType.PO,
-            DocumentId = documentId,
+            DocumentId = poId,
             AllValidationsPassed = true,
             CreatedAt = DateTime.UtcNow
         };
@@ -172,7 +171,7 @@ public class EntityPersistenceProperties
         // Act
         await context.Users.AddAsync(user);
         await context.DocumentPackages.AddAsync(package);
-        await context.Documents.AddAsync(document);
+        await context.POs.AddAsync(po);
         await context.ValidationResults.AddAsync(validationResult);
         await context.ConfidenceScores.AddAsync(confidenceScore);
         await context.Recommendations.AddAsync(recommendation);
@@ -180,16 +179,14 @@ public class EntityPersistenceProperties
 
         // Assert
         var savedPackage = await context.DocumentPackages
-            .Include(p => p.Documents)
-            .Include(p => p.ValidationResult)
+            .Include(p => p.PO)
             .Include(p => p.ConfidenceScore)
             .Include(p => p.Recommendation)
             .FirstOrDefaultAsync(p => p.Id == packageId);
 
         Assert.True(saveResult > 0, "SaveChanges should return positive count");
         Assert.NotNull(savedPackage);
-        Assert.Single(savedPackage.Documents);
-        Assert.NotNull(savedPackage.ValidationResult);
+        Assert.NotNull(savedPackage.PO);
         Assert.NotNull(savedPackage.ConfidenceScore);
         Assert.NotNull(savedPackage.Recommendation);
     }

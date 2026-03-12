@@ -392,7 +392,7 @@ Provide a 2-3 paragraph summary highlighting the most important insights.";
         var (startDate, endDate) = GetQuarterDateRange(quarter, year);
 
         var packages = await _context.DocumentPackages
-            .Include(p => p.Documents)
+            .Include(p => p.Invoices)
             .Where(p => p.State == PackageState.Approved)
             .Where(p => p.CreatedAt >= startDate && p.CreatedAt <= endDate)
             .AsNoTracking()
@@ -403,9 +403,7 @@ Provide a 2-3 paragraph summary highlighting the most important insights.";
 
         foreach (var package in packages)
         {
-            var invoices = package.Documents
-                .Where(d => d.Type == DocumentType.Invoice)
-                .ToList();
+            var invoices = package.Invoices.Where(i => !i.IsDeleted).ToList();
 
             if (invoices.Count == 0)
                 continue;
@@ -414,7 +412,14 @@ Provide a 2-3 paragraph summary highlighting the most important insights.";
 
             foreach (var invoice in invoices)
             {
-                fapAmount += ExtractTotalAmount(invoice.ExtractedDataJson);
+                if (invoice.TotalAmount != null && invoice.TotalAmount > 0)
+                {
+                    fapAmount += invoice.TotalAmount.Value;
+                }
+                else
+                {
+                    fapAmount += ExtractTotalAmount(invoice.ExtractedDataJson);
+                }
             }
         }
 

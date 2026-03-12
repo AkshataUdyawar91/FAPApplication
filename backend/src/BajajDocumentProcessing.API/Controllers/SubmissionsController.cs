@@ -129,7 +129,8 @@ public class SubmissionsController : ControllerBase
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
 
             var query = _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
                 .Include(p => p.ValidationResult)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
@@ -179,15 +180,7 @@ public class SubmissionsController : ControllerBase
                 HQReviewNotes = raApproval?.Comments,
                 ReviewedAt = asmApproval?.ActionDate,
                 ReviewNotes = asmApproval?.Comments,
-                Documents = package.Documents.Select(d => new SubmissionDocumentDto
-                {
-                    Id = d.Id,
-                    Type = d.Type.ToString(),
-                    Filename = d.FileName,
-                    BlobUrl = d.BlobUrl,
-                    ExtractionConfidence = d.ExtractionConfidence,
-                    ExtractedData = d.ExtractedDataJson
-                }).ToList(),
+                Documents = BuildDocumentDtos(package),
                 Campaigns = package.Teams.Where(c => !c.IsDeleted).Select(c => new CampaignDto
                 {
                     Id = c.Id,
@@ -325,7 +318,8 @@ public class SubmissionsController : ControllerBase
             _logger.LogInformation("ListSubmissions - UserId: {UserId}, Role: {Role}", userId, userRole);
 
             var query = _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Teams.Where(c => !c.IsDeleted))
                     .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
@@ -376,29 +370,6 @@ public class SubmissionsController : ControllerBase
                 string? invoiceNumber = firstInvoice?.InvoiceNumber;
                 decimal? invoiceAmount = firstInvoice?.TotalAmount;
 
-                // Fallback: check old Documents table if no CampaignInvoice found
-                if (string.IsNullOrEmpty(invoiceNumber) && invoiceAmount == null)
-                {
-                    var invoiceDoc = p.Documents.FirstOrDefault(d => d.Type == DocumentType.Invoice);
-                    if (invoiceDoc != null && !string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
-                    {
-                        try
-                        {
-                            var invoiceData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(invoiceDoc.ExtractedDataJson);
-                            if (invoiceData.TryGetProperty("InvoiceNumber", out var invNum))
-                                invoiceNumber = invNum.GetString();
-                            else if (invoiceData.TryGetProperty("invoiceNumber", out var invNum2))
-                                invoiceNumber = invNum2.GetString();
-
-                            if (invoiceData.TryGetProperty("TotalAmount", out var amt) && amt.ValueKind == System.Text.Json.JsonValueKind.Number)
-                                invoiceAmount = amt.GetDecimal();
-                            else if (invoiceData.TryGetProperty("totalAmount", out var amt2) && amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
-                                invoiceAmount = amt2.GetDecimal();
-                        }
-                        catch { }
-                    }
-                }
-
                 // Calculate total invoice amount across all teams
                 var totalInvoiceAmount = p.Teams
                     .Where(c => !c.IsDeleted)
@@ -409,34 +380,37 @@ public class SubmissionsController : ControllerBase
                 if (totalInvoiceAmount > 0)
                     invoiceAmount = totalInvoiceAmount;
 
-                // Extract PO data from documents
-                var poDoc = p.Documents.FirstOrDefault(d => d.Type == DocumentType.PO);
-                string? poNumber = null;
-                decimal? poAmount = null;
+                // Extract PO data from dedicated PO entity
+                string? poNumber = p.PO?.PONumber;
+                decimal? poAmount = p.PO?.TotalAmount;
 
-                if (poDoc != null && !string.IsNullOrEmpty(poDoc.ExtractedDataJson))
+                // Fallback: try ExtractedDataJson if typed fields are empty
+                if (p.PO != null && string.IsNullOrEmpty(poNumber) && !string.IsNullOrEmpty(p.PO.ExtractedDataJson))
                 {
                     try
                     {
-                        var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(poDoc.ExtractedDataJson);
+                        var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(p.PO.ExtractedDataJson);
                         
                         if (poData.TryGetProperty("PONumber", out var poNum))
                             poNumber = poNum.GetString();
                         else if (poData.TryGetProperty("poNumber", out var poNum2))
                             poNumber = poNum2.GetString();
 
-                        if (poData.TryGetProperty("TotalAmount", out var amt) && amt.ValueKind == System.Text.Json.JsonValueKind.Number)
-                            poAmount = amt.GetDecimal();
-                        else if (poData.TryGetProperty("totalAmount", out var amt2) && amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
-                            poAmount = amt2.GetDecimal();
+                        if (poAmount == null || poAmount == 0)
+                        {
+                            if (poData.TryGetProperty("TotalAmount", out var amt) && amt.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                poAmount = amt.GetDecimal();
+                            else if (poData.TryGetProperty("totalAmount", out var amt2) && amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                poAmount = amt2.GetDecimal();
+                        }
                     }
                     catch { }
                 }
 
-                // Count documents: PO docs + team invoices + team photos
+                // Count documents: PO + package invoices + team invoices + team photos
                 var campaignInvoiceCount = p.Teams.Where(c => !c.IsDeleted).SelectMany(c => c.Invoices).Count(i => !i.IsDeleted);
                 var campaignPhotoCount = p.Teams.Where(c => !c.IsDeleted).SelectMany(c => c.Photos).Count(ph => !ph.IsDeleted);
-                var totalDocCount = p.Documents.Count + campaignInvoiceCount + campaignPhotoCount;
+                var totalDocCount = (p.PO != null ? 1 : 0) + p.Invoices.Count + campaignInvoiceCount + campaignPhotoCount;
 
                 return new SubmissionListItemDto
                 {
@@ -1150,7 +1124,8 @@ public class SubmissionsController : ControllerBase
             _logger.LogInformation("User {UserId} submitting package {PackageId}", userId, packageId);
 
             var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
                 .Include(p => p.Teams.Where(c => !c.IsDeleted))
                     .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
                 .Include(p => p.CostSummary)
@@ -1178,12 +1153,10 @@ public class SubmissionsController : ControllerBase
             }
 
             // Verify minimum required documents
-            var hasPO = package.Documents.Any(d => d.Type == DocumentType.PO);
-            // Check both old Documents table and new CampaignInvoices table
-            var hasInvoice = package.Documents.Any(d => d.Type == DocumentType.Invoice) ||
+            var hasPO = package.PO != null;
+            var hasInvoice = package.Invoices.Any() ||
                              package.Teams.Any(c => c.Invoices.Any());
-            var hasCostSummary = package.Documents.Any(d => d.Type == DocumentType.CostSummary) ||
-                                 package.CostSummary != null;
+            var hasCostSummary = package.CostSummary != null;
 
             var campaignInvoiceCount = package.Teams.SelectMany(c => c.Invoices).Count();
             _logger.LogInformation("Package {PackageId} document check: PO={HasPO}, Invoice={HasInvoice} (CampaignInvoices={CampaignInvCount}), CostSummary={HasCostSummary}", 
@@ -1204,8 +1177,9 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = "Cost Summary document is required" });
             }
 
+            var docCount = (package.PO != null ? 1 : 0) + package.Invoices.Count + (package.CostSummary != null ? 1 : 0) + package.Teams.SelectMany(t => t.Invoices).Count();
             _logger.LogInformation("Submitting package {PackageId} for processing with {Count} documents", 
-                packageId, package.Documents.Count);
+                packageId, docCount);
 
             // Queue workflow for background processing
             await _backgroundQueue.QueueWorkflowAsync(packageId);
@@ -1216,7 +1190,7 @@ public class SubmissionsController : ControllerBase
             {
                 Id = packageId,
                 State = package.State.ToString(),
-                DocumentCount = package.Documents.Count,
+                DocumentCount = docCount,
                 Status = "Queued for processing",
                 Message = "Package submitted for processing"
             };
@@ -1424,7 +1398,6 @@ public class SubmissionsController : ControllerBase
             _logger.LogInformation("Manual workflow trigger requested for package {PackageId}", packageId);
 
             var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
@@ -1441,7 +1414,6 @@ public class SubmissionsController : ControllerBase
 
             // Reload package to get updated state
             package = await _context.DocumentPackages
-                .Include(p => p.Documents)
                 .Include(p => p.ConfidenceScore)
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
@@ -1726,6 +1698,42 @@ public class SubmissionsController : ControllerBase
     private static string? FindIssue(List<string> issues, string keyword)
     {
         return issues.FirstOrDefault(i => i.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Builds a list of SubmissionDocumentDto from dedicated entity navigation properties
+    /// </summary>
+    private static List<SubmissionDocumentDto> BuildDocumentDtos(Domain.Entities.DocumentPackage package)
+    {
+        var docs = new List<SubmissionDocumentDto>();
+
+        if (package.PO != null)
+        {
+            docs.Add(new SubmissionDocumentDto
+            {
+                Id = package.PO.Id,
+                Type = DocumentType.PO.ToString(),
+                Filename = package.PO.FileName,
+                BlobUrl = package.PO.BlobUrl,
+                ExtractionConfidence = package.PO.ExtractionConfidence,
+                ExtractedData = package.PO.ExtractedDataJson
+            });
+        }
+
+        foreach (var invoice in package.Invoices.Where(i => !i.IsDeleted))
+        {
+            docs.Add(new SubmissionDocumentDto
+            {
+                Id = invoice.Id,
+                Type = DocumentType.Invoice.ToString(),
+                Filename = invoice.FileName,
+                BlobUrl = invoice.BlobUrl,
+                ExtractionConfidence = invoice.ExtractionConfidence,
+                ExtractedData = invoice.ExtractedDataJson
+            });
+        }
+
+        return docs;
     }
 }
 

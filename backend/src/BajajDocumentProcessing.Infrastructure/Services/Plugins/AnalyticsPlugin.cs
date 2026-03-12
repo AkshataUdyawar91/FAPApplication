@@ -82,7 +82,8 @@ public class AnalyticsPlugin
 
             // Search by ID prefix match — include navigation properties
             var allPackages = _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
                 .Include(p => p.ConfidenceScore)
                 .Where(p => !_currentUserId.HasValue || p.SubmittedByUserId == _currentUserId.Value)
                 .ToList();
@@ -101,7 +102,7 @@ public class AnalyticsPlugin
                 Status = match.State.ToString(),
                 SubmittedOn = match.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
                 LastUpdated = match.UpdatedAt?.ToString("yyyy-MM-dd HH:mm") ?? "N/A",
-                DocumentCount = match.Documents.Count,
+                DocumentCount = (match.PO != null ? 1 : 0) + match.Invoices.Count,
                 Confidence = match.ConfidenceScore != null 
                     ? $"{(match.ConfidenceScore.OverallConfidence * 100):F0}%" 
                     : "N/A"
@@ -222,7 +223,8 @@ public class AnalyticsPlugin
         try
         {
             var query = _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
                 .Include(p => p.ConfidenceScore)
                 .AsQueryable();
 
@@ -257,7 +259,7 @@ public class AnalyticsPlugin
                     State = p.State.ToString(),
                     CreatedAt = p.CreatedAt,
                     OverallConfidence = p.ConfidenceScore?.OverallConfidence ?? 0.0,
-                    DocumentCount = p.Documents.Count
+                    DocumentCount = (p.PO != null ? 1 : 0) + p.Invoices.Count
                 })
                 .ToList();
 
@@ -298,7 +300,8 @@ public class AnalyticsPlugin
         try
         {
             var submissions = _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
                 .Include(p => p.ConfidenceScore)
                 .Where(p => p.State == Domain.Enums.PackageState.Approved)
                 .Where(p => !_currentUserId.HasValue || p.SubmittedByUserId == _currentUserId.Value)
@@ -311,7 +314,7 @@ public class AnalyticsPlugin
                     CreatedAt = p.CreatedAt,
                     ApprovedAt = p.UpdatedAt,
                     OverallConfidence = p.ConfidenceScore?.OverallConfidence ?? 0.0,
-                    DocumentCount = p.Documents.Count
+                    DocumentCount = (p.PO != null ? 1 : 0) + p.Invoices.Count
                 })
                 .ToList();
 
@@ -350,7 +353,6 @@ public class AnalyticsPlugin
         try
         {
             var submissions = _context.DocumentPackages
-                .Include(p => p.Documents)
                 .Where(p => p.State == Domain.Enums.PackageState.ASMRejected || 
                            p.State == Domain.Enums.PackageState.RARejected)
                 .Where(p => !_currentUserId.HasValue || p.SubmittedByUserId == _currentUserId.Value)
@@ -363,7 +365,7 @@ public class AnalyticsPlugin
                     State = p.State.ToString(),
                     CreatedAt = p.CreatedAt,
                     RejectedAt = p.UpdatedAt,
-                    DocumentCount = p.Documents.Count
+                    DocumentCount = 0
                 })
                 .ToList();
 

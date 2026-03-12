@@ -30,7 +30,7 @@ public class ReferentialIntegrityProperties
     [InlineData(3)]
     [InlineData(5)]
     [InlineData(10)]
-    public async Task DocumentPackage_WithDocuments_MaintainsReferentialIntegrity(int documentCount)
+    public async Task DocumentPackage_WithInvoices_MaintainsReferentialIntegrity(int invoiceCount)
     {
         // Arrange
         var userId = Guid.NewGuid();
@@ -56,14 +56,13 @@ public class ReferentialIntegrityProperties
             CreatedAt = DateTime.UtcNow
         };
 
-        var documents = Enumerable.Range(0, documentCount)
-            .Select(i => new Document
+        var invoices = Enumerable.Range(0, invoiceCount)
+            .Select(i => new Invoice
             {
                 Id = Guid.NewGuid(),
                 PackageId = packageId,
-                Type = DocumentType.PO,
-                FileName = $"doc{i}.pdf",
-                BlobUrl = $"https://blob.com/doc{i}.pdf",
+                FileName = $"invoice{i}.pdf",
+                BlobUrl = $"https://blob.com/invoice{i}.pdf",
                 FileSizeBytes = 1000,
                 ContentType = "application/pdf",
                 CreatedAt = DateTime.UtcNow
@@ -73,19 +72,19 @@ public class ReferentialIntegrityProperties
         // Act
         await context.Users.AddAsync(user);
         await context.DocumentPackages.AddAsync(package);
-        await context.Documents.AddRangeAsync(documents);
+        await context.Invoices.AddRangeAsync(invoices);
         await context.SaveChangesAsync();
 
         // Assert - Verify referential integrity
         var savedPackage = await context.DocumentPackages
-            .Include(p => p.Documents)
+            .Include(p => p.Invoices)
             .Include(p => p.SubmittedBy)
             .FirstOrDefaultAsync(p => p.Id == packageId);
 
         Assert.NotNull(savedPackage);
-        Assert.Equal(documentCount, savedPackage.Documents.Count);
+        Assert.Equal(invoiceCount, savedPackage.Invoices.Count);
         Assert.Equal(userId, savedPackage.SubmittedBy.Id);
-        Assert.All(savedPackage.Documents, d => Assert.Equal(packageId, d.PackageId));
+        Assert.All(savedPackage.Invoices, i => Assert.Equal(packageId, i.PackageId));
     }
 
     [Fact]
@@ -115,11 +114,10 @@ public class ReferentialIntegrityProperties
             CreatedAt = DateTime.UtcNow
         };
 
-        var document = new Document
+        var po = new PO
         {
             Id = Guid.NewGuid(),
             PackageId = packageId,
-            Type = DocumentType.PO,
             FileName = "test.pdf",
             BlobUrl = "https://blob.com/test.pdf",
             FileSizeBytes = 1000,
@@ -129,19 +127,19 @@ public class ReferentialIntegrityProperties
 
         await context.Users.AddAsync(user);
         await context.DocumentPackages.AddAsync(package);
-        await context.Documents.AddAsync(document);
+        await context.POs.AddAsync(po);
         await context.SaveChangesAsync();
 
-        // Act - Delete package (should cascade to documents)
+        // Act - Delete package (should cascade to PO)
         context.DocumentPackages.Remove(package);
         await context.SaveChangesAsync();
 
         // Assert
         var deletedPackage = await context.DocumentPackages.FindAsync(packageId);
-        var deletedDocument = await context.Documents.FindAsync(document.Id);
+        var deletedPO = await context.POs.FindAsync(po.Id);
 
         Assert.Null(deletedPackage);
-        Assert.Null(deletedDocument);
+        Assert.Null(deletedPO);
     }
 
     [Fact]
@@ -150,11 +148,10 @@ public class ReferentialIntegrityProperties
         // Arrange
         await using var context = CreateInMemoryContext();
 
-        var document = new Document
+        var invoice = new Invoice
         {
             Id = Guid.NewGuid(),
             PackageId = Guid.NewGuid(), // Non-existent package
-            Type = DocumentType.PO,
             FileName = "test.pdf",
             BlobUrl = "https://blob.com/test.pdf",
             FileSizeBytes = 1000,
@@ -163,7 +160,7 @@ public class ReferentialIntegrityProperties
         };
 
         // Act & Assert
-        await context.Documents.AddAsync(document);
+        await context.Invoices.AddAsync(invoice);
         
         // In-memory database doesn't enforce FK constraints, but in real SQL Server this would fail
         // This test documents the expected behavior

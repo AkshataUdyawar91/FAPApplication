@@ -494,7 +494,7 @@ public class HierarchicalSubmissionController : ControllerBase
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
             var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
                 .Include(p => p.EnquiryDocument)
                 .Include(p => p.CostSummary)
                 .Include(p => p.ActivitySummary)
@@ -510,18 +510,16 @@ public class HierarchicalSubmissionController : ControllerBase
             if (userRole == "Agency" && package.SubmittedByUserId != userId)
                 return NotFound(new { error = "Package not found" });
 
-            var poDocument = package.Documents.FirstOrDefault(d => d.Type == DocumentType.PO);
-
             var response = new HierarchicalStructureResponse
             {
                 PackageId = package.Id,
                 State = package.State.ToString(),
                 CreatedAt = package.CreatedAt,
-                PO = poDocument != null ? new POInfo
+                PO = package.PO != null ? new POInfo
                 {
-                    DocumentId = poDocument.Id,
-                    FileName = poDocument.FileName,
-                    ExtractedData = poDocument.ExtractedDataJson
+                    DocumentId = package.PO.Id,
+                    FileName = package.PO.FileName,
+                    ExtractedData = package.PO.ExtractedDataJson
                 } : null,
                 EnquiryDoc = package.EnquiryDocument != null ? new EnquiryDocInfo
                 {

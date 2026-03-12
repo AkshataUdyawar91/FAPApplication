@@ -72,9 +72,8 @@ public class RecommendationAgent : IRecommendationAgent
         try
         {
             // Load package with related data
-            _logger.LogInformation("Loading package {PackageId} with documents", packageId);
+            _logger.LogInformation("Loading package {PackageId}", packageId);
             var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
@@ -82,7 +81,7 @@ public class RecommendationAgent : IRecommendationAgent
                 _logger.LogError("Package {PackageId} not found", packageId);
                 throw new Domain.Exceptions.NotFoundException($"Package {packageId} not found");
             }
-            _logger.LogInformation("Package {PackageId} loaded successfully with {DocumentCount} documents", packageId, package.Documents.Count);
+            _logger.LogInformation("Package {PackageId} loaded successfully", packageId);
 
             // Get validation result - TODO: ValidationResult is now polymorphic (per document type)
             // For now, we'll skip validation result and rely on confidence scores only

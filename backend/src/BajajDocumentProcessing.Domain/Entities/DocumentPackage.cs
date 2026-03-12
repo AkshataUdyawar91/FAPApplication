@@ -205,11 +205,6 @@ public class DocumentPackage : BaseEntity
     public ICollection<AdditionalDocument> AdditionalDocuments { get; set; } = new List<AdditionalDocument>();
     
     /// <summary>
-    /// Gets or sets the collection of documents in this package
-    /// </summary>
-    public ICollection<Document> Documents { get; set; } = new List<Document>();
-    
-    /// <summary>
     /// Gets or sets the validation result for this package
     /// </summary>
     public ValidationResult? ValidationResult { get; set; }

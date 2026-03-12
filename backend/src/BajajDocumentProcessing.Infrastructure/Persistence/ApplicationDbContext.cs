@@ -25,7 +25,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<DocumentPackage> DocumentPackages => Set<DocumentPackage>();
     
     // Document entities
-    public DbSet<Document> Documents => Set<Document>();  // Legacy - kept for backward compatibility
     public DbSet<PO> POs => Set<PO>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<CostSummary> CostSummaries => Set<CostSummary>();
@@ -69,7 +68,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<Agency>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ASM>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<DocumentPackage>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<Document>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<PO>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Invoice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CostSummary>().HasQueryFilter(e => !e.IsDeleted);

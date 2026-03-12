@@ -14,7 +14,6 @@ public interface IApplicationDbContext
 {
     DbSet<User> Users { get; }
     DbSet<DocumentPackage> DocumentPackages { get; }
-    DbSet<Document> Documents { get; }
     DbSet<Domain.Entities.ValidationResult> ValidationResults { get; }
     DbSet<ConfidenceScore> ConfidenceScores { get; }
     DbSet<Recommendation> Recommendations { get; }
