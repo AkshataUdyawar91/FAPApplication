@@ -61,7 +61,7 @@ public class AnalyticsEmbeddingPipelineTests
             new DocumentPackage
             {
                 Id = Guid.NewGuid(),
-                State = PackageState.Rejected,
+                State = PackageState.ASMRejected,
                 CreatedAt = new DateTime(2024, 1, 25),
                 UpdatedAt = new DateTime(2024, 1, 26),
                 ConfidenceScore = new ConfidenceScore { OverallConfidence = 60.0 },

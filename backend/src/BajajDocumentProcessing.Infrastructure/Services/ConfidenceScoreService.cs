@@ -1,6 +1,5 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Entities;
-using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -61,9 +60,15 @@ public class ConfidenceScoreService : IConfidenceScoreService
 
         try
         {
-            // Load package with documents
+            // Load package with dedicated document navigations
             var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
+                .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
+                .Include(p => p.Teams)
+                    .ThenInclude(t => t.Photos)
+                .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
@@ -72,12 +77,12 @@ public class ConfidenceScoreService : IConfidenceScoreService
                 throw new Domain.Exceptions.NotFoundException($"Package {packageId} not found");
             }
 
-            // Extract individual document confidences
-            var poConfidence = GetDocumentConfidence(package.Documents, DocumentType.PO);
-            var invoiceConfidence = GetDocumentConfidence(package.Documents, DocumentType.Invoice);
-            var costSummaryConfidence = GetDocumentConfidence(package.Documents, DocumentType.CostSummary);
-            var activityConfidence = GetDocumentConfidence(package.Documents, DocumentType.AdditionalDocument);
-            var photosConfidence = GetAveragePhotoConfidence(package.Documents);
+            // Extract individual document confidences from dedicated entities
+            var poConfidence = GetPoConfidence(package);
+            var invoiceConfidence = GetInvoiceConfidence(package);
+            var costSummaryConfidence = GetCostSummaryConfidence(package);
+            var activityConfidence = GetActivityConfidence(package);
+            var photosConfidence = GetAveragePhotoConfidence(package);
 
             // Calculate weighted overall confidence
             var overallConfidence = CalculateWeightedScore(
@@ -188,46 +193,80 @@ public class ConfidenceScoreService : IConfidenceScoreService
     }
 
     /// <summary>
-    /// Gets the confidence score for a specific document type from the package.
-    /// Returns 0 if the document type is not found.
+    /// Gets the PO extraction confidence from the dedicated PO entity.
+    /// Returns 0 if no PO is present.
     /// </summary>
-    /// <param name="documents">Collection of documents in the package</param>
-    /// <param name="documentType">The type of document to get confidence for</param>
-    /// <returns>The extraction confidence score (0-100), or 0 if document not found</returns>
-    private double GetDocumentConfidence(ICollection<Document> documents, DocumentType documentType)
+    private double GetPoConfidence(DocumentPackage package)
     {
-        var document = documents.FirstOrDefault(d => d.Type == documentType);
-
-        if (document == null)
+        if (package.PO == null)
         {
-            _logger.LogWarning("Document type {DocumentType} not found, using confidence 0", documentType);
+            _logger.LogWarning("PO not found for package {PackageId}, using confidence 0", package.Id);
             return 0.0;
         }
 
-        // If document has a confidence score, use it; otherwise default to 0
-        return document.ExtractionConfidence ?? 0.0;
+        return package.PO.ExtractionConfidence ?? 0.0;
     }
 
     /// <summary>
-    /// Gets the average confidence score for all photos in the package.
-    /// Returns 0 if no photos are found.
+    /// Gets the Invoice extraction confidence from the first dedicated Invoice entity.
+    /// Returns 0 if no Invoice is present.
     /// </summary>
-    /// <param name="documents">Collection of documents in the package</param>
-    /// <returns>The average extraction confidence score across all photos (0-100), or 0 if no photos</returns>
-    private double GetAveragePhotoConfidence(ICollection<Document> documents)
+    private double GetInvoiceConfidence(DocumentPackage package)
     {
-        var photos = documents.Where(d => d.Type == DocumentType.Photo).ToList();
-
-        if (!photos.Any())
+        var invoice = package.Invoices.FirstOrDefault();
+        if (invoice == null)
         {
-            _logger.LogWarning("No photos found, using confidence 0");
+            _logger.LogWarning("Invoice not found for package {PackageId}, using confidence 0", package.Id);
             return 0.0;
         }
 
-        // Calculate average confidence across all photos
-        var totalConfidence = photos.Sum(p => p.ExtractionConfidence ?? 0.0);
-        var averageConfidence = totalConfidence / photos.Count;
+        return invoice.ExtractionConfidence ?? 0.0;
+    }
 
-        return averageConfidence;
+    /// <summary>
+    /// Gets the CostSummary extraction confidence from the dedicated CostSummary entity.
+    /// Returns 0 if no CostSummary is present.
+    /// </summary>
+    private double GetCostSummaryConfidence(DocumentPackage package)
+    {
+        if (package.CostSummary == null)
+        {
+            _logger.LogWarning("CostSummary not found for package {PackageId}, using confidence 0", package.Id);
+            return 0.0;
+        }
+
+        return package.CostSummary.ExtractionConfidence ?? 0.0;
+    }
+
+    /// <summary>
+    /// Gets the ActivitySummary extraction confidence from the dedicated ActivitySummary entity.
+    /// Returns 0 if no ActivitySummary is present.
+    /// </summary>
+    private double GetActivityConfidence(DocumentPackage package)
+    {
+        if (package.ActivitySummary == null)
+        {
+            _logger.LogWarning("ActivitySummary not found for package {PackageId}, using confidence 0", package.Id);
+            return 0.0;
+        }
+
+        return package.ActivitySummary.ExtractionConfidence ?? 0.0;
+    }
+
+    /// <summary>
+    /// Gets the average extraction confidence across all TeamPhotos in the package.
+    /// Returns 0 if no photos are found.
+    /// </summary>
+    private double GetAveragePhotoConfidence(DocumentPackage package)
+    {
+        var photos = package.Teams.SelectMany(t => t.Photos).ToList();
+
+        if (!photos.Any())
+        {
+            _logger.LogWarning("No photos found for package {PackageId}, using confidence 0", package.Id);
+            return 0.0;
+        }
+
+        return photos.Average(p => p.ExtractionConfidence ?? 0.0);
     }
 }

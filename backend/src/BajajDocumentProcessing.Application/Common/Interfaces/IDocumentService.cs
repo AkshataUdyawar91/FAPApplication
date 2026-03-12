@@ -28,9 +28,10 @@ public interface IDocumentService
     Task<bool> ValidateFileAsync(IFormFile file, DocumentType documentType);
 
     /// <summary>
-    /// Retrieves a document by ID
+    /// Retrieves a document by ID and type from the appropriate dedicated table
     /// </summary>
     /// <param name="documentId">Document's unique identifier</param>
-    /// <returns>Document entity or null if not found</returns>
-    Task<Domain.Entities.Document?> GetDocumentAsync(Guid documentId);
+    /// <param name="documentType">Type of document to look up in the correct table</param>
+    /// <returns>Document info DTO or null if not found</returns>
+    Task<DocumentInfoDto?> GetDocumentAsync(Guid documentId, DocumentType documentType);
 }

@@ -154,7 +154,8 @@ public class ChatService : IChatService
             // Query user's submission data — match dashboard behavior per role
             // Agency: only their own submissions. ASM/HQ: all submissions (they're reviewers).
             var packagesQuery = _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
                 .Include(p => p.ConfidenceScore)
                 .AsQueryable();
 
@@ -170,18 +171,16 @@ public class ChatService : IChatService
 
             _logger.LogInformation("ChatService - UserId: {UserId}, Role: {Role}, Packages count: {Count}", userId, userRole, userPackages.Count);
 
-            var userPendingASM = userPackages.Count(p => p.State == Domain.Enums.PackageState.PendingASMApproval);
-            var userPendingHQ = userPackages.Count(p => p.State == Domain.Enums.PackageState.PendingHQApproval);
+            var userPendingASM = userPackages.Count(p => p.State == Domain.Enums.PackageState.PendingASM);
+            var userPendingHQ = userPackages.Count(p => p.State == Domain.Enums.PackageState.PendingRA);
             var userApproved = userPackages.Count(p => p.State == Domain.Enums.PackageState.Approved);
             var userRejected = userPackages.Count(p => 
-                p.State == Domain.Enums.PackageState.RejectedByASM || 
-                p.State == Domain.Enums.PackageState.RejectedByRA);
+                p.State == Domain.Enums.PackageState.ASMRejected || 
+                p.State == Domain.Enums.PackageState.RARejected);
             var userUploaded = userPackages.Count(p => p.State == Domain.Enums.PackageState.Uploaded);
             var userProcessing = userPackages.Count(p => 
                 p.State == Domain.Enums.PackageState.Extracting ||
-                p.State == Domain.Enums.PackageState.Validating ||
-                p.State == Domain.Enums.PackageState.Scoring ||
-                p.State == Domain.Enums.PackageState.Recommending);
+                p.State == Domain.Enums.PackageState.Validating);
 
             var userSubmissionsList = userPackages
                 .OrderByDescending(p => p.CreatedAt)
@@ -190,32 +189,62 @@ public class ChatService : IChatService
                     var fapId = $"FAP-{p.Id.ToString().Substring(0, 8).ToUpper()}";
                     var confidence = p.ConfidenceScore != null ? $"{(p.ConfidenceScore.OverallConfidence * 100):F0}%" : "N/A";
                     
-                    // Extract invoice details and document IDs from documents
+                    // Extract invoice details and PO info from dedicated entities
                     string invoiceNumber = "N/A";
                     string invoiceAmount = "N/A";
                     string poNumber = "N/A";
                     string poDocId = "";
                     
-                    foreach (var doc in p.Documents)
+                    // Read PO data from dedicated PO entity
+                    if (p.PO != null)
                     {
-                        if (doc.Type == Domain.Enums.DocumentType.PO)
-                        {
-                            poDocId = doc.Id.ToString();
-                        }
+                        poDocId = p.PO.Id.ToString();
+                        poNumber = p.PO.PONumber ?? "N/A";
                         
-                        if (!string.IsNullOrEmpty(doc.ExtractedDataJson))
+                        // Fallback: try ExtractedDataJson if PONumber field is empty
+                        if (poNumber == "N/A" && !string.IsNullOrEmpty(p.PO.ExtractedDataJson))
                         {
                             try
                             {
-                                var data = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(doc.ExtractedDataJson);
+                                var data = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(p.PO.ExtractedDataJson);
+                                if (data.TryGetProperty("PONumber", out var po))
+                                    poNumber = po.GetString() ?? "N/A";
+                                else if (data.TryGetProperty("poNumber", out var po2))
+                                    poNumber = po2.GetString() ?? "N/A";
+                                else if (data.TryGetProperty("PurchaseOrderNumber", out var po3))
+                                    poNumber = po3.GetString() ?? "N/A";
+                            }
+                            catch { /* skip parsing errors */ }
+                        }
+                    }
+                    
+                    // Read Invoice data from dedicated Invoices collection
+                    var firstInvoice = p.Invoices.FirstOrDefault();
+                    if (firstInvoice != null)
+                    {
+                        invoiceNumber = firstInvoice.InvoiceNumber ?? "N/A";
+                        if (firstInvoice.TotalAmount != null && firstInvoice.TotalAmount > 0)
+                        {
+                            invoiceAmount = $"₹{firstInvoice.TotalAmount}";
+                        }
+                        
+                        // Fallback: try ExtractedDataJson if typed fields are empty
+                        if ((invoiceNumber == "N/A" || invoiceAmount == "N/A") && !string.IsNullOrEmpty(firstInvoice.ExtractedDataJson))
+                        {
+                            try
+                            {
+                                var data = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(firstInvoice.ExtractedDataJson);
                                 
-                                if (doc.Type == Domain.Enums.DocumentType.Invoice)
+                                if (invoiceNumber == "N/A")
                                 {
                                     if (data.TryGetProperty("InvoiceNumber", out var invNum))
                                         invoiceNumber = invNum.GetString() ?? "N/A";
                                     else if (data.TryGetProperty("invoiceNumber", out var invNum2))
                                         invoiceNumber = invNum2.GetString() ?? "N/A";
-                                    
+                                }
+                                
+                                if (invoiceAmount == "N/A")
+                                {
                                     if (data.TryGetProperty("TotalAmount", out var amt))
                                         invoiceAmount = amt.ValueKind == System.Text.Json.JsonValueKind.Number ? $"₹{amt.GetDecimal()}" : $"₹{amt.GetString()}";
                                     else if (data.TryGetProperty("totalAmount", out var amt2))
@@ -223,22 +252,14 @@ public class ChatService : IChatService
                                     else if (data.TryGetProperty("InvoiceAmount", out var amt3))
                                         invoiceAmount = amt3.ValueKind == System.Text.Json.JsonValueKind.Number ? $"₹{amt3.GetDecimal()}" : $"₹{amt3.GetString()}";
                                 }
-                                else if (doc.Type == Domain.Enums.DocumentType.PO)
-                                {
-                                    if (data.TryGetProperty("PONumber", out var po))
-                                        poNumber = po.GetString() ?? "N/A";
-                                    else if (data.TryGetProperty("poNumber", out var po2))
-                                        poNumber = po2.GetString() ?? "N/A";
-                                    else if (data.TryGetProperty("PurchaseOrderNumber", out var po3))
-                                        poNumber = po3.GetString() ?? "N/A";
-                                }
                             }
                             catch { /* skip parsing errors */ }
                         }
                     }
                     
+                    var docCount = (p.PO != null ? 1 : 0) + p.Invoices.Count;
                     var poDocPart = !string.IsNullOrEmpty(poDocId) ? $", PODocId={poDocId}" : "";
-                    return $"- {fapId} (FullId={p.Id}): Status={p.State}, Submitted={p.CreatedAt:yyyy-MM-dd}, PO={poNumber}, InvoiceNo={invoiceNumber}, InvoiceAmount={invoiceAmount}, Confidence={confidence}, Documents={p.Documents.Count}{poDocPart}";
+                    return $"- {fapId} (FullId={p.Id}): Status={p.State}, Submitted={p.CreatedAt:yyyy-MM-dd}, PO={poNumber}, InvoiceNo={invoiceNumber}, InvoiceAmount={invoiceAmount}, Confidence={confidence}, Documents={docCount}{poDocPart}";
                 })
                 .ToList();
 

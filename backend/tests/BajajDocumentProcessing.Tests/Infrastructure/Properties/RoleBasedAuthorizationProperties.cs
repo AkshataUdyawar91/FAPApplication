@@ -48,7 +48,8 @@ public class RoleBasedAuthorizationProperties
     [Theory]
     [InlineData("00000000-0000-0000-0000-000000000001", "agency@test.com", UserRole.Agency)]
     [InlineData("00000000-0000-0000-0000-000000000002", "asm@test.com", UserRole.ASM)]
-    [InlineData("00000000-0000-0000-0000-000000000003", "hq@test.com", UserRole.HQ)]
+    [InlineData("00000000-0000-0000-0000-000000000003", "ra@test.com", UserRole.RA)]
+    [InlineData("00000000-0000-0000-0000-000000000004", "admin@test.com", UserRole.Admin)]
     public void GeneratedToken_ContainsCorrectRole(string userIdStr, string email, UserRole role)
     {
         // Arrange
@@ -72,7 +73,8 @@ public class RoleBasedAuthorizationProperties
     [Theory]
     [InlineData("00000000-0000-0000-0000-000000000001", "agency@test.com", UserRole.Agency)]
     [InlineData("00000000-0000-0000-0000-000000000002", "asm@test.com", UserRole.ASM)]
-    [InlineData("00000000-0000-0000-0000-000000000003", "hq@test.com", UserRole.HQ)]
+    [InlineData("00000000-0000-0000-0000-000000000003", "ra@test.com", UserRole.RA)]
+    [InlineData("00000000-0000-0000-0000-000000000004", "admin@test.com", UserRole.Admin)]
     public void Token_ContainsRequiredClaims(string userIdStr, string email, UserRole role)
     {
         // Arrange
@@ -141,7 +143,7 @@ public class RoleBasedAuthorizationProperties
     }
 
     [Fact]
-    public void HQRole_ShouldHaveHQAccess()
+    public void RARole_ShouldHaveRAAccess()
     {
         // Arrange
         var context = CreateInMemoryContext();
@@ -149,7 +151,7 @@ public class RoleBasedAuthorizationProperties
         var authService = new AuthService(context, configuration);
 
         // Act
-        var token = authService.GenerateToken(Guid.NewGuid(), "hq@test.com", UserRole.HQ.ToString());
+        var token = authService.GenerateToken(Guid.NewGuid(), "ra@test.com", UserRole.RA.ToString());
 
         // Assert
         var handler = new JwtSecurityTokenHandler();
@@ -157,13 +159,34 @@ public class RoleBasedAuthorizationProperties
         var roleClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role);
 
         Assert.NotNull(roleClaim);
-        Assert.Equal("HQ", roleClaim.Value);
+        Assert.Equal("RA", roleClaim.Value);
+    }
+
+    [Fact]
+    public void AdminRole_ShouldHaveAdminAccess()
+    {
+        // Arrange
+        var context = CreateInMemoryContext();
+        var configuration = CreateTestConfiguration();
+        var authService = new AuthService(context, configuration);
+
+        // Act
+        var token = authService.GenerateToken(Guid.NewGuid(), "admin@test.com", UserRole.Admin.ToString());
+
+        // Assert
+        var handler = new JwtSecurityTokenHandler();
+        var jwtToken = handler.ReadJwtToken(token);
+        var roleClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role);
+
+        Assert.NotNull(roleClaim);
+        Assert.Equal("Admin", roleClaim.Value);
     }
 
     [Theory]
     [InlineData("00000000-0000-0000-0000-000000000001", "agency@test.com", UserRole.Agency)]
     [InlineData("00000000-0000-0000-0000-000000000002", "asm@test.com", UserRole.ASM)]
-    [InlineData("00000000-0000-0000-0000-000000000003", "hq@test.com", UserRole.HQ)]
+    [InlineData("00000000-0000-0000-0000-000000000003", "ra@test.com", UserRole.RA)]
+    [InlineData("00000000-0000-0000-0000-000000000004", "admin@test.com", UserRole.Admin)]
     public async Task Token_CanBeValidated(string userIdStr, string email, UserRole role)
     {
         // Arrange

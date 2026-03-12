@@ -99,19 +99,18 @@ public class AnalyticsAgent : IAnalyticsAgent
 
         var totalSubmissions = packages.Count;
         var approvedCount = packages.Count(p => p.State == PackageState.Approved);
-        var rejectedCount = packages.Count(p => p.State == PackageState.Rejected);
+        var rejectedCount = packages.Count(p => p.State == PackageState.ASMRejected || p.State == PackageState.RARejected);
         var pendingCount = packages.Count(p => 
-            p.State == PackageState.PendingApproval || 
+            p.State == PackageState.PendingASM || 
+            p.State == PackageState.PendingRA ||
             p.State == PackageState.Uploaded ||
             p.State == PackageState.Extracting ||
-            p.State == PackageState.Validating ||
-            p.State == PackageState.Scoring ||
-            p.State == PackageState.Recommending);
+            p.State == PackageState.Validating);
 
         var approvalRate = totalSubmissions > 0 ? (double)approvedCount / totalSubmissions * 100 : 0;
 
         var avgProcessingTime = packages
-            .Where(p => p.UpdatedAt.HasValue && (p.State == PackageState.Approved || p.State == PackageState.Rejected))
+            .Where(p => p.UpdatedAt.HasValue && (p.State == PackageState.Approved || p.State == PackageState.ASMRejected || p.State == PackageState.RARejected))
             .Select(p => (p.UpdatedAt!.Value - p.CreatedAt).TotalHours)
             .DefaultIfEmpty(0)
             .Average();

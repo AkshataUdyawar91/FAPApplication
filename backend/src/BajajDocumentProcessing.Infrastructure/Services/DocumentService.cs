@@ -33,12 +33,9 @@ public class DocumentService : IDocumentService
         { DocumentType.PO, new[] { ".pdf", ".jpg", ".jpeg", ".png", ".tiff", ".tif" } },
         { DocumentType.Invoice, new[] { ".pdf", ".jpg", ".jpeg", ".png", ".tiff", ".tif" } },
         { DocumentType.CostSummary, new[] { ".pdf", ".xls", ".xlsx", ".csv" } },
-        { DocumentType.Photo, new[] { ".jpg", ".jpeg", ".png", ".heic" } },
-        // CHANGE: Added allowed extensions for Activity Summary (PDF/image)
-        { DocumentType.Activity, new[] { ".pdf", ".jpg", ".jpeg", ".png", ".xls", ".xlsx" } },
-        // CHANGE: Added allowed extensions for Enquiry Dump (Excel format)
-        { DocumentType.EnquiryDump, new[] { ".xls", ".xlsx", ".csv" } },
-        { DocumentType.AdditionalDocument, new[] { ".pdf", ".doc", ".docx", ".xls", ".xlsx" } }
+        { DocumentType.TeamPhoto, new[] { ".jpg", ".jpeg", ".png", ".heic" } },
+        { DocumentType.ActivitySummary, new[] { ".pdf", ".jpg", ".jpeg", ".png", ".xls", ".xlsx" } },
+        { DocumentType.EnquiryDocument, new[] { ".xls", ".xlsx", ".csv" } }
     };
 
     public DocumentService(
@@ -116,11 +113,11 @@ public class DocumentService : IDocumentService
             _logger.LogInformation("Created new package: {PackageId} for user {UserId}", actualPackageId, userId);
         }
 
-        // CHANGE: Increased photo limit from 20 to 50 per package
-        if (documentType == DocumentType.Photo)
+        // Photo limit check: max 50 photos per package
+        if (documentType == DocumentType.TeamPhoto)
         {
-            var photoCount = await _context.Documents
-                .CountAsync(d => d.PackageId == actualPackageId && d.Type == DocumentType.Photo);
+            var photoCount = await _context.TeamPhotos
+                .CountAsync(tp => tp.PackageId == actualPackageId);
             
             if (photoCount >= 50)
             {
@@ -139,27 +136,155 @@ public class DocumentService : IDocumentService
         // Upload to blob storage
         var blobUrl = await _fileStorageService.UploadFileAsync(file, "documents", uniqueFileName);
 
-        // Create document entity
-        var document = new Document
-        {
-            Id = Guid.NewGuid(),
-            PackageId = actualPackageId,
-            Type = documentType,
-            FileName = file.FileName,
-            BlobUrl = blobUrl,
-            FileSizeBytes = file.Length,
-            ContentType = file.ContentType,
-            CreatedAt = DateTime.UtcNow,
-            CreatedBy = userId.ToString()
-        };
+        // Load the package to get VersionNumber and AgencyId
+        var package = await _context.DocumentPackages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == actualPackageId && !p.IsDeleted);
 
-        // Save to database
-        await _context.Documents.AddAsync(document);
+        if (package == null)
+        {
+            throw new Domain.Exceptions.NotFoundException("Package not found");
+        }
+
+        // Create dedicated entity based on document type
+        Guid entityId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var createdBy = userId.ToString();
+
+        switch (documentType)
+        {
+            case DocumentType.PO:
+                var po = new PO
+                {
+                    Id = entityId,
+                    PackageId = actualPackageId,
+                    AgencyId = package.AgencyId,
+                    FileName = file.FileName,
+                    BlobUrl = blobUrl,
+                    FileSizeBytes = file.Length,
+                    ContentType = file.ContentType,
+                    VersionNumber = package.VersionNumber,
+                    CreatedAt = now,
+                    CreatedBy = createdBy
+                };
+                await _context.POs.AddAsync(po);
+                break;
+
+            case DocumentType.Invoice:
+                var existingPo = await _context.POs
+                    .FirstOrDefaultAsync(p => p.PackageId == actualPackageId);
+                var poId = existingPo?.Id ?? Guid.Empty;
+
+                var invoice = new Invoice
+                {
+                    Id = entityId,
+                    PackageId = actualPackageId,
+                    POId = poId,
+                    FileName = file.FileName,
+                    BlobUrl = blobUrl,
+                    FileSizeBytes = file.Length,
+                    ContentType = file.ContentType,
+                    VersionNumber = package.VersionNumber,
+                    CreatedAt = now,
+                    CreatedBy = createdBy
+                };
+                await _context.Invoices.AddAsync(invoice);
+                break;
+
+            case DocumentType.CostSummary:
+                var costSummary = new CostSummary
+                {
+                    Id = entityId,
+                    PackageId = actualPackageId,
+                    FileName = file.FileName,
+                    BlobUrl = blobUrl,
+                    FileSizeBytes = file.Length,
+                    ContentType = file.ContentType,
+                    VersionNumber = package.VersionNumber,
+                    CreatedAt = now,
+                    CreatedBy = createdBy
+                };
+                await _context.CostSummaries.AddAsync(costSummary);
+                break;
+
+            case DocumentType.ActivitySummary:
+                var activitySummary = new ActivitySummary
+                {
+                    Id = entityId,
+                    PackageId = actualPackageId,
+                    FileName = file.FileName,
+                    BlobUrl = blobUrl,
+                    FileSizeBytes = file.Length,
+                    ContentType = file.ContentType,
+                    VersionNumber = package.VersionNumber,
+                    CreatedAt = now,
+                    CreatedBy = createdBy
+                };
+                await _context.ActivitySummaries.AddAsync(activitySummary);
+                break;
+
+            case DocumentType.EnquiryDocument:
+                var enquiryDocument = new EnquiryDocument
+                {
+                    Id = entityId,
+                    PackageId = actualPackageId,
+                    FileName = file.FileName,
+                    BlobUrl = blobUrl,
+                    FileSizeBytes = file.Length,
+                    ContentType = file.ContentType,
+                    VersionNumber = package.VersionNumber,
+                    CreatedAt = now,
+                    CreatedBy = createdBy
+                };
+                await _context.EnquiryDocuments.AddAsync(enquiryDocument);
+                break;
+
+            case DocumentType.TeamPhoto:
+                // Find or create a team for this package
+                var team = await _context.Teams
+                    .FirstOrDefaultAsync(t => t.PackageId == actualPackageId);
+                if (team == null)
+                {
+                    team = new Teams
+                    {
+                        Id = Guid.NewGuid(),
+                        PackageId = actualPackageId,
+                        CreatedAt = now,
+                        CreatedBy = createdBy
+                    };
+                    await _context.Teams.AddAsync(team);
+                    await _context.SaveChangesAsync();
+                }
+
+                var teamPhoto = new TeamPhotos
+                {
+                    Id = entityId,
+                    TeamId = team.Id,
+                    PackageId = actualPackageId,
+                    FileName = file.FileName,
+                    BlobUrl = blobUrl,
+                    FileSizeBytes = file.Length,
+                    ContentType = file.ContentType,
+                    VersionNumber = package.VersionNumber,
+                    CreatedAt = now,
+                    CreatedBy = createdBy
+                };
+                await _context.TeamPhotos.AddAsync(teamPhoto);
+                break;
+
+            default:
+                throw new Domain.Exceptions.ValidationException(
+                    new Dictionary<string, string[]>
+                    {
+                        { "documentType", new[] { $"Unsupported document type: {documentType}" } }
+                    });
+        }
+
         await _context.SaveChangesAsync();
 
         _logger.LogInformation(
             "Document uploaded: {DocumentId}, Type: {DocumentType}, Size: {Size} bytes, Package: {PackageId}",
-            document.Id, documentType, file.Length, actualPackageId);
+            entityId, documentType, file.Length, actualPackageId);
 
         // IMMEDIATE EXTRACTION: Extract critical UI fields synchronously for instant feedback
         string? immediateExtractedData = null;
@@ -167,19 +292,23 @@ public class DocumentService : IDocumentService
         {
             try
             {
-                _logger.LogInformation("Starting immediate extraction for {DocumentType} {DocumentId}", documentType, document.Id);
+                _logger.LogInformation("Starting immediate extraction for {DocumentType} {DocumentId}", documentType, entityId);
                 
                 if (documentType == DocumentType.PO)
                 {
                     var poData = await _documentAgent.ExtractPOAsync(blobUrl);
                     immediateExtractedData = System.Text.Json.JsonSerializer.Serialize(poData);
                     
-                    // Save immediately to database
-                    document.ExtractedDataJson = immediateExtractedData;
-                    document.ExtractionConfidence = poData.FieldConfidences.Values.Any() 
-                        ? poData.FieldConfidences.Values.Average() 
-                        : 0.5;
-                    await _context.SaveChangesAsync();
+                    // Save immediately to the dedicated PO entity
+                    var poEntity = await _context.POs.FindAsync(entityId);
+                    if (poEntity != null)
+                    {
+                        poEntity.ExtractedDataJson = immediateExtractedData;
+                        poEntity.ExtractionConfidence = poData.FieldConfidences.Values.Any() 
+                            ? poData.FieldConfidences.Values.Average() 
+                            : 0.5;
+                        await _context.SaveChangesAsync();
+                    }
                     
                     _logger.LogInformation("Immediate PO extraction completed: {PONumber}, Amount: {Amount}", 
                         poData.PONumber, poData.TotalAmount);
@@ -189,12 +318,16 @@ public class DocumentService : IDocumentService
                     var invoiceData = await _documentAgent.ExtractInvoiceAsync(blobUrl);
                     immediateExtractedData = System.Text.Json.JsonSerializer.Serialize(invoiceData);
                     
-                    // Save immediately to database
-                    document.ExtractedDataJson = immediateExtractedData;
-                    document.ExtractionConfidence = invoiceData.FieldConfidences.Values.Any() 
-                        ? invoiceData.FieldConfidences.Values.Average() 
-                        : 0.5;
-                    await _context.SaveChangesAsync();
+                    // Save immediately to the dedicated Invoice entity
+                    var invoiceEntity = await _context.Invoices.FindAsync(entityId);
+                    if (invoiceEntity != null)
+                    {
+                        invoiceEntity.ExtractedDataJson = immediateExtractedData;
+                        invoiceEntity.ExtractionConfidence = invoiceData.FieldConfidences.Values.Any() 
+                            ? invoiceData.FieldConfidences.Values.Average() 
+                            : 0.5;
+                        await _context.SaveChangesAsync();
+                    }
                     
                     _logger.LogInformation("Immediate Invoice extraction completed: {InvoiceNumber}, Amount: {Amount}", 
                         invoiceData.InvoiceNumber, invoiceData.TotalAmount);
@@ -203,44 +336,39 @@ public class DocumentService : IDocumentService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Immediate extraction failed for {DocumentType} {DocumentId}, will retry in background", 
-                    documentType, document.Id);
+                    documentType, entityId);
                 // Continue - background extraction will retry
             }
         }
 
         // BACKGROUND EXTRACTION: For other document types or if immediate extraction failed
         if (string.IsNullOrEmpty(immediateExtractedData) && 
-            (documentType == DocumentType.CostSummary || documentType == DocumentType.Activity || 
-             documentType == DocumentType.Photo || documentType == DocumentType.EnquiryDump))
+            (documentType == DocumentType.CostSummary || documentType == DocumentType.ActivitySummary || 
+             documentType == DocumentType.TeamPhoto || documentType == DocumentType.EnquiryDocument))
         {
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
-                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] Starting background for doc {document.Id}, type: {documentType}\n");
-                    await ExtractDocumentDataAsync(document.Id, document.BlobUrl, documentType);
-                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] Completed for doc {document.Id}\n");
+                    await ExtractDocumentDataAsync(entityId, blobUrl, documentType);
                 }
                 catch (Exception ex)
                 {
-                    var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
-                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [EXTRACT] FAILED for doc {document.Id}: {ex.GetType().Name}: {ex.Message}\n");
-                    _logger.LogError(ex, "Error extracting document {DocumentId}", document.Id);
+                    _logger.LogError(ex, "Background extraction failed for document {DocumentId}", entityId);
                 }
             });
         }
 
         return new UploadDocumentResponse
         {
-            DocumentId = document.Id,
+            DocumentId = entityId,
             PackageId = actualPackageId,
-            FileName = document.FileName,
-            FileSizeBytes = document.FileSizeBytes,
-            DocumentType = document.Type,
-            BlobUrl = document.BlobUrl,
-            UploadedAt = document.CreatedAt,
-            ExtractedDataJson = immediateExtractedData  // Return immediately extracted data
+            FileName = file.FileName,
+            FileSizeBytes = file.Length,
+            DocumentType = documentType,
+            BlobUrl = blobUrl,
+            UploadedAt = now,
+            ExtractedDataJson = immediateExtractedData
         };
     }
 
@@ -262,8 +390,6 @@ public class DocumentService : IDocumentService
                 documentId, classification.Type, classification.Confidence);
 
             // Extract data based on type
-            // CHANGE: Use string for serialized JSON instead of object? to avoid System.Text.Json polymorphism issue
-            // System.Text.Json serializes declared type (object) not runtime type, causing "{}" for some types
             string? extractedJson = null;
             double confidence = classification.Confidence;
 
@@ -287,7 +413,7 @@ public class DocumentService : IDocumentService
                     confidence = costSummaryData.FieldConfidences.Values.Any() ? costSummaryData.FieldConfidences.Values.Average() : 0.5;
                     break;
 
-                case DocumentType.Photo:
+                case DocumentType.TeamPhoto:
                     var photoMetadata = await _documentAgent.ExtractPhotoMetadataAsync(blobUrl);
                     extractedJson = System.Text.Json.JsonSerializer.Serialize(photoMetadata);
                     confidence = photoMetadata.FieldConfidences.Values.Any() 
@@ -295,8 +421,7 @@ public class DocumentService : IDocumentService
                         : 0.5;
                     break;
 
-                // CHANGE: Added Activity Summary extraction case
-                case DocumentType.Activity:
+                case DocumentType.ActivitySummary:
                     var activityData = await _documentAgent.ExtractActivityAsync(blobUrl);
                     extractedJson = System.Text.Json.JsonSerializer.Serialize(activityData);
                     confidence = activityData.FieldConfidences.Values.Any()
@@ -304,8 +429,7 @@ public class DocumentService : IDocumentService
                         : 0.5;
                     break;
 
-                // CHANGE: Added Enquiry Dump extraction case
-                case DocumentType.EnquiryDump:
+                case DocumentType.EnquiryDocument:
                     var enquiryData = await _documentAgent.ExtractEnquiryDumpAsync(blobUrl);
                     extractedJson = System.Text.Json.JsonSerializer.Serialize(enquiryData);
                     confidence = enquiryData.FieldConfidences.Values.Any()
@@ -320,29 +444,75 @@ public class DocumentService : IDocumentService
 
             if (!string.IsNullOrEmpty(extractedJson))
             {
-                // Save extracted data to database using the new scope's context
-                var document = await context.Documents.FindAsync(documentId);
-                if (document != null)
+                // Save extracted data to the appropriate dedicated entity
+                switch (documentType)
                 {
-                    // CHANGE: Debug log to file to check what's being saved
-                    var logPath = Path.Combine(AppContext.BaseDirectory, "extraction_debug.log");
-                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [SAVE] Doc {documentId}, type: {documentType}, JSON length: {extractedJson.Length}, preview: {extractedJson.Substring(0, Math.Min(200, extractedJson.Length))}\n");
+                    case DocumentType.PO:
+                        var poEntity = await context.POs.FindAsync(documentId);
+                        if (poEntity != null)
+                        {
+                            poEntity.ExtractedDataJson = extractedJson;
+                            poEntity.ExtractionConfidence = confidence;
+                            poEntity.UpdatedAt = DateTime.UtcNow;
+                        }
+                        break;
 
-                    // CHANGE: Directly assign pre-serialized JSON string instead of re-serializing object
-                    document.ExtractedDataJson = extractedJson;
-                    document.ExtractionConfidence = confidence;
-                    document.UpdatedAt = DateTime.UtcNow;
-                    
-                    await context.SaveChangesAsync();
-                    
-                    // CHANGE: Verify save by re-reading
-                    var verify = await context.Documents.FindAsync(documentId);
-                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] [VERIFY] Doc {documentId}, saved JSON length: {verify?.ExtractedDataJson?.Length}, preview: {verify?.ExtractedDataJson?.Substring(0, Math.Min(200, verify?.ExtractedDataJson?.Length ?? 0))}\n");
+                    case DocumentType.Invoice:
+                        var invoiceEntity = await context.Invoices.FindAsync(documentId);
+                        if (invoiceEntity != null)
+                        {
+                            invoiceEntity.ExtractedDataJson = extractedJson;
+                            invoiceEntity.ExtractionConfidence = confidence;
+                            invoiceEntity.UpdatedAt = DateTime.UtcNow;
+                        }
+                        break;
 
-                    _logger.LogInformation(
-                        "Extracted data saved for document {DocumentId} with confidence {Confidence}",
-                        documentId, confidence);
+                    case DocumentType.CostSummary:
+                        var csEntity = await context.CostSummaries.FindAsync(documentId);
+                        if (csEntity != null)
+                        {
+                            csEntity.ExtractedDataJson = extractedJson;
+                            csEntity.ExtractionConfidence = confidence;
+                            csEntity.UpdatedAt = DateTime.UtcNow;
+                        }
+                        break;
+
+                    case DocumentType.ActivitySummary:
+                        var actEntity = await context.ActivitySummaries.FindAsync(documentId);
+                        if (actEntity != null)
+                        {
+                            actEntity.ExtractedDataJson = extractedJson;
+                            actEntity.ExtractionConfidence = confidence;
+                            actEntity.UpdatedAt = DateTime.UtcNow;
+                        }
+                        break;
+
+                    case DocumentType.EnquiryDocument:
+                        var enqEntity = await context.EnquiryDocuments.FindAsync(documentId);
+                        if (enqEntity != null)
+                        {
+                            enqEntity.ExtractedDataJson = extractedJson;
+                            enqEntity.ExtractionConfidence = confidence;
+                            enqEntity.UpdatedAt = DateTime.UtcNow;
+                        }
+                        break;
+
+                    case DocumentType.TeamPhoto:
+                        var photoEntity = await context.TeamPhotos.FindAsync(documentId);
+                        if (photoEntity != null)
+                        {
+                            photoEntity.ExtractedMetadataJson = extractedJson;
+                            photoEntity.ExtractionConfidence = confidence;
+                            photoEntity.UpdatedAt = DateTime.UtcNow;
+                        }
+                        break;
                 }
+
+                await context.SaveChangesAsync();
+
+                _logger.LogInformation(
+                    "Extracted data saved for document {DocumentId} with confidence {Confidence}",
+                    documentId, confidence);
             }
         }
         catch (Exception ex)
@@ -361,7 +531,7 @@ public class DocumentService : IDocumentService
         }
 
         // Check file size
-        var maxSize = documentType == DocumentType.Photo ? MaxPhotoSize : MaxDocumentSize;
+        var maxSize = documentType == DocumentType.TeamPhoto ? MaxPhotoSize : MaxDocumentSize;
         if (file.Length > maxSize)
         {
             _logger.LogWarning(
@@ -400,8 +570,85 @@ public class DocumentService : IDocumentService
         return true;
     }
 
-    public async Task<Document?> GetDocumentAsync(Guid documentId)
+    /// <summary>
+    /// Retrieves a document by ID and type from the appropriate dedicated table.
+    /// </summary>
+    public async Task<DocumentInfoDto?> GetDocumentAsync(Guid documentId, DocumentType documentType)
     {
-        return await _context.Documents.FindAsync(documentId);
+        switch (documentType)
+        {
+            case DocumentType.PO:
+                var po = await _context.POs.AsNoTracking().FirstOrDefaultAsync(p => p.Id == documentId);
+                if (po == null) return null;
+                return new DocumentInfoDto
+                {
+                    Id = po.Id, PackageId = po.PackageId, Type = DocumentType.PO,
+                    FileName = po.FileName, BlobUrl = po.BlobUrl, FileSizeBytes = po.FileSizeBytes,
+                    ContentType = po.ContentType, ExtractedDataJson = po.ExtractedDataJson,
+                    ExtractionConfidence = po.ExtractionConfidence, IsFlaggedForReview = po.IsFlaggedForReview
+                };
+
+            case DocumentType.Invoice:
+                var invoice = await _context.Invoices.AsNoTracking().FirstOrDefaultAsync(i => i.Id == documentId);
+                if (invoice == null) return null;
+                return new DocumentInfoDto
+                {
+                    Id = invoice.Id, PackageId = invoice.PackageId, Type = DocumentType.Invoice,
+                    FileName = invoice.FileName, BlobUrl = invoice.BlobUrl, FileSizeBytes = invoice.FileSizeBytes,
+                    ContentType = invoice.ContentType, ExtractedDataJson = invoice.ExtractedDataJson,
+                    ExtractionConfidence = invoice.ExtractionConfidence, IsFlaggedForReview = invoice.IsFlaggedForReview
+                };
+
+            case DocumentType.CostSummary:
+                var cs = await _context.CostSummaries.AsNoTracking().FirstOrDefaultAsync(c => c.Id == documentId);
+                if (cs == null) return null;
+                return new DocumentInfoDto
+                {
+                    Id = cs.Id, PackageId = cs.PackageId, Type = DocumentType.CostSummary,
+                    FileName = cs.FileName, BlobUrl = cs.BlobUrl, FileSizeBytes = cs.FileSizeBytes,
+                    ContentType = cs.ContentType, ExtractedDataJson = cs.ExtractedDataJson,
+                    ExtractionConfidence = cs.ExtractionConfidence, IsFlaggedForReview = cs.IsFlaggedForReview
+                };
+
+            case DocumentType.ActivitySummary:
+                var act = await _context.ActivitySummaries.AsNoTracking().FirstOrDefaultAsync(a => a.Id == documentId);
+                if (act == null) return null;
+                return new DocumentInfoDto
+                {
+                    Id = act.Id, PackageId = act.PackageId, Type = DocumentType.ActivitySummary,
+                    FileName = act.FileName, BlobUrl = act.BlobUrl, FileSizeBytes = act.FileSizeBytes,
+                    ContentType = act.ContentType, ExtractedDataJson = act.ExtractedDataJson,
+                    ExtractionConfidence = act.ExtractionConfidence, IsFlaggedForReview = act.IsFlaggedForReview
+                };
+
+            case DocumentType.EnquiryDocument:
+                var enq = await _context.EnquiryDocuments.AsNoTracking().FirstOrDefaultAsync(e => e.Id == documentId);
+                if (enq == null) return null;
+                return new DocumentInfoDto
+                {
+                    Id = enq.Id, PackageId = enq.PackageId, Type = DocumentType.EnquiryDocument,
+                    FileName = enq.FileName, BlobUrl = enq.BlobUrl, FileSizeBytes = enq.FileSizeBytes,
+                    ContentType = enq.ContentType, ExtractedDataJson = enq.ExtractedDataJson,
+                    ExtractionConfidence = enq.ExtractionConfidence, IsFlaggedForReview = enq.IsFlaggedForReview
+                };
+
+            case DocumentType.TeamPhoto:
+                var photo = await _context.TeamPhotos.AsNoTracking().FirstOrDefaultAsync(p => p.Id == documentId);
+                if (photo == null) return null;
+                return new DocumentInfoDto
+                {
+                    Id = photo.Id, PackageId = photo.PackageId, Type = DocumentType.TeamPhoto,
+                    FileName = photo.FileName, BlobUrl = photo.BlobUrl, FileSizeBytes = photo.FileSizeBytes,
+                    ContentType = photo.ContentType, ExtractedDataJson = photo.ExtractedMetadataJson,
+                    ExtractionConfidence = photo.ExtractionConfidence, IsFlaggedForReview = photo.IsFlaggedForReview
+                };
+
+            default:
+                throw new Domain.Exceptions.ValidationException(
+                    new Dictionary<string, string[]>
+                    {
+                        { "documentType", new[] { $"Unsupported document type: {documentType}" } }
+                    });
+        }
     }
 }

@@ -91,9 +91,9 @@ public class CampaignInvoice : BaseEntity
     // Navigation properties
     
     /// <summary>
-    /// Gets or sets the campaign this invoice belongs to
+    /// Gets or sets the team this invoice belongs to
     /// </summary>
-    public Campaign Campaign { get; set; } = null!;
+    public Teams Team { get; set; } = null!;
     
     /// <summary>
     /// Gets or sets the document package (FAP) this invoice belongs to

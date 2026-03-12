@@ -48,20 +48,36 @@ public class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
         builder.Property(i => i.ExtractedDataJson)
             .HasColumnType("nvarchar(max)");
 
+        builder.Property(i => i.VersionNumber)
+            .IsRequired()
+            .HasDefaultValue(1);
+
         // Relationships
         builder.HasOne(i => i.Package)
             .WithMany(p => p.Invoices)
             .HasForeignKey(i => i.PackageId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        builder.HasOne(i => i.PODocument)
-            .WithMany(d => d.LinkedInvoices)
-            .HasForeignKey(i => i.PODocumentId)
+        builder.HasOne(i => i.PO)
+            .WithMany()
+            .HasForeignKey(i => i.POId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // DEPRECATED: PODocumentId relationship - to be removed in future migration
+        // builder.HasOne(i => i.PODocument)
+        //     .WithMany(d => d.LinkedInvoices)
+        //     .HasForeignKey(i => i.PODocumentId)
+        //     .OnDelete(DeleteBehavior.Restrict);
+
+        // One-to-one relationship with ValidationResult (polymorphic)
+        // ValidationResult now uses DocumentType and DocumentId for polymorphic relationships
+        // Ignore navigation to prevent shadow FK
+        builder.Ignore(i => i.ValidationResult);
 
         // Indexes
         builder.HasIndex(i => i.PackageId);
-        builder.HasIndex(i => i.PODocumentId);
+        builder.HasIndex(i => i.POId);
         builder.HasIndex(i => i.InvoiceNumber);
+        builder.HasIndex(i => i.VersionNumber);
     }
 }

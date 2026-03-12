@@ -220,7 +220,7 @@ public class DocumentAgent : IDocumentAgent
                 _logger.LogWarning("Could not prepare image data for classification");
                 return new DocumentClassification
                 {
-                    Type = DocumentType.AdditionalDocument,
+                    Type = DocumentType.TeamPhoto, // Default to TeamPhoto for unclassifiable images
                     Confidence = 0.5,
                     IsFlaggedForReview = true
                 };
@@ -330,9 +330,9 @@ Be precise and confident in your classification."),
             if (!Enum.TryParse<DocumentType>(parsed.TypeString, true, out var documentType))
             {
                 _logger.LogWarning(
-                    "Invalid document type '{Type}' returned. Defaulting to Additional_Document", 
+                    "Invalid document type '{Type}' returned. Defaulting to TeamPhoto", 
                     parsed.TypeString);
-                documentType = DocumentType.AdditionalDocument;
+                documentType = DocumentType.TeamPhoto; // Default to TeamPhoto for unrecognized types
                 parsed.Confidence = 0.5; // Lower confidence for fallback
             }
 
@@ -346,8 +346,8 @@ Be precise and confident in your classification."),
             // Return a default classification with low confidence
             return new ClassificationResponse
             {
-                Type = DocumentType.AdditionalDocument,
-                TypeString = "Additional_Document",
+                Type = DocumentType.TeamPhoto, // Default to TeamPhoto for parse failures
+                TypeString = "TeamPhoto",
                 Confidence = 0.3,
                 Reasoning = "Failed to parse classification response"
             };

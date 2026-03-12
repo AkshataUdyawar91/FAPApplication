@@ -114,8 +114,9 @@ public class DocumentAgentTests
     [InlineData(DocumentType.PO)]
     [InlineData(DocumentType.Invoice)]
     [InlineData(DocumentType.CostSummary)]
-    [InlineData(DocumentType.Photo)]
-    [InlineData(DocumentType.AdditionalDocument)]
+    [InlineData(DocumentType.ActivitySummary)]
+    [InlineData(DocumentType.EnquiryDocument)]
+    [InlineData(DocumentType.TeamPhoto)]
     public void DocumentType_AllTypesAreValid(DocumentType documentType)
     {
         // This test verifies that all document types are properly defined

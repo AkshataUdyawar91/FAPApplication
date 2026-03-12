@@ -14,9 +14,21 @@ public class Invoice : BaseEntity
     public Guid PackageId { get; set; }
     
     /// <summary>
-    /// Gets or sets the unique identifier of the PO document this invoice is linked to
+    /// Gets or sets the unique identifier of the PO this invoice is linked to
     /// </summary>
-    public Guid PODocumentId { get; set; }
+    public Guid POId { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the version number for tracking resubmissions (matches parent package version)
+    /// </summary>
+    public int VersionNumber { get; set; } = 1;
+    
+    // ============ DEPRECATED FIELD - TO BE REMOVED IN FUTURE MIGRATION ============
+    
+    // /// <summary>
+    // /// DEPRECATED: Gets or sets the unique identifier of the PO document this invoice is linked to (replaced by POId)
+    // /// </summary>
+    // public Guid PODocumentId { get; set; }
     
     /// <summary>
     /// Gets or sets the invoice number extracted from the document
@@ -88,7 +100,7 @@ public class Invoice : BaseEntity
     /// </summary>
     public bool IsFlaggedForReview { get; set; }
 
-    // Navigation properties
+    // ============ NAVIGATION PROPERTIES ============
     
     /// <summary>
     /// Gets or sets the document package (FAP) this invoice belongs to
@@ -96,12 +108,23 @@ public class Invoice : BaseEntity
     public DocumentPackage Package { get; set; } = null!;
     
     /// <summary>
-    /// Gets or sets the PO document this invoice is linked to
+    /// Gets or sets the PO this invoice is linked to
     /// </summary>
-    public Document PODocument { get; set; } = null!;
+    public PO PO { get; set; } = null!;
+    
+    // DEPRECATED NAVIGATION PROPERTY - TO BE REMOVED
+    // /// <summary>
+    // /// DEPRECATED: Gets or sets the PO document this invoice is linked to (replaced by PO navigation property)
+    // /// </summary>
+    // public Document PODocument { get; set; } = null!;
     
     /// <summary>
-    /// Gets or sets the collection of campaigns associated with this invoice
+    /// Gets or sets the validation result for this invoice (one-to-one relationship)
     /// </summary>
-    public ICollection<Campaign> Campaigns { get; set; } = new List<Campaign>();
+    public ValidationResult? ValidationResult { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the collection of teams associated with this invoice
+    /// </summary>
+    public ICollection<Teams> Teams { get; set; } = new List<Teams>();
 }

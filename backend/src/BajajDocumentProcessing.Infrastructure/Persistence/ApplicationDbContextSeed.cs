@@ -18,7 +18,8 @@ public static class ApplicationDbContextSeed
     {
         { "agency@bajaj.com", UserRole.Agency },
         { "asm@bajaj.com", UserRole.ASM },
-        { "hq@bajaj.com", UserRole.HQ }
+        { "ra@bajaj.com", UserRole.RA },
+        { "admin@bajaj.com", UserRole.Admin }
     };
 
     public static async Task SeedAsync(ApplicationDbContext context)
@@ -30,7 +31,8 @@ public static class ApplicationDbContextSeed
             {
                 CreateUser("agency@bajaj.com", "Agency User", UserRole.Agency),
                 CreateUser("asm@bajaj.com", "ASM User", UserRole.ASM),
-                CreateUser("hq@bajaj.com", "HQ User", UserRole.HQ)
+                CreateUser("ra@bajaj.com", "RA User", UserRole.RA),
+                CreateUser("admin@bajaj.com", "Admin User", UserRole.Admin)
             };
 
             await context.Users.AddRangeAsync(users);

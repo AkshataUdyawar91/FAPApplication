@@ -30,6 +30,11 @@ public class User : BaseEntity
     public UserRole Role { get; set; }
     
     /// <summary>
+    /// Gets or sets the agency ID this user belongs to (nullable for ASM/RA/Admin users)
+    /// </summary>
+    public Guid? AgencyId { get; set; }
+    
+    /// <summary>
     /// Gets or sets the user's phone number for contact purposes
     /// </summary>
     public string? PhoneNumber { get; set; }
@@ -45,14 +50,14 @@ public class User : BaseEntity
     public DateTime? LastLoginAt { get; set; }
 
     /// <summary>
+    /// Gets or sets the agency this user belongs to (null for ASM/RA/Admin users)
+    /// </summary>
+    public Agency? Agency { get; set; }
+
+    /// <summary>
     /// Gets or sets the collection of document packages submitted by this user (Agency role)
     /// </summary>
     public ICollection<DocumentPackage> SubmittedPackages { get; set; } = new List<DocumentPackage>();
-    
-    /// <summary>
-    /// Gets or sets the collection of document packages reviewed by this user (ASM or HQ role)
-    /// </summary>
-    public ICollection<DocumentPackage> ReviewedPackages { get; set; } = new List<DocumentPackage>();
     
     /// <summary>
     /// Gets or sets the collection of notifications sent to this user

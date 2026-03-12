@@ -45,8 +45,8 @@ public class CampaignInvoiceConfiguration : IEntityTypeConfiguration<CampaignInv
             .IsRequired()
             .HasMaxLength(100);
 
-        // Relationship: CampaignInvoice belongs to Campaign
-        builder.HasOne(ci => ci.Campaign)
+        // Relationship: CampaignInvoice belongs to Team
+        builder.HasOne(ci => ci.Team)
             .WithMany(c => c.Invoices)
             .HasForeignKey(ci => ci.CampaignId)
             .OnDelete(DeleteBehavior.Restrict);

@@ -15,7 +15,7 @@ namespace BajajDocumentProcessing.Tests.Infrastructure.Properties;
 /// Validates: Requirements 2.1
 /// 
 /// Property: For any uploaded document, the DocumentAgent should classify it as exactly one 
-/// of the valid document types (PO, Invoice, Cost_Summary, Photo, or Additional_Document).
+/// of the valid document types (PO, Invoice, CostSummary, ActivitySummary, EnquiryDocument, or TeamPhoto).
 /// </summary>
 public class DocumentClassificationProperties
 {
@@ -70,14 +70,15 @@ public class DocumentClassificationProperties
             Enum.IsDefined(typeof(DocumentType), documentType),
             $"Document type {documentType} must be a valid DocumentType enum value");
         
-        // Assert that it's one of the five valid types
+        // Assert that it's one of the six valid types
         var validTypes = new[]
         {
             DocumentType.PO,
             DocumentType.Invoice,
             DocumentType.CostSummary,
-            DocumentType.Photo,
-            DocumentType.AdditionalDocument
+            DocumentType.ActivitySummary,
+            DocumentType.EnquiryDocument,
+            DocumentType.TeamPhoto
         };
         
         Assert.Contains(documentType, validTypes);
@@ -156,7 +157,7 @@ public class DocumentClassificationProperties
         var distinctTypes = documentTypes.Distinct().ToList();
         
         Assert.Equal(documentTypes.Length, distinctTypes.Count);
-        Assert.Equal(5, distinctTypes.Count); // Exactly 5 document types
+        Assert.Equal(6, distinctTypes.Count); // Exactly 6 document types
     }
 
     /// <summary>
@@ -209,8 +210,9 @@ public class DocumentClassificationProperties
     [InlineData(DocumentType.PO)]
     [InlineData(DocumentType.Invoice)]
     [InlineData(DocumentType.CostSummary)]
-    [InlineData(DocumentType.Photo)]
-    [InlineData(DocumentType.AdditionalDocument)]
+    [InlineData(DocumentType.ActivitySummary)]
+    [InlineData(DocumentType.EnquiryDocument)]
+    [InlineData(DocumentType.TeamPhoto)]
     public void ClassificationResult_ForEachDocumentType_IsValid(DocumentType expectedType)
     {
         // Arrange
@@ -248,8 +250,7 @@ public class DocumentClassificationProperties
         // Verify it's not any other type
         Assert.NotEqual(DocumentType.PO, classification.Type);
         Assert.NotEqual(DocumentType.CostSummary, classification.Type);
-        Assert.NotEqual(DocumentType.Photo, classification.Type);
-        Assert.NotEqual(DocumentType.AdditionalDocument, classification.Type);
+        Assert.NotEqual(DocumentType.TeamPhoto, classification.Type);
     }
 
     /// <summary>
@@ -269,7 +270,7 @@ public class DocumentClassificationProperties
         
         var classification = new DocumentClassification
         {
-            Type = DocumentType.AdditionalDocument,
+            Type = DocumentType.TeamPhoto,
             Confidence = clampedConfidence,
             IsFlaggedForReview = shouldBeFlagged
         };
@@ -297,8 +298,9 @@ public static class Generators
             DocumentType.PO,
             DocumentType.Invoice,
             DocumentType.CostSummary,
-            DocumentType.Photo,
-            DocumentType.AdditionalDocument
+            DocumentType.ActivitySummary,
+            DocumentType.EnquiryDocument,
+            DocumentType.TeamPhoto
         ).ToArbitrary();
     }
 }

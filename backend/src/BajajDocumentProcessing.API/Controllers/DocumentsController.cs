@@ -91,27 +91,45 @@ public class DocumentsController : ControllerBase
                 (campaignStartDate.HasValue || campaignEndDate.HasValue || campaignWorkingDays.HasValue ||
                  !string.IsNullOrEmpty(dealershipName) || !string.IsNullOrEmpty(dealershipAddress) || !string.IsNullOrEmpty(gpsLocation)))
             {
-                var package = await _context.DocumentPackages.FindAsync(response.PackageId);
+                var package = await _context.DocumentPackages
+                    .Include(p => p.Teams)
+                    .FirstOrDefaultAsync(p => p.Id == response.PackageId);
+                
                 if (package != null)
                 {
+                    // Update first team's fields (or create a team if none exists)
+                    var team = package.Teams.FirstOrDefault();
+                    if (team == null)
+                    {
+                        team = new Domain.Entities.Teams
+                        {
+                            Id = Guid.NewGuid(),
+                            PackageId = response.PackageId,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        _context.Teams.Add(team);
+                    }
+
                     // Campaign fields
-                    if (campaignStartDate.HasValue) package.CampaignStartDate = campaignStartDate.Value;
-                    if (campaignEndDate.HasValue) package.CampaignEndDate = campaignEndDate.Value;
-                    if (campaignWorkingDays.HasValue) package.CampaignWorkingDays = campaignWorkingDays.Value;
+                    if (campaignStartDate.HasValue) team.StartDate = campaignStartDate.Value;
+                    if (campaignEndDate.HasValue) team.EndDate = campaignEndDate.Value;
+                    if (campaignWorkingDays.HasValue) team.WorkingDays = campaignWorkingDays.Value;
                     
                     // Dealership fields
-                    if (!string.IsNullOrEmpty(dealershipName)) package.DealershipName = dealershipName;
-                    if (!string.IsNullOrEmpty(dealershipAddress)) package.DealershipAddress = dealershipAddress;
-                    if (!string.IsNullOrEmpty(gpsLocation)) package.GPSLocation = gpsLocation;
+                    if (!string.IsNullOrEmpty(dealershipName)) team.DealershipName = dealershipName;
+                    if (!string.IsNullOrEmpty(dealershipAddress)) team.DealershipAddress = dealershipAddress;
+                    if (!string.IsNullOrEmpty(gpsLocation)) team.GPSLocation = gpsLocation;
                     
-                    // Note: TeamsJson is now stored at Campaign level, not DocumentPackage level
+                    // Note: TeamsJson is now stored at Team level
+                    if (!string.IsNullOrEmpty(teamsJson)) team.TeamsJson = teamsJson;
                     
+                    team.UpdatedAt = DateTime.UtcNow;
                     package.UpdatedAt = DateTime.UtcNow;
                     
                     await _context.SaveChangesAsync(default);
                     
                     _logger.LogInformation(
-                        "Package data updated for {PackageId}: StartDate={StartDate}, EndDate={EndDate}, WorkingDays={WorkingDays}, Dealership={Dealership}",
+                        "Team data updated for {PackageId}: StartDate={StartDate}, EndDate={EndDate}, WorkingDays={WorkingDays}, Dealership={Dealership}",
                         response.PackageId, campaignStartDate, campaignEndDate, campaignWorkingDays, dealershipName);
                 }
             }
@@ -149,7 +167,7 @@ public class DocumentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetDocument(Guid id)
+    public async Task<IActionResult> GetDocument(Guid id, [FromQuery] DocumentType? documentType = null)
     {
         try
         {
@@ -164,7 +182,26 @@ public class DocumentsController : ControllerBase
 
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            var document = await _documentService.GetDocumentAsync(id);
+            // If documentType is provided, query that specific table; otherwise try each table
+            DocumentInfoDto? document = null;
+            if (documentType.HasValue)
+            {
+                document = await _documentService.GetDocumentAsync(id, documentType.Value);
+            }
+            else
+            {
+                // Try each dedicated table until found
+                var typesToTry = new[] 
+                { 
+                    DocumentType.PO, DocumentType.Invoice, DocumentType.CostSummary,
+                    DocumentType.ActivitySummary, DocumentType.EnquiryDocument, DocumentType.TeamPhoto 
+                };
+                foreach (var type in typesToTry)
+                {
+                    document = await _documentService.GetDocumentAsync(id, type);
+                    if (document != null) break;
+                }
+            }
 
             if (document == null)
             {
@@ -174,7 +211,6 @@ public class DocumentsController : ControllerBase
             // Verify resource ownership for Agency users
             if (userRole == "Agency")
             {
-                // Get the package to check ownership
                 var package = await _context.DocumentPackages
                     .AsNoTracking()
                     .FirstOrDefaultAsync(p => p.Id == document.PackageId);
@@ -184,7 +220,6 @@ public class DocumentsController : ControllerBase
                     return NotFound(new { message = "Document not found" });
                 }
 
-                // Agency users can only access their own documents
                 if (package.SubmittedByUserId != userId)
                 {
                     _logger.LogWarning(
@@ -193,19 +228,16 @@ public class DocumentsController : ControllerBase
                     return StatusCode(403, new { message = "You do not have permission to access this document" });
                 }
             }
-            // ASM and HQ users can access all documents
 
             return Ok(new
             {
                 document.Id,
                 document.FileName,
                 document.FileSizeBytes,
-                document.Type,
+                type = document.Type,
                 document.BlobUrl,
-                document.CreatedAt,
                 document.ExtractedDataJson,
                 document.ExtractionConfidence,
-                // Extraction status: if ExtractedDataJson is not empty, extraction is complete
                 extractionComplete = !string.IsNullOrEmpty(document.ExtractedDataJson) && 
                                    document.ExtractedDataJson != "{}"
             });
@@ -233,13 +265,30 @@ public class DocumentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> DownloadDocument(
         Guid id,
-        CancellationToken cancellationToken)
+        [FromQuery] DocumentType? documentType = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            var document = await _context.Documents
-                .AsNoTracking()
-                .FirstOrDefaultAsync(d => d.Id == id, cancellationToken);
+            // Find the document across dedicated tables
+            DocumentInfoDto? document = null;
+            if (documentType.HasValue)
+            {
+                document = await _documentService.GetDocumentAsync(id, documentType.Value);
+            }
+            else
+            {
+                var typesToTry = new[] 
+                { 
+                    DocumentType.PO, DocumentType.Invoice, DocumentType.CostSummary,
+                    DocumentType.ActivitySummary, DocumentType.EnquiryDocument, DocumentType.TeamPhoto 
+                };
+                foreach (var type in typesToTry)
+                {
+                    document = await _documentService.GetDocumentAsync(id, type);
+                    if (document != null) break;
+                }
+            }
 
             if (document == null)
             {

@@ -1,17 +1,24 @@
 using BajajDocumentProcessing.Domain.Common;
+using BajajDocumentProcessing.Domain.Enums;
 
 namespace BajajDocumentProcessing.Domain.Entities;
 
 /// <summary>
-/// Represents the results of automated validation checks performed on a document package.
-/// Includes SAP verification, amount consistency, line item matching, completeness, date validation, and vendor matching
+/// Represents the results of automated validation checks performed on a document.
+/// Includes SAP verification, amount consistency, line item matching, completeness, date validation, and vendor matching.
+/// Supports polymorphic relationships - can validate different document types (PO, Invoice, CostSummary, ActivitySummary, EnquiryDocument, TeamPhotos).
 /// </summary>
 public class ValidationResult : BaseEntity
 {
     /// <summary>
-    /// Gets or sets the unique identifier of the document package this validation result belongs to
+    /// Gets or sets the type of document this validation result belongs to
     /// </summary>
-    public Guid PackageId { get; set; }
+    public DocumentType DocumentType { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the unique identifier of the document this validation result belongs to
+    /// </summary>
+    public Guid DocumentId { get; set; }
     
     /// <summary>
     /// Gets or sets whether the SAP system verification check passed (PO exists in SAP)
@@ -57,9 +64,4 @@ public class ValidationResult : BaseEntity
     /// Gets or sets the reason for validation failure, if any checks failed
     /// </summary>
     public string? FailureReason { get; set; }
-
-    /// <summary>
-    /// Gets or sets the document package this validation result belongs to
-    /// </summary>
-    public DocumentPackage Package { get; set; } = null!;
 }

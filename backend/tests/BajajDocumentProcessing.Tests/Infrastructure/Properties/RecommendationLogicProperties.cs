@@ -286,7 +286,7 @@ public class RecommendationLogicProperties
         var package = new DocumentPackage
         {
             Id = packageId,
-            State = PackageState.Validated,
+            State = PackageState.Validating,
             CreatedAt = DateTime.UtcNow,
             Documents = new List<Document>()
         };
@@ -299,7 +299,8 @@ public class RecommendationLogicProperties
         var validationResult = new ValidationResult
         {
             Id = Guid.NewGuid(),
-            PackageId = packageId,
+            DocumentType = DocumentType.PO,
+            DocumentId = packageId,
             AllValidationsPassed = validationPassed,
             SapVerificationPassed = validationPassed,
             AmountConsistencyPassed = validationPassed,

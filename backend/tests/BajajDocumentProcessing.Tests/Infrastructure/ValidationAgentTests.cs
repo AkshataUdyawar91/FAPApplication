@@ -125,7 +125,7 @@ public class ValidationAgentTests : IDisposable
             package.Documents.Add(new Document
             {
                 Id = Guid.NewGuid(),
-                Type = DocumentType.Activity,
+                Type = DocumentType.ActivitySummary,
                 ExtractedDataJson = JsonSerializer.Serialize(activityData)
             });
         }
@@ -135,7 +135,7 @@ public class ValidationAgentTests : IDisposable
             package.Documents.Add(new Document
             {
                 Id = Guid.NewGuid(),
-                Type = DocumentType.Photo,
+                Type = DocumentType.TeamPhoto,
                 ExtractedDataJson = JsonSerializer.Serialize(new PhotoMetadata
                 {
                     Timestamp = DateTime.UtcNow,

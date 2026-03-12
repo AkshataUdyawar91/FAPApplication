@@ -84,11 +84,10 @@ public class RecommendationAgent : IRecommendationAgent
             }
             _logger.LogInformation("Package {PackageId} loaded successfully with {DocumentCount} documents", packageId, package.Documents.Count);
 
-            // Get validation result
-            _logger.LogInformation("Loading validation result for package {PackageId}", packageId);
-            var validationResult = await _context.ValidationResults
-                .FirstOrDefaultAsync(v => v.PackageId == packageId, cancellationToken);
-            _logger.LogInformation("Validation result loaded: {ValidationPassed}", validationResult?.AllValidationsPassed ?? false);
+            // Get validation result - TODO: ValidationResult is now polymorphic (per document type)
+            // For now, we'll skip validation result and rely on confidence scores only
+            _logger.LogInformation("Skipping validation result load (ValidationResult is now polymorphic)");
+            ValidationResult? validationResult = null;
 
             // Get confidence score
             _logger.LogInformation("Loading confidence score for package {PackageId}", packageId);
@@ -134,18 +133,8 @@ public class RecommendationAgent : IRecommendationAgent
                 existingRecommendation.Type = recommendationType;
                 existingRecommendation.Evidence = evidence;
                 existingRecommendation.ConfidenceScore = confidenceScore.OverallConfidence;
-                existingRecommendation.ValidationIssuesJson = validationResult != null
-                    ? JsonSerializer.Serialize(new
-                    {
-                        AllPassed = validationResult.AllValidationsPassed,
-                        SAPVerified = validationResult.SapVerificationPassed,
-                        AmountConsistent = validationResult.AmountConsistencyPassed,
-                        LineItemsMatched = validationResult.LineItemMatchingPassed,
-                        Complete = validationResult.CompletenessCheckPassed,
-                        DatesValid = validationResult.DateValidationPassed,
-                        VendorMatched = validationResult.VendorMatchingPassed
-                    })
-                    : null;
+                // TODO: ValidationIssuesJson disabled until ValidationResult refactored for polymorphic model
+                existingRecommendation.ValidationIssuesJson = null;
                 existingRecommendation.UpdatedAt = DateTime.UtcNow;
                 // CreatedAt is preserved automatically
 
@@ -162,18 +151,8 @@ public class RecommendationAgent : IRecommendationAgent
                     Type = recommendationType,
                     Evidence = evidence,
                     ConfidenceScore = confidenceScore.OverallConfidence,
-                    ValidationIssuesJson = validationResult != null
-                        ? JsonSerializer.Serialize(new
-                        {
-                            AllPassed = validationResult.AllValidationsPassed,
-                            SAPVerified = validationResult.SapVerificationPassed,
-                            AmountConsistent = validationResult.AmountConsistencyPassed,
-                            LineItemsMatched = validationResult.LineItemMatchingPassed,
-                            Complete = validationResult.CompletenessCheckPassed,
-                            DatesValid = validationResult.DateValidationPassed,
-                            VendorMatched = validationResult.VendorMatchingPassed
-                        })
-                        : null,
+                    // TODO: ValidationIssuesJson disabled until ValidationResult refactored for polymorphic model
+                    ValidationIssuesJson = null,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };

@@ -58,7 +58,7 @@ public class HierarchicalSubmissionController : ControllerBase
             if (package == null)
                 return NotFound(new { error = "Package not found" });
 
-            var campaign = new Campaign
+            var campaign = new Teams
             {
                 Id = Guid.NewGuid(),
                 PackageId = packageId,
@@ -71,7 +71,6 @@ public class HierarchicalSubmissionController : ControllerBase
                 DealershipAddress = request.DealershipAddress,
                 GPSLocation = request.GPSLocation,
                 State = request.State,
-                TotalCost = request.TotalCost,
                 TeamsJson = request.TeamsJson,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -244,18 +243,18 @@ public class HierarchicalSubmissionController : ControllerBase
                 return NotFound(new { error = "Campaign not found" });
 
             var photoIds = new List<Guid>();
-            var displayOrder = await _context.CampaignPhotos
-                .Where(p => p.CampaignId == campaignId)
+            var displayOrder = await _context.TeamPhotos
+                .Where(p => p.TeamId == campaignId)
                 .CountAsync(cancellationToken);
 
             foreach (var file in files)
             {
                 var blobUrl = await _fileStorage.UploadFileAsync(file, "photos", $"{Guid.NewGuid()}_{file.FileName}");
 
-                var photo = new CampaignPhoto
+                var photo = new TeamPhotos
                 {
                     Id = Guid.NewGuid(),
-                    CampaignId = campaignId,
+                    TeamId = campaignId,
                     PackageId = packageId,
                     FileName = file.FileName,
                     BlobUrl = blobUrl,
@@ -284,7 +283,7 @@ public class HierarchicalSubmissionController : ControllerBase
     }
 
     /// <summary>
-    /// Upload cost summary for a campaign (1 per campaign)
+    /// Upload cost summary for a package (1 per package, stored as separate CostSummary entity)
     /// </summary>
     [HttpPost("{packageId}/campaigns/{campaignId}/cost-summary")]
     [Authorize(Roles = "Agency")]
@@ -298,36 +297,62 @@ public class HierarchicalSubmissionController : ControllerBase
         {
             var userId = GetUserId();
             
-            var campaign = await _context.Campaigns
-                .Include(c => c.Package)
-                .FirstOrDefaultAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+            var package = await _context.DocumentPackages
+                .Include(p => p.CostSummary)
+                .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
 
-            if (campaign == null || campaign.Package.SubmittedByUserId != userId)
+            if (package == null)
+                return NotFound(new { error = "Package not found" });
+
+            // Verify campaign belongs to this package
+            var campaignExists = await _context.Teams
+                .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+            if (!campaignExists)
                 return NotFound(new { error = "Campaign not found" });
 
             var blobUrl = await _fileStorage.UploadFileAsync(file, "cost-summaries", $"{Guid.NewGuid()}_{file.FileName}");
 
-            campaign.CostSummaryFileName = file.FileName;
-            campaign.CostSummaryBlobUrl = blobUrl;
-            campaign.CostSummaryContentType = file.ContentType;
-            campaign.CostSummaryFileSizeBytes = file.Length;
-            campaign.UpdatedAt = DateTime.UtcNow;
+            if (package.CostSummary == null)
+            {
+                var costSummary = new Domain.Entities.CostSummary
+                {
+                    Id = Guid.NewGuid(),
+                    PackageId = packageId,
+                    FileName = file.FileName,
+                    BlobUrl = blobUrl,
+                    ContentType = file.ContentType,
+                    FileSizeBytes = file.Length,
+                    VersionNumber = package.VersionNumber,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _context.CostSummaries.Add(costSummary);
+            }
+            else
+            {
+                package.CostSummary.FileName = file.FileName;
+                package.CostSummary.BlobUrl = blobUrl;
+                package.CostSummary.ContentType = file.ContentType;
+                package.CostSummary.FileSizeBytes = file.Length;
+                package.CostSummary.UpdatedAt = DateTime.UtcNow;
+            }
 
+            package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Cost summary uploaded for campaign {CampaignId}", campaignId);
+            _logger.LogInformation("Cost summary uploaded for package {PackageId}", packageId);
 
             return Ok(new { message = "Cost summary uploaded successfully" });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error uploading cost summary for campaign {CampaignId}", campaignId);
+            _logger.LogError(ex, "Error uploading cost summary for package {PackageId}", packageId);
             return StatusCode(500, new { error = "Failed to upload cost summary" });
         }
     }
 
     /// <summary>
-    /// Upload activity summary for a campaign (1 per campaign)
+    /// Upload activity summary for a package (1 per package, stored as separate ActivitySummary entity)
     /// </summary>
     [HttpPost("{packageId}/campaigns/{campaignId}/activity-summary")]
     [Authorize(Roles = "Agency")]
@@ -341,30 +366,56 @@ public class HierarchicalSubmissionController : ControllerBase
         {
             var userId = GetUserId();
             
-            var campaign = await _context.Campaigns
-                .Include(c => c.Package)
-                .FirstOrDefaultAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+            var package = await _context.DocumentPackages
+                .Include(p => p.ActivitySummary)
+                .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
 
-            if (campaign == null || campaign.Package.SubmittedByUserId != userId)
+            if (package == null)
+                return NotFound(new { error = "Package not found" });
+
+            // Verify campaign belongs to this package
+            var campaignExists = await _context.Teams
+                .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+            if (!campaignExists)
                 return NotFound(new { error = "Campaign not found" });
 
             var blobUrl = await _fileStorage.UploadFileAsync(file, "activity-summaries", $"{Guid.NewGuid()}_{file.FileName}");
 
-            campaign.ActivitySummaryFileName = file.FileName;
-            campaign.ActivitySummaryBlobUrl = blobUrl;
-            campaign.ActivitySummaryContentType = file.ContentType;
-            campaign.ActivitySummaryFileSizeBytes = file.Length;
-            campaign.UpdatedAt = DateTime.UtcNow;
+            if (package.ActivitySummary == null)
+            {
+                var activitySummary = new Domain.Entities.ActivitySummary
+                {
+                    Id = Guid.NewGuid(),
+                    PackageId = packageId,
+                    FileName = file.FileName,
+                    BlobUrl = blobUrl,
+                    ContentType = file.ContentType,
+                    FileSizeBytes = file.Length,
+                    VersionNumber = package.VersionNumber,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _context.ActivitySummaries.Add(activitySummary);
+            }
+            else
+            {
+                package.ActivitySummary.FileName = file.FileName;
+                package.ActivitySummary.BlobUrl = blobUrl;
+                package.ActivitySummary.ContentType = file.ContentType;
+                package.ActivitySummary.FileSizeBytes = file.Length;
+                package.ActivitySummary.UpdatedAt = DateTime.UtcNow;
+            }
 
+            package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Activity summary uploaded for campaign {CampaignId}", campaignId);
+            _logger.LogInformation("Activity summary uploaded for package {PackageId}", packageId);
 
             return Ok(new { message = "Activity summary uploaded successfully" });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error uploading activity summary for campaign {CampaignId}", campaignId);
+            _logger.LogError(ex, "Error uploading activity summary for package {PackageId}", packageId);
             return StatusCode(500, new { error = "Failed to upload activity summary" });
         }
     }
@@ -384,6 +435,7 @@ public class HierarchicalSubmissionController : ControllerBase
             var userId = GetUserId();
             
             var package = await _context.DocumentPackages
+                .Include(p => p.EnquiryDocument)
                 .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
 
             if (package == null)
@@ -391,12 +443,32 @@ public class HierarchicalSubmissionController : ControllerBase
 
             var blobUrl = await _fileStorage.UploadFileAsync(file, "enquiry-docs", $"{Guid.NewGuid()}_{file.FileName}");
 
-            package.EnquiryDocFileName = file.FileName;
-            package.EnquiryDocBlobUrl = blobUrl;
-            package.EnquiryDocContentType = file.ContentType;
-            package.EnquiryDocFileSizeBytes = file.Length;
-            package.UpdatedAt = DateTime.UtcNow;
+            // Create or update EnquiryDocument entity
+            if (package.EnquiryDocument == null)
+            {
+                var enquiryDoc = new Domain.Entities.EnquiryDocument
+                {
+                    Id = Guid.NewGuid(),
+                    PackageId = packageId,
+                    FileName = file.FileName,
+                    BlobUrl = blobUrl,
+                    ContentType = file.ContentType,
+                    FileSizeBytes = file.Length,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _context.EnquiryDocuments.Add(enquiryDoc);
+            }
+            else
+            {
+                package.EnquiryDocument.FileName = file.FileName;
+                package.EnquiryDocument.BlobUrl = blobUrl;
+                package.EnquiryDocument.ContentType = file.ContentType;
+                package.EnquiryDocument.FileSizeBytes = file.Length;
+                package.EnquiryDocument.UpdatedAt = DateTime.UtcNow;
+            }
 
+            package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Enquiry document uploaded for package {PackageId}", packageId);
@@ -423,9 +495,12 @@ public class HierarchicalSubmissionController : ControllerBase
 
             var package = await _context.DocumentPackages
                 .Include(p => p.Documents)
-                .Include(p => p.Campaigns)
+                .Include(p => p.EnquiryDocument)
+                .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
+                .Include(p => p.Teams)
                     .ThenInclude(c => c.Invoices)
-                .Include(p => p.Campaigns)
+                .Include(p => p.Teams)
                     .ThenInclude(c => c.Photos)
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
@@ -448,12 +523,12 @@ public class HierarchicalSubmissionController : ControllerBase
                     FileName = poDocument.FileName,
                     ExtractedData = poDocument.ExtractedDataJson
                 } : null,
-                EnquiryDoc = package.EnquiryDocFileName != null ? new EnquiryDocInfo
+                EnquiryDoc = package.EnquiryDocument != null ? new EnquiryDocInfo
                 {
-                    FileName = package.EnquiryDocFileName,
-                    BlobUrl = package.EnquiryDocBlobUrl
+                    FileName = package.EnquiryDocument.FileName,
+                    BlobUrl = package.EnquiryDocument.BlobUrl
                 } : null,
-                Campaigns = package.Campaigns.Select(c => new CampaignInfo
+                Campaigns = package.Teams.Select(c => new CampaignInfo
                 {
                     CampaignId = c.Id,
                     CampaignName = c.CampaignName,
@@ -462,9 +537,9 @@ public class HierarchicalSubmissionController : ControllerBase
                     EndDate = c.EndDate,
                     WorkingDays = c.WorkingDays,
                     DealershipName = c.DealershipName,
-                    TotalCost = c.TotalCost,
-                    CostSummaryFileName = c.CostSummaryFileName,
-                    ActivitySummaryFileName = c.ActivitySummaryFileName,
+                    TotalCost = package.CostSummary?.TotalCost,
+                    CostSummaryFileName = package.CostSummary?.FileName,
+                    ActivitySummaryFileName = package.ActivitySummary?.FileName,
                     Invoices = c.Invoices.Select(i => new CampaignInvoiceInfo
                     {
                         InvoiceId = i.Id,
@@ -569,9 +644,9 @@ public class HierarchicalSubmissionController : ControllerBase
         {
             var userId = GetUserId();
             
-            var photo = await _context.CampaignPhotos
+            var photo = await _context.TeamPhotos
                 .Include(p => p.Package)
-                .FirstOrDefaultAsync(p => p.Id == photoId && p.CampaignId == campaignId && p.PackageId == packageId, cancellationToken);
+                .FirstOrDefaultAsync(p => p.Id == photoId && p.TeamId == campaignId && p.PackageId == packageId, cancellationToken);
 
             if (photo == null || photo.Package.SubmittedByUserId != userId)
                 return NotFound(new { error = "Photo not found" });
@@ -616,8 +691,8 @@ public class HierarchicalSubmissionController : ControllerBase
             if (request.Ids == null || request.Ids.Count == 0)
                 return BadRequest(new { error = "No photo IDs provided" });
 
-            var photos = await _context.CampaignPhotos
-                .Where(p => request.Ids.Contains(p.Id) && p.CampaignId == campaignId && p.PackageId == packageId && !p.IsDeleted)
+            var photos = await _context.TeamPhotos
+                .Where(p => request.Ids.Contains(p.Id) && p.TeamId == campaignId && p.PackageId == packageId && !p.IsDeleted)
                 .ToListAsync(cancellationToken);
 
             foreach (var photo in photos)
@@ -702,37 +777,42 @@ public class HierarchicalSubmissionController : ControllerBase
         {
             var userId = GetUserId();
 
-            var campaign = await _context.Campaigns
-                .Include(c => c.Package)
-                .FirstOrDefaultAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+            var package = await _context.DocumentPackages
+                .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
+                .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
 
-            if (campaign == null || campaign.Package.SubmittedByUserId != userId)
+            if (package == null)
+                return NotFound(new { error = "Package not found" });
+
+            // Verify campaign belongs to this package
+            var campaignExists = await _context.Teams
+                .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+            if (!campaignExists)
                 return NotFound(new { error = "Campaign not found" });
 
             if (docType.Equals("cost-summary", StringComparison.OrdinalIgnoreCase))
             {
-                campaign.CostSummaryFileName = null;
-                campaign.CostSummaryBlobUrl = null;
-                campaign.CostSummaryContentType = null;
-                campaign.CostSummaryFileSizeBytes = null;
-                campaign.CostSummaryExtractedDataJson = null;
-                campaign.CostSummaryExtractionConfidence = null;
+                if (package.CostSummary != null)
+                {
+                    package.CostSummary.IsDeleted = true;
+                    package.CostSummary.UpdatedAt = DateTime.UtcNow;
+                }
             }
             else if (docType.Equals("activity-summary", StringComparison.OrdinalIgnoreCase))
             {
-                campaign.ActivitySummaryFileName = null;
-                campaign.ActivitySummaryBlobUrl = null;
-                campaign.ActivitySummaryContentType = null;
-                campaign.ActivitySummaryFileSizeBytes = null;
-                campaign.ActivitySummaryExtractedDataJson = null;
-                campaign.ActivitySummaryExtractionConfidence = null;
+                if (package.ActivitySummary != null)
+                {
+                    package.ActivitySummary.IsDeleted = true;
+                    package.ActivitySummary.UpdatedAt = DateTime.UtcNow;
+                }
             }
             else
             {
                 return BadRequest(new { error = "Invalid document type. Use 'cost-summary' or 'activity-summary'." });
             }
 
-            campaign.UpdatedAt = DateTime.UtcNow;
+            package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("{DocType} removed from campaign {CampaignId}", docType, campaignId);
@@ -786,7 +866,7 @@ public class HierarchicalSubmissionController : ControllerBase
     {
         try
         {
-            var photo = await _context.CampaignPhotos
+            var photo = await _context.TeamPhotos
                 .AsNoTracking()
                 .FirstOrDefaultAsync(p => p.Id == photoId, cancellationToken);
 
@@ -811,7 +891,7 @@ public class HierarchicalSubmissionController : ControllerBase
     }
 
     /// <summary>
-    /// Download cost summary or activity summary for a campaign
+    /// Download cost summary or activity summary for a package
     /// </summary>
     [HttpGet("campaigns/{campaignId}/download/{docType}")]
     public async Task<IActionResult> DownloadCampaignSummary(
@@ -821,11 +901,12 @@ public class HierarchicalSubmissionController : ControllerBase
     {
         try
         {
-            var campaign = await _context.Campaigns
+            // Get the package via the campaign/team
+            var team = await _context.Teams
                 .AsNoTracking()
                 .FirstOrDefaultAsync(c => c.Id == campaignId, cancellationToken);
 
-            if (campaign == null)
+            if (team == null)
                 return NotFound(new { message = "Campaign not found" });
 
             string? blobUrl;
@@ -834,15 +915,21 @@ public class HierarchicalSubmissionController : ControllerBase
 
             if (docType.Equals("cost-summary", StringComparison.OrdinalIgnoreCase))
             {
-                blobUrl = campaign.CostSummaryBlobUrl;
-                fileName = campaign.CostSummaryFileName;
-                contentType = campaign.CostSummaryContentType;
+                var costSummary = await _context.CostSummaries
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(cs => cs.PackageId == team.PackageId && !cs.IsDeleted, cancellationToken);
+                blobUrl = costSummary?.BlobUrl;
+                fileName = costSummary?.FileName;
+                contentType = costSummary?.ContentType;
             }
             else if (docType.Equals("activity-summary", StringComparison.OrdinalIgnoreCase))
             {
-                blobUrl = campaign.ActivitySummaryBlobUrl;
-                fileName = campaign.ActivitySummaryFileName;
-                contentType = campaign.ActivitySummaryContentType;
+                var activitySummary = await _context.ActivitySummaries
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.PackageId == team.PackageId && !a.IsDeleted, cancellationToken);
+                blobUrl = activitySummary?.BlobUrl;
+                fileName = activitySummary?.FileName;
+                contentType = activitySummary?.ContentType;
             }
             else
             {
@@ -881,11 +968,11 @@ public class HierarchicalSubmissionController : ControllerBase
             var userId = GetUserId();
             
             var invoice = await _context.CampaignInvoices
-                .Include(i => i.Campaign)
+                .Include(i => i.Team)
                     .ThenInclude(c => c.Package)
                 .FirstOrDefaultAsync(i => i.Id == invoiceId && !i.IsDeleted, cancellationToken);
 
-            if (invoice == null || invoice.Campaign?.Package?.SubmittedByUserId != userId)
+            if (invoice == null || invoice.Team?.Package?.SubmittedByUserId != userId)
                 return NotFound(new { error = "Invoice not found" });
 
             return Ok(new

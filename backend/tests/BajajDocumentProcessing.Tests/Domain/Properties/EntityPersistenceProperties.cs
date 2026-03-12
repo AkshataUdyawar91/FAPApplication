@@ -28,7 +28,8 @@ public class EntityPersistenceProperties
     [Theory]
     [InlineData("00000000-0000-0000-0000-000000000001", "test1@test.com", "User One", UserRole.Agency)]
     [InlineData("00000000-0000-0000-0000-000000000002", "test2@test.com", "User Two", UserRole.ASM)]
-    [InlineData("00000000-0000-0000-0000-000000000003", "test3@test.com", "User Three", UserRole.HQ)]
+    [InlineData("00000000-0000-0000-0000-000000000003", "test3@test.com", "User Three", UserRole.RA)]
+    [InlineData("00000000-0000-0000-0000-000000000004", "test4@test.com", "User Four", UserRole.Admin)]
     public async Task User_Creation_IsPersisted(string idStr, string email, string fullName, UserRole role)
     {
         // Arrange
@@ -139,7 +140,8 @@ public class EntityPersistenceProperties
         var validationResult = new ValidationResult
         {
             Id = Guid.NewGuid(),
-            PackageId = packageId,
+            DocumentType = DocumentType.PO,
+            DocumentId = documentId,
             AllValidationsPassed = true,
             CreatedAt = DateTime.UtcNow
         };

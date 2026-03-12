@@ -69,13 +69,13 @@ public class PhotoUploadLimitProperties
         for (int i = 0; i < 20; i++)
         {
             var file = CreateMockPhotoFile($"photo{i}.jpg");
-            await service.UploadDocumentAsync(file, DocumentType.Photo, packageId, userId);
+            await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, packageId, userId);
         }
 
         // Act & Assert - 21st photo should be rejected
         var file21 = CreateMockPhotoFile("photo20.jpg");
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await service.UploadDocumentAsync(file21, DocumentType.Photo, packageId, userId));
+            async () => await service.UploadDocumentAsync(file21, DocumentType.TeamPhoto, packageId, userId));
         
         Assert.Contains("Photo limit exceeded", exception.Message);
         Assert.Contains("20 photos", exception.Message);
@@ -107,12 +107,12 @@ public class PhotoUploadLimitProperties
         for (int i = 0; i < 20; i++)
         {
             var file = CreateMockPhotoFile($"package1_photo{i}.jpg");
-            await service.UploadDocumentAsync(file, DocumentType.Photo, packageId1, userId);
+            await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, packageId1, userId);
         }
 
         // Act - Upload photo to package 2 should succeed
         var file2 = CreateMockPhotoFile("package2_photo0.jpg");
-        var response = await service.UploadDocumentAsync(file2, DocumentType.Photo, packageId2, userId);
+        var response = await service.UploadDocumentAsync(file2, DocumentType.TeamPhoto, packageId2, userId);
 
         // Assert
         Assert.NotNull(response);
@@ -144,13 +144,13 @@ public class PhotoUploadLimitProperties
         for (int i = 0; i < 25; i++)
         {
             var file = CreateMockPhotoFile($"orphan_photo{i}.jpg");
-            var response = await service.UploadDocumentAsync(file, DocumentType.Photo, null, userId);
+            var response = await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, null, userId);
             Assert.NotNull(response);
         }
 
         // Assert - All uploads should succeed
         var orphanPhotos = await context.Documents
-            .Where(d => d.Type == DocumentType.Photo && d.PackageId == Guid.Empty)
+            .Where(d => d.Type == DocumentType.TeamPhoto && d.PackageId == Guid.Empty)
             .CountAsync();
         
         Assert.Equal(25, orphanPhotos);
@@ -181,7 +181,7 @@ public class PhotoUploadLimitProperties
         for (int i = 0; i < 20; i++)
         {
             var file = CreateMockPhotoFile($"photo{i}.jpg");
-            await service.UploadDocumentAsync(file, DocumentType.Photo, packageId, userId);
+            await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, packageId, userId);
         }
 
         // Act - Upload non-photo documents should still work

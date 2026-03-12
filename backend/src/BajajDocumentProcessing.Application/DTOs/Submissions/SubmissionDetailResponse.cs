@@ -96,6 +96,36 @@ public class SubmissionDetailResponse
     /// </summary>
     [JsonPropertyName("recommendation")]
     public RecommendationDto? Recommendation { get; init; }
+
+    /// <summary>
+    /// Agency ID that submitted this package
+    /// </summary>
+    [JsonPropertyName("agencyId")]
+    public Guid? AgencyId { get; init; }
+
+    /// <summary>
+    /// Agency/supplier name
+    /// </summary>
+    [JsonPropertyName("agencyName")]
+    public string? AgencyName { get; init; }
+
+    /// <summary>
+    /// Current version number of the submission
+    /// </summary>
+    [JsonPropertyName("versionNumber")]
+    public int VersionNumber { get; init; } = 1;
+
+    /// <summary>
+    /// Approval history entries for this submission
+    /// </summary>
+    [JsonPropertyName("approvalHistory")]
+    public List<ApprovalHistoryItemDto>? ApprovalHistory { get; init; }
+
+    /// <summary>
+    /// Comments on this submission
+    /// </summary>
+    [JsonPropertyName("comments")]
+    public List<CommentItemDto>? Comments { get; init; }
 }
 
 /// <summary>
@@ -315,4 +345,55 @@ public class CampaignPhotoDto
     
     [JsonPropertyName("caption")]
     public string? Caption { get; init; }
+}
+
+/// <summary>
+/// Inline DTO for approval history items in submission detail response.
+/// </summary>
+public class ApprovalHistoryItemDto
+{
+    [JsonPropertyName("id")]
+    public Guid Id { get; init; }
+
+    [JsonPropertyName("approverName")]
+    public string? ApproverName { get; init; }
+
+    [JsonPropertyName("approverRole")]
+    public required string ApproverRole { get; init; }
+
+    [JsonPropertyName("action")]
+    public required string Action { get; init; }
+
+    [JsonPropertyName("comments")]
+    public string? Comments { get; init; }
+
+    [JsonPropertyName("actionDate")]
+    public DateTime ActionDate { get; init; }
+
+    [JsonPropertyName("versionNumber")]
+    public int VersionNumber { get; init; }
+}
+
+/// <summary>
+/// Inline DTO for comment items in submission detail response.
+/// </summary>
+public class CommentItemDto
+{
+    [JsonPropertyName("id")]
+    public Guid Id { get; init; }
+
+    [JsonPropertyName("userName")]
+    public string? UserName { get; init; }
+
+    [JsonPropertyName("userRole")]
+    public required string UserRole { get; init; }
+
+    [JsonPropertyName("commentText")]
+    public required string CommentText { get; init; }
+
+    [JsonPropertyName("commentDate")]
+    public DateTime CommentDate { get; init; }
+
+    [JsonPropertyName("versionNumber")]
+    public int VersionNumber { get; init; }
 }

@@ -109,11 +109,15 @@ public class ValidationAgent : IValidationAgent
 
         try
         {
-            // Load package with documents AND hierarchical campaign data
+            // Load package with dedicated document navigations
             var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
-                .Include(p => p.Campaigns).ThenInclude(c => c.Invoices)
-                .Include(p => p.Campaigns).ThenInclude(c => c.Photos)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
+                .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
+                .Include(p => p.EnquiryDocument)
+                .Include(p => p.Teams).ThenInclude(c => c.Invoices)
+                .Include(p => p.Teams).ThenInclude(c => c.Photos)
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
@@ -130,44 +134,23 @@ public class ValidationAgent : IValidationAgent
                 return result;
             }
 
-            // Extract document data
-            var poDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.PO);
-            var invoiceDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.Invoice);
-            var costSummaryDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.CostSummary);
-            var activityDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.Activity);
-            // CHANGE: Added EnquiryDump document loading
-            var enquiryDumpDoc = package.Documents.FirstOrDefault(d => d.Type == DocumentType.EnquiryDump);
+            // Extract document data from dedicated navigation properties
+            var firstTeamInvoice = package.Teams.SelectMany(c => c.Invoices).FirstOrDefault();
+            var allTeamPhotos = package.Teams.SelectMany(c => c.Photos).ToList();
 
-            // Hierarchical data: get first campaign invoice/photo/cost summary/activity
-            var firstCampaignInvoice = package.Campaigns.SelectMany(c => c.Invoices).FirstOrDefault();
-            var firstCampaignWithCostSummary = package.Campaigns.FirstOrDefault(c => !string.IsNullOrEmpty(c.CostSummaryBlobUrl));
-            var firstCampaignWithActivity = package.Campaigns.FirstOrDefault(c => !string.IsNullOrEmpty(c.ActivitySummaryBlobUrl));
-            var allCampaignPhotos = package.Campaigns.SelectMany(c => c.Photos).ToList();
-
-            // CHANGE: Populate FileNames dictionary so validation output shows which file each check refers to
+            // Populate FileNames dictionary so validation output shows which file each check refers to
             result.FileNames = new Dictionary<string, string>();
-            if (poDoc != null) result.FileNames["PO"] = poDoc.FileName ?? "PO document";
-            if (invoiceDoc != null) result.FileNames["Invoice"] = invoiceDoc.FileName ?? "Invoice document";
-            else if (firstCampaignInvoice != null) result.FileNames["Invoice"] = firstCampaignInvoice.FileName ?? "Invoice document";
-            if (costSummaryDoc != null) result.FileNames["CostSummary"] = costSummaryDoc.FileName ?? "Cost Summary document";
-            else if (firstCampaignWithCostSummary != null) result.FileNames["CostSummary"] = firstCampaignWithCostSummary.CostSummaryFileName ?? "Cost Summary document";
-            if (activityDoc != null) result.FileNames["Activity"] = activityDoc.FileName ?? "Activity document";
-            else if (firstCampaignWithActivity != null) result.FileNames["Activity"] = firstCampaignWithActivity.ActivitySummaryFileName ?? "Activity document";
-            if (enquiryDumpDoc != null) result.FileNames["EnquiryDump"] = enquiryDumpDoc.FileName ?? "Enquiry Dump document";
-            // Photo filenames: check old Documents table first, then CampaignPhotos
-            var photoDocsList = package.Documents.Where(d => d.Type == DocumentType.Photo).ToList();
-            if (photoDocsList.Any())
+            if (package.PO != null) result.FileNames["PO"] = package.PO.FileName ?? "PO document";
+            if (package.Invoices.Any()) result.FileNames["Invoice"] = package.Invoices.First().FileName ?? "Invoice document";
+            else if (firstTeamInvoice != null) result.FileNames["Invoice"] = firstTeamInvoice.FileName ?? "Invoice document";
+            if (package.CostSummary != null) result.FileNames["CostSummary"] = package.CostSummary.FileName ?? "Cost Summary document";
+            if (package.ActivitySummary != null) result.FileNames["Activity"] = package.ActivitySummary.FileName ?? "Activity document";
+            if (package.EnquiryDocument != null) result.FileNames["EnquiryDump"] = package.EnquiryDocument.FileName ?? "Enquiry Dump document";
+            if (allTeamPhotos.Any())
             {
-                for (int i = 0; i < photoDocsList.Count; i++)
+                for (int i = 0; i < allTeamPhotos.Count; i++)
                 {
-                    result.FileNames[$"Photo_{i}"] = photoDocsList[i].FileName ?? $"Photo {i + 1}";
-                }
-            }
-            else if (allCampaignPhotos.Any())
-            {
-                for (int i = 0; i < allCampaignPhotos.Count; i++)
-                {
-                    result.FileNames[$"Photo_{i}"] = allCampaignPhotos[i].FileName ?? $"Photo {i + 1}";
+                    result.FileNames[$"Photo_{i}"] = allTeamPhotos[i].FileName ?? $"Photo {i + 1}";
                 }
             }
 
@@ -175,48 +158,40 @@ public class ValidationAgent : IValidationAgent
             InvoiceData? invoiceData = null;
             CostSummaryData? costSummaryData = null;
             ActivityData? activityData = null;
-            // CHANGE: Added EnquiryDumpData variable
             EnquiryDumpData? enquiryDumpData = null;
 
-            if (poDoc?.ExtractedDataJson != null)
+            if (package.PO?.ExtractedDataJson != null)
             {
-                poData = JsonSerializer.Deserialize<POData>(poDoc.ExtractedDataJson);
+                poData = JsonSerializer.Deserialize<POData>(package.PO.ExtractedDataJson);
             }
 
-            // Invoice data: check old Documents table first, then CampaignInvoices
-            if (invoiceDoc?.ExtractedDataJson != null)
+            // Invoice data: check package-level Invoices first, then TeamInvoices
+            var firstInvoice = package.Invoices.FirstOrDefault();
+            if (firstInvoice?.ExtractedDataJson != null)
             {
-                invoiceData = JsonSerializer.Deserialize<InvoiceData>(invoiceDoc.ExtractedDataJson);
+                invoiceData = JsonSerializer.Deserialize<InvoiceData>(firstInvoice.ExtractedDataJson);
             }
-            else if (firstCampaignInvoice?.ExtractedDataJson != null)
+            else if (firstTeamInvoice?.ExtractedDataJson != null)
             {
-                invoiceData = JsonSerializer.Deserialize<InvoiceData>(firstCampaignInvoice.ExtractedDataJson);
-            }
-
-            // Cost Summary data: check old Documents table first, then Campaign.CostSummaryExtractedDataJson
-            if (costSummaryDoc?.ExtractedDataJson != null)
-            {
-                costSummaryData = JsonSerializer.Deserialize<CostSummaryData>(costSummaryDoc.ExtractedDataJson);
-            }
-            else if (firstCampaignWithCostSummary?.CostSummaryExtractedDataJson != null)
-            {
-                costSummaryData = JsonSerializer.Deserialize<CostSummaryData>(firstCampaignWithCostSummary.CostSummaryExtractedDataJson);
+                invoiceData = JsonSerializer.Deserialize<InvoiceData>(firstTeamInvoice.ExtractedDataJson);
             }
 
-            // Activity data: check old Documents table first, then Campaign.ActivitySummaryExtractedDataJson
-            if (activityDoc?.ExtractedDataJson != null)
+            // Cost Summary data from dedicated entity
+            if (package.CostSummary?.ExtractedDataJson != null)
             {
-                activityData = JsonSerializer.Deserialize<ActivityData>(activityDoc.ExtractedDataJson);
-            }
-            else if (firstCampaignWithActivity?.ActivitySummaryExtractedDataJson != null)
-            {
-                activityData = JsonSerializer.Deserialize<ActivityData>(firstCampaignWithActivity.ActivitySummaryExtractedDataJson);
+                costSummaryData = JsonSerializer.Deserialize<CostSummaryData>(package.CostSummary.ExtractedDataJson);
             }
 
-            // CHANGE: Added EnquiryDump data deserialization
-            if (enquiryDumpDoc?.ExtractedDataJson != null)
+            // Activity Summary data from dedicated entity
+            if (package.ActivitySummary?.ExtractedDataJson != null)
             {
-                enquiryDumpData = JsonSerializer.Deserialize<EnquiryDumpData>(enquiryDumpDoc.ExtractedDataJson);
+                activityData = JsonSerializer.Deserialize<ActivityData>(package.ActivitySummary.ExtractedDataJson);
+            }
+
+            // Enquiry Document data from dedicated entity
+            if (package.EnquiryDocument?.ExtractedDataJson != null)
+            {
+                enquiryDumpData = JsonSerializer.Deserialize<EnquiryDumpData>(package.EnquiryDocument.ExtractedDataJson);
             }
 
             // 1. SAP Verification
@@ -400,11 +375,10 @@ public class ValidationAgent : IValidationAgent
             }
 
             // 13. Photo Proofs Field Presence Validation
-            var photoDocuments = package.Documents.Where(d => d.Type == DocumentType.Photo).ToList();
-            var totalPhotoCount = photoDocuments.Count + allCampaignPhotos.Count;
-            if (photoDocuments.Any())
+            var totalPhotoCount = allTeamPhotos.Count;
+            if (allTeamPhotos.Any())
             {
-                result.PhotoFieldPresence = ValidatePhotoFieldPresence(photoDocuments);
+                result.PhotoFieldPresence = ValidatePhotoFieldPresence(allTeamPhotos);
                 if (!result.PhotoFieldPresence.AllFieldsPresent)
                 {
                     result.Issues.Add(new ValidationIssue
@@ -482,17 +456,12 @@ public class ValidationAgent : IValidationAgent
                 correlationId);
 
             // Persist validation result to database
-            await SaveValidationResultAsync(result, cancellationToken);
+            // TODO: SaveValidationResultAsync disabled - ValidationResult is now polymorphic (per document type)
+            // Need to refactor to save validation results for each document type separately
+            // await SaveValidationResultAsync(result, cancellationToken);
 
-            // Update package state
-            if (result.AllPassed)
-            {
-                package.State = Domain.Enums.PackageState.Validated;
-            }
-            else
-            {
-                package.State = Domain.Enums.PackageState.ValidationFailed;
-            }
+            // Update package state - validation no longer sets state (removed Validated/ValidationFailed states)
+            // Package remains in Validating state, workflow orchestrator will move to PendingASM
 
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -710,9 +679,11 @@ public class ValidationAgent : IValidationAgent
     public async Task<CompletenessResult> ValidateCompletenessAsync(Guid packageId, CancellationToken cancellationToken = default)
     {
         var package = await _context.DocumentPackages
-            .Include(p => p.Documents)
-            .Include(p => p.Campaigns).ThenInclude(c => c.Invoices)
-            .Include(p => p.Campaigns).ThenInclude(c => c.Photos)
+            .Include(p => p.PO)
+            .Include(p => p.Invoices)
+            .Include(p => p.CostSummary)
+            .Include(p => p.Teams).ThenInclude(c => c.Invoices)
+            .Include(p => p.Teams).ThenInclude(c => c.Photos)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
@@ -726,45 +697,41 @@ public class ValidationAgent : IValidationAgent
             };
         }
 
-        var presentDocTypes = package.Documents.Select(d => d.Type).Distinct().ToList();
         var missingItems = new List<string>();
 
-        // PO is still in the old Documents table
-        if (!presentDocTypes.Contains(DocumentType.PO))
+        // PO: check dedicated navigation property
+        if (package.PO == null)
         {
             missingItems.Add("PO");
         }
 
-        // Invoice: check both old Documents table AND hierarchical CampaignInvoices
-        var hasInvoiceInDocuments = presentDocTypes.Contains(DocumentType.Invoice);
-        var hasInvoiceInCampaigns = package.Campaigns.Any(c => c.Invoices.Any());
-        if (!hasInvoiceInDocuments && !hasInvoiceInCampaigns)
+        // Invoice: check both package-level Invoices AND hierarchical TeamInvoices
+        var hasInvoiceInPackage = package.Invoices.Any();
+        var hasInvoiceInTeams = package.Teams.Any(c => c.Invoices.Any());
+        if (!hasInvoiceInPackage && !hasInvoiceInTeams)
         {
             missingItems.Add("Invoice");
         }
 
-        // Cost Summary: check both old Documents table AND Campaign.CostSummaryBlobUrl
-        var hasCostSummaryInDocuments = presentDocTypes.Contains(DocumentType.CostSummary);
-        var hasCostSummaryInCampaigns = package.Campaigns.Any(c => !string.IsNullOrEmpty(c.CostSummaryBlobUrl));
-        if (!hasCostSummaryInDocuments && !hasCostSummaryInCampaigns)
+        // Cost Summary: check dedicated navigation property
+        if (package.CostSummary == null)
         {
             missingItems.Add("CostSummary");
         }
 
-        // Photos: check both old Documents table AND hierarchical CampaignPhotos
-        var photoCountInDocuments = package.Documents.Count(d => d.Type == DocumentType.Photo);
-        var photoCountInCampaigns = package.Campaigns.Sum(c => c.Photos.Count);
-        if (photoCountInDocuments == 0 && photoCountInCampaigns == 0)
+        // Photos: check TeamPhotos from Teams
+        var photoCountInTeams = package.Teams.Sum(c => c.Photos.Count);
+        if (photoCountInTeams == 0)
         {
             missingItems.Add("Photos (at least 1 required)");
         }
 
         // Count present items (PO + Invoice + CostSummary + Photos)
         var presentItemCount = 0;
-        if (presentDocTypes.Contains(DocumentType.PO)) presentItemCount++;
-        if (hasInvoiceInDocuments || hasInvoiceInCampaigns) presentItemCount++;
-        if (hasCostSummaryInDocuments || hasCostSummaryInCampaigns) presentItemCount++;
-        if (photoCountInDocuments > 0 || photoCountInCampaigns > 0) presentItemCount++;
+        if (package.PO != null) presentItemCount++;
+        if (hasInvoiceInPackage || hasInvoiceInTeams) presentItemCount++;
+        if (package.CostSummary != null) presentItemCount++;
+        if (photoCountInTeams > 0) presentItemCount++;
 
         return new CompletenessResult
         {
@@ -1335,23 +1302,23 @@ public class ValidationAgent : IValidationAgent
     /// Validates photo field presence including date, location, and AI-detected content.
     /// Checks for EXIF metadata (date, GPS) and AI-detected features (blue t-shirt, Bajaj vehicle).
     /// </summary>
-    /// <param name="photoDocuments">List of photo documents to validate</param>
+    /// <param name="teamPhotos">List of team photo entities to validate</param>
     /// <returns>A PhotoFieldPresenceResult with counts of photos meeting each requirement</returns>
-    private PhotoFieldPresenceResult ValidatePhotoFieldPresence(List<Domain.Entities.Document> photoDocuments)
+    private PhotoFieldPresenceResult ValidatePhotoFieldPresence(List<Domain.Entities.TeamPhotos> teamPhotos)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
         _logger.LogInformation(
             "Starting photo field presence validation. PhotoCount: {PhotoCount}. CorrelationId: {CorrelationId}",
-            photoDocuments.Count, correlationId);
+            teamPhotos.Count, correlationId);
 
         var result = new PhotoFieldPresenceResult 
         { 
             AllFieldsPresent = true,
-            TotalPhotos = photoDocuments.Count
+            TotalPhotos = teamPhotos.Count
         };
         var missingFields = new List<string>();
 
-        if (!photoDocuments.Any())
+        if (!teamPhotos.Any())
         {
             missingFields.Add("No photos uploaded");
             result.AllFieldsPresent = false;
@@ -1364,33 +1331,29 @@ public class ValidationAgent : IValidationAgent
         int photosWithBlueTshirt = 0;
         int photosWithVehicle = 0;
 
-        foreach (var photoDoc in photoDocuments)
+        foreach (var photo in teamPhotos)
         {
-            if (photoDoc.ExtractedDataJson != null)
+            if (photo.ExtractedMetadataJson != null)
             {
-                var photoMetadata = JsonSerializer.Deserialize<PhotoMetadata>(photoDoc.ExtractedDataJson);
+                var photoMetadata = JsonSerializer.Deserialize<PhotoMetadata>(photo.ExtractedMetadataJson);
                 
                 if (photoMetadata != null)
                 {
-                    // Check for date/timestamp
                     if (photoMetadata.Timestamp.HasValue)
                     {
                         photosWithDate++;
                     }
 
-                    // Check for location (lat/long)
                     if (photoMetadata.Latitude.HasValue && photoMetadata.Longitude.HasValue)
                     {
                         photosWithLocation++;
                     }
 
-                    // Check for blue t-shirt person (AI-detected)
                     if (photoMetadata.HasBlueTshirtPerson)
                     {
                         photosWithBlueTshirt++;
                     }
 
-                    // Check for Bajaj vehicle (AI-detected)
                     if (photoMetadata.HasBajajVehicle)
                     {
                         photosWithVehicle++;
@@ -1404,20 +1367,16 @@ public class ValidationAgent : IValidationAgent
         result.PhotosWithBlueTshirt = photosWithBlueTshirt;
         result.PhotosWithVehicle = photosWithVehicle;
 
-        // Validate: Date should be present on all photos
-        if (photosWithDate < photoDocuments.Count)
+        if (photosWithDate < teamPhotos.Count)
         {
-            missingFields.Add($"Date present on {photosWithDate} out of {photoDocuments.Count} photos");
+            missingFields.Add($"Date present on {photosWithDate} out of {teamPhotos.Count} photos");
         }
 
-        // Validate: Location should be present on all photos
-        if (photosWithLocation < photoDocuments.Count)
+        if (photosWithLocation < teamPhotos.Count)
         {
-            missingFields.Add($"Location coordinates present on {photosWithLocation} out of {photoDocuments.Count} photos");
+            missingFields.Add($"Location coordinates present on {photosWithLocation} out of {teamPhotos.Count} photos");
         }
 
-        // Note: Blue t-shirt and vehicle are content validations (AI-based)
-        // These are informational but not blocking validations
         if (photosWithBlueTshirt == 0)
         {
             missingFields.Add("No photos with person in blue t-shirt detected (AI validation)");
@@ -1588,92 +1547,16 @@ public class ValidationAgent : IValidationAgent
 
     /// <summary>
     /// Saves validation result to the database.
-    /// Creates a new ValidationResult entity or updates an existing one.
+    /// TODO: DISABLED - ValidationResult is now polymorphic (per document type), not per package
+    /// This method needs to be refactored to save validation results for each document type separately
     /// </summary>
     /// <param name="result">The validation result to save</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     private async Task SaveValidationResultAsync(PackageValidationResult result, CancellationToken cancellationToken)
     {
-        var correlationId = _correlationIdService.GetCorrelationId();
-        
-        try
-        {
-            _logger.LogInformation(
-                "Saving validation result for package {PackageId}. CorrelationId: {CorrelationId}",
-                result.PackageId, correlationId);
-
-            // Check if validation result already exists
-            var existingResult = await _context.ValidationResults
-                .FirstOrDefaultAsync(v => v.PackageId == result.PackageId, cancellationToken);
-
-            var validationEntity = existingResult ?? new Domain.Entities.ValidationResult
-            {
-                Id = Guid.NewGuid(),
-                PackageId = result.PackageId,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            // Update validation flags
-            validationEntity.SapVerificationPassed = result.SAPVerification?.IsVerified ?? false;
-            validationEntity.AmountConsistencyPassed = result.AmountConsistency?.IsConsistent ?? false;
-            validationEntity.LineItemMatchingPassed = result.LineItemMatching?.AllItemsMatched ?? false;
-            validationEntity.CompletenessCheckPassed = result.Completeness?.IsComplete ?? false;
-            validationEntity.DateValidationPassed = result.DateValidation?.IsValid ?? false;
-            validationEntity.VendorMatchingPassed = result.VendorMatching?.IsMatched ?? false;
-            validationEntity.AllValidationsPassed = result.AllPassed;
-
-            // CHANGE: Added FileNames section to validation JSON so API response can show which file each check refers to
-            // Store detailed validation results as JSON
-            validationEntity.ValidationDetailsJson = JsonSerializer.Serialize(new
-            {
-                // CHANGE: FileNames maps document type to uploaded filename for display in validation output
-                FileNames = result.FileNames,
-                SAPVerification = result.SAPVerification,
-                AmountConsistency = result.AmountConsistency,
-                LineItemMatching = result.LineItemMatching,
-                Completeness = result.Completeness,
-                DateValidation = result.DateValidation,
-                VendorMatching = result.VendorMatching,
-                InvoiceFieldPresence = result.InvoiceFieldPresence,
-                InvoiceCrossDocument = result.InvoiceCrossDocument,
-                CostSummaryFieldPresence = result.CostSummaryFieldPresence,
-                CostSummaryCrossDocument = result.CostSummaryCrossDocument,
-                ActivityFieldPresence = result.ActivityFieldPresence,
-                ActivityCrossDocument = result.ActivityCrossDocument,
-                PhotoFieldPresence = result.PhotoFieldPresence,
-                PhotoCrossDocument = result.PhotoCrossDocument,
-                // CHANGE: Removed EnquiryDumpCrossDocument from saved JSON per spec — only field presence needed
-                EnquiryDumpFieldPresence = result.EnquiryDumpFieldPresence,
-                Issues = result.Issues
-            });
-
-            // Store failure reasons
-            if (!result.AllPassed && result.Issues.Any())
-            {
-                validationEntity.FailureReason = string.Join("; ", result.Issues.Select(i => $"{i.Field}: {i.Issue}"));
-            }
-
-            validationEntity.UpdatedAt = DateTime.UtcNow;
-
-            if (existingResult == null)
-            {
-                _context.ValidationResults.Add(validationEntity);
-            }
-
-            await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation(
-                "Validation result saved for package {PackageId}. CorrelationId: {CorrelationId}",
-                result.PackageId, correlationId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Error saving validation result for package {PackageId}. CorrelationId: {CorrelationId}",
-                result.PackageId, correlationId);
-            // Don't throw - validation result saving failure shouldn't break the validation process
-        }
+        // Method disabled - ValidationResult schema changed to polymorphic model
+        // TODO: Refactor to save per-document validation results
+        await Task.CompletedTask;
     }
 }
 

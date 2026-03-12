@@ -71,9 +71,6 @@ public class SubmissionsController : ControllerBase
                 Id = Guid.NewGuid(),
                 SubmittedByUserId = userId,
                 State = PackageState.Uploaded,
-                CampaignStartDate = request.CampaignStartDate,
-                CampaignEndDate = request.CampaignEndDate,
-                CampaignWorkingDays = request.CampaignWorkingDays,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -137,10 +134,13 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
                 .Include(p => p.SubmittedBy)
-                .Include(p => p.Campaigns)
+                .Include(p => p.Teams)
                     .ThenInclude(c => c.Invoices)
-                .Include(p => p.Campaigns)
+                .Include(p => p.Teams)
                     .ThenInclude(c => c.Photos)
+                .Include(p => p.CostSummary)
+                .Include(p => p.EnquiryDocument)
+                .Include(p => p.RequestApprovalHistory)
                 .AsSplitQuery()
                 .AsQueryable();
 
@@ -157,18 +157,28 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
+            // Get approval history for review fields
+            var asmApproval = package.RequestApprovalHistory
+                .Where(h => h.ApproverRole == Domain.Enums.UserRole.ASM)
+                .OrderByDescending(h => h.ActionDate)
+                .FirstOrDefault();
+            var raApproval = package.RequestApprovalHistory
+                .Where(h => h.ApproverRole == Domain.Enums.UserRole.RA)
+                .OrderByDescending(h => h.ActionDate)
+                .FirstOrDefault();
+
             var response = new SubmissionDetailResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
                 CreatedAt = package.CreatedAt,
                 UpdatedAt = package.UpdatedAt,
-                ASMReviewedAt = package.ASMReviewedAt,
-                ASMReviewNotes = package.ASMReviewNotes,
-                HQReviewedAt = package.HQReviewedAt,
-                HQReviewNotes = package.HQReviewNotes,
-                ReviewedAt = package.ReviewedAt,
-                ReviewNotes = package.ReviewNotes,
+                ASMReviewedAt = asmApproval?.ActionDate,
+                ASMReviewNotes = asmApproval?.Comments,
+                HQReviewedAt = raApproval?.ActionDate,
+                HQReviewNotes = raApproval?.Comments,
+                ReviewedAt = asmApproval?.ActionDate,
+                ReviewNotes = asmApproval?.Comments,
                 Documents = package.Documents.Select(d => new SubmissionDocumentDto
                 {
                     Id = d.Id,
@@ -178,7 +188,7 @@ public class SubmissionsController : ControllerBase
                     ExtractionConfidence = d.ExtractionConfidence,
                     ExtractedData = d.ExtractedDataJson
                 }).ToList(),
-                Campaigns = package.Campaigns.Where(c => !c.IsDeleted).Select(c => new CampaignDto
+                Campaigns = package.Teams.Where(c => !c.IsDeleted).Select(c => new CampaignDto
                 {
                     Id = c.Id,
                     CampaignName = c.CampaignName,
@@ -188,11 +198,11 @@ public class SubmissionsController : ControllerBase
                     WorkingDays = c.WorkingDays,
                     DealershipName = c.DealershipName,
                     DealershipAddress = c.DealershipAddress,
-                    TotalCost = c.TotalCost,
-                    CostSummaryFileName = c.CostSummaryFileName,
-                    CostSummaryBlobUrl = c.CostSummaryBlobUrl,
-                    ActivitySummaryFileName = c.ActivitySummaryFileName,
-                    ActivitySummaryBlobUrl = c.ActivitySummaryBlobUrl,
+                    TotalCost = package.CostSummary?.TotalCost,
+                    CostSummaryFileName = package.CostSummary?.FileName,
+                    CostSummaryBlobUrl = package.CostSummary?.BlobUrl,
+                    ActivitySummaryFileName = package.ActivitySummary?.FileName,
+                    ActivitySummaryBlobUrl = package.ActivitySummary?.BlobUrl,
                     Invoices = c.Invoices.Where(i => !i.IsDeleted).Select(i => new CampaignInvoiceDto
                     {
                         Id = i.Id,
@@ -317,9 +327,9 @@ public class SubmissionsController : ControllerBase
             var query = _context.DocumentPackages
                 .Include(p => p.Documents)
                 .Include(p => p.ConfidenceScore)
-                .Include(p => p.Campaigns.Where(c => !c.IsDeleted))
+                .Include(p => p.Teams.Where(c => !c.IsDeleted))
                     .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
-                .Include(p => p.Campaigns.Where(c => !c.IsDeleted))
+                .Include(p => p.Teams.Where(c => !c.IsDeleted))
                     .ThenInclude(c => c.Photos.Where(ph => !ph.IsDeleted))
                 .AsSplitQuery()
                 .AsQueryable();
@@ -357,7 +367,7 @@ public class SubmissionsController : ControllerBase
             var items = packages.Select(p =>
             {
                 // Extract invoice data from CampaignInvoices (hierarchical model)
-                var firstInvoice = p.Campaigns
+                var firstInvoice = p.Teams
                     .Where(c => !c.IsDeleted)
                     .SelectMany(c => c.Invoices)
                     .Where(i => !i.IsDeleted)
@@ -389,8 +399,8 @@ public class SubmissionsController : ControllerBase
                     }
                 }
 
-                // Calculate total invoice amount across all campaigns
-                var totalInvoiceAmount = p.Campaigns
+                // Calculate total invoice amount across all teams
+                var totalInvoiceAmount = p.Teams
                     .Where(c => !c.IsDeleted)
                     .SelectMany(c => c.Invoices)
                     .Where(i => !i.IsDeleted && i.TotalAmount != null && i.TotalAmount > 0)
@@ -423,9 +433,9 @@ public class SubmissionsController : ControllerBase
                     catch { }
                 }
 
-                // Count documents: PO docs + campaign invoices + campaign photos
-                var campaignInvoiceCount = p.Campaigns.Where(c => !c.IsDeleted).SelectMany(c => c.Invoices).Count(i => !i.IsDeleted);
-                var campaignPhotoCount = p.Campaigns.Where(c => !c.IsDeleted).SelectMany(c => c.Photos).Count(ph => !ph.IsDeleted);
+                // Count documents: PO docs + team invoices + team photos
+                var campaignInvoiceCount = p.Teams.Where(c => !c.IsDeleted).SelectMany(c => c.Invoices).Count(i => !i.IsDeleted);
+                var campaignPhotoCount = p.Teams.Where(c => !c.IsDeleted).SelectMany(c => c.Photos).Count(ph => !ph.IsDeleted);
                 var totalDocCount = p.Documents.Count + campaignInvoiceCount + campaignPhotoCount;
 
                 return new SubmissionListItemDto
@@ -493,28 +503,38 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Allow approval from PendingASMApproval, PendingApproval (legacy), or RejectedByRA states
-            if (package.State != PackageState.PendingASMApproval && 
-                package.State != PackageState.PendingApproval &&
-                package.State != PackageState.RejectedByRA)
+            // Allow approval from PendingASM or RARejected states
+            if (package.State != PackageState.PendingASM && 
+                package.State != PackageState.RARejected)
             {
                 return BadRequest(new { error = $"Submission is not in a state that can be approved by ASM. Current state: {package.State}" });
             }
 
-            package.State = PackageState.PendingHQApproval;
-            package.ASMReviewedByUserId = userId;
-            package.ASMReviewedAt = DateTime.UtcNow;
-            package.ASMReviewNotes = request?.Notes ?? "Approved by ASM";
+            package.State = PackageState.PendingRA;
+            // Record approval in RequestApprovalHistory
+            var approvalHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.ASM,
+                Action = Domain.Enums.ApprovalAction.Approved,
+                Comments = request?.Notes ?? "Approved by ASM",
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(approvalHistory);
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} approved by ASM {UserId}, moved to HQ approval", id, userId);
+            _logger.LogInformation("Submission {Id} approved by ASM {UserId}, moved to RA approval", id, userId);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Approved by ASM, pending HQ approval"
+                Message = "Approved by ASM, pending RA approval"
             };
 
             return Ok(response);
@@ -559,18 +579,28 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Allow rejection from PendingASMApproval, PendingApproval (legacy), or RejectedByRA states
-            if (package.State != PackageState.PendingASMApproval && 
-                package.State != PackageState.PendingApproval &&
-                package.State != PackageState.RejectedByRA)
+            // Allow rejection from PendingASM or RARejected states
+            if (package.State != PackageState.PendingASM && 
+                package.State != PackageState.RARejected)
             {
                 return BadRequest(new { error = $"Submission is not in a state that can be rejected by ASM. Current state: {package.State}" });
             }
 
-            package.State = PackageState.RejectedByASM;
-            package.ASMReviewedByUserId = userId;
-            package.ASMReviewedAt = DateTime.UtcNow;
-            package.ASMReviewNotes = request.Reason;
+            package.State = PackageState.ASMRejected;
+            // Record rejection in RequestApprovalHistory
+            var rejectionHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.ASM,
+                Action = Domain.Enums.ApprovalAction.Rejected,
+                Comments = request.Reason,
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(rejectionHistory);
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -625,25 +655,36 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingHQApproval)
+            if (package.State != PackageState.PendingRA)
             {
-                return BadRequest(new { error = $"Submission is not in pending HQ approval state. Current state: {package.State}" });
+                return BadRequest(new { error = $"Submission is not in pending RA approval state. Current state: {package.State}" });
             }
 
             package.State = PackageState.Approved;
-            package.HQReviewedByUserId = userId;
-            package.HQReviewedAt = DateTime.UtcNow;
-            package.HQReviewNotes = request?.Notes ?? "Approved by HQ";
+            // Record approval in RequestApprovalHistory
+            var approvalHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.RA,
+                Action = Domain.Enums.ApprovalAction.Approved,
+                Comments = request?.Notes ?? "Approved by RA",
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(approvalHistory);
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} approved by HQ {UserId} - final approval", id, userId);
+            _logger.LogInformation("Submission {Id} approved by RA {UserId} - final approval", id, userId);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Final approval by HQ"
+                Message = "Final approval by RA"
             };
 
             return Ok(response);
@@ -688,15 +729,26 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingHQApproval)
+            if (package.State != PackageState.PendingRA)
             {
-                return BadRequest(new { error = $"Submission is not in pending HQ approval state. Current state: {package.State}" });
+                return BadRequest(new { error = $"Submission is not in pending RA approval state. Current state: {package.State}" });
             }
 
-            package.State = PackageState.RejectedByRA;
-            package.HQReviewedByUserId = userId;
-            package.HQReviewedAt = DateTime.UtcNow;
-            package.HQReviewNotes = request.Reason;
+            package.State = PackageState.RARejected;
+            // Record rejection in RequestApprovalHistory
+            var rejectionHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.RA,
+                Action = Domain.Enums.ApprovalAction.Rejected,
+                Comments = request.Reason,
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(rejectionHistory);
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -782,8 +834,8 @@ public class SubmissionsController : ControllerBase
             }
 
             // Can only resubmit if rejected by ASM or rejected by RA
-            if (package.State != PackageState.RejectedByASM && 
-                package.State != PackageState.RejectedByRA)
+            if (package.State != PackageState.ASMRejected && 
+                package.State != PackageState.RARejected)
             {
                 return BadRequest(new { error = $"Can only resubmit packages rejected by ASM or RA. Current state: {package.State}" });
             }
@@ -794,24 +846,31 @@ public class SubmissionsController : ControllerBase
                 return Forbid();
             }
 
-            // Track resubmission
-            package.ResubmissionCount = (package.ResubmissionCount ?? 0) + 1;
+            // Track resubmission via VersionNumber
+            package.VersionNumber += 1;
             
             // Reset to uploaded state to trigger workflow
             package.State = PackageState.Uploaded;
-            package.ASMReviewNotes = null;
-            package.ASMReviewedAt = null;
-            package.ASMReviewedByUserId = null;
-            // Clear HQ review fields if resubmitting from RA rejection
-            package.HQReviewNotes = null;
-            package.HQReviewedAt = null;
-            package.HQReviewedByUserId = null;
+            // Record resubmission in RequestApprovalHistory
+            var resubmitHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.Agency,
+                Action = Domain.Enums.ApprovalAction.Resubmitted,
+                Comments = "Resubmitted by Agency",
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(resubmitHistory);
             package.UpdatedAt = DateTime.UtcNow;
             
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Package {Id} resubmitted by Agency user {UserId} (Resubmission #{Count})", 
-                id, userId, package.ResubmissionCount);
+            _logger.LogInformation("Package {Id} resubmitted by Agency user {UserId} (Version #{Version})", 
+                id, userId, package.VersionNumber);
 
             // Trigger workflow processing
             try
@@ -829,7 +888,7 @@ public class SubmissionsController : ControllerBase
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                ResubmissionCount = package.ResubmissionCount,
+                ResubmissionCount = package.VersionNumber - 1,
                 Message = "Package resubmitted successfully and workflow triggered"
             };
 
@@ -876,39 +935,45 @@ public class SubmissionsController : ControllerBase
             }
 
             // Can only resubmit if rejected by RA
-            if (package.State != PackageState.RejectedByRA)
+            if (package.State != PackageState.RARejected)
             {
-                return BadRequest(new { error = $"Can only resubmit packages rejected by HQ. Current state: {package.State}" });
+                return BadRequest(new { error = $"Can only resubmit packages rejected by RA. Current state: {package.State}" });
             }
 
-            // Track HQ resubmission
-            package.HQResubmissionCount = (package.HQResubmissionCount ?? 0) + 1;
+            // Track HQ resubmission via VersionNumber
+            package.VersionNumber += 1;
             
-            // Move back to pending HQ approval
-            package.State = PackageState.PendingHQApproval;
+            // Move back to pending RA approval
+            package.State = PackageState.PendingRA;
             
-            // Append resubmission notes to ASM notes
-            var resubmissionNote = $"\n\n[Resubmission #{package.HQResubmissionCount} - {DateTime.UtcNow:yyyy-MM-dd HH:mm}]\n{request.Notes}";
-            package.ASMReviewNotes = (package.ASMReviewNotes ?? "") + resubmissionNote;
-            
-            // Clear HQ rejection (but keep history in notes)
-            package.HQReviewNotes = null;
-            package.HQReviewedAt = null;
-            package.HQReviewedByUserId = null;
+            // Record resubmission in RequestApprovalHistory
+            var resubmitHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.ASM,
+                Action = Domain.Enums.ApprovalAction.Resubmitted,
+                Comments = request.Notes,
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(resubmitHistory);
             
             package.UpdatedAt = DateTime.UtcNow;
             
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Package {Id} resubmitted to HQ by ASM user {UserId} (HQ Resubmission #{Count})", 
-                id, userId, package.HQResubmissionCount);
+            _logger.LogInformation("Package {Id} resubmitted to RA by ASM user {UserId} (Version #{Version})", 
+                id, userId, package.VersionNumber);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                HQResubmissionCount = package.HQResubmissionCount,
-                Message = "Package resubmitted to HQ successfully"
+                HQResubmissionCount = package.VersionNumber - 1,
+                Message = "Package resubmitted to RA successfully"
             };
 
             return Ok(response);
@@ -953,21 +1018,27 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.RejectedByRA)
+            if (package.State != PackageState.RARejected)
             {
                 return BadRequest(new { error = $"Can only send back packages rejected by RA. Current state: {package.State}" });
             }
 
-            // Move to RejectedByASM so Agency can edit and resubmit
-            package.State = PackageState.RejectedByASM;
-            package.ASMReviewedByUserId = userId;
-            package.ASMReviewedAt = DateTime.UtcNow;
-            package.ASMReviewNotes = $"Sent back to Agency: {request.Reason}";
-
-            // Clear HQ review fields
-            package.HQReviewNotes = null;
-            package.HQReviewedAt = null;
-            package.HQReviewedByUserId = null;
+            // Move to ASMRejected so Agency can edit and resubmit
+            package.State = PackageState.ASMRejected;
+            // Record in RequestApprovalHistory
+            var sendBackHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.ASM,
+                Action = Domain.Enums.ApprovalAction.Rejected,
+                Comments = $"Sent back to Agency: {request.Reason}",
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(sendBackHistory);
 
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
@@ -1020,12 +1091,12 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingApproval)
+            if (package.State != PackageState.PendingASM)
             {
                 return BadRequest(new { error = "Submission is not in pending approval state" });
             }
 
-            package.State = PackageState.Rejected;
+            package.State = PackageState.ASMRejected;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -1080,8 +1151,9 @@ public class SubmissionsController : ControllerBase
 
             var package = await _context.DocumentPackages
                 .Include(p => p.Documents)
-                .Include(p => p.Campaigns.Where(c => !c.IsDeleted))
+                .Include(p => p.Teams.Where(c => !c.IsDeleted))
                     .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
+                .Include(p => p.CostSummary)
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
@@ -1109,11 +1181,11 @@ public class SubmissionsController : ControllerBase
             var hasPO = package.Documents.Any(d => d.Type == DocumentType.PO);
             // Check both old Documents table and new CampaignInvoices table
             var hasInvoice = package.Documents.Any(d => d.Type == DocumentType.Invoice) ||
-                             package.Campaigns.Any(c => c.Invoices.Any());
+                             package.Teams.Any(c => c.Invoices.Any());
             var hasCostSummary = package.Documents.Any(d => d.Type == DocumentType.CostSummary) ||
-                                 package.Campaigns.Any(c => !string.IsNullOrEmpty(c.CostSummaryBlobUrl));
+                                 package.CostSummary != null;
 
-            var campaignInvoiceCount = package.Campaigns.SelectMany(c => c.Invoices).Count();
+            var campaignInvoiceCount = package.Teams.SelectMany(c => c.Invoices).Count();
             _logger.LogInformation("Package {PackageId} document check: PO={HasPO}, Invoice={HasInvoice} (CampaignInvoices={CampaignInvCount}), CostSummary={HasCostSummary}", 
                 packageId, hasPO, hasInvoice, campaignInvoiceCount, hasCostSummary);
 
@@ -1187,20 +1259,20 @@ public class SubmissionsController : ControllerBase
             // Only allow moving from Uploaded state
             if (package.State != PackageState.Uploaded)
             {
-                return BadRequest(new { error = $"Cannot move submission from {package.State} to PendingApproval" });
+                return BadRequest(new { error = $"Cannot move submission from {package.State} to PendingASM" });
             }
 
-            package.State = PackageState.PendingApproval;
+            package.State = PackageState.PendingASM;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} manually moved to PendingApproval", id);
+            _logger.LogInformation("Submission {Id} manually moved to PendingASM", id);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Moved to PendingApproval"
+                Message = "Moved to PendingASM"
             };
 
             return Ok(response);
@@ -1231,30 +1303,45 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var package = await _context.DocumentPackages.FindAsync(new object[] { id }, cancellationToken);
+            var package = await _context.DocumentPackages
+                .Include(p => p.Teams)
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+            
             if (package == null)
             {
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Update campaign fields
+            // Update first team's campaign fields (or create a team if none exists)
+            var team = package.Teams.FirstOrDefault();
+            if (team == null)
+            {
+                team = new Domain.Entities.Teams
+                {
+                    Id = Guid.NewGuid(),
+                    PackageId = id,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _context.Teams.Add(team);
+            }
+
+            // Update campaign fields on team
             if (request.CampaignStartDate.HasValue)
-                package.CampaignStartDate = request.CampaignStartDate.Value;
+                team.StartDate = request.CampaignStartDate.Value;
             if (request.CampaignEndDate.HasValue)
-                package.CampaignEndDate = request.CampaignEndDate.Value;
+                team.EndDate = request.CampaignEndDate.Value;
             if (request.CampaignWorkingDays.HasValue)
-                package.CampaignWorkingDays = request.CampaignWorkingDays.Value;
+                team.WorkingDays = request.CampaignWorkingDays.Value;
 
-            // Update dealership fields
+            // Update dealership fields on team
             if (!string.IsNullOrEmpty(request.DealershipName))
-                package.DealershipName = request.DealershipName;
+                team.DealershipName = request.DealershipName;
             if (!string.IsNullOrEmpty(request.DealershipAddress))
-                package.DealershipAddress = request.DealershipAddress;
+                team.DealershipAddress = request.DealershipAddress;
             if (!string.IsNullOrEmpty(request.GpsLocation))
-                package.GPSLocation = request.GpsLocation;
-            
-            // Note: TeamsJson is now stored at Campaign level, not DocumentPackage level
+                team.GPSLocation = request.GpsLocation;
 
+            team.UpdatedAt = DateTime.UtcNow;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 

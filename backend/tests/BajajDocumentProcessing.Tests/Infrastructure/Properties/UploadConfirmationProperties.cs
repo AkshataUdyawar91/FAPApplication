@@ -156,10 +156,10 @@ public class UploadConfirmationProperties
         var file = CreateMockFile("photo.jpg", 1024, "image/jpeg");
 
         // Act
-        var response = await service.UploadDocumentAsync(file, DocumentType.Photo, null, Guid.NewGuid());
+        var response = await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, null, Guid.NewGuid());
 
         // Assert
-        Assert.Equal(DocumentType.Photo, response.DocumentType);
+        Assert.Equal(DocumentType.TeamPhoto, response.DocumentType);
     }
 }
 

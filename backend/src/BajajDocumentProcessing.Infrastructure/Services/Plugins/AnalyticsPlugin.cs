@@ -104,9 +104,7 @@ public class AnalyticsPlugin
                 DocumentCount = match.Documents.Count,
                 Confidence = match.ConfidenceScore != null 
                     ? $"{(match.ConfidenceScore.OverallConfidence * 100):F0}%" 
-                    : "N/A",
-                ASMNotes = !string.IsNullOrEmpty(match.ASMReviewNotes) ? match.ASMReviewNotes : "None",
-                HQNotes = !string.IsNullOrEmpty(match.HQReviewNotes) ? match.HQReviewNotes : "None"
+                    : "N/A"
             };
 
             return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
@@ -137,7 +135,9 @@ public class AnalyticsPlugin
 
             var totalSubmissions = packages.Count;
             var approvedCount = packages.Count(p => p.State == Domain.Enums.PackageState.Approved);
-            var rejectedCount = packages.Count(p => p.State == Domain.Enums.PackageState.Rejected);
+            var rejectedCount = packages.Count(p => 
+                p.State == Domain.Enums.PackageState.ASMRejected || 
+                p.State == Domain.Enums.PackageState.RARejected);
             var approvalRate = totalSubmissions > 0 ? (double)approvedCount / totalSubmissions * 100 : 0;
 
             var packagesWithUpdates = packages.Where(p => p.UpdatedAt.HasValue);
@@ -234,17 +234,17 @@ public class AnalyticsPlugin
 
             if (approvalLevel?.ToLower() == "asm")
             {
-                query = query.Where(p => p.State == Domain.Enums.PackageState.PendingASMApproval);
+                query = query.Where(p => p.State == Domain.Enums.PackageState.PendingASM);
             }
             else if (approvalLevel?.ToLower() == "hq")
             {
-                query = query.Where(p => p.State == Domain.Enums.PackageState.PendingHQApproval);
+                query = query.Where(p => p.State == Domain.Enums.PackageState.PendingRA);
             }
             else
             {
                 query = query.Where(p => 
-                    p.State == Domain.Enums.PackageState.PendingASMApproval || 
-                    p.State == Domain.Enums.PackageState.PendingHQApproval);
+                    p.State == Domain.Enums.PackageState.PendingASM || 
+                    p.State == Domain.Enums.PackageState.PendingRA);
             }
 
             var submissions = query
@@ -351,8 +351,8 @@ public class AnalyticsPlugin
         {
             var submissions = _context.DocumentPackages
                 .Include(p => p.Documents)
-                .Where(p => p.State == Domain.Enums.PackageState.RejectedByASM || 
-                           p.State == Domain.Enums.PackageState.RejectedByRA)
+                .Where(p => p.State == Domain.Enums.PackageState.ASMRejected || 
+                           p.State == Domain.Enums.PackageState.RARejected)
                 .Where(p => !_currentUserId.HasValue || p.SubmittedByUserId == _currentUserId.Value)
                 .OrderByDescending(p => p.UpdatedAt ?? p.CreatedAt)
                 .Take(count)
@@ -363,7 +363,6 @@ public class AnalyticsPlugin
                     State = p.State.ToString(),
                     CreatedAt = p.CreatedAt,
                     RejectedAt = p.UpdatedAt,
-                    RejectionReason = p.State == Domain.Enums.PackageState.RejectedByASM ? p.ASMReviewNotes : p.HQReviewNotes,
                     DocumentCount = p.Documents.Count
                 })
                 .ToList();
@@ -382,7 +381,6 @@ public class AnalyticsPlugin
                     Status = s.State,
                     SubmittedOn = s.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
                     RejectedOn = s.RejectedAt?.ToString("yyyy-MM-dd HH:mm") ?? "N/A",
-                    Reason = !string.IsNullOrEmpty(s.RejectionReason) ? s.RejectionReason : "No reason provided",
                     Documents = s.DocumentCount
                 })
             };
@@ -410,17 +408,15 @@ public class AnalyticsPlugin
             var summary = new
             {
                 Total = allPackages.Count,
-                PendingASM = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingASMApproval),
-                PendingHQ = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingHQApproval),
+                PendingASM = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingASM),
+                PendingRA = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingRA),
                 Approved = allPackages.Count(p => p.State == Domain.Enums.PackageState.Approved),
-                RejectedByASM = allPackages.Count(p => p.State == Domain.Enums.PackageState.RejectedByASM),
-                RejectedByRA = allPackages.Count(p => p.State == Domain.Enums.PackageState.RejectedByRA),
+                ASMRejected = allPackages.Count(p => p.State == Domain.Enums.PackageState.ASMRejected),
+                RARejected = allPackages.Count(p => p.State == Domain.Enums.PackageState.RARejected),
                 Processing = allPackages.Count(p => 
                     p.State == Domain.Enums.PackageState.Uploaded ||
                     p.State == Domain.Enums.PackageState.Extracting ||
-                    p.State == Domain.Enums.PackageState.Validating ||
-                    p.State == Domain.Enums.PackageState.Scoring ||
-                    p.State == Domain.Enums.PackageState.Recommending),
+                    p.State == Domain.Enums.PackageState.Validating),
                 AvgConfidence = allPackages.Where(p => p.ConfidenceScore != null).Any()
                     ? allPackages.Where(p => p.ConfidenceScore != null).Average(p => p.ConfidenceScore!.OverallConfidence) * 100
                     : 0.0

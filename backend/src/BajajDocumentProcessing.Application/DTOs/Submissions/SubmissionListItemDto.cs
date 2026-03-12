@@ -66,4 +66,22 @@ public class SubmissionListItemDto
     /// </summary>
     [JsonPropertyName("overallConfidence")]
     public decimal? OverallConfidence { get; init; }
+
+    /// <summary>
+    /// Agency ID that submitted this package
+    /// </summary>
+    [JsonPropertyName("agencyId")]
+    public Guid? AgencyId { get; init; }
+
+    /// <summary>
+    /// Agency/supplier name
+    /// </summary>
+    [JsonPropertyName("agencyName")]
+    public string? AgencyName { get; init; }
+
+    /// <summary>
+    /// Current version number of the submission (increments on resubmission)
+    /// </summary>
+    [JsonPropertyName("versionNumber")]
+    public int VersionNumber { get; init; } = 1;
 }

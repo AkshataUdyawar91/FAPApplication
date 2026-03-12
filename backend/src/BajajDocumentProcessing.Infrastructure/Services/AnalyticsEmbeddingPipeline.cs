@@ -91,7 +91,7 @@ public class AnalyticsEmbeddingPipeline : IAnalyticsEmbeddingPipeline
             var statePackages = stateGroup.ToList();
 
             var approvedCount = statePackages.Count(p => p.State == PackageState.Approved);
-            var rejectedCount = statePackages.Count(p => p.State == PackageState.Rejected);
+            var rejectedCount = statePackages.Count(p => p.State == PackageState.ASMRejected || p.State == PackageState.RARejected);
             var totalCount = statePackages.Count;
 
             var avgConfidence = statePackages
@@ -125,7 +125,7 @@ public class AnalyticsEmbeddingPipeline : IAnalyticsEmbeddingPipeline
 
         // Also create an overall aggregate (all states)
         var allApprovedCount = packages.Count(p => p.State == PackageState.Approved);
-        var allRejectedCount = packages.Count(p => p.State == PackageState.Rejected);
+        var allRejectedCount = packages.Count(p => p.State == PackageState.ASMRejected || p.State == PackageState.RARejected);
         var allTotalCount = packages.Count;
 
         var allAvgConfidence = packages

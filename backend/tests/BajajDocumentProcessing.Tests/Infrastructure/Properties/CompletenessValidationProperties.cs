@@ -322,7 +322,7 @@ public class CompletenessValidationProperties
             {
                 Id = Guid.NewGuid(),
                 PackageId = packageId,
-                Type = DocumentType.Photo,
+                Type = DocumentType.TeamPhoto,
                 FileName = $"Photo{i + 1}.jpg",
                 CreatedAt = DateTime.UtcNow
             });

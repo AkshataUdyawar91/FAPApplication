@@ -149,7 +149,7 @@ public class DocumentUploadValidationProperties
         var file = CreateMockFile("photo.jpg", 6 * 1024 * 1024, "image/jpeg"); // 6MB (exceeds 5MB limit for photos)
 
         // Act
-        var result = await service.ValidateFileAsync(file, DocumentType.Photo);
+        var result = await service.ValidateFileAsync(file, DocumentType.TeamPhoto);
 
         // Assert
         Assert.False(result, "Oversized photo should fail validation");

@@ -1,6 +1,10 @@
 using BajajDocumentProcessing.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
+// Type aliases for backward compatibility
+using Campaign = BajajDocumentProcessing.Domain.Entities.Teams;
+using CampaignPhoto = BajajDocumentProcessing.Domain.Entities.TeamPhotos;
+
 namespace BajajDocumentProcessing.Application.Common.Interfaces;
 
 /// <summary>
@@ -19,11 +23,28 @@ public interface IApplicationDbContext
     DbSet<Conversation> Conversations { get; }
     DbSet<ConversationMessage> ConversationMessages { get; }
     
-    // Hierarchical structure: FAP -> PO -> Campaigns (Teams) -> Invoices/Photos
-    DbSet<Invoice> Invoices { get; }  // Legacy - kept for backward compatibility
-    DbSet<Campaign> Campaigns { get; }
+    // Agency and ASM management
+    DbSet<Agency> Agencies { get; }
+    DbSet<Domain.Entities.ASM> ASMs { get; }
+
+    // Document entities
+    DbSet<PO> POs { get; }
+    DbSet<Invoice> Invoices { get; }
+    DbSet<CostSummary> CostSummaries { get; }
+    DbSet<ActivitySummary> ActivitySummaries { get; }
+    DbSet<EnquiryDocument> EnquiryDocuments { get; }
+    DbSet<AdditionalDocument> AdditionalDocuments { get; }
+
+    // Hierarchical structure: Package -> Teams -> Photos
+    DbSet<Teams> Teams { get; }
+    DbSet<Campaign> Campaigns { get; }  // Alias for Teams for backward compatibility
     DbSet<CampaignInvoice> CampaignInvoices { get; }
-    DbSet<CampaignPhoto> CampaignPhotos { get; }
+    DbSet<TeamPhotos> TeamPhotos { get; }
+    DbSet<CampaignPhoto> CampaignPhotos { get; }  // Alias for TeamPhotos for backward compatibility
+
+    // Approval workflow
+    DbSet<RequestApprovalHistory> RequestApprovalHistories { get; }
+    DbSet<RequestComments> RequestComments { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
