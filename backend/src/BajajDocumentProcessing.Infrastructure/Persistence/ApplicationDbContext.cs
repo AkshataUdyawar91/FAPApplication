@@ -31,6 +31,11 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<CampaignInvoice> CampaignInvoices => Set<CampaignInvoice>();
     public DbSet<CampaignPhoto> CampaignPhotos => Set<CampaignPhoto>();
 
+    // Push notification entities
+    public DbSet<DeviceToken> DeviceTokens => Set<DeviceToken>();
+    public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
+    public DbSet<NotificationLog> NotificationLogs => Set<NotificationLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -55,6 +60,11 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<Campaign>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CampaignInvoice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CampaignPhoto>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Push notification entities
+        modelBuilder.Entity<DeviceToken>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<NotificationPreference>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<NotificationLog>().HasQueryFilter(e => !e.IsDeleted);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

@@ -7,6 +7,7 @@ import '../../data/repositories/auth_repository_impl.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../../domain/usecases/login_usecase.dart';
 import '../../domain/usecases/logout_usecase.dart';
+import '../../../notifications/presentation/providers/push_notification_providers.dart';
 import 'auth_notifier.dart';
 
 // Data sources
@@ -46,5 +47,11 @@ final authNotifierProvider =
     loginUseCase: ref.watch(loginUseCaseProvider),
     logoutUseCase: ref.watch(logoutUseCaseProvider),
     authRepository: ref.watch(authRepositoryProvider),
+    registerDeviceTokenUseCase:
+        ref.watch(registerDeviceTokenUseCaseProvider),
+    deregisterDeviceTokenUseCase:
+        ref.watch(deregisterDeviceTokenUseCaseProvider),
+    pushNotificationService: ref.watch(pushNotificationServiceProvider),
+    notificationRepository: ref.watch(notificationRepositoryProvider),
   );
 });

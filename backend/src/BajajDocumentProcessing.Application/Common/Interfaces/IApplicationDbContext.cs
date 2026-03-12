@@ -25,5 +25,10 @@ public interface IApplicationDbContext
     DbSet<CampaignInvoice> CampaignInvoices { get; }
     DbSet<CampaignPhoto> CampaignPhotos { get; }
 
+    // Push notification entities
+    DbSet<DeviceToken> DeviceTokens { get; }
+    DbSet<NotificationPreference> NotificationPreferences { get; }
+    DbSet<NotificationLog> NotificationLogs { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

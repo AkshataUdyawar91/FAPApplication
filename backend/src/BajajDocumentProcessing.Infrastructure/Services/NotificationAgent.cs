@@ -1,4 +1,5 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Application.DTOs.Notifications;
 using BajajDocumentProcessing.Domain.Entities;
 using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -13,17 +14,20 @@ public class NotificationAgent : INotificationAgent
 {
     private readonly IApplicationDbContext _context;
     private readonly IEmailAgent _emailAgent;
+    private readonly IPushNotificationService _pushNotificationService;
     private readonly ILogger<NotificationAgent> _logger;
     private readonly ICorrelationIdService _correlationIdService;
 
     public NotificationAgent(
         IApplicationDbContext context,
         IEmailAgent emailAgent,
+        IPushNotificationService pushNotificationService,
         ILogger<NotificationAgent> logger,
         ICorrelationIdService correlationIdService)
     {
         _context = context;
         _emailAgent = emailAgent;
+        _pushNotificationService = pushNotificationService;
         _logger = logger;
         _correlationIdService = correlationIdService;
     }
@@ -77,6 +81,9 @@ public class NotificationAgent : INotificationAgent
                 "In-app notification created: {NotificationId} for user {UserId}",
                 notification.Id,
                 userId);
+
+            // Send push notification
+            await SendPushNotificationAsync(userId, type, title, message, relatedEntityId, cancellationToken);
 
             // Send email notification if requested
             if (sendEmail)
@@ -349,6 +356,80 @@ public class NotificationAgent : INotificationAgent
             // Don't throw - email failure shouldn't prevent in-app notification
         }
     }
+
+    /// <summary>
+    /// Sends push notification to the user's registered devices
+    /// </summary>
+    /// <param name="userId">The ID of the user to notify</param>
+    /// <param name="type">The type of notification</param>
+    /// <param name="title">The notification title</param>
+    /// <param name="message">The notification message</param>
+    /// <param name="relatedEntityId">Optional ID of the related entity</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    private async Task SendPushNotificationAsync(
+        Guid userId,
+        NotificationType type,
+        string title,
+        string message,
+        Guid? relatedEntityId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var notificationType = MapNotificationTypeToString(type);
+            var deepLink = relatedEntityId.HasValue
+                ? $"/submissions/{relatedEntityId.Value}"
+                : string.Empty;
+
+            var data = new Dictionary<string, string>
+            {
+                { "notificationType", notificationType }
+            };
+
+            if (relatedEntityId.HasValue)
+            {
+                data["relatedEntityId"] = relatedEntityId.Value.ToString();
+            }
+
+            var payload = new PushNotificationPayload(
+                Title: title,
+                Body: message,
+                NotificationType: notificationType,
+                Data: data,
+                DeepLink: deepLink);
+
+            await _pushNotificationService.SendAsync(userId, payload, cancellationToken);
+
+            _logger.LogInformation(
+                "Push notification sent to user {UserId} for type {Type}",
+                userId,
+                type);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error sending push notification to user {UserId} for type {Type}",
+                userId,
+                type);
+            // Don't throw - push failure shouldn't prevent in-app or email notifications
+        }
+    }
+
+    /// <summary>
+    /// Maps a NotificationType enum value to a push notification type string
+    /// </summary>
+    /// <param name="type">The notification type enum value</param>
+    /// <returns>The corresponding push notification type string</returns>
+    private static string MapNotificationTypeToString(NotificationType type) => type switch
+    {
+        NotificationType.SubmissionReceived => "SubmissionStatusUpdate",
+        NotificationType.FlaggedForReview => "ApprovalRequired",
+        NotificationType.Approved => "ApprovalDecision",
+        NotificationType.Rejected => "ApprovalDecision",
+        NotificationType.ReuploadRequested => "ReuploadRequest",
+        _ => "General"
+    };
 
     /// <summary>
     /// Sends a notification when a submission is received

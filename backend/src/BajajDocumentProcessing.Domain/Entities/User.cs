@@ -63,4 +63,19 @@ public class User : BaseEntity
     /// Gets or sets the collection of audit log entries for actions performed by this user
     /// </summary>
     public ICollection<AuditLog> AuditLogs { get; set; } = new List<AuditLog>();
+
+    /// <summary>
+    /// Gets or sets the collection of device tokens registered by this user for push notifications
+    /// </summary>
+    public ICollection<DeviceToken> DeviceTokens { get; set; } = new List<DeviceToken>();
+
+    /// <summary>
+    /// Gets or sets the collection of notification preferences configured by this user
+    /// </summary>
+    public ICollection<NotificationPreference> NotificationPreferences { get; set; } = new List<NotificationPreference>();
+
+    /// <summary>
+    /// Gets or sets the collection of notification delivery logs for this user
+    /// </summary>
+    public ICollection<NotificationLog> NotificationLogs { get; set; } = new List<NotificationLog>();
 }

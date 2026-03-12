@@ -1,8 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Infrastructure.Configuration;
+using BajajDocumentProcessing.Infrastructure.HealthChecks;
 using BajajDocumentProcessing.Infrastructure.Persistence;
+using BajajDocumentProcessing.Infrastructure.Resilience;
 using BajajDocumentProcessing.Infrastructure.Services;
 
 namespace BajajDocumentProcessing.Infrastructure;
@@ -121,12 +125,59 @@ public static class DependencyInjection
         // Correlation ID Service
         services.AddScoped<ICorrelationIdService, CorrelationIdService>();
 
-        // Azure services configuration will be added in subsequent tasks
-        
+        // Push notification configuration
+        services.Configure<ApnsSettings>(configuration.GetSection(ApnsSettings.SectionName));
+        services.Configure<FcmSettings>(configuration.GetSection(FcmSettings.SectionName));
+
+        services.AddHttpClient("ApnsClient", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        })
+        .AddPolicyHandler((serviceProvider, _) =>
+        {
+            var logger = serviceProvider.GetRequiredService<ILogger<ApnsService>>();
+            return PushNotificationResiliencePolicies.GetCombinedPolicy(logger);
+        });
+
+        services.AddHttpClient("FcmClient", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        })
+        .AddPolicyHandler((serviceProvider, _) =>
+        {
+            var logger = serviceProvider.GetRequiredService<ILogger<FcmService>>();
+            return PushNotificationResiliencePolicies.GetCombinedPolicy(logger);
+        });
+
+        services.AddSingleton<IApnsService, ApnsService>();
+        services.AddSingleton<IFcmService, FcmService>();
+
+        // Device token management (scoped - depends on scoped DbContext)
+        services.AddScoped<IDeviceTokenService, DeviceTokenService>();
+
+        // Notification preference management (scoped - depends on scoped DbContext)
+        services.AddScoped<INotificationPreferenceService, NotificationPreferenceService>();
+
+        // Push notification orchestration (scoped - depends on scoped DbContext and services)
+        services.AddScoped<IPushNotificationService, PushNotificationService>();
+
+        // Push notification credential validation at startup
+        services.AddHostedService<PushNotificationCredentialValidator>();
+
+        // Push notification health checks
+        services.AddHealthChecks()
+            .AddCheck<ApnsHealthCheck>("apns", tags: new[] { "ready", "push" })
+            .AddCheck<FcmHealthCheck>("fcm", tags: new[] { "ready", "push" });
+
         // Background workflow processor
         services.AddSingleton<BackgroundWorkflowProcessor>();
         services.AddHostedService(provider => provider.GetRequiredService<BackgroundWorkflowProcessor>());
         services.AddSingleton<IBackgroundWorkflowQueue, BackgroundWorkflowQueue>();
+
+        // Health checks for push notification services
+        services.AddHealthChecks()
+            .AddCheck<Health.ApnsHealthCheck>("apns", tags: new[] { "ready" })
+            .AddCheck<Health.FcmHealthCheck>("fcm", tags: new[] { "ready" });
         
         return services;
     }
