@@ -2,136 +2,87 @@
 
 ## Prerequisites
 
-Ensure you have the following installed:
 - .NET 8 SDK
-- SQL Server (LocalDB or full instance)
-- Entity Framework Core tools
+- SQL Server (SQLEXPRESS or full instance)
+- Entity Framework Core tools (`dotnet tool install --global dotnet-ef`)
 
-## Install EF Core Tools (if not already installed)
+## Connection String
 
-```bash
-dotnet tool install --global dotnet-ef
+Default local development connection:
+```
+Server=localhost\SQLEXPRESS;Database=BajajDocumentProcessing;Trusted_Connection=True;MultipleActiveResultSets=true;TrustServerCertificate=true
 ```
 
-## Create Initial Migration
+Configure in `appsettings.Development.json`.
 
-From the `backend` directory, run:
+## Apply Migrations
 
-```bash
-dotnet ef migrations add InitialCreate --project src/BajajDocumentProcessing.Infrastructure --startup-project src/BajajDocumentProcessing.API
-```
-
-This will create a migration in `src/BajajDocumentProcessing.Infrastructure/Migrations/`
-
-## Apply Migration to Database
+From the repository root:
 
 ```bash
-dotnet ef database update --project src/BajajDocumentProcessing.Infrastructure --startup-project src/BajajDocumentProcessing.API
+dotnet ef database update --project backend/src/BajajDocumentProcessing.Infrastructure --startup-project backend/src/BajajDocumentProcessing.API
 ```
 
-This will:
-1. Create the database if it doesn't exist
-2. Apply all pending migrations
-3. Seed initial test data (3 users with different roles)
+## Current Migrations
 
-## Verify Database Creation
+1. `DatabaseRedesign` - Creates the redesigned schema with all new tables
+2. `RemoveLegacyDocumentsTable` - Drops the legacy Documents table
 
-You can verify the database was created successfully by:
+## Database Schema (Post-Redesign)
 
-1. **Using SQL Server Management Studio (SSMS)**:
-   - Connect to `(localdb)\mssqllocaldb`
-   - Look for database named `BajajDocumentProcessing`
+### Core Tables
+- **Users** - System users with roles (Agency, ASM, RA, Admin)
+- **Agencies** - Agency/supplier entities with SupplierCode
+- **ASMs** - Area Sales Manager tracking (Name, Location)
+- **DocumentPackages** - Central submission entity with AgencyId, VersionNumber, State
 
-2. **Using Visual Studio SQL Server Object Explorer**:
-   - View > SQL Server Object Explorer
-   - Expand (localdb)\mssqllocaldb
-   - Find BajajDocumentProcessing database
+### Document Tables (Dedicated Per-Type)
+- **POs** - Purchase Orders (one per package)
+- **Invoices** - Invoice documents (many per package)
+- **CostSummaries** - Cost summary documents (one per package)
+- **ActivitySummaries** - Activity summary documents (one per package)
+- **EnquiryDocuments** - Enquiry documents (one per package)
+- **AdditionalDocuments** - Supporting documents (many per package)
 
-3. **Using dotnet ef**:
-   ```bash
-   dotnet ef database list --project src/BajajDocumentProcessing.Infrastructure --startup-project src/BajajDocumentProcessing.API
-   ```
+### Team/Campaign Tables
+- **Teams** - Team/campaign info (many per package)
+- **TeamPhotos** - Photos linked to teams (many per team)
+- **CampaignInvoices** - Campaign-level invoices
 
-## Test Data
+### Workflow Tables
+- **RequestApprovalHistory** - Approval actions with versioning
+- **RequestComments** - Comments with versioning
+- **ValidationResults** - Per-document validation (polymorphic via DocumentType + DocumentId)
 
-The database will be seeded with 3 test users:
+### AI/Analytics Tables
+- **ConfidenceScores** - AI confidence scores (one per package)
+- **Recommendations** - AI approval recommendations (one per package)
+- **Notifications** - In-app notifications
+- **AuditLogs** - Audit trail
+- **Conversations** / **ConversationMessages** - Chat history
 
-| Email | Password | Role | Full Name |
-|-------|----------|------|-----------|
-| agency@bajaj.com | Password123! | Agency | Agency User |
-| asm@bajaj.com | Password123! | ASM | ASM User |
-| hq@bajaj.com | Password123! | HQ | HQ User |
+## Breaking Changes from Redesign
 
-## Database Schema
+1. **Documents table removed** - All services now use dedicated tables (POs, Invoices, etc.)
+2. **UserRole enum updated** - HQ renamed to RA; values: Agency=1, ASM=2, RA=3, Admin=4
+3. **PackageState enum updated** - New states: PendingASM, ASMRejected, PendingRA, RARejected
+4. **ValidationResult** - Now uses polymorphic (DocumentType, DocumentId) instead of PackageId
+5. **DocumentPackage** - Added AgencyId (required), VersionNumber; removed review fields
 
-The following tables will be created:
+## State Transitions
 
-- **Users**: System users with roles
-- **DocumentPackages**: Document submission packages
-- **Documents**: Individual documents (PO, Invoice, etc.)
-- **ValidationResults**: Validation results for packages
-- **ConfidenceScores**: Confidence scores for packages
-- **Recommendations**: AI-generated recommendations
-- **Notifications**: In-app notifications
-- **AuditLogs**: Audit trail for user actions
+```
+Uploaded → Extracting → Validating → PendingASM
+PendingASM → PendingRA (ASM approves) | ASMRejected (ASM rejects)
+ASMRejected → Uploaded (resubmission)
+PendingRA → Approved (RA approves) | RARejected (RA rejects)
+RARejected → Uploaded (resubmission)
+```
 
 ## Troubleshooting
 
-### Connection String Issues
+If connection string gets overwritten after git pull, update:
+1. `backend/src/BajajDocumentProcessing.API/appsettings.json`
+2. `backend/src/BajajDocumentProcessing.API/appsettings.Development.json`
 
-If you encounter connection issues, update the connection string in `appsettings.json`:
-
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=(localdb)\\mssqllocaldb;Database=BajajDocumentProcessing;Trusted_Connection=True;MultipleActiveResultSets=true"
-  }
-}
-```
-
-For a full SQL Server instance:
-
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=localhost;Database=BajajDocumentProcessing;User Id=sa;Password=YourPassword;TrustServerCertificate=True"
-  }
-}
-```
-
-### Migration Already Exists
-
-If you see "A migration named 'InitialCreate' already exists", you can:
-
-1. Remove the existing migration:
-   ```bash
-   dotnet ef migrations remove --project src/BajajDocumentProcessing.Infrastructure --startup-project src/BajajDocumentProcessing.API
-   ```
-
-2. Or use a different name:
-   ```bash
-   dotnet ef migrations add InitialCreate_v2 --project src/BajajDocumentProcessing.Infrastructure --startup-project src/BajajDocumentProcessing.API
-   ```
-
-### Database Already Exists
-
-If the database already exists and you want to start fresh:
-
-```bash
-dotnet ef database drop --project src/BajajDocumentProcessing.Infrastructure --startup-project src/BajajDocumentProcessing.API
-dotnet ef database update --project src/BajajDocumentProcessing.Infrastructure --startup-project src/BajajDocumentProcessing.API
-```
-
-## Next Steps
-
-After successfully creating and seeding the database:
-
-1. Run the API:
-   ```bash
-   dotnet run --project src/BajajDocumentProcessing.API
-   ```
-
-2. Navigate to Swagger UI:
-   - https://localhost:7001/swagger
-
-3. Test the database connection by implementing authentication endpoints (Task 3)
+Change `SQLEXPRESS01` to `SQLEXPRESS` if needed.

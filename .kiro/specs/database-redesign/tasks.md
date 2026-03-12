@@ -42,12 +42,12 @@ This document breaks down the database redesign into small, independently verifi
 - [x] 6.2 Update Service Interfaces
 
 ### Phase 7: Testing
-- [ ] 7.1 Update Unit Tests
-- [ ] 7.2 Create Property-Based Tests
+- [x] 7.1 Update Unit Tests
+- [x] 7.2 Create Property-Based Tests
 
 ### Phase 8: Documentation
-- [ ] 8.1 Update API Documentation
-- [ ] 8.2 Create Migration Guide
+- [x] 8.1 Update API Documentation
+- [x] 8.2 Create Migration Guide
 
 ---
 
