@@ -30,6 +30,10 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<Campaign> Campaigns => Set<Campaign>();
     public DbSet<CampaignInvoice> CampaignInvoices => Set<CampaignInvoice>();
     public DbSet<CampaignPhoto> CampaignPhotos => Set<CampaignPhoto>();
+    
+    // Vendor lookup for PO email notifications
+    public DbSet<Vendor> Vendors => Set<Vendor>();
+    public DbSet<VendorContact> VendorContacts => Set<VendorContact>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -55,6 +59,10 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<Campaign>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CampaignInvoice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CampaignPhoto>().HasQueryFilter(e => !e.IsDeleted);
+        
+        // Vendor tables
+        modelBuilder.Entity<Vendor>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<VendorContact>().HasQueryFilter(e => !e.IsDeleted);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

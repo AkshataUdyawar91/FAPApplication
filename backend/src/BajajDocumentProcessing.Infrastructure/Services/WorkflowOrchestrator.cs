@@ -1,7 +1,9 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Application.DTOs.Documents;
 using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
@@ -16,6 +18,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
     private readonly IConfidenceScoreService _confidenceScoreService;
     private readonly IRecommendationAgent _recommendationAgent;
     private readonly INotificationAgent _notificationAgent;
+    private readonly IEmailAgent _emailAgent;
     private readonly ILogger<WorkflowOrchestrator> _logger;
     private readonly ICorrelationIdService _correlationIdService;
 
@@ -26,6 +29,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         IConfidenceScoreService confidenceScoreService,
         IRecommendationAgent recommendationAgent,
         INotificationAgent notificationAgent,
+        IEmailAgent emailAgent,
         ILogger<WorkflowOrchestrator> logger,
         ICorrelationIdService correlationIdService)
     {
@@ -35,6 +39,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         _confidenceScoreService = confidenceScoreService;
         _recommendationAgent = recommendationAgent;
         _notificationAgent = notificationAgent;
+        _emailAgent = emailAgent;
         _logger = logger;
         _correlationIdService = correlationIdService;
     }
@@ -131,6 +136,16 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
             // Send notification
             await _notificationAgent.NotifySubmissionReceivedAsync(package.SubmittedByUserId, package.Id, cancellationToken);
+
+            // Send PO details email to vendor (Agency submissions only — fire and forget, never blocks workflow)
+            try
+            {
+                await SendVendorPOEmailAsync(package, cancellationToken);
+            }
+            catch (Exception vendorEx)
+            {
+                _logger.LogError(vendorEx, "Vendor email failed for package {PackageId}, continuing workflow", packageId);
+            }
 
             _logger.LogInformation("Workflow orchestration completed successfully for package {PackageId}", packageId);
             return true;
@@ -557,5 +572,119 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         {
             _logger.LogError(ex, "Error during compensation for package {PackageId}", package.Id);
         }
+    }
+
+    /// <summary>
+    /// Looks up vendor from extracted PO data and sends PO details email to vendor contacts.
+    /// This only runs for Agency submissions. Never blocks the main workflow.
+    /// </summary>
+    private async Task SendVendorPOEmailAsync(
+        Domain.Entities.DocumentPackage package,
+        CancellationToken cancellationToken)
+    {
+        // Find the PO document with extracted data
+        var poDocument = package.Documents?.FirstOrDefault(d => d.Type == Domain.Enums.DocumentType.PO);
+        if (poDocument?.ExtractedDataJson == null)
+        {
+            _logger.LogWarning("No PO document found for package {PackageId}, skipping vendor email", package.Id);
+            return;
+        }
+
+        // Deserialize PO data to get vendor info
+        POData? poData;
+        try
+        {
+            poData = JsonSerializer.Deserialize<POData>(poDocument.ExtractedDataJson);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize PO data for package {PackageId}", package.Id);
+            return;
+        }
+
+        if (poData == null)
+        {
+            _logger.LogWarning("PO data is null for package {PackageId}", package.Id);
+            return;
+        }
+
+        // Lookup vendor by VendorCode first, then fallback to VendorName
+        var vendor = await _context.Vendors
+            .Include(v => v.Contacts.Where(c => c.IsActive && !c.IsDeleted))
+            .FirstOrDefaultAsync(v =>
+                !v.IsDeleted && v.IsActive &&
+                (!string.IsNullOrEmpty(poData.VendorCode)
+                    ? v.VendorCode == poData.VendorCode
+                    : v.VendorName.ToLower() == poData.VendorName.ToLower()),
+                cancellationToken);
+
+        if (vendor == null)
+        {
+            _logger.LogWarning(
+                "No vendor found for VendorCode={VendorCode}, VendorName={VendorName} (Package {PackageId}). Skipping vendor email.",
+                poData.VendorCode, poData.VendorName, package.Id);
+            return;
+        }
+
+        if (!vendor.Contacts.Any())
+        {
+            _logger.LogWarning("Vendor {VendorCode} ({VendorName}) has no active contacts. Skipping vendor email.",
+                vendor.VendorCode, vendor.VendorName);
+            return;
+        }
+
+        // Build email content
+        var subject = $"Purchase Order Details - {poData.PONumber}";
+        var body = GenerateVendorPOEmailBody(poData, vendor.VendorName);
+
+        _logger.LogInformation(
+            "Vendor PO email body for Package {PackageId}: Dear {VendorName}, PO Number: {PONumber}, PO Amount: {POAmount}",
+            package.Id, vendor.VendorName, poData.PONumber, poData.TotalAmount);
+
+        // Send to each active vendor contact
+        foreach (var contact in vendor.Contacts)
+        {
+            try
+            {
+                var result = await _emailAgent.SendVendorPOEmailAsync(
+                    contact.Email, subject, body, cancellationToken);
+
+                _logger.LogInformation(
+                    "Vendor PO email {Status} for {Email} (Vendor: {VendorName}, PO: {PONumber}, Package: {PackageId}). Attempts: {Attempts}",
+                    result.Success ? "sent" : "failed",
+                    contact.Email, vendor.VendorName, poData.PONumber, package.Id, result.AttemptsCount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send vendor PO email to {Email} for package {PackageId}",
+                    contact.Email, package.Id);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Generates HTML email body with PO Number and Amount for vendor notification
+    /// </summary>
+    private static string GenerateVendorPOEmailBody(POData poData, string vendorName)
+    {
+        return $@"
+<html>
+<body style='font-family:Arial,sans-serif;color:#333'>
+    <h2 style='color:#1a5276'>Purchase Order Notification</h2>
+    <p>Dear {vendorName},</p>
+    <p>A Purchase Order has been submitted with the following details:</p>
+    <table style='border-collapse:collapse;width:100%;margin:16px 0'>
+        <tr>
+            <td style='padding:12px;font-weight:bold;width:200px;background:#f8f9fa;border:1px solid #ddd'>PO Number</td>
+            <td style='padding:12px;border:1px solid #ddd'>{poData.PONumber}</td>
+        </tr>
+        <tr>
+            <td style='padding:12px;font-weight:bold;width:200px;background:#f8f9fa;border:1px solid #ddd'>PO Amount</td>
+            <td style='padding:12px;border:1px solid #ddd'>{poData.TotalAmount:N2}</td>
+        </tr>
+    </table>
+    <p style='margin-top:24px;color:#666;font-size:12px'>This is an automated notification from the Bajaj FAP Document Processing System.</p>
+</body>
+</html>";
     }
 }

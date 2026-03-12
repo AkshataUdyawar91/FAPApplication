@@ -24,6 +24,10 @@ public interface IApplicationDbContext
     DbSet<Campaign> Campaigns { get; }
     DbSet<CampaignInvoice> CampaignInvoices { get; }
     DbSet<CampaignPhoto> CampaignPhotos { get; }
+    
+    // Vendor lookup for PO email notifications
+    DbSet<Vendor> Vendors { get; }
+    DbSet<VendorContact> VendorContacts { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

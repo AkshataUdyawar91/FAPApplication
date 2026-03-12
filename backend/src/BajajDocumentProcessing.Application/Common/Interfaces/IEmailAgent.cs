@@ -24,6 +24,11 @@ public interface IEmailAgent
     /// Sends email to Agency when ASM rejects the package
     /// </summary>
     Task<EmailResult> SendRejectedEmailAsync(Guid packageId, string agencyEmail, string reason, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends PO details email to a vendor contact
+    /// </summary>
+    Task<EmailResult> SendVendorPOEmailAsync(string recipientEmail, string subject, string body, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

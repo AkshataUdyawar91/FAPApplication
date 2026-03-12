@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Text;
+using MailKit.Net.Smtp;
+using MimeKit;
 
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
@@ -301,6 +303,38 @@ public class EmailAgent : IEmailAgent
     }
 
     /// <summary>
+    /// Sends a pre-built PO details email to a vendor contact with retry logic.
+    /// </summary>
+    public async Task<EmailResult> SendVendorPOEmailAsync(
+        string recipientEmail,
+        string subject,
+        string body,
+        CancellationToken cancellationToken = default)
+    {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Sending vendor PO email to {Email}. Subject: {Subject}. CorrelationId: {CorrelationId}",
+            recipientEmail, subject, correlationId);
+
+        try
+        {
+            return await SendEmailWithRetryAsync(recipientEmail, subject, body, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error sending vendor PO email to {Email}. CorrelationId: {CorrelationId}",
+                recipientEmail, correlationId);
+            return new EmailResult
+            {
+                Success = false,
+                ErrorMessage = ex.Message,
+                AttemptsCount = 0
+            };
+        }
+    }
+
+    /// <summary>
     /// Sends an email with exponential backoff retry logic to handle transient failures.
     /// </summary>
     /// <param name="recipientEmail">The recipient's email address.</param>
@@ -420,29 +454,26 @@ public class EmailAgent : IEmailAgent
         string body,
         CancellationToken cancellationToken)
     {
-        // FUTURE ENHANCEMENT: Azure Communication Services Integration
-        // This method currently uses a mock implementation for email sending.
-        // To integrate with Azure Communication Services:
-        // 1. Add Azure.Communication.Email NuGet package
-        // 2. Configure ACS connection string in appsettings.json
-        // 3. Replace mock implementation with actual EmailClient SDK calls
-        // 4. Handle ACS-specific exceptions and retry policies
-        // Example implementation:
-        //   var emailClient = new EmailClient(connectionString);
-        //   var emailSendOperation = await emailClient.SendAsync(
-        //       Azure.WaitUntil.Completed,
-        //       senderAddress: "noreply@bajaj.com",
-        //       recipientAddress: recipientEmail,
-        //       subject: subject,
-        //       htmlContent: body,
-        //       cancellationToken: cancellationToken);
-        //   return emailSendOperation.Id;
+        var smtpHost = _configuration["Smtp:Host"];
+        var smtpPort = int.Parse(_configuration["Smtp:Port"] ?? "587");
+        var smtpUsername = _configuration["Smtp:Username"];
+        var smtpPassword = _configuration["Smtp:Password"];
+        var senderEmail = _configuration["Smtp:SenderEmail"] ?? smtpUsername;
+        var senderName = _configuration["Smtp:SenderName"] ?? "Bajaj FAP System";
 
-        // Simulate async operation
-        await Task.Delay(100, cancellationToken);
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress(senderName, senderEmail));
+        message.To.Add(MailboxAddress.Parse(recipientEmail));
+        message.Subject = subject;
+        message.Body = new TextPart("html") { Text = body };
 
-        // Generate mock message ID
-        return $"msg_{Guid.NewGuid():N}";
+        using var client = new SmtpClient();
+        await client.ConnectAsync(smtpHost, smtpPort, MailKit.Security.SecureSocketOptions.StartTls, cancellationToken);
+        await client.AuthenticateAsync(smtpUsername, smtpPassword, cancellationToken);
+        var response = await client.SendAsync(message, cancellationToken);
+        await client.DisconnectAsync(true, cancellationToken);
+
+        return response ?? $"msg_{Guid.NewGuid():N}";
     }
 
     /// <summary>
