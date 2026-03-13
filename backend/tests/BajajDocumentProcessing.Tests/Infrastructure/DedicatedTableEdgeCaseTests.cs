@@ -130,9 +130,10 @@ public class DedicatedTableEdgeCaseTests
         var mockHttpClientFactory = new Mock<IHttpClientFactory>();
         var mockReferenceDataService = new Mock<IReferenceDataService>();
         var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        var mockPerceptualHashService = new Mock<IPerceptualHashService>();
         return new ValidationAgent(
             mockContext.Object, mockLogger.Object, mockHttpClientFactory.Object,
-            mockReferenceDataService.Object, mockCorrelationIdService.Object);
+            mockReferenceDataService.Object, mockCorrelationIdService.Object, mockPerceptualHashService.Object);
     }
 
     private static DocumentPackage CreatePackage(Guid packageId, bool hasPO, bool hasInvoice, bool hasCostSummary, int photoCount)

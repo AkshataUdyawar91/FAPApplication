@@ -22,6 +22,7 @@ public class ValidationAgent : IValidationAgent
     private readonly HttpClient _sapHttpClient;
     private readonly IReferenceDataService _referenceDataService;
     private readonly ICorrelationIdService _correlationIdService;
+    private readonly IPerceptualHashService _perceptualHashService;
     private readonly AsyncCircuitBreakerPolicy _circuitBreakerPolicy;
     private readonly IAsyncPolicy _retryPolicy;
 
@@ -38,13 +39,15 @@ public class ValidationAgent : IValidationAgent
         ILogger<ValidationAgent> logger,
         IHttpClientFactory httpClientFactory,
         IReferenceDataService referenceDataService,
-        ICorrelationIdService correlationIdService)
+        ICorrelationIdService correlationIdService,
+        IPerceptualHashService perceptualHashService)
     {
         _context = context;
         _logger = logger;
         _sapHttpClient = httpClientFactory.CreateClient("SAP");
         _referenceDataService = referenceDataService;
         _correlationIdService = correlationIdService;
+        _perceptualHashService = perceptualHashService;
 
         // Circuit breaker: Open after 5 failures, stay open for 60 seconds, close after 2 successes
         _circuitBreakerPolicy = Policy
@@ -455,10 +458,8 @@ public class ValidationAgent : IValidationAgent
                 result.Issues.Count,
                 correlationId);
 
-            // Persist validation result to database
-            // TODO: SaveValidationResultAsync disabled - ValidationResult is now polymorphic (per document type)
-            // Need to refactor to save validation results for each document type separately
-            // await SaveValidationResultAsync(result, cancellationToken);
+            // Persist validation results per document type
+            await SaveValidationResultsAsync(result, package, cancellationToken);
 
             // Update package state - validation no longer sets state (removed Validated/ValidationFailed states)
             // Package remains in Validating state, workflow orchestrator will move to PendingASM
@@ -1330,6 +1331,8 @@ public class ValidationAgent : IValidationAgent
         int photosWithLocation = 0;
         int photosWithBlueTshirt = 0;
         int photosWithVehicle = 0;
+        int photosWithFace = 0;
+        var photoHashes = new List<(string FileName, string Hash)>();
 
         foreach (var photo in teamPhotos)
         {
@@ -1358,6 +1361,17 @@ public class ValidationAgent : IValidationAgent
                     {
                         photosWithVehicle++;
                     }
+
+                    if (photoMetadata.HasHumanFace)
+                    {
+                        photosWithFace++;
+                    }
+
+                    if (!string.IsNullOrEmpty(photoMetadata.PerceptualHash))
+                    {
+                        var fileName = photo.BlobUrl ?? photo.Id.ToString();
+                        photoHashes.Add((fileName, photoMetadata.PerceptualHash));
+                    }
                 }
             }
         }
@@ -1366,6 +1380,27 @@ public class ValidationAgent : IValidationAgent
         result.PhotosWithLocation = photosWithLocation;
         result.PhotosWithBlueTshirt = photosWithBlueTshirt;
         result.PhotosWithVehicle = photosWithVehicle;
+        result.PhotosWithFace = photosWithFace;
+
+        // Detect duplicate photos using perceptual hash comparison
+        const double similarityThreshold = 0.9;
+        for (int i = 0; i < photoHashes.Count; i++)
+        {
+            for (int j = i + 1; j < photoHashes.Count; j++)
+            {
+                var similarity = _perceptualHashService.ComputeSimilarity(
+                    photoHashes[i].Hash, photoHashes[j].Hash);
+                if (similarity >= similarityThreshold)
+                {
+                    result.DuplicatePhotos.Add(new DuplicatePhotoPair
+                    {
+                        Photo1FileName = photoHashes[i].FileName,
+                        Photo2FileName = photoHashes[j].FileName,
+                        SimilarityScore = similarity
+                    });
+                }
+            }
+        }
 
         if (photosWithDate < teamPhotos.Count)
         {
@@ -1385,6 +1420,16 @@ public class ValidationAgent : IValidationAgent
         if (photosWithVehicle == 0)
         {
             missingFields.Add("No photos with Bajaj vehicle detected (AI validation)");
+        }
+
+        if (photosWithFace == 0)
+        {
+            missingFields.Add("No photos with human face detected (AI validation)");
+        }
+
+        if (result.DuplicatePhotos.Count > 0)
+        {
+            missingFields.Add($"Duplicate images detected: {result.DuplicatePhotos.Count} pair(s) with >90% similarity");
         }
 
         result.MissingFields = missingFields;
@@ -1546,17 +1591,196 @@ public class ValidationAgent : IValidationAgent
     }
 
     /// <summary>
-    /// Saves validation result to the database.
-    /// TODO: DISABLED - ValidationResult is now polymorphic (per document type), not per package
-    /// This method needs to be refactored to save validation results for each document type separately
+    /// Persists per-document-type validation results to the database.
+    /// Creates or updates a ValidationResult entity for each document type that was validated.
+    /// Errors on individual saves are logged and do not block the pipeline.
     /// </summary>
-    /// <param name="result">The validation result to save</param>
-    /// <param name="cancellationToken">Cancellation token for async operation</param>
-    private async Task SaveValidationResultAsync(PackageValidationResult result, CancellationToken cancellationToken)
+    private async Task SaveValidationResultsAsync(
+        PackageValidationResult result,
+        Domain.Entities.DocumentPackage package,
+        CancellationToken cancellationToken)
     {
-        // Method disabled - ValidationResult schema changed to polymorphic model
-        // TODO: Refactor to save per-document validation results
-        await Task.CompletedTask;
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Persisting validation results for package {PackageId}. CorrelationId: {CorrelationId}",
+            package.Id, correlationId);
+
+        var documentResults = BuildPerDocumentResults(result, package);
+
+        foreach (var (documentType, documentId, allPassed, detailsJson, failureReason) in documentResults)
+        {
+            try
+            {
+                var existing = await _context.ValidationResults
+                    .FirstOrDefaultAsync(
+                        v => v.DocumentType == documentType && v.DocumentId == documentId,
+                        cancellationToken);
+
+                if (existing != null)
+                {
+                    existing.AllValidationsPassed = allPassed;
+                    existing.ValidationDetailsJson = detailsJson;
+                    existing.FailureReason = failureReason;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _context.ValidationResults.Add(new Domain.Entities.ValidationResult
+                    {
+                        Id = Guid.NewGuid(),
+                        DocumentType = documentType,
+                        DocumentId = documentId,
+                        AllValidationsPassed = allPassed,
+                        ValidationDetailsJson = detailsJson,
+                        FailureReason = failureReason,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                _logger.LogInformation(
+                    "Saved ValidationResult for {DocumentType} (DocumentId: {DocumentId}). Passed: {Passed}",
+                    documentType, documentId, allPassed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Failed to save ValidationResult for {DocumentType} (DocumentId: {DocumentId}). CorrelationId: {CorrelationId}",
+                    documentType, documentId, correlationId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Builds a list of per-document-type validation result tuples from the package validation result.
+    /// </summary>
+    private static List<(DocumentType Type, Guid DocumentId, bool AllPassed, string DetailsJson, string? FailureReason)>
+        BuildPerDocumentResults(PackageValidationResult result, Domain.Entities.DocumentPackage package)
+    {
+        var items = new List<(DocumentType, Guid, bool, string, string?)>();
+
+        // PO: SAP verification + date validation
+        if (package.PO != null && (result.SAPVerification != null || result.DateValidation != null))
+        {
+            var passed = (result.SAPVerification?.IsVerified ?? true || result.SAPVerification?.SAPConnectionFailed == true)
+                         && (result.DateValidation?.IsValid ?? true);
+            var details = new { result.SAPVerification, result.DateValidation };
+            var issues = new List<string>();
+            if (result.SAPVerification != null && !result.SAPVerification.IsVerified && !result.SAPVerification.SAPConnectionFailed)
+                issues.AddRange(result.SAPVerification.Discrepancies);
+            if (result.DateValidation != null && !result.DateValidation.IsValid)
+                issues.AddRange(result.DateValidation.DateIssues);
+
+            items.Add((DocumentType.PO, package.PO.Id, passed,
+                JsonSerializer.Serialize(details),
+                issues.Count > 0 ? string.Join("; ", issues) : null));
+        }
+
+        // Invoice: field presence + cross-document
+        var invoiceDoc = package.Invoices.FirstOrDefault();
+        if (invoiceDoc == null)
+        {
+            var teamInvoice = package.Teams.SelectMany(t => t.Invoices).FirstOrDefault();
+            if (teamInvoice != null)
+            {
+                var invPassed = (result.InvoiceFieldPresence?.AllFieldsPresent ?? true)
+                                && (result.InvoiceCrossDocument?.AllChecksPass ?? true);
+                var invDetails = new { result.InvoiceFieldPresence, result.InvoiceCrossDocument };
+                var invIssues = new List<string>();
+                if (result.InvoiceFieldPresence != null && !result.InvoiceFieldPresence.AllFieldsPresent)
+                    invIssues.AddRange(result.InvoiceFieldPresence.MissingFields);
+                if (result.InvoiceCrossDocument != null && !result.InvoiceCrossDocument.AllChecksPass)
+                    invIssues.AddRange(result.InvoiceCrossDocument.Issues);
+
+                items.Add((DocumentType.Invoice, teamInvoice.Id, invPassed,
+                    JsonSerializer.Serialize(invDetails),
+                    invIssues.Count > 0 ? string.Join("; ", invIssues) : null));
+            }
+        }
+        else if (result.InvoiceFieldPresence != null || result.InvoiceCrossDocument != null)
+        {
+            var invPassed = (result.InvoiceFieldPresence?.AllFieldsPresent ?? true)
+                            && (result.InvoiceCrossDocument?.AllChecksPass ?? true);
+            var invDetails = new { result.InvoiceFieldPresence, result.InvoiceCrossDocument };
+            var invIssues = new List<string>();
+            if (result.InvoiceFieldPresence != null && !result.InvoiceFieldPresence.AllFieldsPresent)
+                invIssues.AddRange(result.InvoiceFieldPresence.MissingFields);
+            if (result.InvoiceCrossDocument != null && !result.InvoiceCrossDocument.AllChecksPass)
+                invIssues.AddRange(result.InvoiceCrossDocument.Issues);
+
+            items.Add((DocumentType.Invoice, invoiceDoc.Id, invPassed,
+                JsonSerializer.Serialize(invDetails),
+                invIssues.Count > 0 ? string.Join("; ", invIssues) : null));
+        }
+
+        // CostSummary: field presence + cross-document
+        if (package.CostSummary != null && (result.CostSummaryFieldPresence != null || result.CostSummaryCrossDocument != null))
+        {
+            var passed = (result.CostSummaryFieldPresence?.AllFieldsPresent ?? true)
+                         && (result.CostSummaryCrossDocument?.AllChecksPass ?? true);
+            var details = new { result.CostSummaryFieldPresence, result.CostSummaryCrossDocument };
+            var issues = new List<string>();
+            if (result.CostSummaryFieldPresence != null && !result.CostSummaryFieldPresence.AllFieldsPresent)
+                issues.AddRange(result.CostSummaryFieldPresence.MissingFields);
+            if (result.CostSummaryCrossDocument != null && !result.CostSummaryCrossDocument.AllChecksPass)
+                issues.AddRange(result.CostSummaryCrossDocument.Issues);
+
+            items.Add((DocumentType.CostSummary, package.CostSummary.Id, passed,
+                JsonSerializer.Serialize(details),
+                issues.Count > 0 ? string.Join("; ", issues) : null));
+        }
+
+        // ActivitySummary: field presence + cross-document
+        if (package.ActivitySummary != null && (result.ActivityFieldPresence != null || result.ActivityCrossDocument != null))
+        {
+            var passed = (result.ActivityFieldPresence?.AllFieldsPresent ?? true)
+                         && (result.ActivityCrossDocument?.AllChecksPass ?? true);
+            var details = new { result.ActivityFieldPresence, result.ActivityCrossDocument };
+            var issues = new List<string>();
+            if (result.ActivityFieldPresence != null && !result.ActivityFieldPresence.AllFieldsPresent)
+                issues.AddRange(result.ActivityFieldPresence.MissingFields);
+            if (result.ActivityCrossDocument != null && !result.ActivityCrossDocument.AllChecksPass)
+                issues.AddRange(result.ActivityCrossDocument.Issues);
+
+            items.Add((DocumentType.ActivitySummary, package.ActivitySummary.Id, passed,
+                JsonSerializer.Serialize(details),
+                issues.Count > 0 ? string.Join("; ", issues) : null));
+        }
+
+        // EnquiryDocument: field presence only
+        if (package.EnquiryDocument != null && result.EnquiryDumpFieldPresence != null)
+        {
+            var passed = result.EnquiryDumpFieldPresence.AllFieldsPresent;
+            var details = new { result.EnquiryDumpFieldPresence };
+            var issues = result.EnquiryDumpFieldPresence.AllFieldsPresent
+                ? null
+                : string.Join("; ", result.EnquiryDumpFieldPresence.MissingFields);
+
+            items.Add((DocumentType.EnquiryDocument, package.EnquiryDocument.Id, passed,
+                JsonSerializer.Serialize(details), issues));
+        }
+
+        // TeamPhotos: field presence + cross-document (use package ID as the "document" since photos are a collection)
+        if (result.PhotoFieldPresence != null || result.PhotoCrossDocument != null)
+        {
+            var passed = (result.PhotoFieldPresence?.AllFieldsPresent ?? true)
+                         && (result.PhotoCrossDocument?.AllChecksPass ?? true);
+            var details = new { result.PhotoFieldPresence, result.PhotoCrossDocument };
+            var issues = new List<string>();
+            if (result.PhotoFieldPresence != null && !result.PhotoFieldPresence.AllFieldsPresent)
+                issues.AddRange(result.PhotoFieldPresence.MissingFields);
+            if (result.PhotoCrossDocument != null && !result.PhotoCrossDocument.AllChecksPass)
+                issues.AddRange(result.PhotoCrossDocument.Issues);
+
+            items.Add((DocumentType.TeamPhoto, package.Id, passed,
+                JsonSerializer.Serialize(details),
+                issues.Count > 0 ? string.Join("; ", issues) : null));
+        }
+
+        return items;
     }
 }
 

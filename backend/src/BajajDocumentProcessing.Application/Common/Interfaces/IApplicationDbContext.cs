@@ -45,5 +45,11 @@ public interface IApplicationDbContext
     DbSet<RequestApprovalHistory> RequestApprovalHistories { get; }
     DbSet<RequestComments> RequestComments { get; }
 
+    // Reference data
+    DbSet<StateGstMaster> StateGstMasters { get; }
+    DbSet<HsnMaster> HsnMasters { get; }
+    DbSet<CostMaster> CostMasters { get; }
+    DbSet<CostMasterStateRate> CostMasterStateRates { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

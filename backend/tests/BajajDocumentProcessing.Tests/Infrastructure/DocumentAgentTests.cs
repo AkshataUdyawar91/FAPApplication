@@ -17,6 +17,7 @@ public class DocumentAgentTests
     private readonly Mock<IFileStorageService> _mockFileStorage;
     private readonly Mock<ILogger<AzureDocumentIntelligenceService>> _mockDocIntelLogger;
     private readonly Mock<ICorrelationIdService> _mockCorrelationIdService;
+    private readonly Mock<IPerceptualHashService> _mockPerceptualHashService;
     private readonly IConfiguration _configuration;
 
     public DocumentAgentTests()
@@ -25,6 +26,7 @@ public class DocumentAgentTests
         _mockFileStorage = new Mock<IFileStorageService>();
         _mockDocIntelLogger = new Mock<ILogger<AzureDocumentIntelligenceService>>();
         _mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        _mockPerceptualHashService = new Mock<IPerceptualHashService>();
         
         // Create configuration with Azure OpenAI and Document Intelligence settings
         var configurationBuilder = new ConfigurationBuilder();
@@ -47,7 +49,7 @@ public class DocumentAgentTests
         var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
 
         // Act
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object);
 
         // Assert
         Assert.NotNull(documentAgent);
@@ -68,7 +70,7 @@ public class DocumentAgentTests
 
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => 
-            new DocumentAgent(config, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object));
+            new DocumentAgent(config, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object));
         Assert.Contains("endpoint not configured", exception.Message);
     }
 
@@ -87,7 +89,7 @@ public class DocumentAgentTests
 
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => 
-            new DocumentAgent(config, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object));
+            new DocumentAgent(config, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object));
         Assert.Contains("API key not configured", exception.Message);
     }
 
@@ -101,7 +103,7 @@ public class DocumentAgentTests
         // Arrange
         var httpClient = new HttpClient();
         var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object);
         var testUrl = "https://example.com/test-document.pdf";
 
         // Act & Assert
@@ -166,7 +168,7 @@ public class DocumentAgentTests
         // Arrange
         var httpClient = new HttpClient();
         var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object);
         var fieldConfidences = new Dictionary<string, double>
         {
             { "Field1", 0.95 },
@@ -188,7 +190,7 @@ public class DocumentAgentTests
         // Arrange
         var httpClient = new HttpClient();
         var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object);
         var fieldConfidences = new Dictionary<string, double>
         {
             { "Field1", 0.50 },
@@ -209,7 +211,7 @@ public class DocumentAgentTests
         // Arrange
         var httpClient = new HttpClient();
         var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object);
         var fieldConfidences = new Dictionary<string, double>
         {
             { "Field1", 0.95 },
@@ -232,7 +234,7 @@ public class DocumentAgentTests
         // Arrange
         var httpClient = new HttpClient();
         var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object);
         var fieldConfidences = new Dictionary<string, double>();
 
         // Act

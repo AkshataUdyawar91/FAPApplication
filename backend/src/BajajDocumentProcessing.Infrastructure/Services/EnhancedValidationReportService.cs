@@ -543,7 +543,7 @@ public partial class EnhancedValidationReportService : IEnhancedValidationReport
                 try
                 {
                     var metadata = JsonSerializer.Deserialize<Application.DTOs.Documents.PhotoMetadata>(photo.ExtractedMetadataJson);
-                    if (metadata?.HasBlueTshirtPerson == true)
+                    if (metadata?.HasHumanFace == true)
                     {
                         photosWithFaces++;
                     }

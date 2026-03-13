@@ -26,6 +26,7 @@ public class DocumentAgent : IDocumentAgent
     private readonly IFileStorageService _fileStorageService;
     private readonly AzureDocumentIntelligenceService _documentIntelligenceService;
     private readonly ICorrelationIdService _correlationIdService;
+    private readonly IPerceptualHashService _perceptualHashService;
     private const double CONFIDENCE_THRESHOLD = 0.70;
     private const double FIELD_CONFIDENCE_THRESHOLD = 0.60;
 
@@ -39,6 +40,7 @@ public class DocumentAgent : IDocumentAgent
     /// <param name="fileStorageService">Service for accessing blob storage</param>
     /// <param name="documentIntelligenceService">Service for Azure Document Intelligence operations</param>
     /// <param name="correlationIdService">Service for accessing correlation ID</param>
+    /// <param name="perceptualHashService">Service for computing perceptual hashes of images</param>
     /// <exception cref="InvalidOperationException">Thrown when Azure OpenAI configuration is missing</exception>
     public DocumentAgent(
         IConfiguration configuration,
@@ -46,13 +48,15 @@ public class DocumentAgent : IDocumentAgent
         HttpClient httpClient,
         IFileStorageService fileStorageService,
         AzureDocumentIntelligenceService documentIntelligenceService,
-        ICorrelationIdService correlationIdService)
+        ICorrelationIdService correlationIdService,
+        IPerceptualHashService perceptualHashService)
     {
         _logger = logger;
         _httpClient = httpClient;
         _fileStorageService = fileStorageService;
         _documentIntelligenceService = documentIntelligenceService;
         _correlationIdService = correlationIdService;
+        _perceptualHashService = perceptualHashService;
 
         var endpoint = configuration["AzureOpenAI:Endpoint"] 
             ?? throw new InvalidOperationException("Azure OpenAI endpoint not configured");
@@ -1450,6 +1454,22 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
             var metadata = new PhotoMetadata();
             var fieldConfidences = new Dictionary<string, double>();
 
+            // Compute perceptual hash for duplicate detection
+            try
+            {
+                using var hashStream = new MemoryStream(imageBytes);
+                var perceptualHash = await _perceptualHashService.ComputeHashAsync(hashStream, cancellationToken);
+                if (perceptualHash != null)
+                {
+                    metadata.PerceptualHash = perceptualHash;
+                    _logger.LogDebug("Computed perceptual hash {Hash} for {BlobUrl}", perceptualHash, blobUrl);
+                }
+            }
+            catch (Exception hashEx)
+            {
+                _logger.LogWarning(hashEx, "Failed to compute perceptual hash for {BlobUrl}, continuing without it", blobUrl);
+            }
+
             // Extract EXIF data
             var exifSubIfdDirectory = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
             var exifIfd0Directory = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
@@ -1526,6 +1546,9 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
                     metadata.VehicleConfidence = visionAnalysis.VehicleConfidence;
                     metadata.PhotoDateFromOverlay = visionAnalysis.PhotoDateFromOverlay;
                     metadata.LocationText = visionAnalysis.LocationText;
+                    metadata.HasHumanFace = visionAnalysis.HasHumanFace;
+                    metadata.FaceCount = visionAnalysis.FaceCount;
+                    metadata.FaceDetectionConfidence = visionAnalysis.FaceDetectionConfidence;
                 
                     // Use overlay date if EXIF timestamp is missing
                     if (!metadata.Timestamp.HasValue && !string.IsNullOrEmpty(visionAnalysis.PhotoDateFromOverlay))
@@ -1623,6 +1646,12 @@ WHAT TO DETECT:
    - Read the LOCATION text (city, state, country)
    - Many campaign photos have a GPS Map Camera overlay with this info
 
+4. HUMAN FACE DETECTION:
+   - Detect if any human face is visible in the photo
+   - Count the number of distinct human faces
+   - This is independent of blue t-shirt detection
+   - Confidence: 0.9+ if face clearly visible, 0.5-0.8 if partially visible
+
 Respond ONLY with JSON:
 {
   ""hasBlueTshirtPerson"": false,
@@ -1634,14 +1663,17 @@ Respond ONLY with JSON:
   ""photoDateFromOverlay"": ""YYYY-MM-DD"",
   ""overlayLatitude"": null,
   ""overlayLongitude"": null,
-  ""locationText"": ""string""
+  ""locationText"": ""string"",
+  ""hasHumanFace"": false,
+  ""faceCount"": 0,
+  ""faceDetectionConfidence"": 0.0
 }
 
 If GPS overlay is not visible, set photoDateFromOverlay to empty string and lat/long to null."),
                 new ChatRequestUserMessage(
                     new ChatMessageContentItem[]
                     {
-                        new ChatMessageTextContentItem("Analyze this campaign photo. Detect: 1) People with blue t-shirt (count them), 2) Any 3-wheel vehicle, 3) Read GPS overlay text if visible (date, lat/long, location)."),
+                        new ChatMessageTextContentItem("Analyze this campaign photo. Detect: 1) People with blue t-shirt (count them), 2) Any 3-wheel vehicle, 3) Read GPS overlay text if visible (date, lat/long, location), 4) Human faces (count them, independent of clothing)."),
                         CreateImageContentItem(imageData)
                     })
             }
@@ -1674,6 +1706,9 @@ If GPS overlay is not visible, set photoDateFromOverlay to empty string and lat/
         public double? OverlayLatitude { get; set; }
         public double? OverlayLongitude { get; set; }
         public string? LocationText { get; set; }
+        public bool HasHumanFace { get; set; }
+        public int FaceCount { get; set; }
+        public double FaceDetectionConfidence { get; set; }
     }
 
     /// <summary>
@@ -2457,7 +2492,7 @@ Return ONLY valid JSON:
         DebugLog($"[ENQUIRY] OpenAI response preview: {content?.Substring(0, Math.Min(1000, content?.Length ?? 0))}");
         _logger.LogInformation("Received Enquiry Dump text analysis response length: {Length}", content?.Length);
 
-        return ParseEnquiryDumpResponse(content);
+        return ParseEnquiryDumpResponse(content ?? string.Empty);
     }
 
     // CHANGE: Added ParseEnquiryDumpResponse to parse OpenAI response into EnquiryDumpData
