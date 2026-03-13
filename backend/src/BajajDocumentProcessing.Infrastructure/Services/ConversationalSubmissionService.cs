@@ -198,6 +198,36 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
             return BuildStepResponse(existingDraft);
         }
 
+        // User tapped "Submit New Claim" or "Start over" — create a draft and go to PO selection
+        if (request.Action == "start" || request.Action == "start_new")
+        {
+            // Soft-delete any existing draft so we start fresh
+            if (existingDraft is not null && request.Action == "start_new")
+            {
+                existingDraft.IsDeleted = true;
+                await _db.SaveChangesAsync(ct);
+            }
+
+            var newPackage = new DocumentPackage
+            {
+                Id = Guid.NewGuid(),
+                AgencyId = agencyId,
+                SubmittedByUserId = userId,
+                State = PackageState.Draft,
+                CurrentStep = (int)ConversationStep.POSelection,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            _db.DocumentPackages.Add(newPackage);
+            await _db.SaveChangesAsync(ct);
+
+            return await HandlePOSelectionAsync(
+                new ConversationRequest { Action = "show_pos", SubmissionId = newPackage.Id },
+                newPackage,
+                agencyId,
+                ct);
+        }
+
         return new ConversationResponse
         {
             SubmissionId = Guid.Empty,

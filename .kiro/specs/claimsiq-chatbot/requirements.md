@@ -10,10 +10,10 @@ Build a server-side `ConversationalSubmissionService` that drives a 10-step guid
 - AC4: Invalid step transitions are rejected with helpful error messages
 
 ## Requirement 2: PO Search & Selection (Step 2)
-Agencies must be able to find and select a Purchase Order from their pre-synced SAP POs. Support two paths: direct PO number typeahead search, and progressive filtering (by date, amount, pagination).
+Agencies must be able to find and select a Purchase Order from their pre-synced SAP POs. Support two paths: direct PO number typeahead search, and progressive filtering (by date and pagination).
 
 ### Acceptance Criteria
-- AC1: `GET /api/purchase-orders/search?vendorCode={code}&q={partial}&status=Open,PartiallyConsumed` returns matching POs with typeahead (min 3 chars, max 10 results, debounce 300ms client-side)
+- AC1: `GET /api/purchase-orders/search?vendorCode={code}&q={partial} returns matching POs with typeahead (min 3 chars, max 10 results, debounce 300ms client-side)
 - AC2: `GET /api/purchase-orders?vendorCode={code}&dateFrom=&dateTo=&amountMin=&amountMax=&sort=poDate:desc&page=1&size=5` supports progressive filtering with pagination
 - AC3: Zero results returns explanation (PO closed, not synced, etc.) with action buttons
 - AC4: On PO confirmation, `POST /api/submissions/draft { poId, agencyId }` creates a draft `DocumentPackage` with new `Draft` state

@@ -7,7 +7,7 @@ class CardDataModel extends CardData {
   const CardDataModel({required super.type});
 
   factory CardDataModel.fromJson(Map<String, dynamic> json) {
-    final type = json['type'] as String;
+    final type = json['cardType'] as String? ?? json['type'] as String? ?? 'unknown';
     switch (type) {
       case 'poList':
         return POListCardModel.fromJson(json);
@@ -36,7 +36,7 @@ class POListCardModel extends CardDataModel {
 
   factory POListCardModel.fromJson(Map<String, dynamic> json) {
     return POListCardModel(
-      purchaseOrders: (json['purchaseOrders'] as List<dynamic>?)
+      purchaseOrders: (json['items'] as List<dynamic>?)
               ?.map((e) =>
                   POSearchResultModel.fromJson(e as Map<String, dynamic>))
               .toList() ??

@@ -19,8 +19,8 @@ class POSearchResultModel extends POSearchResult {
       poDate: DateTime.parse(json['poDate'] as String),
       vendorName: json['vendorName'] as String,
       totalAmount: (json['totalAmount'] as num).toDouble(),
-      remainingBalance: (json['remainingBalance'] as num).toDouble(),
-      poStatus: json['poStatus'] as String,
+      remainingBalance: (json['remainingBalance'] as num?)?.toDouble() ?? 0.0,
+      poStatus: json['poStatus'] as String? ?? 'Unknown',
     );
   }
 

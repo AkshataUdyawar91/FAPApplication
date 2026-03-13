@@ -207,7 +207,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   title: const Text('Bajaj', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
                   actions: [
-                    IconButton(icon: const Icon(Icons.add, color: Colors.white), onPressed: _navigateToUpload),
+                    IconButton(icon: const Icon(Icons.add_comment, color: Colors.white), onPressed: _navigateToChatbot),
                   ],
                 )
               : null,
@@ -287,9 +287,17 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     });
   }
 
+  void _navigateToChatbot() {
+    Navigator.pushNamed(context, '/agency/conversational-submission', arguments: {
+      'token': widget.token,
+      'userName': widget.userName,
+    });
+  }
+
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(icon: Icons.dashboard, label: 'Dashboard', isActive: true, onTap: () {}),
+      NavItem(icon: Icons.chat_bubble_outline, label: 'New Claim (Chat)', onTap: _navigateToChatbot),
       NavItem(icon: Icons.upload_file, label: 'Upload', onTap: _navigateToUpload),
       NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
@@ -368,9 +376,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
             ),
           ),
           ElevatedButton.icon(
-            onPressed: _navigateToUpload,
-            icon: const Icon(Icons.add, size: 20),
-            label: const Text('New Request'),
+            onPressed: _navigateToChatbot,
+            icon: const Icon(Icons.add_comment, size: 20),
+            label: const Text('New Submission'),
           ),
         ],
       ),

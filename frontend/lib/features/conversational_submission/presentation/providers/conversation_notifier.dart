@@ -63,12 +63,12 @@ class ConversationNotifier extends StateNotifier<ConversationChatState> {
   ConversationNotifier(this.repository)
       : super(const ConversationChatState());
 
-  /// Starts a new conversation by sending the "start" action.
+  /// Starts a new conversation by sending the "greet" action.
   Future<void> startConversation() async {
     state = state.copyWith(isLoading: true, error: null);
 
     final result = await repository.sendMessage(
-      action: 'start',
+      action: 'greet',
       submissionId: state.submissionId,
     );
 

@@ -81,7 +81,9 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidAudience = jwtAudience,
         ValidateLifetime = true,
-        ClockSkew = TimeSpan.FromMinutes(5)
+        ClockSkew = TimeSpan.FromMinutes(5),
+        RoleClaimType = System.Security.Claims.ClaimTypes.Role,
+        NameClaimType = System.Security.Claims.ClaimTypes.NameIdentifier
     };
 
     // SignalR sends JWT via query string for WebSocket connections
@@ -130,7 +132,8 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var context = services.GetRequiredService<ApplicationDbContext>();
-        // CHANGE: Auto-create database if it doesn't exist (creates all tables from current entity definitions)
+        // Drop and recreate to pick up all schema changes (dev only)
+        await context.Database.EnsureDeletedAsync();
         await context.Database.EnsureCreatedAsync();
         await ApplicationDbContextSeed.SeedAsync(context);
     }

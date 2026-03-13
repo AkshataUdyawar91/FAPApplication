@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../../core/network/dio_client.dart';
 import '../../../../core/constants/api_constants.dart';
@@ -74,7 +73,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
                   ? _buildEmptyState()
                   : _buildSubmissionsList(),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.go('/conversational-submission'),
+        onPressed: () => Navigator.pushNamed(context, '/agency/conversational-submission'),
         backgroundColor: const Color(0xFF003087),
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
@@ -119,7 +118,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
           ),
           const SizedBox(height: 24),
           ElevatedButton.icon(
-            onPressed: () => context.go('/conversational-submission'),
+            onPressed: () => Navigator.pushNamed(context, '/agency/conversational-submission'),
             icon: const Icon(Icons.add_comment),
             label: const Text('New Submission'),
             style: ElevatedButton.styleFrom(
@@ -171,7 +170,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: isDraft
-            ? () => context.go('/conversational-submission')
+            ? () => Navigator.pushNamed(context, '/agency/conversational-submission')
             : null,
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -207,7 +206,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () =>
-                        context.go('/conversational-submission'),
+                        Navigator.pushNamed(context, '/agency/conversational-submission'),
                     icon: const Icon(Icons.play_arrow, size: 18),
                     label: const Text('Resume'),
                     style: OutlinedButton.styleFrom(
