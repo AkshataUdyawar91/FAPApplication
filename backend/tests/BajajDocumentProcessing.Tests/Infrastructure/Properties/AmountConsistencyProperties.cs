@@ -27,13 +27,15 @@ public class AmountConsistencyProperties
         var mockHttpClientFactory = new Mock<IHttpClientFactory>();
         var mockReferenceDataService = new Mock<IReferenceDataService>();
         var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        var mockPerceptualHashService = new Mock<IPerceptualHashService>();
 
         _validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            mockPerceptualHashService.Object);
     }
 
     /// <summary>

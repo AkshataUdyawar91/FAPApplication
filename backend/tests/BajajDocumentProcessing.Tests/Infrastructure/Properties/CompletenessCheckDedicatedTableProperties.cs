@@ -128,6 +128,7 @@ public class CompletenessCheckDedicatedTableProperties
         var mockHttpClientFactory = new Mock<IHttpClientFactory>();
         var mockReferenceDataService = new Mock<IReferenceDataService>();
         var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        var mockPerceptualHashService = new Mock<IPerceptualHashService>();
 
         var package = new DocumentPackage
         {
@@ -198,7 +199,7 @@ public class CompletenessCheckDedicatedTableProperties
 
         var agent = new ValidationAgent(
             mockContext.Object, mockLogger.Object, mockHttpClientFactory.Object,
-            mockReferenceDataService.Object, mockCorrelationIdService.Object);
+            mockReferenceDataService.Object, mockCorrelationIdService.Object, mockPerceptualHashService.Object);
 
         return (agent, mockContext);
     }

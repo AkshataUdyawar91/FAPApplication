@@ -239,7 +239,19 @@ public class PhotoFieldPresenceResult
     public int PhotosWithLocation { get; set; }
     public int PhotosWithBlueTshirt { get; set; }
     public int PhotosWithVehicle { get; set; }
+    public int PhotosWithFace { get; set; }
+    public List<DuplicatePhotoPair> DuplicatePhotos { get; set; } = new();
     public List<string> MissingFields { get; set; } = new();
+}
+
+/// <summary>
+/// Represents a pair of photos detected as duplicates via perceptual hashing.
+/// </summary>
+public class DuplicatePhotoPair
+{
+    public string Photo1FileName { get; set; } = string.Empty;
+    public string Photo2FileName { get; set; } = string.Empty;
+    public double SimilarityScore { get; set; }
 }
 
 /// <summary>

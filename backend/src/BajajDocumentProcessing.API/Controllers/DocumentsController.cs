@@ -20,17 +20,20 @@ public class DocumentsController : ControllerBase
     private readonly ILogger<DocumentsController> _logger;
     private readonly IApplicationDbContext _context;
     private readonly IFileStorageService _fileStorageService;
+    private readonly IProactiveValidator _proactiveValidator;
 
     public DocumentsController(
         IDocumentService documentService, 
         ILogger<DocumentsController> logger,
         IApplicationDbContext context,
-        IFileStorageService fileStorageService)
+        IFileStorageService fileStorageService,
+        IProactiveValidator proactiveValidator)
     {
         _documentService = documentService;
         _logger = logger;
         _context = context;
         _fileStorageService = fileStorageService;
+        _proactiveValidator = proactiveValidator;
     }
 
     /// <summary>
@@ -324,6 +327,76 @@ public class DocumentsController : ControllerBase
         {
             _logger.LogError(ex, "Error downloading document {DocumentId}", id);
             return StatusCode(500, new { message = "An error occurred while preparing the download" });
+        }
+    }
+
+    /// <summary>
+    /// Run proactive field presence validation on an uploaded document.
+    /// Returns missing fields immediately so the user can correct before submitting.
+    /// </summary>
+    /// <param name="id">Document ID to validate</param>
+    /// <param name="documentType">Type of the document</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <response code="200">Validation result with pass/fail and missing fields</response>
+    /// <response code="401">Unauthorized</response>
+    /// <response code="403">Forbidden - user does not own this document</response>
+    /// <response code="404">Document not found</response>
+    [HttpPost("{id}/validate")]
+    [ProducesResponseType(typeof(ProactiveValidationResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ValidateDocument(
+        [FromRoute] Guid id,
+        [FromQuery] DocumentType documentType,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                ?? throw new System.UnauthorizedAccessException("User ID not found in token");
+
+            if (!Guid.TryParse(userIdClaim, out var userId))
+            {
+                throw new System.UnauthorizedAccessException("Invalid user ID format");
+            }
+
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+
+            // Find the document to verify it exists and check ownership
+            var document = await _documentService.GetDocumentAsync(id, documentType);
+            if (document == null)
+            {
+                return NotFound(new { message = "Document not found" });
+            }
+
+            // Verify resource ownership for Agency users
+            if (userRole == "Agency")
+            {
+                var package = await _context.DocumentPackages
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == document.PackageId, cancellationToken);
+
+                if (package == null || package.SubmittedByUserId != userId)
+                {
+                    return StatusCode(403, new { message = "You do not have permission to validate this document" });
+                }
+            }
+
+            var result = await _proactiveValidator.ValidateDocumentOnUploadAsync(
+                id, documentType, cancellationToken);
+
+            return Ok(result);
+        }
+        catch (System.UnauthorizedAccessException ex)
+        {
+            _logger.LogError(ex, "Unauthorized proactive validation attempt");
+            return Unauthorized(new { message = "Authentication failed" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during proactive validation for document {DocumentId}", id);
+            return StatusCode(500, new { message = "An error occurred during validation" });
         }
     }
 }
