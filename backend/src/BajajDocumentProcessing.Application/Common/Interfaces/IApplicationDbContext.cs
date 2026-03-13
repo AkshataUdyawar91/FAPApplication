@@ -51,5 +51,8 @@ public interface IApplicationDbContext
     DbSet<CostMaster> CostMasters { get; }
     DbSet<CostMasterStateRate> CostMasterStateRates { get; }
 
+    // Teams bot conversations
+    DbSet<TeamsConversation> TeamsConversations { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
