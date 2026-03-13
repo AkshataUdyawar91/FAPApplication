@@ -123,8 +123,4 @@ public class Invoice : BaseEntity
     /// </summary>
     public ValidationResult? ValidationResult { get; set; }
     
-    /// <summary>
-    /// Gets or sets the collection of teams associated with this invoice
-    /// </summary>
-    public ICollection<Teams> Teams { get; set; } = new List<Teams>();
 }

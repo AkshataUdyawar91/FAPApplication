@@ -66,11 +66,10 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             // Load package with dedicated navigations and hierarchical structure
             var package = await _context.DocumentPackages
                 .Include(p => p.PO)
+                .Include(p => p.Invoices.Where(i => !i.IsDeleted))
                 .Include(p => p.CostSummary)
                 .Include(p => p.ActivitySummary)
                 .Include(p => p.EnquiryDocument)
-                .Include(p => p.Teams)
-                    .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
                 .Include(p => p.Teams)
                     .ThenInclude(c => c.Photos.Where(p => !p.IsDeleted))
                 .Include(p => p.SubmittedBy)
@@ -243,7 +242,49 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 }
             }
 
-            // Extract from Teams → Invoices and Photos
+            // Extract from Invoices (linked to PO)
+            if (package.Invoices != null && package.Invoices.Any())
+            {
+                _logger.LogInformation("Processing {InvoiceCount} invoices for package {PackageId}", 
+                    package.Invoices.Count, package.Id);
+
+                foreach (var invoice in package.Invoices.Where(i => !i.IsDeleted && !string.IsNullOrEmpty(i.BlobUrl)))
+                {
+                    try
+                    {
+                        _logger.LogInformation("Extracting invoice {InvoiceId}", invoice.Id);
+                        
+                        var invoiceData = await _documentAgent.ExtractInvoiceAsync(invoice.BlobUrl, cancellationToken);
+                        
+                        // Update invoice with extracted data (only if fields are empty)
+                        if (string.IsNullOrEmpty(invoice.InvoiceNumber) && !string.IsNullOrEmpty(invoiceData.InvoiceNumber))
+                            invoice.InvoiceNumber = invoiceData.InvoiceNumber;
+                        
+                        if (invoice.InvoiceDate == null && invoiceData.InvoiceDate != default)
+                            invoice.InvoiceDate = invoiceData.InvoiceDate;
+                        
+                        if (string.IsNullOrEmpty(invoice.VendorName) && !string.IsNullOrEmpty(invoiceData.VendorName))
+                            invoice.VendorName = invoiceData.VendorName;
+                        
+                        if (string.IsNullOrEmpty(invoice.GSTNumber) && !string.IsNullOrEmpty(invoiceData.GSTNumber))
+                            invoice.GSTNumber = invoiceData.GSTNumber;
+                        
+                        if ((invoice.TotalAmount == null || invoice.TotalAmount == 0) && invoiceData.TotalAmount > 0)
+                            invoice.TotalAmount = invoiceData.TotalAmount;
+                        
+                        invoice.UpdatedAt = DateTime.UtcNow;
+                        
+                        _logger.LogInformation("Invoice {InvoiceId} extracted: Number={Number}, Amount={Amount}", 
+                            invoice.Id, invoiceData.InvoiceNumber, invoiceData.TotalAmount);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error extracting invoice {InvoiceId}, continuing with next", invoice.Id);
+                    }
+                }
+            }
+
+            // Extract from Teams → Photos
             if (package.Teams != null && package.Teams.Any())
             {
                 _logger.LogInformation("Processing hierarchical structure: {TeamCount} teams for package {PackageId}", 
@@ -251,43 +292,6 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
                 foreach (var team in package.Teams.Where(c => !c.IsDeleted))
                 {
-                    // Extract invoices
-                    foreach (var invoice in team.Invoices.Where(i => !i.IsDeleted && !string.IsNullOrEmpty(i.BlobUrl)))
-                    {
-                        try
-                        {
-                            _logger.LogInformation("Extracting invoice {InvoiceId} from team {TeamId}", 
-                                invoice.Id, team.Id);
-                            
-                            var invoiceData = await _documentAgent.ExtractInvoiceAsync(invoice.BlobUrl, cancellationToken);
-                            
-                            // Update invoice with extracted data (only if fields are empty)
-                            if (string.IsNullOrEmpty(invoice.InvoiceNumber) && !string.IsNullOrEmpty(invoiceData.InvoiceNumber))
-                                invoice.InvoiceNumber = invoiceData.InvoiceNumber;
-                            
-                            if (invoice.InvoiceDate == null && invoiceData.InvoiceDate != default)
-                                invoice.InvoiceDate = invoiceData.InvoiceDate;
-                            
-                            if (string.IsNullOrEmpty(invoice.VendorName) && !string.IsNullOrEmpty(invoiceData.VendorName))
-                                invoice.VendorName = invoiceData.VendorName;
-                            
-                            if (string.IsNullOrEmpty(invoice.GSTNumber) && !string.IsNullOrEmpty(invoiceData.GSTNumber))
-                                invoice.GSTNumber = invoiceData.GSTNumber;
-                            
-                            if ((invoice.TotalAmount == null || invoice.TotalAmount == 0) && invoiceData.TotalAmount > 0)
-                                invoice.TotalAmount = invoiceData.TotalAmount;
-                            
-                            invoice.UpdatedAt = DateTime.UtcNow;
-                            
-                            _logger.LogInformation("Invoice {InvoiceId} extracted: Number={Number}, Amount={Amount}", 
-                                invoice.Id, invoiceData.InvoiceNumber, invoiceData.TotalAmount);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error extracting invoice {InvoiceId}, continuing with next", invoice.Id);
-                        }
-                    }
-
                     // Extract photos in batches
                     var photos = team.Photos.Where(p => !p.IsDeleted && !string.IsNullOrEmpty(p.BlobUrl)).ToList();
                     if (photos.Any())

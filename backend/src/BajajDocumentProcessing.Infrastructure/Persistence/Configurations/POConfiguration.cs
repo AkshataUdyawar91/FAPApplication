@@ -73,6 +73,12 @@ public class POConfiguration : IEntityTypeConfiguration<PO>
             .HasForeignKey(p => p.AgencyId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // One-to-many with Invoices (one PO has many Invoices)
+        builder.HasMany(p => p.Invoices)
+            .WithOne(i => i.PO)
+            .HasForeignKey(i => i.POId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         // ValidationResult is polymorphic (DocumentType + DocumentId) - ignore navigation to prevent shadow FK
         builder.Ignore(p => p.ValidationResult);
 
