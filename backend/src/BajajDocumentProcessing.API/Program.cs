@@ -104,17 +104,49 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
+    var logger = services.GetRequiredService<ILogger<Program>>();
+    
     try
     {
+        // Debug: Check configuration before getting DbContext
+        var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+        var environment = app.Environment.EnvironmentName;
+        
+        logger.LogInformation("Environment: {Environment}", environment);
+        logger.LogInformation("Connection string is null: {IsNull}", connectionString == null);
+        logger.LogInformation("Connection string is empty: {IsEmpty}", string.IsNullOrEmpty(connectionString));
+        
+        if (!string.IsNullOrEmpty(connectionString))
+        {
+            logger.LogInformation("Connection string length: {Length} characters", connectionString.Length);
+            logger.LogInformation("Connection string starts with: {Start}", connectionString.Substring(0, Math.Min(20, connectionString.Length)));
+        }
+        
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            logger.LogError("Connection string 'DefaultConnection' is null or empty. Check appsettings.json configuration.");
+            logger.LogError("Current directory: {Directory}", Directory.GetCurrentDirectory());
+            throw new InvalidOperationException("Database connection string is not configured.");
+        }
+        
         var context = services.GetRequiredService<ApplicationDbContext>();
-        // CHANGE: Auto-create database if it doesn't exist (creates all tables from current entity definitions)
+        
+        // Drop and recreate database to ensure schema matches current entity model
+        logger.LogInformation("Dropping existing database if it exists...");
+        await context.Database.EnsureDeletedAsync();
+        
+        logger.LogInformation("Creating database with current schema...");
         await context.Database.EnsureCreatedAsync();
+        
+        logger.LogInformation("Seeding database...");
         await ApplicationDbContextSeed.SeedAsync(context);
+        
+        logger.LogInformation("Database seeding completed successfully.");
     }
     catch (Exception ex)
     {
-        var logger = services.GetRequiredService<ILogger<Program>>();
         logger.LogError(ex, "An error occurred while seeding the database.");
+        throw; // Re-throw to prevent app from starting with invalid database
     }
 }
 

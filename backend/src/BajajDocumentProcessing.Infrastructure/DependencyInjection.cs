@@ -17,9 +17,26 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         // Database configuration
+        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        
+        // Debug logging for connection string
+        Console.WriteLine($"[DependencyInjection] Connection string is null: {connectionString == null}");
+        Console.WriteLine($"[DependencyInjection] Connection string is empty: {string.IsNullOrEmpty(connectionString)}");
+        if (!string.IsNullOrEmpty(connectionString))
+        {
+            Console.WriteLine($"[DependencyInjection] Connection string length: {connectionString.Length}");
+        }
+        
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException(
+                "Database connection string 'DefaultConnection' is not configured. " +
+                "Please check appsettings.json or appsettings.Development.json");
+        }
+        
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(
-                configuration.GetConnectionString("DefaultConnection"),
+                connectionString,
                 b => b.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName)));
 
         services.AddScoped<IApplicationDbContext>(provider => 
