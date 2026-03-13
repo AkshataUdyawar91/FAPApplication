@@ -89,4 +89,24 @@ public class PhotoMetadata
     /// Whether this photo has been flagged for manual review
     /// </summary>
     public bool IsFlaggedForReview { get; set; }
+
+    /// <summary>
+    /// Whether AI detected a human face in the photo
+    /// </summary>
+    public bool HasHumanFace { get; set; }
+
+    /// <summary>
+    /// Number of human faces detected by AI
+    /// </summary>
+    public int FaceCount { get; set; }
+
+    /// <summary>
+    /// AI confidence score for face detection (0-100)
+    /// </summary>
+    public double FaceDetectionConfidence { get; set; }
+
+    /// <summary>
+    /// Perceptual hash of the image for duplicate detection
+    /// </summary>
+    public string? PerceptualHash { get; set; }
 }

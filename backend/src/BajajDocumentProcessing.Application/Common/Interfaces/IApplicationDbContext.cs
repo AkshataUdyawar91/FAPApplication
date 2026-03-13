@@ -49,5 +49,11 @@ public interface IApplicationDbContext
     DbSet<StateMapping> StateMappings { get; }
     DbSet<SubmissionSequence> SubmissionSequences { get; }
 
+    // Reference data
+    DbSet<StateGstMaster> StateGstMasters { get; }
+    DbSet<HsnMaster> HsnMasters { get; }
+    DbSet<CostMaster> CostMasters { get; }
+    DbSet<CostMasterStateRate> CostMasterStateRates { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

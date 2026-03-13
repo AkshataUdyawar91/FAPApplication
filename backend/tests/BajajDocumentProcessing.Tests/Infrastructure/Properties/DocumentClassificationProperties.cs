@@ -197,7 +197,7 @@ public class DocumentClassificationProperties
         var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
 
         // Act
-        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object);
+        var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, new Mock<IPerceptualHashService>().Object);
 
         // Assert
         Assert.NotNull(documentAgent);

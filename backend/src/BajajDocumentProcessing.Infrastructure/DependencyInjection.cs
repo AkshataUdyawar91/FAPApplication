@@ -56,6 +56,12 @@ public static class DependencyInjection
         services.AddScoped<IReferenceDataService, ReferenceDataService>();
         services.AddScoped<IValidationAgent, ValidationAgent>();
 
+        // Proactive Validator (on-upload field presence checks)
+        services.AddScoped<IProactiveValidator, ProactiveValidator>();
+
+        // Perceptual Hash Service (duplicate image detection)
+        services.AddSingleton<IPerceptualHashService, PerceptualHashService>();
+
         // Confidence Score Service
         services.AddScoped<IConfidenceScoreService, ConfidenceScoreService>();
 

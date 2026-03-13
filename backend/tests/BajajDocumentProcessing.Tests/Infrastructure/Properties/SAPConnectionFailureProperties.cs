@@ -63,7 +63,8 @@ public class SAPConnectionFailureProperties
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = validationAgent.VerifySAPPOAsync(poNumber.Get, CancellationToken.None).Result;
@@ -110,7 +111,8 @@ public class SAPConnectionFailureProperties
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = validationAgent.VerifySAPPOAsync(poNumber.Get, CancellationToken.None).Result;
@@ -162,7 +164,8 @@ public class SAPConnectionFailureProperties
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = validationAgent.VerifySAPPOAsync(poNumber.Get, CancellationToken.None).Result;
@@ -244,7 +247,8 @@ public class SAPConnectionFailureProperties
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = validationAgent.VerifySAPPOAsync(poNumber.Get, CancellationToken.None).Result;
@@ -297,7 +301,8 @@ public class SAPConnectionFailureProperties
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);
@@ -344,7 +349,8 @@ public class SAPConnectionFailureProperties
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);
@@ -398,7 +404,8 @@ public class SAPConnectionFailureProperties
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);
@@ -458,7 +465,8 @@ public class SAPConnectionFailureProperties
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);
@@ -523,7 +531,8 @@ public class SAPConnectionFailureProperties
             mockLogger.Object,
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
-            mockCorrelationIdService.Object);
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);

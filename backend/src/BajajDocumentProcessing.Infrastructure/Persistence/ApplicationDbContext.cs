@@ -60,6 +60,12 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<StateMapping> StateMappings => Set<StateMapping>();
     public DbSet<SubmissionSequence> SubmissionSequences => Set<SubmissionSequence>();
 
+    // Reference data
+    public DbSet<StateGstMaster> StateGstMasters => Set<StateGstMaster>();
+    public DbSet<HsnMaster> HsnMasters => Set<HsnMaster>();
+    public DbSet<CostMaster> CostMasters => Set<CostMaster>();
+    public DbSet<CostMasterStateRate> CostMasterStateRates => Set<CostMasterStateRate>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -91,6 +97,12 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<Conversation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ConversationMessage>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<StateMapping>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Reference data soft-delete filters
+        modelBuilder.Entity<StateGstMaster>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<HsnMaster>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CostMaster>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CostMasterStateRate>().HasQueryFilter(e => !e.IsDeleted);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

@@ -396,66 +396,10 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Validate package
+            // Validate package (persistence now happens inside ValidatePackageAsync)
             var validationResult = await _validationAgent.ValidatePackageAsync(
                 package.Id,
                 cancellationToken);
-
-            // TODO: ValidationResult is now polymorphic (validates individual documents, not packages)
-            // Need to refactor this to create ValidationResult entries for each document type
-            // For now, validation runs but results are not persisted to database
-            // This will be addressed in a future task
-            
-            /*
-            // Check if validation result already exists
-            var existingValidation = await _context.ValidationResults
-                .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.Invoice && v.DocumentId == package.Id, cancellationToken);
-
-            if (existingValidation != null)
-            {
-                _logger.LogInformation("Updating existing validation result for package {PackageId}", package.Id);
-                
-                // Update existing validation result
-                existingValidation.SapVerificationPassed = validationResult.SAPVerification?.IsVerified ?? false;
-                existingValidation.AmountConsistencyPassed = validationResult.AmountConsistency?.IsConsistent ?? false;
-                existingValidation.LineItemMatchingPassed = validationResult.LineItemMatching?.AllItemsMatched ?? false;
-                existingValidation.CompletenessCheckPassed = validationResult.Completeness?.IsComplete ?? false;
-                existingValidation.DateValidationPassed = validationResult.DateValidation?.IsValid ?? true;
-                existingValidation.VendorMatchingPassed = validationResult.VendorMatching?.IsMatched ?? true;
-                existingValidation.AllValidationsPassed = validationResult.AllPassed;
-                existingValidation.ValidationDetailsJson = System.Text.Json.JsonSerializer.Serialize(validationResult);
-                existingValidation.FailureReason = validationResult.AllPassed ? null : string.Join("; ", validationResult.Issues.Select(i => i.Issue));
-                existingValidation.UpdatedAt = DateTime.UtcNow;
-            }
-            else
-            {
-                _logger.LogInformation("Creating new validation result for package {PackageId}", package.Id);
-                
-                // Convert PackageValidationResult to ValidationResult entity
-                var validationEntity = new Domain.Entities.ValidationResult
-                {
-                    Id = Guid.NewGuid(),
-                    DocumentType = DocumentType.Invoice, // TODO: Determine correct document type
-                    DocumentId = package.Id,
-                    SapVerificationPassed = validationResult.SAPVerification?.IsVerified ?? false,
-                    AmountConsistencyPassed = validationResult.AmountConsistency?.IsConsistent ?? false,
-                    LineItemMatchingPassed = validationResult.LineItemMatching?.AllItemsMatched ?? false,
-                    CompletenessCheckPassed = validationResult.Completeness?.IsComplete ?? false,
-                    DateValidationPassed = validationResult.DateValidation?.IsValid ?? true,
-                    VendorMatchingPassed = validationResult.VendorMatching?.IsMatched ?? true,
-                    AllValidationsPassed = validationResult.AllPassed,
-                    ValidationDetailsJson = System.Text.Json.JsonSerializer.Serialize(validationResult),
-                    FailureReason = validationResult.AllPassed ? null : string.Join("; ", validationResult.Issues.Select(i => i.Issue)),
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-
-                // Store validation result
-                _context.ValidationResults.Add(validationEntity);
-            }
-            
-            await _context.SaveChangesAsync(cancellationToken);
-            */
             
             _logger.LogInformation("Validation step completed for package {PackageId}, Passed: {Passed}", 
                 package.Id, validationResult.AllPassed);
