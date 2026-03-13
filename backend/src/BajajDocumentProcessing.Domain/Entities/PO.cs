@@ -74,6 +74,21 @@ public class PO : BaseEntity
     public bool IsFlaggedForReview { get; set; }
 
     /// <summary>
+    /// Agency vendor code from SAP, used for PO search/filter.
+    /// </summary>
+    public string? VendorCode { get; set; }
+
+    /// <summary>
+    /// PO status: Open, PartiallyConsumed, or Closed.
+    /// </summary>
+    public string? POStatus { get; set; }
+
+    /// <summary>
+    /// Remaining PO balance available for claims.
+    /// </summary>
+    public decimal? RemainingBalance { get; set; }
+
+    /// <summary>
     /// Version number matching the parent package version.
     /// Increments on resubmission.
     /// </summary>

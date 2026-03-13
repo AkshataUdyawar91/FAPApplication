@@ -126,6 +126,36 @@ public class SubmissionDetailResponse
     /// </summary>
     [JsonPropertyName("comments")]
     public List<CommentItemDto>? Comments { get; init; }
+
+    /// <summary>
+    /// Current step in the conversational submission flow (0-10)
+    /// </summary>
+    [JsonPropertyName("currentStep")]
+    public int CurrentStep { get; init; }
+
+    /// <summary>
+    /// Submission number in CIQ-YYYY-XXXXX format
+    /// </summary>
+    [JsonPropertyName("submissionNumber")]
+    public string? SubmissionNumber { get; init; }
+
+    /// <summary>
+    /// Assigned CIRCLE HEAD user ID for review
+    /// </summary>
+    [JsonPropertyName("assignedCircleHeadUserId")]
+    public Guid? AssignedCircleHeadUserId { get; init; }
+
+    /// <summary>
+    /// Activity state/region where the work was performed
+    /// </summary>
+    [JsonPropertyName("activityState")]
+    public string? ActivityState { get; init; }
+
+    /// <summary>
+    /// Selected PO ID from conversational flow
+    /// </summary>
+    [JsonPropertyName("selectedPOId")]
+    public Guid? SelectedPOId { get; init; }
 }
 
 /// <summary>

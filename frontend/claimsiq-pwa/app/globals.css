@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --claimsiq-blue: #1E40AF;
+}
+
+body {
+  @apply bg-white text-gray-900 antialiased;
+}

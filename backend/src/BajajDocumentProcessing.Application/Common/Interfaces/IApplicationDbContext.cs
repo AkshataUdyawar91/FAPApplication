@@ -45,5 +45,9 @@ public interface IApplicationDbContext
     DbSet<RequestApprovalHistory> RequestApprovalHistories { get; }
     DbSet<RequestComments> RequestComments { get; }
 
+    // Conversational submission
+    DbSet<StateMapping> StateMappings { get; }
+    DbSet<SubmissionSequence> SubmissionSequences { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
