@@ -1,11 +1,12 @@
-using AdaptiveCards;
 using Microsoft.Bot.Schema;
-using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace BajajDocumentProcessing.Infrastructure.Services.Teams;
 
 /// <summary>
 /// Builds adaptive cards for ASM approval workflow in Teams.
+/// Uses raw JObject construction with schema version 1.3 for maximum compatibility
+/// with Bot Framework Emulator (v1.5 causes yellow/gold background rendering).
 /// </summary>
 public static class ApprovalCardBuilder
 {
@@ -26,122 +27,94 @@ public static class ApprovalCardBuilder
         string recommendationSummary,
         string portalBaseUrl)
     {
-        var confidenceColor = confidenceScore > 85 ? "good" : confidenceScore >= 70 ? "warning" : "attention";
-        var recommendationColor = recommendation == "APPROVE" ? "good" : recommendation == "REVIEW" ? "warning" : "attention";
+        var confidenceEmoji = confidenceScore > 85 ? "🟢" : confidenceScore >= 70 ? "🟡" : "🔴";
+        var recommendationEmoji = recommendation == "APPROVE" ? "✅" : recommendation == "REVIEW" ? "⚠️" : "❌";
         var deepLink = $"{portalBaseUrl}/fap/{fapId}/review";
 
-        var card = new AdaptiveCard(new AdaptiveSchemaVersion(1, 5))
+        var card = new JObject
         {
-            Body = new List<AdaptiveElement>
+            ["type"] = "AdaptiveCard",
+            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
+            ["version"] = "1.3",
+            ["body"] = new JArray
             {
-                new AdaptiveTextBlock
+                new JObject
                 {
-                    Text = "New FAP Submission for Review",
-                    Weight = AdaptiveTextWeight.Bolder,
-                    Size = AdaptiveTextSize.Medium
+                    ["type"] = "TextBlock",
+                    ["text"] = "New FAP Submission for Review",
+                    ["weight"] = "Bolder",
+                    ["size"] = "Medium"
                 },
-                new AdaptiveFactSet
+                new JObject
                 {
-                    Facts = new List<AdaptiveFact>
+                    ["type"] = "FactSet",
+                    ["facts"] = new JArray
                     {
-                        new("FAP #", fapNumber),
-                        new("Agency", agencyName),
-                        new("PO #", poNumber),
-                        new("Amount", $"₹{amount:N2}"),
-                        new("Submitted", submittedDate.ToString("dd-MMM-yyyy"))
+                        new JObject { ["title"] = "FAP #", ["value"] = fapNumber },
+                        new JObject { ["title"] = "Agency", ["value"] = agencyName },
+                        new JObject { ["title"] = "PO #", ["value"] = poNumber },
+                        new JObject { ["title"] = "Amount", ["value"] = $"₹{amount:N2}" },
+                        new JObject { ["title"] = "Submitted", ["value"] = submittedDate.ToString("dd-MMM-yyyy") }
                     }
                 },
-                new AdaptiveColumnSet
+                new JObject
                 {
-                    Columns = new List<AdaptiveColumn>
-                    {
-                        new()
-                        {
-                            Width = "auto",
-                            Items = new List<AdaptiveElement>
-                            {
-                                new AdaptiveTextBlock { Text = "AI Confidence", Weight = AdaptiveTextWeight.Bolder }
-                            }
-                        },
-                        new()
-                        {
-                            Width = "auto",
-                            Items = new List<AdaptiveElement>
-                            {
-                                new AdaptiveTextBlock
-                                {
-                                    Text = $"{confidenceScore:F0}%",
-                                    Color = confidenceColor == "good" ? AdaptiveTextColor.Good
-                                          : confidenceColor == "warning" ? AdaptiveTextColor.Warning
-                                          : AdaptiveTextColor.Attention,
-                                    Weight = AdaptiveTextWeight.Bolder,
-                                    Size = AdaptiveTextSize.ExtraLarge
-                                }
-                            }
-                        }
-                    }
+                    ["type"] = "TextBlock",
+                    ["text"] = $"{confidenceEmoji} AI Confidence: {confidenceScore:F0}%",
+                    ["weight"] = "Bolder",
+                    ["size"] = "Large"
                 },
-                new AdaptiveTextBlock
+                new JObject
                 {
-                    Text = $"Recommendation: {recommendation}",
-                    Weight = AdaptiveTextWeight.Bolder,
-                    Color = recommendationColor == "good" ? AdaptiveTextColor.Good
-                          : recommendationColor == "warning" ? AdaptiveTextColor.Warning
-                          : AdaptiveTextColor.Attention
+                    ["type"] = "TextBlock",
+                    ["text"] = $"{recommendationEmoji} Recommendation: {recommendation}",
+                    ["weight"] = "Bolder"
                 },
-                new AdaptiveTextBlock
+                new JObject
                 {
-                    Text = recommendationSummary,
-                    Wrap = true,
-                    Size = AdaptiveTextSize.Small
+                    ["type"] = "TextBlock",
+                    ["text"] = recommendationSummary,
+                    ["wrap"] = true,
+                    ["size"] = "Small"
                 }
             },
-            Actions = new List<AdaptiveAction>
+            ["actions"] = new JArray
             {
-                new AdaptiveSubmitAction
+                new JObject
                 {
-                    Title = "✅ Approve",
-                    Style = "positive",
-                    Data = new { action = "approve", fapId = fapId.ToString(), cardVersion = CardVersion }
-                },
-                new AdaptiveShowCardAction
-                {
-                    Title = "❌ Reject",
-                    Card = new AdaptiveCard(new AdaptiveSchemaVersion(1, 5))
+                    ["type"] = "Action.Submit",
+                    ["title"] = "✅ Approve",
+                    ["style"] = "positive",
+                    ["data"] = new JObject
                     {
-                        Body = new List<AdaptiveElement>
-                        {
-                            new AdaptiveTextInput
-                            {
-                                Id = "rejectionReason",
-                                Placeholder = "Enter rejection reason (min 10 characters)...",
-                                IsMultiline = true,
-                                IsRequired = true,
-                                Label = "Rejection Reason"
-                            }
-                        },
-                        Actions = new List<AdaptiveAction>
-                        {
-                            new AdaptiveSubmitAction
-                            {
-                                Title = "Confirm Reject",
-                                Style = "destructive",
-                                Data = new { action = "reject", fapId = fapId.ToString(), cardVersion = CardVersion }
-                            }
-                        }
+                        ["action"] = "approve",
+                        ["fapId"] = fapId.ToString(),
+                        ["cardVersion"] = CardVersion
                     }
                 },
-                new AdaptiveOpenUrlAction
+                new JObject
                 {
-                    Title = "📋 View in Portal",
-                    Url = new Uri(deepLink)
+                    ["type"] = "Action.Submit",
+                    ["title"] = "❌ Reject",
+                    ["data"] = new JObject
+                    {
+                        ["action"] = "review_details",
+                        ["fapId"] = fapId.ToString(),
+                        ["cardVersion"] = CardVersion
+                    }
+                },
+                new JObject
+                {
+                    ["type"] = "Action.OpenUrl",
+                    ["title"] = "📋 View in Portal",
+                    ["url"] = deepLink
                 }
             }
         };
 
         return new Attachment
         {
-            ContentType = AdaptiveCard.ContentType,
+            ContentType = "application/vnd.microsoft.card.adaptive",
             Content = card
         };
     }
@@ -157,41 +130,49 @@ public static class ApprovalCardBuilder
         DateTime actionTimestamp,
         string? reason = null)
     {
-        var statusText = action == "approve"
-            ? $"✅ Approved by {actorName} at {actionTimestamp:dd-MMM-yyyy HH:mm} UTC"
-            : $"❌ Rejected by {actorName} at {actionTimestamp:dd-MMM-yyyy HH:mm} UTC";
+        var statusEmoji = action == "approve" ? "✅" : "❌";
+        var actionWord = action == "approve" ? "Approved" : "Rejected";
+        var statusText = $"{statusEmoji} {actionWord} by {actorName} at {actionTimestamp:dd-MMM-yyyy HH:mm} UTC";
 
-        var body = new List<AdaptiveElement>
+        var body = new JArray
         {
-            new AdaptiveTextBlock
+            new JObject
             {
-                Text = $"FAP #{fapNumber} — Action Completed",
-                Weight = AdaptiveTextWeight.Bolder,
-                Size = AdaptiveTextSize.Medium
+                ["type"] = "TextBlock",
+                ["text"] = $"FAP #{fapNumber} — Action Completed",
+                ["weight"] = "Bolder",
+                ["size"] = "Medium"
             },
-            new AdaptiveTextBlock
+            new JObject
             {
-                Text = statusText,
-                Wrap = true,
-                Color = action == "approve" ? AdaptiveTextColor.Good : AdaptiveTextColor.Attention
+                ["type"] = "TextBlock",
+                ["text"] = statusText,
+                ["wrap"] = true
             }
         };
 
         if (!string.IsNullOrEmpty(reason))
         {
-            body.Add(new AdaptiveTextBlock
+            body.Add(new JObject
             {
-                Text = $"Reason: {reason}",
-                Wrap = true,
-                Size = AdaptiveTextSize.Small
+                ["type"] = "TextBlock",
+                ["text"] = $"Reason: {reason}",
+                ["wrap"] = true,
+                ["size"] = "Small"
             });
         }
 
-        var card = new AdaptiveCard(new AdaptiveSchemaVersion(1, 5)) { Body = body };
+        var card = new JObject
+        {
+            ["type"] = "AdaptiveCard",
+            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
+            ["version"] = "1.3",
+            ["body"] = body
+        };
 
         return new Attachment
         {
-            ContentType = AdaptiveCard.ContentType,
+            ContentType = "application/vnd.microsoft.card.adaptive",
             Content = card
         };
     }

@@ -300,6 +300,37 @@ public class EmailAgent : IEmailAgent
         }
     }
 
+    /// <inheritdoc />
+    public async Task<EmailResult> SendHtmlEmailAsync(
+        string recipientEmail,
+        string subject,
+        string htmlBody,
+        CancellationToken cancellationToken = default)
+    {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Sending HTML email to {Email}, Subject: {Subject}. CorrelationId: {CorrelationId}",
+            recipientEmail, subject, correlationId);
+
+        try
+        {
+            return await SendEmailWithRetryAsync(recipientEmail, subject, htmlBody, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error sending HTML email to {Email}. CorrelationId: {CorrelationId}",
+                recipientEmail, correlationId);
+            return new EmailResult
+            {
+                Success = false,
+                ErrorMessage = ex.Message,
+                AttemptsCount = 0
+            };
+        }
+    }
+
     /// <summary>
     /// Sends an email with exponential backoff retry logic to handle transient failures.
     /// </summary>

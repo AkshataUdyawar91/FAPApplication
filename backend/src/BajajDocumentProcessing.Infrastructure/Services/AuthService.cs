@@ -79,6 +79,7 @@ public class AuthService : IAuthService
             Token = token,
             UserId = user.Id,
             Email = user.Email,
+            FullName = user.FullName,
             Role = roleName,
             ExpiresAt = expiresAt
         };
@@ -151,6 +152,7 @@ public class AuthService : IAuthService
                 Token = newToken,
                 UserId = user.Id,
                 Email = user.Email,
+                FullName = user.FullName,
                 Role = roleName,
                 ExpiresAt = expiresAt
             };

@@ -111,10 +111,16 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<TeamsConversation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<TeamsConversation>().HasIndex(e => e.TeamsUserId);
         modelBuilder.Entity<TeamsConversation>().HasIndex(e => e.ConversationId);
+        modelBuilder.Entity<TeamsConversation>().HasIndex(e => e.UserId).HasFilter("IsActive = 1");
         modelBuilder.Entity<TeamsConversation>().Property(e => e.TeamsUserId).HasMaxLength(256);
         modelBuilder.Entity<TeamsConversation>().Property(e => e.ConversationId).HasMaxLength(256);
         modelBuilder.Entity<TeamsConversation>().Property(e => e.ServiceUrl).HasMaxLength(512);
         modelBuilder.Entity<TeamsConversation>().Property(e => e.ChannelId).HasMaxLength(64);
+        modelBuilder.Entity<TeamsConversation>()
+            .HasOne(tc => tc.User)
+            .WithMany()
+            .HasForeignKey(tc => tc.UserId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

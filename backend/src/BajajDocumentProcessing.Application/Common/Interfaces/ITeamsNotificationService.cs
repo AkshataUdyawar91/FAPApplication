@@ -1,3 +1,6 @@
+using BajajDocumentProcessing.Application.DTOs.Notifications;
+using BajajDocumentProcessing.Domain.Entities;
+
 namespace BajajDocumentProcessing.Application.Common.Interfaces;
 
 /// <summary>
@@ -25,6 +28,19 @@ public interface ITeamsNotificationService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>True if the notification was sent successfully</returns>
     Task<bool> SendStatusUpdateAsync(Guid packageId, string newState, string? details = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a proactive adaptive card to a specific user's Teams conversation.
+    /// Used by NotificationDispatcher for per-user targeted delivery.
+    /// </summary>
+    /// <param name="conversation">The Teams conversation reference for the target user.</param>
+    /// <param name="cardJson">The fully expanded Adaptive Card JSON string.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A <see cref="ProactiveMessageResult"/> indicating success/failure with details.</returns>
+    Task<ProactiveMessageResult> SendProactiveCardToUserAsync(
+        TeamsConversation conversation,
+        string cardJson,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Whether the Teams notification service is available (bot installed, conversation captured).

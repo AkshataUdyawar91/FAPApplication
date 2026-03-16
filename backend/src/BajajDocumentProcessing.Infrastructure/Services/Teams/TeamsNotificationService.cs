@@ -1,6 +1,11 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Application.DTOs.Notifications;
+using BajajDocumentProcessing.Domain.Entities;
 using Microsoft.Bot.Builder;
 using Microsoft.Bot.Builder.Integration.AspNet.Core;
+using Microsoft.Bot.Connector;
 using Microsoft.Bot.Schema;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -22,6 +27,13 @@ public class TeamsNotificationService : ITeamsNotificationService
     private readonly PilotTeamsConfig _pilotConfig;
     private readonly string _appId;
     private readonly string _portalBaseUrl;
+
+    /// <summary>
+    /// Tracks the last proactive send time per user for rate limiting (Req 9.3).
+    /// Key = TeamsConversation.Id, Value = UTC timestamp of last send.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, DateTime> _lastSendTimestamps = new();
+    private static readonly TimeSpan RateLimitDelay = TimeSpan.FromSeconds(2);
 
     public TeamsNotificationService(
         IBotFrameworkHttpAdapter adapter,
@@ -280,6 +292,156 @@ public class TeamsNotificationService : ITeamsNotificationService
                 "Failed to send proactive message to conversation {ConversationId}",
                 reference.Conversation?.Id);
             return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<ProactiveMessageResult> SendProactiveCardToUserAsync(
+        TeamsConversation conversation,
+        string cardJson,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "Sending proactive card to user {TeamsUserId} via conversation {ConversationId}",
+            conversation.TeamsUserId, conversation.ConversationId);
+
+        // Step 1: Deserialize the stored conversation reference
+        ConversationReference? reference;
+        try
+        {
+            reference = JsonConvert.DeserializeObject<ConversationReference>(
+                conversation.ConversationReferenceJson);
+
+            if (reference == null)
+            {
+                _logger.LogWarning(
+                    "Failed to deserialize ConversationReference for conversation {ConversationId}",
+                    conversation.ConversationId);
+                return new ProactiveMessageResult
+                {
+                    Success = false,
+                    HttpStatusCode = 0,
+                    ErrorMessage = "Invalid conversation reference JSON"
+                };
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex,
+                "Malformed ConversationReferenceJson for conversation {ConversationId}",
+                conversation.ConversationId);
+            return new ProactiveMessageResult
+            {
+                Success = false,
+                HttpStatusCode = 0,
+                ErrorMessage = $"Failed to deserialize conversation reference: {ex.Message}"
+            };
+        }
+
+        // Step 2: Enforce 2-second rate limit between sends to the same user (Req 9.3)
+        await EnforceRateLimitAsync(conversation.Id, cancellationToken);
+
+        // Step 3: Build the Adaptive Card attachment from the JSON string
+        var cardAttachment = new Attachment
+        {
+            ContentType = "application/vnd.microsoft.card.adaptive",
+            Content = JsonConvert.DeserializeObject(cardJson)
+        };
+
+        // Step 4: Send via ContinueConversationAsync
+        string? activityId = null;
+        try
+        {
+            await ((BotAdapter)_adapter).ContinueConversationAsync(
+                _appId, reference,
+                async (turnContext, ct) =>
+                {
+                    var response = await turnContext.SendActivityAsync(
+                        MessageFactory.Attachment(cardAttachment), ct);
+                    activityId = response?.Id;
+                },
+                cancellationToken);
+
+            // Record send timestamp for rate limiting
+            _lastSendTimestamps[conversation.Id] = DateTime.UtcNow;
+
+            _logger.LogInformation(
+                "Proactive card sent to user {TeamsUserId}, ActivityId={ActivityId}",
+                conversation.TeamsUserId, activityId);
+
+            return new ProactiveMessageResult
+            {
+                Success = true,
+                HttpStatusCode = 200,
+                ActivityId = activityId
+            };
+        }
+        catch (ErrorResponseException ex)
+        {
+            var statusCode = (int)(ex.Response?.StatusCode ?? System.Net.HttpStatusCode.InternalServerError);
+
+            _logger.LogWarning(
+                "Proactive send failed for user {TeamsUserId} with HTTP {StatusCode}: {ErrorMessage}",
+                conversation.TeamsUserId, statusCode, ex.Message);
+
+            return new ProactiveMessageResult
+            {
+                Success = false,
+                HttpStatusCode = statusCode,
+                ErrorMessage = ex.Message
+            };
+        }
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "Proactive send timed out for user {TeamsUserId}",
+                conversation.TeamsUserId);
+
+            return new ProactiveMessageResult
+            {
+                Success = false,
+                HttpStatusCode = 408,
+                ErrorMessage = "Request timed out"
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogInformation(
+                "Proactive send cancelled for user {TeamsUserId}",
+                conversation.TeamsUserId);
+            throw; // Let cancellation propagate
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Unexpected error sending proactive card to user {TeamsUserId}",
+                conversation.TeamsUserId);
+
+            return new ProactiveMessageResult
+            {
+                Success = false,
+                HttpStatusCode = 500,
+                ErrorMessage = ex.Message
+            };
+        }
+    }
+
+    /// <summary>
+    /// Enforces a 2-second minimum delay between sequential sends to the same user (Req 9.3).
+    /// </summary>
+    private async Task EnforceRateLimitAsync(Guid conversationId, CancellationToken cancellationToken)
+    {
+        if (_lastSendTimestamps.TryGetValue(conversationId, out var lastSend))
+        {
+            var elapsed = DateTime.UtcNow - lastSend;
+            if (elapsed < RateLimitDelay)
+            {
+                var waitTime = RateLimitDelay - elapsed;
+                _logger.LogDebug(
+                    "Rate limiting: waiting {WaitMs}ms before sending to conversation {ConversationId}",
+                    waitTime.TotalMilliseconds, conversationId);
+                await Task.Delay(waitTime, cancellationToken);
+            }
         }
     }
 

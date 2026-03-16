@@ -63,10 +63,18 @@ class AuthResponse {
   });
 
   factory AuthResponse.fromJson(Map<String, dynamic> json) {
+    // Backend returns flat: { token, userId, email, fullName, role, expiresAt }
+    final user = UserModel(
+      id: json['userId'] as String,
+      email: json['email'] as String,
+      name: json['fullName'] as String,
+      role: json['role'] as String,
+    );
+
     return AuthResponse(
-      user: UserModel.fromJson(json['user']),
-      accessToken: json['accessToken'],
-      refreshToken: json['refreshToken'],
+      user: user,
+      accessToken: json['token'] as String,
+      refreshToken: '', // Backend doesn't issue refresh tokens yet
     );
   }
 }

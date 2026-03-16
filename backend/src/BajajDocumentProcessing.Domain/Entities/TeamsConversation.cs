@@ -9,6 +9,12 @@ namespace BajajDocumentProcessing.Domain.Entities;
 public class TeamsConversation : BaseEntity
 {
     /// <summary>
+    /// FK to the system User this Teams conversation belongs to.
+    /// Nullable until identity is resolved (e.g., first install before email match).
+    /// </summary>
+    public Guid? UserId { get; set; }
+
+    /// <summary>
     /// The Teams user ID (from ChannelAccount.Id)
     /// </summary>
     public string TeamsUserId { get; set; } = string.Empty;
@@ -59,7 +65,19 @@ public class TeamsConversation : BaseEntity
     public bool IsActive { get; set; } = true;
 
     /// <summary>
+    /// Last time any activity occurred on this conversation (message sent or received).
+    /// </summary>
+    public DateTime? LastActivityAt { get; set; }
+
+    /// <summary>
     /// Last time a proactive message was sent to this conversation
     /// </summary>
     public DateTime? LastMessageSentAt { get; set; }
+
+    // Navigation properties
+
+    /// <summary>
+    /// Navigation property to the system User.
+    /// </summary>
+    public User? User { get; set; }
 }

@@ -1,12 +1,13 @@
-using AdaptiveCards;
 using BajajDocumentProcessing.Infrastructure.Services.Teams;
 using Microsoft.Bot.Schema;
+using Newtonsoft.Json.Linq;
 using Xunit;
 
 namespace BajajDocumentProcessing.Tests.Infrastructure.Teams;
 
 /// <summary>
 /// Tests for ApprovalCardBuilder — validates adaptive card structure and content.
+/// Cards are built as JObject (schema 1.3) for Bot Framework Emulator compatibility.
 /// </summary>
 public class ApprovalCardBuilderTests
 {
@@ -21,27 +22,37 @@ public class ApprovalCardBuilderTests
     [Fact]
     public void BuildApprovalCard_ReturnsAdaptiveCardAttachment()
     {
-        var card = ApprovalCardBuilder.BuildApprovalCard(
+        var attachment = ApprovalCardBuilder.BuildApprovalCard(
             _fapId, FapNumber, AgencyName, PoNumber, Amount,
             _submittedDate, 90, "APPROVE", "All checks passed.", PortalBaseUrl);
 
-        Assert.NotNull(card);
-        Assert.Equal(AdaptiveCard.ContentType, card.ContentType);
-        Assert.IsType<AdaptiveCard>(card.Content);
+        Assert.NotNull(attachment);
+        Assert.Equal("application/vnd.microsoft.card.adaptive", attachment.ContentType);
+        Assert.IsType<JObject>(attachment.Content);
+
+        var card = (JObject)attachment.Content;
+        Assert.Equal("1.3", card["version"]?.ToString());
+        Assert.Equal("AdaptiveCard", card["type"]?.ToString());
     }
 
     [Fact]
     public void BuildApprovalCard_ContainsFactSetWithRequiredFields()
     {
-        var card = ApprovalCardBuilder.BuildApprovalCard(
+        var attachment = ApprovalCardBuilder.BuildApprovalCard(
             _fapId, FapNumber, AgencyName, PoNumber, Amount,
             _submittedDate, 85, "APPROVE", "Summary", PortalBaseUrl);
 
-        var adaptive = (AdaptiveCard)card.Content;
-        var factSet = adaptive.Body.OfType<AdaptiveFactSet>().FirstOrDefault();
+        var card = (JObject)attachment.Content;
+        var body = (JArray)card["body"]!;
+
+        // Find the FactSet element in the body
+        var factSet = body.Children<JObject>()
+            .FirstOrDefault(e => e["type"]?.ToString() == "FactSet");
 
         Assert.NotNull(factSet);
-        var factTitles = factSet.Facts.Select(f => f.Title).ToList();
+        var facts = (JArray)factSet["facts"]!;
+        var factTitles = facts.Children<JObject>().Select(f => f["title"]?.ToString()).ToList();
+
         Assert.Contains("FAP #", factTitles);
         Assert.Contains("Agency", factTitles);
         Assert.Contains("PO #", factTitles);
@@ -52,126 +63,118 @@ public class ApprovalCardBuilderTests
     [Fact]
     public void BuildApprovalCard_ContainsApproveRejectAndPortalActions()
     {
-        var card = ApprovalCardBuilder.BuildApprovalCard(
+        var attachment = ApprovalCardBuilder.BuildApprovalCard(
             _fapId, FapNumber, AgencyName, PoNumber, Amount,
             _submittedDate, 75, "REVIEW", "Needs review.", PortalBaseUrl);
 
-        var adaptive = (AdaptiveCard)card.Content;
+        var card = (JObject)attachment.Content;
+        var actions = (JArray)card["actions"]!;
 
-        Assert.Equal(3, adaptive.Actions.Count);
+        Assert.Equal(3, actions.Count);
 
         // Approve button
-        var approve = adaptive.Actions[0] as AdaptiveSubmitAction;
-        Assert.NotNull(approve);
-        Assert.Contains("Approve", approve.Title);
+        Assert.Contains("Approve", actions[0]["title"]?.ToString());
+        Assert.Equal("Action.Submit", actions[0]["type"]?.ToString());
 
-        // Reject button (ShowCard with nested input)
-        var reject = adaptive.Actions[1] as AdaptiveShowCardAction;
-        Assert.NotNull(reject);
-        Assert.Contains("Reject", reject.Title);
-        Assert.NotEmpty(reject.Card.Actions);
+        // Reject button (routes to review_details)
+        Assert.Contains("Reject", actions[1]["title"]?.ToString());
+        Assert.Equal("Action.Submit", actions[1]["type"]?.ToString());
 
         // View in Portal button
-        var portal = adaptive.Actions[2] as AdaptiveOpenUrlAction;
-        Assert.NotNull(portal);
-        Assert.Contains("Portal", portal.Title);
-        Assert.Contains(_fapId.ToString(), portal.Url.ToString());
+        Assert.Contains("Portal", actions[2]["title"]?.ToString());
+        Assert.Equal("Action.OpenUrl", actions[2]["type"]?.ToString());
+        Assert.Contains(_fapId.ToString(), actions[2]["url"]?.ToString());
     }
 
     [Theory]
-    [InlineData(90, AdaptiveTextColor.Good)]
-    [InlineData(75, AdaptiveTextColor.Warning)]
-    [InlineData(50, AdaptiveTextColor.Attention)]
-    public void BuildApprovalCard_ConfidenceScoreColorCoding(double score, AdaptiveTextColor expectedColor)
+    [InlineData(90, "🟢")]
+    [InlineData(75, "🟡")]
+    [InlineData(50, "🔴")]
+    public void BuildApprovalCard_ConfidenceScoreEmojiIndicator(double score, string expectedEmoji)
     {
-        var card = ApprovalCardBuilder.BuildApprovalCard(
+        var attachment = ApprovalCardBuilder.BuildApprovalCard(
             _fapId, FapNumber, AgencyName, PoNumber, Amount,
             _submittedDate, score, "REVIEW", "Summary", PortalBaseUrl);
 
-        var adaptive = (AdaptiveCard)card.Content;
-        var columnSet = adaptive.Body.OfType<AdaptiveColumnSet>().FirstOrDefault();
-        Assert.NotNull(columnSet);
+        var card = (JObject)attachment.Content;
+        var body = (JArray)card["body"]!;
 
-        // Second column has the score text
-        var scoreBlock = columnSet.Columns[1].Items.OfType<AdaptiveTextBlock>().FirstOrDefault();
-        Assert.NotNull(scoreBlock);
-        Assert.Equal(expectedColor, scoreBlock.Color);
+        // Find the confidence text block
+        var confidenceBlock = body.Children<JObject>()
+            .FirstOrDefault(e => e["text"]?.ToString()?.Contains("Confidence") == true);
+
+        Assert.NotNull(confidenceBlock);
+        Assert.Contains(expectedEmoji, confidenceBlock["text"]?.ToString());
     }
 
     [Fact]
     public void BuildApprovalCard_IncludesCardVersionInActionData()
     {
-        var card = ApprovalCardBuilder.BuildApprovalCard(
+        var attachment = ApprovalCardBuilder.BuildApprovalCard(
             _fapId, FapNumber, AgencyName, PoNumber, Amount,
             _submittedDate, 80, "APPROVE", "Summary", PortalBaseUrl);
 
-        var adaptive = (AdaptiveCard)card.Content;
-        var approveAction = adaptive.Actions[0] as AdaptiveSubmitAction;
-        Assert.NotNull(approveAction);
+        var card = (JObject)attachment.Content;
+        var actions = (JArray)card["actions"]!;
+        var approveData = (JObject)actions[0]["data"]!;
 
-        // Data should contain cardVersion
-        var dataJson = System.Text.Json.JsonSerializer.Serialize(approveAction.Data);
-        Assert.Contains("cardVersion", dataJson);
-        Assert.Contains("1.0", dataJson);
+        Assert.Equal("1.0", approveData["cardVersion"]?.ToString());
+        Assert.Equal("approve", approveData["action"]?.ToString());
     }
 
     [Fact]
-    public void BuildActionConfirmationCard_ApproveShowsGreenStatus()
+    public void BuildActionConfirmationCard_ApproveShowsApprovedStatus()
     {
-        var card = ApprovalCardBuilder.BuildActionConfirmationCard(
+        var attachment = ApprovalCardBuilder.BuildActionConfirmationCard(
             FapNumber, "approve", "John ASM", DateTime.UtcNow);
 
-        var adaptive = (AdaptiveCard)card.Content;
-        var statusBlock = adaptive.Body.OfType<AdaptiveTextBlock>()
-            .FirstOrDefault(b => b.Text.Contains("Approved"));
+        var card = (JObject)attachment.Content;
+        var body = (JArray)card["body"]!;
+
+        var statusBlock = body.Children<JObject>()
+            .FirstOrDefault(e => e["text"]?.ToString()?.Contains("Approved") == true);
 
         Assert.NotNull(statusBlock);
-        Assert.Equal(AdaptiveTextColor.Good, statusBlock.Color);
+        Assert.Contains("✅", statusBlock["text"]?.ToString());
     }
 
     [Fact]
-    public void BuildActionConfirmationCard_RejectShowsRedStatusWithReason()
+    public void BuildActionConfirmationCard_RejectShowsRejectedStatusWithReason()
     {
         var reason = "Documents are incomplete and need revision.";
-        var card = ApprovalCardBuilder.BuildActionConfirmationCard(
+        var attachment = ApprovalCardBuilder.BuildActionConfirmationCard(
             FapNumber, "reject", "Jane ASM", DateTime.UtcNow, reason);
 
-        var adaptive = (AdaptiveCard)card.Content;
-        var statusBlock = adaptive.Body.OfType<AdaptiveTextBlock>()
-            .FirstOrDefault(b => b.Text.Contains("Rejected"));
-        var reasonBlock = adaptive.Body.OfType<AdaptiveTextBlock>()
-            .FirstOrDefault(b => b.Text.Contains(reason));
+        var card = (JObject)attachment.Content;
+        var body = (JArray)card["body"]!;
 
+        var statusBlock = body.Children<JObject>()
+            .FirstOrDefault(e => e["text"]?.ToString()?.Contains("Rejected") == true);
         Assert.NotNull(statusBlock);
-        Assert.Equal(AdaptiveTextColor.Attention, statusBlock.Color);
+        Assert.Contains("❌", statusBlock["text"]?.ToString());
+
+        var reasonBlock = body.Children<JObject>()
+            .FirstOrDefault(e => e["text"]?.ToString()?.Contains(reason) == true);
         Assert.NotNull(reasonBlock);
     }
 
     [Fact]
     public void BuildActionConfirmationCard_NoActionsOnConfirmationCard()
     {
-        var card = ApprovalCardBuilder.BuildActionConfirmationCard(
+        var attachment = ApprovalCardBuilder.BuildActionConfirmationCard(
             FapNumber, "approve", "John ASM", DateTime.UtcNow);
 
-        var adaptive = (AdaptiveCard)card.Content;
-        Assert.Empty(adaptive.Actions);
+        var card = (JObject)attachment.Content;
+        Assert.Null(card["actions"]);
     }
 
     [Fact]
-    public void BuildApprovalCard_RejectShowCardContainsReasonInput()
+    public void BuildActionConfirmationCard_UsesSchemaVersion13()
     {
-        var card = ApprovalCardBuilder.BuildApprovalCard(
-            _fapId, FapNumber, AgencyName, PoNumber, Amount,
-            _submittedDate, 60, "REJECT", "Reject recommended.", PortalBaseUrl);
+        var attachment = ApprovalCardBuilder.BuildActionConfirmationCard(
+            FapNumber, "approve", "John ASM", DateTime.UtcNow);
 
-        var adaptive = (AdaptiveCard)card.Content;
-        var rejectAction = adaptive.Actions[1] as AdaptiveShowCardAction;
-        Assert.NotNull(rejectAction);
-
-        var textInput = rejectAction.Card.Body.OfType<AdaptiveTextInput>().FirstOrDefault();
-        Assert.NotNull(textInput);
-        Assert.Equal("rejectionReason", textInput.Id);
-        Assert.True(textInput.IsMultiline);
-        Assert.True(textInput.IsRequired);
+        var card = (JObject)attachment.Content;
+        Assert.Equal("1.3", card["version"]?.ToString());
     }
 }

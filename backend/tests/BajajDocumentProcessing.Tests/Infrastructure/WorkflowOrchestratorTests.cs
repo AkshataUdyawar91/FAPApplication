@@ -24,6 +24,7 @@ public class WorkflowOrchestratorTests : IDisposable
     private readonly Mock<IConfidenceScoreService> _mockConfidenceScoreService;
     private readonly Mock<IRecommendationAgent> _mockRecommendationAgent;
     private readonly Mock<INotificationAgent> _mockNotificationAgent;
+    private readonly Mock<INotificationDispatcher> _mockNotificationDispatcher;
     private readonly Mock<ILogger<WorkflowOrchestrator>> _mockLogger;
     private readonly Mock<ICorrelationIdService> _mockCorrelationIdService;
     private readonly WorkflowOrchestrator _orchestrator;
@@ -40,6 +41,7 @@ public class WorkflowOrchestratorTests : IDisposable
         _mockConfidenceScoreService = new Mock<IConfidenceScoreService>();
         _mockRecommendationAgent = new Mock<IRecommendationAgent>();
         _mockNotificationAgent = new Mock<INotificationAgent>();
+        _mockNotificationDispatcher = new Mock<INotificationDispatcher>();
         _mockLogger = new Mock<ILogger<WorkflowOrchestrator>>();
         _mockCorrelationIdService = new Mock<ICorrelationIdService>();
 
@@ -52,6 +54,7 @@ public class WorkflowOrchestratorTests : IDisposable
             _mockConfidenceScoreService.Object,
             _mockRecommendationAgent.Object,
             _mockNotificationAgent.Object,
+            _mockNotificationDispatcher.Object,
             _mockLogger.Object,
             _mockCorrelationIdService.Object);
     }

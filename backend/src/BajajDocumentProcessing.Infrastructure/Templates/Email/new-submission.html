@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClaimsIQ: New Claim Ready for Review</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;">
+    <tr>
+      <td align="center" style="padding:24px 16px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#003087;padding:24px 32px;text-align:center;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="color:#ffffff;font-size:24px;font-weight:bold;letter-spacing:1px;">
+                    &#x1F4CB; ClaimsIQ
+                  </td>
+                </tr>
+                <tr>
+                  <td style="color:#00A3E0;font-size:14px;padding-top:4px;">
+                    Intelligent Claim Processing
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Title Banner -->
+          <tr>
+            <td style="background-color:#00A3E0;padding:16px 32px;text-align:center;">
+              <span style="color:#ffffff;font-size:18px;font-weight:bold;">New Claim Submitted</span>
+            </td>
+          </tr>
+
+          <!-- Key Facts Section -->
+          <tr>
+            <td style="padding:24px 32px 8px 32px;">
+              <h2 style="margin:0 0 16px 0;font-size:16px;color:#003087;border-bottom:2px solid #003087;padding-bottom:8px;">
+                Key Facts
+              </h2>
+</td>
+</tr>
+<tr>
+<td style="padding:0 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#555;font-size:13px;width:40%;">FAP ID</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#222;font-size:13px;font-weight:bold;">${submissionNumber}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#555;font-size:13px;">Agency</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#222;font-size:13px;">${agencyName}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#555;font-size:13px;">PO Number</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#222;font-size:13px;">${poNumber}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#555;font-size:13px;">Invoice</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#222;font-size:13px;">${invoiceNumber}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#555;font-size:13px;">Amount</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#222;font-size:13px;font-weight:bold;">${invoiceAmount}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#555;font-size:13px;">State</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#222;font-size:13px;">${state}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#555;font-size:13px;">Submitted</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#222;font-size:13px;">${submittedAtFormatted}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#555;font-size:13px;">Teams / Photos</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#222;font-size:13px;">${teamPhotoSummary}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#555;font-size:13px;">Inquiries</td>
+                  <td style="padding:8px 12px;border-bottom:1px solid #e8e8eb;color:#222;font-size:13px;">${inquirySummary}</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- AI Recommendation Section -->
+          <tr>
+            <td style="padding:24px 32px 8px 32px;">
+              <h2 style="margin:0 0 16px 0;font-size:16px;color:#003087;border-bottom:2px solid #003087;padding-bottom:8px;">
+                AI Recommendation
+              </h2>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 32px 16px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-radius:6px;overflow:hidden;">
+                <tr>
+                  <td style="padding:16px 20px;background-color:${recommendationBgColor};border-left:4px solid ${recommendationBorderColor};">
+                    <span style="font-size:16px;font-weight:bold;color:${recommendationTextColor};">
+                      ${recommendationEmoji} Recommended: ${recommendation}
+                    </span>
+                    <br />
+                    <span style="font-size:13px;color:#555;margin-top:4px;display:inline-block;">
+                      Confidence: ${confidenceScoreFormatted} &nbsp;|&nbsp; ${checksSummary}
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Top Issues (if any) -->
+          <tr>
+            <td style="padding:0 32px 16px 32px;">
+              ${topIssuesHtml}
+            </td>
+          </tr>
+
+          <!-- CTA Button -->
+          <tr>
+            <td style="padding:16px 32px 24px 32px;text-align:center;">
+              <a href="${portalUrl}" target="_blank" style="display:inline-block;background-color:#003087;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:6px;font-size:16px;font-weight:bold;letter-spacing:0.5px;">
+                Review in ClaimsIQ Portal
+              </a>
+            </td>
+          </tr>
+
+          <!-- Divider -->
+          <tr>
+            <td style="padding:0 32px;">
+              <hr style="border:none;border-top:1px solid #e8e8eb;margin:0;" />
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 32px 24px 32px;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#888;line-height:1.6;">
+                You're receiving this because you're an assigned reviewer.<br />
+                Install the ClaimsIQ Teams bot for richer notifications.
+              </p>
+              <p style="margin:8px 0 0 0;font-size:11px;color:#aaa;">
+                &copy; Bajaj Auto Limited &mdash; ClaimsIQ Document Processing
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

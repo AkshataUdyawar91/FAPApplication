@@ -10,6 +10,7 @@ using Moq.Protected;
 using System.Net;
 using System.Text.Json;
 using Xunit;
+using TeamsEntity = BajajDocumentProcessing.Domain.Entities.Teams;
 
 namespace BajajDocumentProcessing.Tests.Infrastructure;
 
@@ -90,7 +91,7 @@ public class ValidationAgentTests : IDisposable
             Id = packageId,
             CreatedAt = DateTime.UtcNow,
             State = PackageState.Uploaded,
-            Teams = new List<Teams>()
+            Teams = new List<TeamsEntity>()
         };
 
         if (poData != null)
@@ -138,7 +139,7 @@ public class ValidationAgentTests : IDisposable
 
         if (photoCount > 0)
         {
-            var team = new Teams
+            var team = new TeamsEntity
             {
                 Id = Guid.NewGuid(),
                 PackageId = packageId,

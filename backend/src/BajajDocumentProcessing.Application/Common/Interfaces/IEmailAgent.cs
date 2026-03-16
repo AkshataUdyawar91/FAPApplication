@@ -24,6 +24,12 @@ public interface IEmailAgent
     /// Sends email to Agency when ASM rejects the package
     /// </summary>
     Task<EmailResult> SendRejectedEmailAsync(Guid packageId, string agencyEmail, string reason, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a pre-built HTML email to the specified recipient with retry logic.
+    /// Used by NotificationDispatcher for templated email fallback notifications.
+    /// </summary>
+    Task<EmailResult> SendHtmlEmailAsync(string recipientEmail, string subject, string htmlBody, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

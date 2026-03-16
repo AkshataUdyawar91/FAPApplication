@@ -120,7 +120,7 @@ public class TeamsNotificationServiceTests
         var package = new DocumentPackage
         {
             Id = packageId,
-            State = PackageState.PendingASMApproval,
+            State = PackageState.PendingASM,
             CreatedAt = DateTime.UtcNow,
             SubmittedBy = new User { FullName = "Test Agency" }
         };

@@ -245,7 +245,7 @@ public class DocumentService : IDocumentService
                     .FirstOrDefaultAsync(t => t.PackageId == actualPackageId);
                 if (team == null)
                 {
-                    team = new Teams
+                    team = new Domain.Entities.Teams
                     {
                         Id = Guid.NewGuid(),
                         PackageId = actualPackageId,

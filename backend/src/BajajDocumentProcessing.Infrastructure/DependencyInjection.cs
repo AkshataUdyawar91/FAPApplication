@@ -20,9 +20,11 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         // Database configuration
+        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(
-                configuration.GetConnectionString("DefaultConnection"),
+                connectionString,
                 b => b.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName)));
 
         services.AddScoped<IApplicationDbContext>(provider => 
@@ -118,6 +120,12 @@ public static class DependencyInjection
             services.AddScoped<IAnalyticsAgent, NullAnalyticsAgent>();
         }
 
+        // Notification Data Service (Scoped — depends on DbContext)
+        services.AddScoped<INotificationDataService, NotificationDataService>();
+
+        // Notification Dispatcher (Scoped — depends on DbContext)
+        services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
+
         // Workflow Orchestrator
         services.AddScoped<IWorkflowOrchestrator, WorkflowOrchestrator>();
 
@@ -151,6 +159,9 @@ public static class DependencyInjection
 
         // Teams proactive notification service (Singleton — depends on Singleton adapter + PilotConfig)
         services.AddSingleton<ITeamsNotificationService, TeamsNotificationService>();
+
+        // Teams Adaptive Card templating service (Singleton — stateless, loads templates once)
+        services.AddSingleton<ITeamsCardService, TeamsCardService>();
         
         return services;
     }

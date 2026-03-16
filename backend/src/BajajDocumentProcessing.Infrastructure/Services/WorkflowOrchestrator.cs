@@ -16,7 +16,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
     private readonly IConfidenceScoreService _confidenceScoreService;
     private readonly IRecommendationAgent _recommendationAgent;
     private readonly INotificationAgent _notificationAgent;
-    private readonly ITeamsNotificationService _teamsNotificationService;
+    private readonly INotificationDispatcher _notificationDispatcher;
     private readonly ILogger<WorkflowOrchestrator> _logger;
     private readonly ICorrelationIdService _correlationIdService;
 
@@ -27,7 +27,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         IConfidenceScoreService confidenceScoreService,
         IRecommendationAgent recommendationAgent,
         INotificationAgent notificationAgent,
-        ITeamsNotificationService teamsNotificationService,
+        INotificationDispatcher notificationDispatcher,
         ILogger<WorkflowOrchestrator> logger,
         ICorrelationIdService correlationIdService)
     {
@@ -37,7 +37,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         _confidenceScoreService = confidenceScoreService;
         _recommendationAgent = recommendationAgent;
         _notificationAgent = notificationAgent;
-        _teamsNotificationService = teamsNotificationService;
+        _notificationDispatcher = notificationDispatcher;
         _logger = logger;
         _correlationIdService = correlationIdService;
     }
@@ -134,27 +134,19 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Send notification
+            // Send notification to agency user
             await _notificationAgent.NotifySubmissionReceivedAsync(package.SubmittedByUserId, package.Id, cancellationToken);
 
-            // Send Teams approval card (fire-and-forget style — don't fail workflow if Teams is unavailable)
+            // Dispatch rich notification to ASM users (Teams adaptive card with fallback to email)
             try
             {
-                if (_teamsNotificationService.IsAvailable)
-                {
-                    var teamsSent = await _teamsNotificationService.SendApprovalCardAsync(package.Id, cancellationToken);
-                    _logger.LogInformation(
-                        "Teams approval card for package {PackageId}: {Result}",
-                        packageId, teamsSent ? "sent" : "not sent");
-                }
-                else
-                {
-                    _logger.LogDebug("Teams notification service not available, skipping approval card for {PackageId}", packageId);
-                }
+                await _notificationDispatcher.DispatchNewSubmissionNotificationAsync(package.Id, cancellationToken);
             }
-            catch (Exception teamsEx)
+            catch (Exception dispatchEx)
             {
-                _logger.LogWarning(teamsEx, "Failed to send Teams approval card for package {PackageId} — workflow continues", packageId);
+                _logger.LogWarning(dispatchEx,
+                    "Failed to dispatch ASM notification for package {PackageId} — workflow continues",
+                    packageId);
             }
 
             _logger.LogInformation("Workflow orchestration completed successfully for package {PackageId}", packageId);
