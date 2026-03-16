@@ -140,9 +140,5 @@ public class DocumentPackageConfiguration : IEntityTypeConfiguration<DocumentPac
             .HasForeignKey(cp => cp.PackageId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        builder.HasMany(p => p.CampaignInvoices)
-            .WithOne(ci => ci.Package)
-            .HasForeignKey(ci => ci.PackageId)
-            .OnDelete(DeleteBehavior.Cascade);
     }
 }

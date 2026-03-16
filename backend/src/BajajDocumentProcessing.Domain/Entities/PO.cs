@@ -92,6 +92,11 @@ public class PO : BaseEntity
     public Agency Agency { get; set; } = null!;
 
     /// <summary>
+    /// Navigation property to the Invoices linked to this PO (one-to-many).
+    /// </summary>
+    public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
+
+    /// <summary>
     /// Navigation property to the ValidationResult for this PO.
     /// </summary>
     public ValidationResult? ValidationResult { get; set; }

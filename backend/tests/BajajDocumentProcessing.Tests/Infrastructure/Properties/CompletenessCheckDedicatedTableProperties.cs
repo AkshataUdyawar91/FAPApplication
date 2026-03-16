@@ -172,8 +172,7 @@ public class CompletenessCheckDedicatedTableProperties
             var team = new TeamsEntity
             {
                 Id = Guid.NewGuid(), PackageId = packageId,
-                CampaignName = "Test", Photos = new List<TeamPhotos>(),
-                Invoices = new List<CampaignInvoice>()
+                CampaignName = "Test", Photos = new List<TeamPhotos>()
             };
             team.Photos.Add(new TeamPhotos
             {
@@ -188,8 +187,7 @@ public class CompletenessCheckDedicatedTableProperties
             var emptyTeam = new TeamsEntity
             {
                 Id = Guid.NewGuid(), PackageId = packageId,
-                CampaignName = "Empty", Photos = new List<TeamPhotos>(),
-                Invoices = new List<CampaignInvoice>()
+                CampaignName = "Empty", Photos = new List<TeamPhotos>()
             };
             package.Teams.Add(emptyTeam);
         }
