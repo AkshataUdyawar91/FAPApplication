@@ -7,6 +7,7 @@ import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
+import '../../../conversational_submission/presentation/widgets/conversational_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';class AgencyDashboardPage extends StatefulWidget {
   final String token;
@@ -31,6 +32,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   bool _isLoading = true;
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
+  bool _isChatbotOpen = false;
 
   @override
   void initState() {
@@ -249,29 +251,27 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                       deviceType: device,
                       onClose: () => setState(() => _isChatOpen = false),
                     ),
+                    if (_isChatbotOpen && !isMobile) ConversationalChatPanel(
+                      token: widget.token,
+                      onClose: () => setState(() => _isChatbotOpen = false),
+                    ),
                   ],
                 ),
               ),
             ],
           ),
           endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
-          floatingActionButton: (_isChatOpen && !isMobile) ? null : Builder(
-            builder: (scaffoldContext) => Padding(
-              padding: const EdgeInsets.only(bottom: 16, right: 4),
-              child: FloatingActionButton(
-                onPressed: () {
-                  if (isMobile) {
-                    Scaffold.of(scaffoldContext).openEndDrawer();
-                  } else {
-                    setState(() => _isChatOpen = !_isChatOpen);
-                  }
-                },
-                backgroundColor: AppColors.primary,
-                child: Icon(
-                  isMobile ? Icons.smart_toy : Icons.smart_toy,
-                  color: Colors.white,
-                ),
-              ),
+          floatingActionButton: Padding(
+            padding: const EdgeInsets.only(bottom: 16, right: 4),
+            child: FloatingActionButton(
+              onPressed: () {
+                Navigator.pushNamed(context, '/agency/conversational-submission', arguments: {
+                  'token': widget.token,
+                  'userName': widget.userName,
+                });
+              },
+              backgroundColor: AppColors.primary,
+              child: const Icon(Icons.smart_toy, color: Colors.white),
             ),
           ),
           floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
@@ -288,9 +288,10 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   }
 
   void _navigateToChatbot() {
-    Navigator.pushNamed(context, '/agency/conversational-submission', arguments: {
-      'token': widget.token,
-      'userName': widget.userName,
+    setState(() {
+      _isChatbotOpen = !_isChatbotOpen;
+      // Close the AI assistant panel when opening chatbot
+      if (_isChatbotOpen) _isChatOpen = false;
     });
   }
 

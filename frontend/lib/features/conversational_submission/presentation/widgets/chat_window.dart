@@ -132,6 +132,7 @@ class _ChatWindowState extends State<ChatWindow> {
               BotMessageBubble(
                 key: ValueKey(message.id),
                 message: message,
+                onActionTap: widget.onActionTap,
               )
             else
               UserMessageBubble(

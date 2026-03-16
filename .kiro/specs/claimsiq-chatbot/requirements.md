@@ -1,118 +1,254 @@
-# ClaimsIQ — T1: Agency Conversational Submission — Requirements
+# ClaimsIQ — Guided Workflow Assistant — Requirements
 
-## Requirement 1: Conversational Submission State Machine
-Build a server-side `ConversationalSubmissionService` that drives a 10-step guided chatbot flow for agency FAP claim submission. The service must track the current step per session, persist progress to the database, and expose a single chat endpoint that accepts user messages/actions and returns bot responses with buttons/cards.
+---
 
-### Acceptance Criteria
-- AC1: Service maintains a per-submission state machine with steps: `Greeting → POSelection → StateSelection → InvoiceUpload → ActivitySummaryUpload → CostSummaryUpload → TeamDetailsLoop → EnquiryDumpUpload → AdditionalDocsUpload → FinalReview`
-- AC2: Each step transition is persisted so sessions can resume after timeout
-- AC3: The chat endpoint returns structured JSON responses containing: message text, action buttons, card data, current step, and submission progress percentage
-- AC4: Invalid step transitions are rejected with helpful error messages
+## Architecture
 
-## Requirement 2: PO Search & Selection (Step 2)
-Agencies must be able to find and select a Purchase Order from their pre-synced SAP POs. Support two paths: direct PO number typeahead search, and progressive filtering (by date and pagination).
+- Frontend: Flutter Web (reuse existing project structure)
+- Backend: .NET 8 Web API
+- Database: SQL Server
+- Flow: Flutter Web → .NET API → SQL Server
+- Reuse existing modules — no duplicate services or unnecessary scaffolding
 
-### Acceptance Criteria
-- AC1: `GET /api/purchase-orders/search?vendorCode={code}&q={partial} returns matching POs with typeahead (min 3 chars, max 10 results, debounce 300ms client-side)
-- AC2: `GET /api/purchase-orders?vendorCode={code}&dateFrom=&dateTo=&amountMin=&amountMax=&sort=poDate:desc&page=1&size=5` supports progressive filtering with pagination
-- AC3: Zero results returns explanation (PO closed, not synced, etc.) with action buttons
-- AC4: On PO confirmation, `POST /api/submissions/draft { poId, agencyId }` creates a draft `DocumentPackage` with new `Draft` state
-- AC5: PO entity must have `RemainingBalance`, `POStatus` (Open/PartiallyConsumed/Closed), and `VendorCode` fields for search/filter queries
+---
 
-## Requirement 3: State & Activity Region Selection (Step 3)
-Agency enters the state where the activity was performed. This state is stored on the submission and used later for CIRCLE HEAD auto-assignment.
+## Implementation Status Summary
 
-### Acceptance Criteria
-- AC1: Bot shows agency's top 4 most frequently used states derived from: `SELECT TOP 4 State FROM DocumentPackages WHERE AgencyId = @agencyId GROUP BY State ORDER BY COUNT(*) DESC`
-- AC2: `[More states...]` shows full searchable list of 36 Indian states/UTs with typeahead
-- AC3: `PATCH /api/submissions/{id} { state: 'Maharashtra' }` updates the submission. State is NOT nullable — enforced at submit time
-- AC4: `DocumentPackage` entity must have a `State` column (string, nullable until submit)
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1 | Assistant UI and Basic Menu | ✅ DONE |
+| Phase 2 | PO Search & Selection | ✅ DONE |
+| Phase 3 | State & Activity Region Selection | ✅ DONE |
+| Phase 4 | Invoice Upload | ✅ DONE |
+| Phase 5–10 | Full Submission Flow | ✅ Previously implemented |
 
-## Requirement 4: Proactive Document Validation at Upload Time (Steps 4-6)
-Each document (Invoice, Activity Summary, Cost Summary) is validated immediately after upload — not batched at the end. The bot shows pass/fail/warning per field in real-time.
+---
 
-### Acceptance Criteria
-- AC1: `POST /api/documents/upload { submissionId, documentType }` uploads to Blob Storage, triggers extraction via DocumentAgent, then runs proactive validation rules
-- AC2: `GET /api/documents/{id}/status` returns extraction status (Pending/Processing/Completed/Failed) — client polls every 3s
-- AC3: `GET /api/documents/{id}/validation-results` returns per-field validation results with rule codes, pass/fail/warning status, and extracted values
-- AC4: Invoice validation rules implemented: `INV_INVOICE_NUMBER_PRESENT`, `INV_DATE_PRESENT`, `INV_AMOUNT_PRESENT`, `INV_GST_NUMBER_PRESENT`, `INV_GST_PERCENT_PRESENT`, `INV_HSN_SAC_PRESENT`, `INV_VENDOR_CODE_PRESENT`, `INV_PO_NUMBER_MATCH`, `INV_AMOUNT_VS_PO_BALANCE`
-- AC5: Activity Summary rules: `AS_DEALER_LOCATION_PRESENT`, `AS_DAYS_MATCH_COST_SUMMARY`, `AS_DAYS_MATCH_TEAM_DETAILS`
-- AC6: Cost Summary rules: `CS_PLACE_OF_SUPPLY_PRESENT`, `CS_TOTAL_DAYS_PRESENT`, `CS_TOTAL_VS_INVOICE`, `CS_ELEMENT_COST_VS_RATES`
-- AC7: Re-upload soft-deletes old document and links new one. Warnings carry forward to CIRCLE HEAD review as `ProactiveValidationResult`
+## PHASE 1 — Assistant UI and Basic Menu ✅
 
-## Requirement 5: Team Details Entry Loop (Step 7)
-Collect per-team data sequentially: team name, dealer selection, activity dates/working days, and photo proofs with AI vision validation.
+### Requirement P1.1: Copilot-Style Assistant UI
+Copilot-style assistant UI that opens as the main chat experience after login.
 
-### Acceptance Criteria
-- AC1: `POST /api/team-details { submissionId, teamName, dealerCode, dealerName, city, startDate, endDate, workingDays }` creates a team record
-- AC2: `PUT /api/team-details/{id}` updates team details
-- AC3: `GET /api/state/dealers?state={state}&q={searchTerm}&size=5` provides dealer typeahead from StateMapping table
-- AC4: If dealer not found, allow manual text entry — store as unverified, flag for CIRCLE HEAD review
-- AC5: Working days auto-calculated as business days (exclude Sundays) between start and end dates. User can adjust for holidays
-- AC6: Photo upload: min 3, max 10 per team. Client-side compression to ≤500KB (canvas.toBlob quality=0.7, max 1920px)
-- AC7: Per-photo AI vision validation via Azure OpenAI checks: Date overlay, GPS overlay, Blue T-shirt detection, 3W Vehicle detection. Results stored per-photo in ValidationResults
-- AC8: Bot shows thumbnail grid with per-photo pass/fail. Actions: Replace, Add more, Done with team
-- AC9: Progress indicator shows "Team X of Y done" throughout the loop
+#### What's Implemented
+- Login navigates to `/agency/assistant` (ChatScreen)
+- Greeting message: "Hello! I am your Field Activity Assistant. I can help you manage campaign requests."
+- 3 workflow action cards: Create Request, View My Requests, Pending Approvals
+- User message bubble shows action in sentence case (e.g., "Create Request")
+- FAB on Agency Dashboard navigates to `/agency/assistant`
 
-## Requirement 6: Enquiry Dump Upload — Mandatory (Step 8)
-Enquiry dump is mandatory evidence of enquiry generation. Hard-blocked if missing.
+#### Backend
+- `POST /api/assistant/message` with `action: 'greet'` returns greeting + cards
+- `AssistantController.cs` handles all assistant actions via single endpoint
 
-### Acceptance Criteria
-- AC1: Accepted formats: Excel (.xlsx, .csv) or PDF
-- AC2: Backend extracts enquiry records. Bot shows: total records, complete vs incomplete, fields checked per record (State, Date, Dealer Code, Dealer Name, District, Pincode, Customer Name, Customer Phone, Test Ride), sample record
-- AC3: Hard block: submission cannot transition from Draft to Submitted without `DocumentType = 'EnquiryDump'` document
-- AC4: Customer phone numbers stored with AES-256 column-level encryption
-- AC5: `SyncedToWarehouse = 0` initially; J7 (Enquiry Warehouse Sync) handles nightly push
+#### Frontend Files
+- `chat_screen.dart` — main chat page with message list, input mode switching
+- `assistant_notifier.dart` — Riverpod StateNotifier managing chat state
+- `assistant_remote_datasource.dart` — Dio-based API calls
+- `assistant_response_model.dart` — response DTO with type, message, cards, poItems, states fields
+- `assistant_providers.dart` — Riverpod provider definitions
+- Widgets: `AssistantHeader`, `AssistantBubble`, `UserBubble`, `WorkflowActionCard`, `ChatInputBar`
 
-## Requirement 7: Additional Documents Upload — Optional (Step 9)
-Optional supporting documents with a skip button.
+#### Acceptance Criteria — ALL MET ✅
+- AC1: Greeting + 3 cards appear on assistant open
+- AC2: Card tap sends action to backend
+- AC3: Backend returns structured JSON
+- AC4: AssistantNotifier manages state
+- AC5: AssistantRemoteDataSource calls API via Dio
 
-### Acceptance Criteria
-- AC1: Bot prompts for additional documents with `[Upload]` and `[Skip →]` buttons
-- AC2: Multiple additional documents allowed, stored in `AdditionalDocuments` table
+---
 
-## Requirement 8: Final Review & Submit (Step 10)
-Comprehensive summary card showing everything before final submission.
+## PHASE 2 — PO Search & Selection ✅
 
-### Acceptance Criteria
-- AC1: Summary card displays: PO details, State, Invoice (number, amount, validation status), Cost Summary, Activity Summary, all Teams (dealer, city, days, photo count/status), Enquiry Dump (record count, completeness), overall totals
-- AC2: `[Edit something]` navigates back to specific section; other data preserved
-- AC3: `POST /api/submissions/{id}/submit` validates: all mandatory documents present (Invoice, CostSummary, EnquiryDump, ActivitySummary, min 1 team with min 3 photos), State is set
-- AC4: On submit: status transitions `Draft → Submitted`, CIRCLE HEAD auto-assigned via `StateMapping WHERE State = submission.State AND IsActive = 1` with load balancing (least pending submissions)
-- AC5: Background pipeline triggered: J4 (Full Validation) → J5 (Confidence Score) → J6 (Notification)
-- AC6: Bot confirms with: Submission ID (format `CIQ-YYYY-XXXXX`), assigned reviewer name, expected review timeline (24-48 hours)
-- AC7: If no CIRCLE HEAD found for state, flag for manual assignment
+### Requirement P2.1: PO Number Typeahead Search
+When user taps "Create Request", assistant shows PO search with typeahead.
 
-## Requirement 9: Draft Persistence & Session Resume
-Submissions are saved as drafts and resumable after session timeout.
+#### What's Implemented
+- Tapping "Create Request" sends `create_request` action → backend returns `po_search` type
+- Search bar appears at bottom with "Search PO number (min 3 chars)..." hint
+- Typing 3+ chars triggers debounced search (400ms) via `search_po` action
+- Backend queries `PurchaseOrdersController` search endpoint internally
+- Results display as simple `OutlinedButton` list showing PO numbers only (no amount, no vendor)
+- Consistent styling: navy blue text (#003087), rounded corners, left-aligned
 
-### Acceptance Criteria
-- AC1: New `Draft` value added to `PackageState` enum (value = 0, before Uploaded)
-- AC2: On return, bot detects existing draft: "Welcome back! You have a draft submission for PO X. [Resume] [Start over]"
-- AC3: Resume loads from last completed step. All previously uploaded documents and entered data preserved
-- AC4: `GET /api/submissions/{id}` returns full submission detail including current step for resume
+#### Backend Actions
+- `create_request` → returns `po_search` type with search prompt
+- `search_po` → queries POs by number, returns `po_search_results` with `poItems` array
 
-## Requirement 10: Duplicate Submission Detection
-Warn when same PO + invoice number combination already exists.
+#### Frontend Files
+- `po_search_list.dart` — renders PO results as OutlinedButton list (PO number only)
+- Input mode `'po'` activates PO search bar at bottom
 
-### Acceptance Criteria
-- AC1: On invoice upload, check: `SELECT FROM DocumentPackages dp JOIN Invoices i ON dp.Id = i.PackageId WHERE dp.PO.PONumber = @poNumber AND i.InvoiceNumber = @invoiceNum AND dp.IsDeleted = 0 AND dp.State NOT IN ('Rejected')`
-- AC2: If duplicate found, bot warns: "Submission CIQ-X already exists for this PO with invoice INV-X. [View existing] [Submit anyway (new version)]"
+#### Acceptance Criteria — ALL MET ✅
+- AC1: Create Request shows PO search prompt
+- AC2: Search bar appears for PO input
+- AC3: 3+ chars triggers typeahead
+- AC4: Results as selectable PO number list
+- AC5: Selecting PO sends `select_po` with PO ID
+- AC6: Mock POs seeded (8110011482, 8110011617, 8110011618, 8110011755)
 
-## Requirement 11: Edge Cases & Error Handling
-Robust handling of all failure scenarios.
+### Requirement P2.2: Direct to State Selection After PO Selection
+After PO selection, assistant skips file upload and goes directly to state selection.
 
-### Acceptance Criteria
-- AC1: Upload failure: client retries 3x with exponential backoff. Bot shows "Upload failed. [Retry upload]". Draft preserved
-- AC2: AI extraction timeout (>60s): switch from polling to push via SignalR. Bot: "Taking longer than usual. I'll notify you when done."
-- AC3: Wrong document type: DocumentAgent classification confidence <70% triggers warning: "This looks like a Cost Summary, not an Invoice. [Upload correct] [Proceed anyway]"
-- AC4: No open POs: "No open POs found. POs sync every 4 hours. [Check status] [Contact support]"
-- AC5: Photo >10MB before compression: auto-compress. If still >10MB: "Photo too large. Please use lower resolution." If original >20MB: reject outright
-- AC6: Enquiry dump unexpected format: "Couldn't extract records. [Re-upload] [Upload as additional document]"
+#### What's Implemented
+- `select_po` action → backend returns `state_selection` type (not `upload_po`)
+- PO upload step removed from flow
+- Response includes quick-select state buttons
 
-## Requirement 12: Submission ID Format
-Submissions use ClaimsIQ branding format.
+#### Acceptance Criteria — ALL MET ✅
+- AC1: After PO selection, state selection appears immediately
+- AC2: No upload step between PO selection and state selection
 
-### Acceptance Criteria
-- AC1: Submission number format: `CIQ-YYYY-XXXXX` (e.g., CIQ-2026-00042)
-- AC2: Auto-generated sequential number per year
+---
+
+## PHASE 3 — State & Activity Region Selection ✅
+
+### Requirement P3.1: State Selection with Quick-Select and Typeahead
+After PO selection, assistant asks which state the activity was conducted in.
+
+#### What's Implemented
+- After `select_po`, backend returns `state_selection` type with:
+  - Message: "PO {number} selected. Which state was this activity conducted in? Start typing or select:"
+  - Quick-select cards for top 4 frequent states (default: Maharashtra, Gujarat, Karnataka, Tamil Nadu)
+  - "More states..." card with search icon
+- State buttons rendered as `OutlinedButton` list (same style as PO list)
+- "More states..." button has search icon prefix
+- State search bar appears at bottom (input mode `'state'`) alongside buttons
+- Typing filters states via `search_state` action (debounced 300ms)
+- `list_states` returns all 36 Indian states/UTs as `state_search_results`
+- `select_state` validates against 36 states, returns `state_confirmed`
+- Confirmation shows green checkmark: "State set to {state}. Proceeding to the next step..."
+- Header label "Select State" above buttons (matches "Purchase Orders" label style)
+
+#### Backend Actions (AssistantController.cs)
+- `select_state` → validates state name, returns `state_confirmed`
+- `search_state` → filters AllIndianStates list by query, returns `state_search_results` with `states` array
+- `list_states` → returns full 36 states/UTs
+- `BuildStateSelectionPrompt` → builds top 4 frequent states + "More states..." card
+- `AllIndianStates` — static list of 36 Indian states and union territories
+
+#### Frontend
+- `_stateButton` helper in `chat_screen.dart` — reusable OutlinedButton with consistent styling
+- Input mode `'state'` shows state search bar for both `state_selection` and `state_search_results` types
+- `states` field on `AssistantResponseModel` for state search results
+
+#### Acceptance Criteria — ALL MET ✅
+- AC1: After PO selection, state selection prompt with quick-select buttons appears
+- AC2: Top 4 frequent states shown as tappable buttons (OutlinedButton style)
+- AC3: "More states..." opens full searchable list
+- AC4: Typing in search bar filters states in real-time
+- AC5: Selecting a state shows confirmation with green checkmark
+- AC6: Invalid state names rejected with helpful message
+- AC7: Both quick-select buttons and search bar available simultaneously
+
+---
+
+## PHASE 4 — Invoice Upload ✅
+
+### Requirement P4.1: Invoice Document Upload
+After state confirmation, assistant prompts for invoice upload with two action buttons.
+
+#### What's Implemented
+- After `select_state`, backend creates a Draft `DocumentPackage` (linked to selected PO via `SelectedPOId` and `ActivityState`)
+- Backend returns `invoice_upload` type with:
+  - Message: "State set to {state}. Please upload the invoice document."
+  - Two action buttons: "Upload from device" (upload_file icon), "Take photo" (camera_alt icon)
+  - `submissionId` (the draft package GUID) for frontend to attach upload to correct package
+  - `allowedFormats`: PDF, JPG, PNG
+- `HandleSelectPO` now returns `SelectedPO` in response so frontend stores the PO ID in state
+- `selectState` frontend method passes `poId` in `payloadJson` so backend can link PO to draft
+- Frontend `_pickInvoiceFile` uses `file_picker` package (PDF, JPG, PNG, max 10 MB)
+- Upload posts to `POST /api/documents/upload` with `documentType=Invoice`, `submissionId`, `Content-Type: multipart/form-data`
+- `LinearProgressIndicator` shown during upload
+- On success, frontend sends `invoice_uploaded` action with `documentId` → backend returns `invoice_upload_success`
+- Green checkmark confirmation: "Invoice uploaded successfully!"
+
+#### Backend Changes (AssistantController.cs)
+- `HandleSelectState` creates Draft `DocumentPackage` with `SelectedPOId`, `ActivityState`, `AgencyId`
+- `HandleSelectPO` returns `SelectedPO` object in response (fix: was missing, caused null `poId` downstream)
+- Added `SubmissionId` field to `AssistantResponse` DTO
+- Added `invoice_uploaded` action to router → `HandleInvoiceUploaded` method
+- Logging: `=== SELECT STATE ===` shows PayloadJson and SelectedPOId for debugging
+
+#### Backend Changes (DocumentService.cs)
+- Invoice `POId` FK fix: now uses `package.SelectedPOId` (assistant flow) before falling back to `PackageId` match (legacy flow)
+- Invoice extraction now saves individual fields (InvoiceNumber, InvoiceDate, VendorName, GSTNumber, SubTotal, TaxAmount, TotalAmount) to Invoice entity columns, not just `ExtractedDataJson`
+- Extraction pipeline: File → Azure Blob Storage → Azure Document Intelligence + OpenAI → DB
+- Detailed logging added: `=== UPLOAD START ===`, `=== BLOB UPLOAD ===`, `=== INVOICE: Looking for PO ===`, `=== INVOICE EXTRACTION START/RESULT ===`
+
+#### Frontend Changes
+- `assistant_response_model.dart` — added `submissionId` field
+- `assistant_remote_datasource.dart` — added `uploadInvoice` method (multipart form to `/documents/upload` with explicit `Content-Type: multipart/form-data` via Dio `Options`)
+- `assistant_notifier.dart` — added `submissionId` to `AssistantState`, added `uploadInvoice(bytes, fileName)` method, `selectState` passes `poId` in payload
+- `chat_screen.dart` — `invoice_upload` case with two `OutlinedButton.icon` buttons (consistent navy blue #003087 styling), `LinearProgressIndicator`, format hint text; `invoice_upload_success` case with green checkmark; `_pickInvoiceFile` method
+
+#### Upload Endpoint (Existing — No Changes to Interface)
+- `POST /api/documents/upload` in `DocumentsController.cs`
+- Multipart form: `file`, `documentType=Invoice`, `submissionId={packageId}`
+- Pipeline: blob storage → AI extraction (Document Intelligence + OpenAI) → DB record with extracted fields → proactive validation
+
+#### Acceptance Criteria — ALL MET ✅
+- AC1: After state confirmation, invoice upload prompt appears with two buttons
+- AC2: Two buttons: "Upload from device" and "Take photo" (OutlinedButton.icon style)
+- AC3: File picker accepts PDF, JPG, PNG (max 10 MB enforced client-side)
+- AC4: Upload progress shown via LinearProgressIndicator
+- AC5: Upload uses existing `POST /api/documents/upload` endpoint with multipart/form-data
+- AC6: Draft submission created with PO (via SelectedPOId) and state linked
+- AC7: Invoice row saved to Invoices table with correct POId FK
+- AC8: AI extraction runs and saves extracted fields to individual DB columns
+
+---
+
+## PHASES 5–10 — Full Submission Flow (Previously Implemented ✅)
+
+The following were implemented in the prior conversational submission system and remain functional. They will be integrated into the guided workflow assistant in future phases.
+
+- **Phase 5**: Proactive Document Validation at Upload Time (Invoice: 9 rules, Activity Summary: 3 rules, Cost Summary: 4 rules)
+- **Phase 6**: Team Details Entry Loop (team name, dealer, dates, working days, photo proofs with AI vision)
+- **Phase 7**: Enquiry Dump Upload (mandatory, Excel/CSV/PDF)
+- **Phase 8**: Additional Documents Upload (optional with skip)
+- **Phase 9**: Final Review & Submit (summary card, Draft → Submitted, CIRCLE HEAD auto-assigned)
+- **Phase 10**: Draft Persistence & Session Resume
+
+---
+
+## Routing (Current)
+
+| Route | Page | Auth |
+|-------|------|------|
+| `/` | NewLoginPage | No |
+| `/agency/dashboard` | AgencyDashboardPage | Yes (AuthWrapper) |
+| `/agency/assistant` | ChatScreen | Yes (AuthWrapper) |
+| `/agency/conversational-submission` | ConversationalSubmissionPage (old) | Yes |
+
+- Login navigates to `/agency/assistant`
+- Dashboard FAB navigates to `/agency/assistant`
+- "New Request" button on dashboard navigates to upload page
+- `main.dart` uses `MaterialApp` with named routes (active routing system)
+
+---
+
+## Key Backend Files
+
+| File | Purpose |
+|------|---------|
+| `AssistantController.cs` | All assistant chat actions (greet, create_request, search_po, select_po, select_state, search_state, list_states, invoice_uploaded) |
+| `DocumentsController.cs` | Document upload (with logging), extraction status, validation, download |
+| `DocumentService.cs` | Upload pipeline: file validation → blob storage → Invoice/PO entity creation → AI extraction → save extracted fields to DB columns |
+| `PurchaseOrdersController.cs` | PO search/typeahead and paginated list |
+| `DocumentsController.cs` | Document upload, extraction status, validation, download |
+| `SubmissionsController.cs` | Submission CRUD, approval flow, draft creation |
+| `ConversationalSubmissionController.cs` | Old 10-step chatbot (still functional) |
+| `ApplicationDbContextSeed.cs` | Seeds agency, user, 3 sample POs |
+
+## Key Frontend Files
+
+| File | Purpose |
+|------|---------|
+| `chat_screen.dart` | Main chat page, message list, input mode switching (none/po/state) |
+| `assistant_notifier.dart` | StateNotifier: greet, sendAction, searchPO, selectPO, searchState, selectState, listAllStates, uploadInvoice, uploadPOFile |
+| `assistant_remote_datasource.dart` | Dio API calls to /assistant/message, /upload/po, /documents/upload (invoice) |
+| `assistant_response_model.dart` | Response DTO: type, message, cards, poItems, states, selectedPO, allowedFormats, submissionId |
+| `assistant_providers.dart` | Riverpod provider definitions |
+| `po_search_list.dart` | PO results as OutlinedButton list (number only) |
+| `workflow_action_card.dart` | Tappable workflow card with icon |
+| `file_upload_card.dart` | File upload widget with drag-drop |

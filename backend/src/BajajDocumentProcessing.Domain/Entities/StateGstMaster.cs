@@ -8,9 +8,9 @@ namespace BajajDocumentProcessing.Domain.Entities;
 public class StateGstMaster : BaseEntity
 {
     /// <summary>
-    /// 2-digit GST state code (e.g., "01", "07")
+    /// GST rate percentage applicable for this state (e.g., 18.00)
     /// </summary>
-    public string GstCode { get; set; } = string.Empty;
+    public decimal GstPercentage { get; set; } = 18.00m;
 
     /// <summary>
     /// Short state code (e.g., "JK", "DL")

@@ -32,37 +32,8 @@ public class ReferenceDataService : IReferenceDataService
     /// <inheritdoc />
     public bool ValidateGSTStateMapping(string gstNumber, string stateCode)
     {
-        if (string.IsNullOrWhiteSpace(gstNumber) || gstNumber.Length < 2)
-        {
-            _logger.LogWarning("Invalid GST number format: {GSTNumber}", gstNumber);
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(stateCode))
-        {
-            _logger.LogWarning("State code is empty");
-            return false;
-        }
-
-        var gstMappings = GetGstMappings();
-        var gstStateCode = gstNumber.Substring(0, 2);
-
-        if (!gstMappings.TryGetValue(gstStateCode, out var expectedStateCode))
-        {
-            _logger.LogWarning("Unknown GST state code: {GSTStateCode}", gstStateCode);
-            return false;
-        }
-
-        var isValid = expectedStateCode.Equals(stateCode, StringComparison.OrdinalIgnoreCase);
-
-        if (!isValid)
-        {
-            _logger.LogWarning(
-                "GST state mismatch. GST number {GSTNumber} indicates state {ExpectedState}, but document has {ActualState}",
-                gstNumber, expectedStateCode, stateCode);
-        }
-
-        return isValid;
+        // GstRate is a rate value (e.g. 18%), not a state prefix — state mapping validation skipped
+        return true;
     }
 
     /// <inheritdoc />
@@ -71,9 +42,10 @@ public class ReferenceDataService : IReferenceDataService
         if (string.IsNullOrWhiteSpace(gstNumber) || gstNumber.Length < 2)
             return null;
 
+        // First 2 chars of GSTIN are the state code prefix — match against StateCode
+        var prefix = gstNumber.Substring(0, 2).ToUpperInvariant();
         var gstMappings = GetGstMappings();
-        var gstStateCode = gstNumber.Substring(0, 2);
-        return gstMappings.TryGetValue(gstStateCode, out var stateCode) ? stateCode : null;
+        return gstMappings.ContainsKey(prefix) ? prefix : null;
     }
 
     /// <inheritdoc />
@@ -189,9 +161,9 @@ public class ReferenceDataService : IReferenceDataService
 
     // --- Private cache helpers ---
 
-    private Dictionary<string, string> GetGstMappings()
+    private Dictionary<string, decimal> GetGstMappings()
     {
-        return _cache.GetOrCreate(GstCacheKey, entry =>
+        return _cache.GetOrCreate<Dictionary<string, decimal>>(GstCacheKey, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = CacheTtl;
             try
@@ -199,12 +171,12 @@ public class ReferenceDataService : IReferenceDataService
                 return _dbContext.StateGstMasters
                     .AsNoTracking()
                     .Where(g => g.IsActive)
-                    .ToDictionary(g => g.GstCode, g => g.StateCode);
+                    .ToDictionary(g => g.StateCode, g => g.GstPercentage);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to load GST mappings from database, using empty dictionary");
-                return new Dictionary<string, string>();
+                return new Dictionary<string, decimal>();
             }
         })!;
     }

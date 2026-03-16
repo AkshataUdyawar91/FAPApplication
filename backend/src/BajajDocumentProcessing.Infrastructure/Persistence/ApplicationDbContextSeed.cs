@@ -83,7 +83,12 @@ public static class ApplicationDbContextSeed
             {
                 ("PO-2026-001", new DateTime(2026, 1, 15), 500000m, 350000m, "Open"),
                 ("PO-2026-002", new DateTime(2026, 2, 20), 250000m, 250000m, "Open"),
-                ("PO-2025-045", new DateTime(2025, 11, 10), 750000m, 120000m, "PartiallyConsumed")
+                ("PO-2025-045", new DateTime(2025, 11, 10), 750000m, 120000m, "PartiallyConsumed"),
+                ("8110011482", new DateTime(2026, 3, 1), 1200000m, 800000m, "Open"),
+                ("8110011617", new DateTime(2026, 3, 5), 950000m, 950000m, "Open"),
+                ("8110011618", new DateTime(2026, 3, 5), 680000m, 400000m, "PartiallyConsumed"),
+                ("8110011700", new DateTime(2026, 2, 28), 320000m, 320000m, "Open"),
+                ("8110011755", new DateTime(2026, 3, 10), 1500000m, 1100000m, "Open"),
             };
 
             foreach (var (poNum, poDate, total, remaining, status) in poData)
@@ -121,7 +126,7 @@ public static class ApplicationDbContextSeed
             }
 
             await context.SaveChangesAsync();
-            Console.WriteLine("[Seed] Added 3 sample POs for Demo Agency");
+            Console.WriteLine("[Seed] Added 8 sample POs for Demo Agency");
         }
     }
 

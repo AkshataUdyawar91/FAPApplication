@@ -71,6 +71,9 @@ public class DocumentsController : ControllerBase
     {
         try
         {
+            _logger.LogInformation("=== DOCUMENTS UPLOAD === File: {FileName}, Size: {Size}, DocType: {DocType}, PackageId: {PkgId}, SubmissionId: {SubId}",
+                file?.FileName, file?.Length, documentType, packageId, submissionId);
+
             if (file == null || file.Length == 0)
             {
                 return BadRequest(new { message = "No file provided" });
