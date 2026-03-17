@@ -130,7 +130,7 @@ class _InvoiceListSectionState extends State<InvoiceListSection> {
       final invoice = _invoices[invoiceIndex];
       invoice.campaigns.add(CampaignData(
         id: '${invoice.id}_campaign_${invoice.campaigns.length + 1}',
-      ));
+      ),);
     });
     widget.onInvoicesChanged(_invoices);
   }
@@ -290,14 +290,14 @@ class _InvoiceListSectionState extends State<InvoiceListSection> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(invoice.invoiceNumber.isNotEmpty ? 'Invoice #${invoice.invoiceNumber}' : 'Invoice ${index + 1}',
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),),
                         if (invoice.file != null)
-                          Text(invoice.file!.name, style: TextStyle(fontSize: 12, color: AppColors.textSecondary), overflow: TextOverflow.ellipsis),
+                          Text(invoice.file!.name, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary), overflow: TextOverflow.ellipsis),
                       ],
                     ),
                   ),
                   Text('${invoice.campaigns.length} campaign${invoice.campaigns.length > 1 ? 's' : ''}',
-                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),),
                   if (_invoices.length > 1)
                     IconButton(onPressed: () => _removeInvoice(index), icon: const Icon(Icons.delete_outline, color: AppColors.rejectedText, size: 20)),
                   Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: AppColors.textSecondary),
@@ -434,7 +434,7 @@ class _InvoiceListSectionState extends State<InvoiceListSection> {
           // Campaign header
           Row(
             children: [
-              Icon(Icons.campaign, color: AppColors.primary, size: 20),
+              const Icon(Icons.campaign, color: AppColors.primary, size: 20),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -462,12 +462,12 @@ class _InvoiceListSectionState extends State<InvoiceListSection> {
                     Expanded(child: _buildDateField('Start Date', campaign.startDate, (v) {
                       campaign.startDate = v;
                       _calculateWorkingDays(campaign);
-                    })),
+                    }),),
                     const SizedBox(width: 12),
                     Expanded(child: _buildDateField('End Date', campaign.endDate, (v) {
                       campaign.endDate = v;
                       _calculateWorkingDays(campaign);
-                    })),
+                    }),),
                     const SizedBox(width: 12),
                     SizedBox(
                       width: 120,
@@ -529,11 +529,11 @@ class _InvoiceListSectionState extends State<InvoiceListSection> {
                       child: TextField(
                         controller: TextEditingController(text: campaign.gpsLocation),
                         onChanged: (v) { campaign.gpsLocation = v; widget.onInvoicesChanged(_invoices); },
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           labelText: 'GPS Location',
                           hintText: 'Click to capture location',
-                          border: const OutlineInputBorder(),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           isDense: true,
                           suffixIcon: Icon(Icons.location_on, color: AppColors.textSecondary),
                         ),
@@ -586,7 +586,7 @@ class _InvoiceListSectionState extends State<InvoiceListSection> {
                           const SizedBox(height: 8),
                           const Text('Upload team photos', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w500)),
                           const SizedBox(height: 4),
-                          Text('PNG, JPG, JPEG only (max. 10MB)', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                          const Text('PNG, JPG, JPEG only (max. 10MB)', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                         ],
                       ),
                     ),
@@ -612,7 +612,7 @@ class _InvoiceListSectionState extends State<InvoiceListSection> {
                                 const Icon(Icons.image, size: 16, color: AppColors.approvedText),
                                 const SizedBox(width: 6),
                                 Text(photo.name.length > 20 ? '${photo.name.substring(0, 20)}...' : photo.name,
-                                    style: const TextStyle(fontSize: 12)),
+                                    style: const TextStyle(fontSize: 12),),
                                 const SizedBox(width: 6),
                                 InkWell(
                                   onTap: () => _removePhoto(invoiceIndex, campaignIndex, photoIndex),
@@ -643,8 +643,8 @@ class _InvoiceListSectionState extends State<InvoiceListSection> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Upload itemized costs with quantities, rates, and totals (Excel/PDF)',
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                const Text('Upload itemized costs with quantities, rates, and totals (Excel/PDF)',
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),),
                 const SizedBox(height: 12),
                 if (campaign.costSummaryFile == null)
                   InkWell(

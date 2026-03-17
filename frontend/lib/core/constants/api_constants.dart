@@ -18,6 +18,8 @@ class ApiConstants {
   // Document endpoints
   static const String uploadDocument = '/documents/upload';
   static String documentById(String id) => '/documents/$id';
+  static String documentStatus(String id) => '/documents/$id/status';
+  static String documentValidationResults(String id) => '/documents/$id/validation-results';
 
   // Analytics endpoints
   static const String kpis = '/analytics/kpis';
@@ -33,4 +35,19 @@ class ApiConstants {
   // Notification endpoints
   static const String notifications = '/notifications';
   static String markNotificationRead(String id) => '/notifications/$id/read';
+
+  // Conversational Submission endpoints
+  static const String conversationMessage = '/conversation/message';
+  static String conversationState(String id) => '/conversation/$id/state';
+  static String conversationResume(String id) => '/conversation/$id/resume';
+
+  // Purchase Order endpoints
+  static const String purchaseOrderSearch = '/purchase-orders/search';
+  static const String purchaseOrders = '/purchase-orders';
+
+  // Dealer search endpoints
+  static const String dealerSearch = '/state/dealers';
+
+  // SignalR Hub
+  static String get signalRHubUrl => baseUrl.replaceAll('/api', '/hubs/submission');
 }

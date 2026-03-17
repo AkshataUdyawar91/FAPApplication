@@ -170,7 +170,7 @@ class HQRejectionSection extends StatelessWidget {
     try {
       final dt = DateTime.parse(date.toString());
       final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',];
       return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
     } catch (e) {
       return 'N/A';

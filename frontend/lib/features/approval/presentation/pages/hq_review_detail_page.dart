@@ -45,7 +45,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
       'Pragma': 'no-cache',
       'Expires': '0',
     },
-  ));
+  ),);
   final _commentsController = TextEditingController();
 
   bool _isLoading = true;
@@ -286,10 +286,10 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
       NavItem(icon: Icons.rate_review, label: 'Review', isActive: true, onTap: () {}),
       NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      }),
+      },),
       NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      }),
+      },),
     ];
   }
 
@@ -531,7 +531,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.calendar_today,
-                                  size: 14, color: Colors.grey[600]),
+                                  size: 14, color: Colors.grey[600],),
                               const SizedBox(width: 4),
                               Text(
                                 _formatDisplayDate(submittedDate),
@@ -564,7 +564,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                       foregroundColor: const Color(0xFFEF4444),
                       side: const BorderSide(color: Color(0xFFEF4444)),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
+                          horizontal: 20, vertical: 12,),
                     ),
                     child: const Text('Reject'),
                   ),
@@ -574,7 +574,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                       backgroundColor: const Color(0xFF10B981),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
+                          horizontal: 20, vertical: 12,),
                     ),
                     child: _isProcessing
                         ? const SizedBox(
@@ -694,7 +694,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
             Row(
               children: [
                 const Icon(Icons.check_circle,
-                    color: Color(0xFF10B981), size: 20),
+                    color: Color(0xFF10B981), size: 20,),
                 const SizedBox(width: 8),
                 Text(
                   'ASM Review',
@@ -779,7 +779,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
           remarks: remarks,
           documentId: photo['photoId']?.toString(),
-        ));
+        ),);
       }
 
       if (costFile != null && costFile.isNotEmpty) {
@@ -791,7 +791,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           documentName: costFile,
           status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
           remarks: remarks,
-        ));
+        ),);
       }
 
       if (activityFile != null && activityFile.isNotEmpty) {
@@ -803,7 +803,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
           documentName: activityFile,
           status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
           remarks: remarks,
-        ));
+        ),);
       }
     }
 
@@ -1011,7 +1011,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
                                   const SizedBox(height: 8),
                                   Text('Preview not available for this file type.\nClick "Download" to save.',
                                     textAlign: TextAlign.center,
-                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
+                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),),
                                 ],
                               ),
                             ),

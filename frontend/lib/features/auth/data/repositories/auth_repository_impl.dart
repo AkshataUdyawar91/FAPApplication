@@ -59,7 +59,7 @@ class AuthRepositoryImpl implements AuthRepository {
     try {
       final refreshToken = await localDataSource.getRefreshToken();
       if (refreshToken == null) {
-        return Left(CacheFailure('No refresh token found'));
+        return const Left(CacheFailure('No refresh token found'));
       }
 
       await remoteDataSource.refreshToken(refreshToken);

@@ -9,7 +9,6 @@ import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
-import '../widgets/po_fields_section.dart';
 import '../widgets/campaign_list_section.dart';
 
 class AgencyUploadPage extends StatefulWidget {
@@ -38,7 +37,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   late final TabController _tabController;
   int _currentStep = 1;
   bool _isUploading = false;
-  bool _isExtractingPO = false;
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
   bool _isLoadingExisting = false;
@@ -57,7 +55,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   bool _isLoadingStates = false;
 
   PlatformFile? _purchaseOrder;
-  String? _existingPOFileName;
+  String? _existingPOFileName; // Server-side PO file name for edit mode
   List<InvoiceItemData> _invoices = []; // Invoices linked to PO (package level)
   PlatformFile? _costSummaryFile;
   String? _existingCostSummaryFileName;
@@ -66,7 +64,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   PlatformFile? _enquiryDocFile;
   String? _existingEnquiryDocFileName;
   List<PlatformFile> _additionalDocs = [];
-  Map<String, dynamic>? _poData;
 
   List<CampaignItemData> _campaigns = []; // Teams (independent of invoices)
 
@@ -174,12 +171,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               parsed = Map<String, dynamic>.from(extractedData);
             }
             if (parsed != null) {
-              _poData = {
-                'poNumber': parsed['PONumber'] ?? parsed['poNumber'],
-                'totalAmount': parsed['TotalAmount'] ?? parsed['totalAmount'],
-                'date': parsed['PODate'] ?? parsed['poDate'] ?? parsed['Date'] ?? parsed['date'],
-                'vendorName': parsed['VendorName'] ?? parsed['vendorName'],
-              };
+              // PO data loaded for edit mode reference (used by POFieldsSection if present)
             }
           }
         }
@@ -285,7 +277,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
 
   Future<void> _uploadAndExtractPO(PlatformFile file) async {
     if (file.bytes == null) return;
-    setState(() => _isExtractingPO = true);
     try {
       final uploadResponse = await _dio.post(
         '/documents/upload',
@@ -308,8 +299,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
     } catch (e) {
       debugPrint('Error uploading/extracting PO: $e');
       _showError('Failed to extract PO data. You can enter details manually.');
-    } finally {
-      if (mounted) setState(() => _isExtractingPO = false);
     }
   }
 
@@ -317,14 +306,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
     const maxAttempts = 25;
     const delayBetweenAttempts = Duration(seconds: 2);
     
-    print('PO polling started: packageId=$packageId, documentId=$documentId');
-    
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
       await Future.delayed(delayBetweenAttempts);
-      if (!mounted) {
-        print('PO polling stopped: widget disposed at attempt $attempt');
-        return;
-      }
+      if (!mounted) return;
       
       try {
         final response = await _dio.get(
@@ -342,12 +326,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               orElse: () => null,
             );
             
-            if (poDoc == null) {
-              print('PO poll attempt $attempt: PO doc not found in ${documents.length} docs');
-            } else if (poDoc['extractedData'] == null) {
-              print('PO poll attempt $attempt: doc found but extractedData is null');
-            }
-            
             if (poDoc != null) {
               var extractedData = poDoc['extractedData'];
               if (extractedData != null) {
@@ -361,18 +339,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                   final date = extractedData['PODate'] ?? extractedData['poDate'] ?? extractedData['Date'] ?? extractedData['date'];
                   if (poNumber != null || totalAmount != null || vendorName != null || date != null) {
                     if (!mounted) return;
-                    setState(() {
-                      _poData = {
-                        'poNumber': poNumber,
-                        'totalAmount': totalAmount,
-                        'date': date,
-                        'vendorName': vendorName,
-                      };
-                    });
-                    print('PO extraction successful: $_poData');
+                    setState(() {}); // trigger rebuild to show PO data in UI if needed
                     return; // Success - exit polling
-                  } else {
-                    print('PO extraction attempt $attempt: No meaningful data found in extractedData');
                   }
                 }
               }
@@ -480,7 +448,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
     Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: {
       'token': widget.token,
       'userName': widget.userName,
-    });
+    },);
   }
 
   Future<void> _handleSubmit() async {
@@ -490,24 +458,16 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
     try {
       String? packageId = _currentPackageId;
 
-      debugPrint('=== SUBMIT STATE ===');
-      debugPrint('_currentPackageId: $_currentPackageId');
-      debugPrint('_selectedPO: $_selectedPO');
-      debugPrint('_purchaseOrder: ${_purchaseOrder?.name}');
-      debugPrint('packageId at start: $packageId');
-
       if (!_isEditMode) {
-        // If PO was selected from dropdown, packageId is already set from the PO's packageId.
-        // If packageId is still null (backend not yet restarted / PO has no package),
-        // create a new package via POST /submissions then associate the selected PO.
-        if (packageId == null && _selectedPO != null) {
-          debugPrint('packageId null with selectedPO — creating new package');
+        // Always create a fresh package for the current user when submitting via dropdown PO.
+        // The PO's linked packageId is a seeded/template package — reusing it would assign
+        // the submission to the wrong user and hide it from the dashboard.
+        if (_selectedPO != null) {
           final createResp = await _dio.post(
             '/submissions',
-            data: {},
+            data: {'selectedPoId': _selectedPO!['id']?.toString()},
             options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
-          debugPrint('=== CREATE PACKAGE RESPONSE === ${createResp.statusCode} ${createResp.data}');
           if (createResp.statusCode == 200 || createResp.statusCode == 201) {
             packageId = (createResp.data['id'] ?? createResp.data['packageId'])?.toString();
           }
@@ -520,9 +480,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 'documentType': 'PO',
               }),
               options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
-          debugPrint('=== PO UPLOAD RESPONSE ===');
-          debugPrint('Status: ${poResponse.statusCode}');
-          debugPrint('Body: ${poResponse.data}');
           if (poResponse.statusCode == 200) {
             packageId = poResponse.data['packageId']?.toString();
           }
@@ -540,7 +497,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 'documentType': 'PO',
                 'packageId': packageId,
               }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),);
         }
       }
 
@@ -663,27 +620,21 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 'documentType': 'AdditionalDocument',
                 'packageId': packageId,
               }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),);
         }
       }
 
       if (_isEditMode) {
-        final resubmitResp = await _dio.patch(
+        await _dio.patch(
           '/submissions/$packageId/resubmit',
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
-        debugPrint('=== RESUBMIT RESPONSE ===');
-        debugPrint('Status: ${resubmitResp.statusCode}');
-        debugPrint('Body: ${resubmitResp.data}');
         _showSuccess('Submission resubmitted successfully!');
       } else {
-        final processResp = await _dio.post(
+        await _dio.post(
           '/submissions/$packageId/process-async',
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
-        debugPrint('=== PROCESS-ASYNC RESPONSE ===');
-        debugPrint('Status: ${processResp.statusCode}');
-        debugPrint('Body: ${processResp.data}');
         _showSuccess('Submission complete! Processing in background...');
       }
 
@@ -707,10 +658,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   }
 
   void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: AppColors.rejectedText));
+      SnackBar(content: Text(msg), backgroundColor: AppColors.rejectedText),);
 
   void _showSuccess(String msg) => ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: AppColors.approvedText));
+      SnackBar(content: Text(msg), backgroundColor: AppColors.approvedText),);
 
   // ─── SHARED NAV ITEMS ────────────────────────────────────────────────
   List<NavItem> _getNavItems(BuildContext context) {
@@ -719,10 +670,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       NavItem(icon: Icons.upload_file, label: 'Upload', isActive: true, onTap: () {}),
       NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      }),
+      },),
       NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      }),
+      },),
     ];
   }
 
@@ -1098,7 +1049,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 GestureDetector(
                   onTap: () => setState(() {
                     _selectedPO = null;
-                    _poData = null;
+                    _currentPackageId = null;
                     _poSearchController.clear();
                   }),
                   child: const Icon(Icons.close, size: 16, color: AppColors.rejectedText),
@@ -1165,18 +1116,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                   final amount = po['totalAmount'];
                   return InkWell(
                     onTap: () {
-                      debugPrint('=== PO SELECTED FROM DROPDOWN ===');
-                      debugPrint('PO data: $po');
                       setState(() {
                         _selectedPO = po;
                         _currentPackageId = po['packageId']?.toString();
-                        debugPrint('_currentPackageId set to: $_currentPackageId');
-                        _poData = {
-                          'poNumber': po['poNumber'],
-                          'totalAmount': po['totalAmount'],
-                          'date': po['poDate'],
-                          'vendorName': po['vendorName'],
-                        };
                         _poSearchController.clear();
                       });
                     },
@@ -1883,7 +1825,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       onPressed: _navigateToDashboard,
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.textSecondary,
-        side: BorderSide(color: AppColors.border, width: 1.5),
+        side: const BorderSide(color: AppColors.border, width: 1.5),
         padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),

@@ -80,13 +80,13 @@ public class POsController : ControllerBase
                 .Select(p => new
                 {
                     p.Id,
-                    p.PackageId,
                     p.PONumber,
                     p.VendorName,
                     p.TotalAmount,
                     p.PODate,
                     p.FileName,
-                    AgencyName = p.Agency != null ? p.Agency.SupplierName : null
+                    AgencyName = p.Agency != null ? p.Agency.SupplierName : null,
+                    PackageId = p.PackageId
                 })
                 .ToListAsync(cancellationToken);
 
@@ -113,7 +113,7 @@ public class POsController : ControllerBase
                 .AsNoTracking()
                 .Where(s => s.IsActive)
                 .OrderBy(s => s.StateName)
-                .Select(s => new { s.GstCode, s.StateCode, s.StateName })
+                .Select(s => new { s.GstPercentage, s.StateCode, s.StateName })
                 .ToListAsync(cancellationToken);
 
             return Ok(states);

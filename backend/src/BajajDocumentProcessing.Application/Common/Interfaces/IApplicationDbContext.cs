@@ -44,11 +44,18 @@ public interface IApplicationDbContext
     DbSet<RequestApprovalHistory> RequestApprovalHistories { get; }
     DbSet<RequestComments> RequestComments { get; }
 
+    // Conversational submission
+    DbSet<StateMapping> StateMappings { get; }
+    DbSet<SubmissionSequence> SubmissionSequences { get; }
+
     // Reference data
     DbSet<StateGstMaster> StateGstMasters { get; }
     DbSet<HsnMaster> HsnMasters { get; }
     DbSet<CostMaster> CostMasters { get; }
     DbSet<CostMasterStateRate> CostMasterStateRates { get; }
+
+    // Audit logs
+    DbSet<PoBalanceLog> POBalanceLogs { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

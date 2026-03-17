@@ -55,11 +55,18 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
 
+    // Conversational submission
+    public DbSet<StateMapping> StateMappings => Set<StateMapping>();
+    public DbSet<SubmissionSequence> SubmissionSequences => Set<SubmissionSequence>();
+
     // Reference data
     public DbSet<StateGstMaster> StateGstMasters => Set<StateGstMaster>();
     public DbSet<HsnMaster> HsnMasters => Set<HsnMaster>();
     public DbSet<CostMaster> CostMasters => Set<CostMaster>();
     public DbSet<CostMasterStateRate> CostMasterStateRates => Set<CostMasterStateRate>();
+
+    // Audit logs
+    public DbSet<PoBalanceLog> POBalanceLogs => Set<PoBalanceLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -90,6 +97,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<AuditLog>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Conversation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ConversationMessage>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<StateMapping>().HasQueryFilter(e => !e.IsDeleted);
 
         // Reference data soft-delete filters
         modelBuilder.Entity<StateGstMaster>().HasQueryFilter(e => !e.IsDeleted);
