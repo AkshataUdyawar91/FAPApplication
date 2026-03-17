@@ -508,6 +508,48 @@ public class DocumentService : IDocumentService
                             csEntity.ExtractedDataJson = extractedJson;
                             csEntity.ExtractionConfidence = confidence;
                             csEntity.UpdatedAt = DateTime.UtcNow;
+
+                            _logger.LogInformation("=== CS EXTRACTION RAW JSON === DocId: {DocId} | JSON: {Json}", documentId, extractedJson);
+
+                            try
+                            {
+                                var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                                var parsed = System.Text.Json.JsonSerializer.Deserialize<BajajDocumentProcessing.Application.DTOs.Documents.CostSummaryData>(extractedJson, opts);
+                                if (parsed != null)
+                                {
+                                    csEntity.PlaceOfSupply = parsed.PlaceOfSupply ?? parsed.State;
+                                    csEntity.NumberOfDays = parsed.NumberOfDays;
+                                    csEntity.NumberOfActivations = parsed.NumberOfActivations;
+                                    csEntity.NumberOfTeams = parsed.NumberOfTeams;
+                                    if (parsed.TotalCost > 0) csEntity.TotalCost = parsed.TotalCost;
+
+                                    // Element-wise costs: Category + ElementName + Amount per row
+                                    if (parsed.CostBreakdowns?.Count > 0)
+                                    {
+                                        csEntity.ElementWiseCostsJson = System.Text.Json.JsonSerializer.Serialize(
+                                            parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount }));
+                                        csEntity.ElementWiseQuantityJson = System.Text.Json.JsonSerializer.Serialize(
+                                            parsed.CostBreakdowns.Select(b => new { b.Category, b.Quantity, b.Unit }));
+                                    }
+
+                                    _logger.LogInformation(
+                                        "=== CS EXTRACTION MAPPED === DocId: {DocId} | PlaceOfSupply: {Pos} | Days: {Days} | Activations: {Act} | Teams: {Teams} | TotalCost: {Cost} | Breakdowns: {Cnt}",
+                                        documentId, csEntity.PlaceOfSupply, csEntity.NumberOfDays, csEntity.NumberOfActivations,
+                                        csEntity.NumberOfTeams, csEntity.TotalCost, parsed.CostBreakdowns?.Count ?? 0);
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("=== CS EXTRACTION === Parsed CostSummaryData is NULL for DocId: {DocId}", documentId);
+                                }
+                            }
+                            catch (Exception parseEx)
+                            {
+                                _logger.LogWarning(parseEx, "Could not parse CostSummaryData JSON to map columns for document {DocumentId}", documentId);
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogWarning("=== CS EXTRACTION === CostSummary entity NOT FOUND in DB for DocId: {DocId}", documentId);
                         }
                         break;
 
