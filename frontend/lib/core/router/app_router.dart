@@ -5,6 +5,7 @@ import '../../features/auth/presentation/pages/login_page.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
 import '../../features/conversational_submission/presentation/pages/conversational_submission_page.dart';
 import '../../features/conversational_submission/presentation/pages/my_submissions_page.dart';
+import '../../features/submission/presentation/pages/agency_submission_detail_page.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authNotifierProvider);
@@ -39,13 +40,28 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/conversational-submission',
         name: 'conversational-submission',
-        builder: (context, state) =>
-            const ConversationalSubmissionPage(),
+        builder: (context, state) => const ConversationalSubmissionPage(),
       ),
       GoRoute(
         path: '/my-submissions',
         name: 'my-submissions',
         builder: (context, state) => const MySubmissionsPage(),
+      ),
+      GoRoute(
+        path: '/agency/submission-detail',
+        name: 'submission-detail',
+        builder: (context, state) {
+          final args = state.extra as Map<String, dynamic>?;
+          final submissionId = args?['submissionId']?.toString() ?? '';
+          final token = args?['token']?.toString() ?? '';
+          final userName = args?['userName']?.toString() ?? '';
+
+          return AgencySubmissionDetailPage(
+            submissionId: submissionId,
+            token: token,
+            userName: userName,
+          );
+        },
       ),
     ],
   );
