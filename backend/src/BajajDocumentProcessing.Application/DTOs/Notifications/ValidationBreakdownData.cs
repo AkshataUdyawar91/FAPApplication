@@ -66,4 +66,10 @@ public class ValidationCheckGroup
     /// Optional detailed issue description from ValidationDetailsJson.
     /// </summary>
     public string? Details { get; set; }
+
+    /// <summary>
+    /// Evidence text with actual extracted values (shown for both pass and fail).
+    /// Example: "PO found in SAP", "Invoice total ₹1,41,600 vs PO amount ₹1,75,000".
+    /// </summary>
+    public string? Evidence { get; set; }
 }

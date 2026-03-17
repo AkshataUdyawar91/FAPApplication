@@ -82,6 +82,65 @@ public class NotificationDataService : INotificationDataService
                     cancellationToken);
         }
 
+        // Load ALL validation results for all documents in this package (for detailed check groups)
+        var allDocumentIds = new List<Guid>();
+        if (package.PO != null) allDocumentIds.Add(package.PO.Id);
+        var allTeamInvoices = package.Teams.SelectMany(t => t.Invoices).ToList();
+        foreach (var inv in allTeamInvoices)
+            allDocumentIds.Add(inv.Id);
+
+        // Also need CostSummary, ActivitySummary, EnquiryDocument — load them
+        var packageWithDocs = await _context.DocumentPackages
+            .Include(p => p.CostSummary)
+            .Include(p => p.ActivitySummary)
+            .Include(p => p.EnquiryDocument)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+
+        if (packageWithDocs?.CostSummary != null) allDocumentIds.Add(packageWithDocs.CostSummary.Id);
+        if (packageWithDocs?.ActivitySummary != null) allDocumentIds.Add(packageWithDocs.ActivitySummary.Id);
+        if (packageWithDocs?.EnquiryDocument != null) allDocumentIds.Add(packageWithDocs.EnquiryDocument.Id);
+
+        // Merge the extra document references into the package for BuildCheckGroupsFromAllDocuments
+        if (packageWithDocs != null)
+        {
+            package.CostSummary ??= packageWithDocs.CostSummary;
+            package.ActivitySummary ??= packageWithDocs.ActivitySummary;
+            package.EnquiryDocument ??= packageWithDocs.EnquiryDocument;
+        }
+
+        var allValidationResults = allDocumentIds.Count > 0
+            ? await _context.ValidationResults
+                .AsNoTracking()
+                .Where(vr => allDocumentIds.Contains(vr.DocumentId))
+                .ToListAsync(cancellationToken)
+            : new List<Domain.Entities.ValidationResult>();
+
+        // Also load by DocumentType for any missing results
+        var foundDocTypes = allValidationResults.Select(vr => vr.DocumentType).ToHashSet();
+        var missingDocTypes = new List<Domain.Enums.DocumentType>();
+        if (package.PO != null && !foundDocTypes.Contains(Domain.Enums.DocumentType.PO))
+            missingDocTypes.Add(Domain.Enums.DocumentType.PO);
+        if (package.CostSummary != null && !foundDocTypes.Contains(Domain.Enums.DocumentType.CostSummary))
+            missingDocTypes.Add(Domain.Enums.DocumentType.CostSummary);
+        if (package.ActivitySummary != null && !foundDocTypes.Contains(Domain.Enums.DocumentType.ActivitySummary))
+            missingDocTypes.Add(Domain.Enums.DocumentType.ActivitySummary);
+        if (package.EnquiryDocument != null && !foundDocTypes.Contains(Domain.Enums.DocumentType.EnquiryDocument))
+            missingDocTypes.Add(Domain.Enums.DocumentType.EnquiryDocument);
+        if (allTeamInvoices.Count > 0 && !foundDocTypes.Contains(Domain.Enums.DocumentType.Invoice))
+            missingDocTypes.Add(Domain.Enums.DocumentType.Invoice);
+
+        if (missingDocTypes.Count > 0)
+        {
+            var additionalResults = await _context.ValidationResults
+                .AsNoTracking()
+                .Where(vr => missingDocTypes.Contains(vr.DocumentType))
+                .ToListAsync(cancellationToken);
+
+            var existingIds = allValidationResults.Select(vr => vr.Id).ToHashSet();
+            allValidationResults.AddRange(additionalResults.Where(r => !existingIds.Contains(r.Id)));
+        }
+
         var cardData = new SubmissionCardData
         {
             SubmissionId = package.Id,
@@ -97,6 +156,9 @@ public class NotificationDataService : INotificationDataService
 
         // === Validation Checks & Issues ===
         MapValidationChecks(cardData, package);
+
+        // === Detailed Check Groups (per-document validation table) ===
+        cardData.CheckGroups = BuildCheckGroupsFromAllDocuments(package, allValidationResults);
 
         // === Action Buttons ===
         cardData.ShowQuickApprove = package.Recommendation?.Type == RecommendationType.Approve;
@@ -121,7 +183,7 @@ public class NotificationDataService : INotificationDataService
         // PO Number with ExtractedDataJson fallback
         cardData.PoNumber = package.PO?.PONumber ?? TryExtractPoNumber(package.PO?.ExtractedDataJson) ?? "N/A";
 
-        // Invoice number: first CampaignInvoice across all Teams
+        // Invoice number: first invoice across all Teams
         var allInvoices = package.Teams
             .SelectMany(t => t.Invoices)
             .ToList();
@@ -130,7 +192,7 @@ public class NotificationDataService : INotificationDataService
             .Select(i => i.InvoiceNumber)
             .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "N/A";
 
-        // Invoice amount: sum of TotalAmount across all CampaignInvoices
+        // Invoice amount: sum of TotalAmount across all team invoices
         var totalAmount = allInvoices
             .Where(i => i.TotalAmount.HasValue)
             .Sum(i => i.TotalAmount!.Value);
@@ -279,6 +341,10 @@ public class NotificationDataService : INotificationDataService
                 {
                     foreach (var element in doc.RootElement.EnumerateArray())
                     {
+                        // Skip non-object elements (plain strings, numbers, etc.)
+                        if (element.ValueKind != JsonValueKind.Object)
+                            continue;
+
                         var severity = element.TryGetProperty("severity", out var sevProp)
                             ? sevProp.GetString() ?? "Warning"
                             : "Warning";
@@ -300,9 +366,9 @@ public class NotificationDataService : INotificationDataService
                     }
                 }
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
-                // Malformed JSON — skip silently
+                // Malformed or unexpected JSON structure — skip silently
             }
         }
 
@@ -487,7 +553,7 @@ public class NotificationDataService : INotificationDataService
             .Include(p => p.CostSummary)
             .Include(p => p.ActivitySummary)
             .Include(p => p.EnquiryDocument)
-            .Include(p => p.CampaignInvoices)
+            .Include(p => p.Teams).ThenInclude(t => t.Invoices)
             .AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
@@ -503,7 +569,7 @@ public class NotificationDataService : INotificationDataService
         if (package.CostSummary != null) documentIds.Add(package.CostSummary.Id);
         if (package.ActivitySummary != null) documentIds.Add(package.ActivitySummary.Id);
         if (package.EnquiryDocument != null) documentIds.Add(package.EnquiryDocument.Id);
-        foreach (var inv in package.CampaignInvoices)
+        foreach (var inv in package.Teams.SelectMany(t => t.Invoices))
             documentIds.Add(inv.Id);
 
         // Load ALL validation results for all documents in this package
@@ -518,7 +584,6 @@ public class NotificationDataService : INotificationDataService
         }
 
         // Also load any validation results by DocumentType that weren't found by ID
-        // (e.g., Invoice validation saved against a Teams invoice ID, not CampaignInvoice ID)
         var foundDocTypes = allValidationResults.Select(vr => vr.DocumentType).ToHashSet();
         var missingDocTypes = new List<Domain.Enums.DocumentType>();
         if (package.PO != null && !foundDocTypes.Contains(Domain.Enums.DocumentType.PO))
@@ -529,7 +594,7 @@ public class NotificationDataService : INotificationDataService
             missingDocTypes.Add(Domain.Enums.DocumentType.ActivitySummary);
         if (package.EnquiryDocument != null && !foundDocTypes.Contains(Domain.Enums.DocumentType.EnquiryDocument))
             missingDocTypes.Add(Domain.Enums.DocumentType.EnquiryDocument);
-        if (package.CampaignInvoices.Any() && !foundDocTypes.Contains(Domain.Enums.DocumentType.Invoice))
+        if (package.Teams.SelectMany(t => t.Invoices).Any() && !foundDocTypes.Contains(Domain.Enums.DocumentType.Invoice))
             missingDocTypes.Add(Domain.Enums.DocumentType.Invoice);
 
         if (missingDocTypes.Count > 0)
@@ -623,8 +688,8 @@ public class NotificationDataService : INotificationDataService
     }
 
     /// <summary>
-    /// Builds validation check groups from ALL documents in the package.
-    /// Shows per-document validation status so the ASM can see checks for PO, Invoice, Cost Summary, etc.
+    /// Builds a flat, numbered list of validation check groups from ALL documents in the package.
+    /// Each row represents one check for one document type, with status and evidence text.
     /// </summary>
     private static List<ValidationCheckGroup> BuildCheckGroupsFromAllDocuments(
         Domain.Entities.DocumentPackage package,
@@ -632,7 +697,6 @@ public class NotificationDataService : INotificationDataService
     {
         var groups = new List<ValidationCheckGroup>();
 
-        // Build document entries with their expected DocumentType for validation lookup
         var docEntries = new List<(string DocName, Guid? DocId, Domain.Enums.DocumentType DocType)>
         {
             ("PO", package.PO?.Id, Domain.Enums.DocumentType.PO),
@@ -641,38 +705,36 @@ public class NotificationDataService : INotificationDataService
             ("Enquiry Document", package.EnquiryDocument?.Id, Domain.Enums.DocumentType.EnquiryDocument)
         };
 
-        // For invoices: the validation system saves ONE ValidationResult for DocumentType.Invoice
-        // using the first team invoice's ID. Show it as a single "Invoice" entry rather than per-CampaignInvoice.
-        var firstCampaignInvoice = package.CampaignInvoices.FirstOrDefault();
-        if (firstCampaignInvoice != null)
+        var allTeamInvoices = package.Teams.SelectMany(t => t.Invoices).ToList();
+        var firstTeamInvoice = allTeamInvoices.FirstOrDefault();
+        if (firstTeamInvoice != null)
         {
-            var invoiceCount = package.CampaignInvoices.Count;
+            var invoiceCount = allTeamInvoices.Count;
             var invoiceLabel = invoiceCount > 1 ? $"Invoices ({invoiceCount})" : "Invoice";
-            docEntries.Add((invoiceLabel, firstCampaignInvoice.Id, Domain.Enums.DocumentType.Invoice));
+            docEntries.Add((invoiceLabel, firstTeamInvoice.Id, Domain.Enums.DocumentType.Invoice));
         }
 
         foreach (var (docName, docId, docType) in docEntries)
         {
             if (docId == null) continue;
 
-            // Look up by document ID first, then fall back to DocumentType match
             var vr = allResults.FirstOrDefault(r => r.DocumentId == docId.Value)
                   ?? allResults.FirstOrDefault(r => r.DocumentType == docType);
 
             if (vr == null)
             {
-                // Document exists but no validation was run on it
                 groups.Add(new ValidationCheckGroup
                 {
-                    GroupName = $"📄 {docName}",
+                    GroupName = docName,
                     Status = "Fail",
-                    Details = "No validation data available"
+                    Details = "No validation data available",
+                    Evidence = "No validation data available"
                 });
                 continue;
             }
 
-            // Parse detail descriptions for failed checks
-            var detailDescriptions = ParseValidationDetailsJson(vr.ValidationDetailsJson);
+            // Parse evidence descriptions for ALL checks (pass and fail)
+            var evidenceMap = ParseValidationEvidenceJson(vr.ValidationDetailsJson);
 
             var checks = new (string CheckName, bool Passed, string DetailKey)[]
             {
@@ -684,42 +746,101 @@ public class NotificationDataService : INotificationDataService
                 ("Vendor Matching", vr.VendorMatchingPassed, "Vendor Matching")
             };
 
-            var failCount = checks.Count(c => !c.Passed);
-
-            // Header row — use FailureReason from ValidationResult if available
-            var headerDetails = !string.IsNullOrWhiteSpace(vr.FailureReason)
-                ? vr.FailureReason
-                : failCount > 0 ? $"{failCount} check(s) failed" : null;
-
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = $"📄 {docName}",
-                Status = vr.AllValidationsPassed ? "Pass" : "Fail",
-                Details = headerDetails
-            });
-
-            // Individual check rows with failure reasons
             foreach (var (checkName, passed, detailKey) in checks)
             {
-                var checkDetail = !passed
-                    ? detailDescriptions.GetValueOrDefault(detailKey) ?? $"{checkName} failed"
-                    : null;
+                var evidence = evidenceMap.GetValueOrDefault(detailKey)
+                    ?? (passed ? $"{checkName} verified" : $"{checkName} failed");
 
                 groups.Add(new ValidationCheckGroup
                 {
-                    GroupName = $"  {checkName}",
+                    GroupName = docName,
                     Status = passed ? "Pass" : "Fail",
-                    Details = checkDetail
+                    Details = checkName,
+                    Evidence = evidence
                 });
             }
         }
 
-        // If no documents found at all, fall back to the old behavior
         if (groups.Count == 0)
         {
             return BuildCheckGroups(allResults.FirstOrDefault());
         }
 
         return groups;
+    }
+
+    /// <summary>
+    /// Parses ValidationDetailsJson into a dictionary of check name → evidence description
+    /// for ALL checks (both pass and fail). Unlike ParseValidationDetailsJson which is used
+    /// for issue descriptions, this extracts the "details" field for every check.
+    /// </summary>
+    private static Dictionary<string, string> ParseValidationEvidenceJson(string? json)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(json)) return result;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            JsonElement arrayToParse = default;
+            var hasArray = false;
+
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("checks", out var checksArray) && checksArray.ValueKind == JsonValueKind.Array)
+                {
+                    arrayToParse = checksArray;
+                    hasArray = true;
+                }
+                else
+                {
+                    // Flat object format
+                    foreach (var prop in root.EnumerateObject())
+                    {
+                        string? description = null;
+                        if (prop.Value.ValueKind == JsonValueKind.String)
+                            description = prop.Value.GetString();
+                        else if (prop.Value.ValueKind == JsonValueKind.Object &&
+                                 prop.Value.TryGetProperty("description", out var descProp))
+                            description = descProp.GetString();
+
+                        if (!string.IsNullOrWhiteSpace(description))
+                            result[prop.Name] = description!;
+                    }
+                }
+            }
+            else if (root.ValueKind == JsonValueKind.Array)
+            {
+                arrayToParse = root;
+                hasArray = true;
+            }
+
+            if (hasArray)
+            {
+                foreach (var element in arrayToParse.EnumerateArray())
+                {
+                    if (element.ValueKind != JsonValueKind.Object) continue;
+
+                    var name = element.TryGetProperty("checkName", out var nameProp)
+                        ? nameProp.GetString()
+                        : element.TryGetProperty("name", out var n) ? n.GetString() : null;
+
+                    var desc = element.TryGetProperty("details", out var detProp)
+                        ? detProp.GetString()
+                        : element.TryGetProperty("description", out var d) ? d.GetString() : null;
+
+                    if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(desc))
+                        result[name!] = desc!;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Malformed JSON — return empty
+        }
+
+        return result;
     }
 }

@@ -85,4 +85,9 @@ public class Teams : BaseEntity
     /// Gets or sets the collection of photos associated with this team
     /// </summary>
     public ICollection<TeamPhotos> Photos { get; set; } = new List<TeamPhotos>();
+    
+    /// <summary>
+    /// Gets or sets the collection of campaign invoices associated with this team
+    /// </summary>
+    public ICollection<CampaignInvoice> Invoices { get; set; } = new List<CampaignInvoice>();
 }

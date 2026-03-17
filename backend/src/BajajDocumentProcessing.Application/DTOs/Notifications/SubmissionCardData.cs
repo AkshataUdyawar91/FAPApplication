@@ -37,7 +37,7 @@ public class SubmissionCardData
     public string PoNumber { get; set; } = "N/A";
 
     /// <summary>
-    /// Invoice number from the first CampaignInvoice.InvoiceNumber across Teams.
+    /// Invoice number from the first team invoice across Teams.
     /// </summary>
     public string InvoiceNumber { get; set; } = "N/A";
 
@@ -147,6 +147,12 @@ public class SubmissionCardData
     /// Text for remaining issues (e.g., "... and 2 more issues") or empty.
     /// </summary>
     public string RemainingIssueText { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Per-document validation check groups with individual check status and evidence.
+    /// Used for the detailed validation table on the new submission card.
+    /// </summary>
+    public List<ValidationCheckGroup> CheckGroups { get; set; } = new();
 
     // === PO Balance Section (Req 4 — deferred) ===
 

@@ -158,9 +158,16 @@ public class TeamsBotService : TeamsActivityHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling card submit action via message activity");
-            await SendTextReplyAsync(turnContext,
-                "Something went wrong. Please try again or use the portal.", cancellationToken);
+            _logger.LogError(ex, "Error handling card submit action via message activity: {Message}", ex.Message);
+            try
+            {
+                await SendTextReplyAsync(turnContext,
+                    "Something went wrong. Please try again or check the portal.", cancellationToken);
+            }
+            catch (Exception sendEx)
+            {
+                _logger.LogError(sendEx, "Failed to send error message back to user");
+            }
         }
     }
 
@@ -173,21 +180,37 @@ public class TeamsBotService : TeamsActivityHandler
         Guid fapId,
         CancellationToken cancellationToken)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var notificationDataService = scope.ServiceProvider.GetRequiredService<INotificationDataService>();
-        var teamsCardService = scope.ServiceProvider.GetRequiredService<ITeamsCardService>();
-
-        var cardData = await notificationDataService.GetSubmissionCardDataAsync(fapId, cancellationToken);
-        var cardJson = teamsCardService.BuildNewSubmissionCard(cardData);
-
-        var cardObject = Newtonsoft.Json.JsonConvert.DeserializeObject(cardJson);
-        var attachment = new Attachment
+        try
         {
-            ContentType = "application/vnd.microsoft.card.adaptive",
-            Content = cardObject
-        };
+            _logger.LogInformation("HandleViewFullCardAsync START for FAP {FapId}", fapId);
 
-        await turnContext.SendActivityAsync(MessageFactory.Attachment(attachment), cancellationToken);
+            using var scope = _scopeFactory.CreateScope();
+            var notificationDataService = scope.ServiceProvider.GetRequiredService<INotificationDataService>();
+            var teamsCardService = scope.ServiceProvider.GetRequiredService<ITeamsCardService>();
+
+            _logger.LogInformation("HandleViewFullCardAsync: loading card data");
+            var cardData = await notificationDataService.GetSubmissionCardDataAsync(fapId, cancellationToken);
+
+            _logger.LogInformation("HandleViewFullCardAsync: building card JSON");
+            var cardJson = teamsCardService.BuildNewSubmissionCard(cardData);
+            _logger.LogInformation("HandleViewFullCardAsync: card JSON built, length={Length}", cardJson.Length);
+
+            var cardObject = Newtonsoft.Json.JsonConvert.DeserializeObject(cardJson);
+            var attachment = new Attachment
+            {
+                ContentType = "application/vnd.microsoft.card.adaptive",
+                Content = cardObject
+            };
+
+            _logger.LogInformation("HandleViewFullCardAsync: sending card attachment");
+            await turnContext.SendActivityAsync(MessageFactory.Attachment(attachment), cancellationToken);
+            _logger.LogInformation("HandleViewFullCardAsync: card sent successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "HandleViewFullCardAsync FAILED for FAP {FapId}: {Message}", fapId, ex.Message);
+            throw;
+        }
     }
 
     /// <summary>
@@ -270,7 +293,7 @@ public class TeamsBotService : TeamsActivityHandler
             var pendingPackages = await context.DocumentPackages
                 .Where(p => p.State == PackageState.PendingASM)
                 .Include(p => p.Agency)
-                .Include(p => p.CampaignInvoices)
+                .Include(p => p.Teams).ThenInclude(t => t.Invoices)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.PO)
                 .OrderByDescending(p => p.CreatedAt)
@@ -336,7 +359,7 @@ public class TeamsBotService : TeamsActivityHandler
             var shortId = package.Id.ToString()[..8].ToUpper();
             var agencyName = package.Agency?.SupplierName ?? "Unknown Agency";
             var poNumber = package.PO?.PONumber ?? "N/A";
-            var amount = package.CampaignInvoices?.Sum(i => i.TotalAmount ?? 0m) ?? 0m;
+            var amount = package.Teams?.SelectMany(t => t.Invoices).Sum(i => i.TotalAmount ?? 0m) ?? 0m;
             var formattedAmount = $"₹{amount:N0}";
             var confidence = package.ConfidenceScore?.OverallConfidence ?? 0;
             var confidenceFormatted = $"{confidence:F0}/100";
@@ -391,13 +414,9 @@ public class TeamsBotService : TeamsActivityHandler
             });
         }
 
-        return new JObject
-        {
-            ["type"] = "AdaptiveCard",
-            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
-            ["version"] = "1.3",
-            ["body"] = body
-        };
+        var card = BuildCardWithWhiteBackground(body);
+
+        return card;
     }
 
     /// <summary>
@@ -739,7 +758,7 @@ public class TeamsBotService : TeamsActivityHandler
     {
         var package = await context.DocumentPackages
             .Include(p => p.Agency)
-            .Include(p => p.CampaignInvoices)
+            .Include(p => p.Teams).ThenInclude(t => t.Invoices)
             .AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == fapId, cancellationToken);
 
@@ -754,7 +773,7 @@ public class TeamsBotService : TeamsActivityHandler
         }
 
         var agencyName = package.Agency?.SupplierName ?? "Unknown Agency";
-        var amount = package.CampaignInvoices?.Sum(i => i.TotalAmount ?? 0m) ?? 0m;
+        var amount = package.Teams?.SelectMany(t => t.Invoices).Sum(i => i.TotalAmount ?? 0m) ?? 0m;
         var formattedAmount = $"₹{amount:N0}";
 
         // Build confirmation card with Approve Invoice and Cancel buttons
@@ -798,7 +817,7 @@ public class TeamsBotService : TeamsActivityHandler
         // Load the package with required navigations for the success message
         var package = await context.DocumentPackages
             .Include(p => p.Agency)
-            .Include(p => p.CampaignInvoices)
+            .Include(p => p.Teams).ThenInclude(t => t.Invoices)
             .FirstOrDefaultAsync(p => p.Id == fapId, cancellationToken);
 
         if (package == null)
@@ -812,7 +831,7 @@ public class TeamsBotService : TeamsActivityHandler
         }
 
         var agencyName = package.Agency?.SupplierName ?? "Unknown Agency";
-        var amount = package.CampaignInvoices?.Sum(i => i.TotalAmount ?? 0m) ?? 0m;
+        var amount = package.Teams?.SelectMany(t => t.Invoices).Sum(i => i.TotalAmount ?? 0m) ?? 0m;
         var formattedAmount = $"₹{amount:N0}";
         var approverId = systemUser?.Id ?? Guid.Empty;
 
@@ -903,45 +922,39 @@ public class TeamsBotService : TeamsActivityHandler
     private AdaptiveCardInvokeResponse BuildQuickApproveConfirmationCard(
         Guid fapId, string shortId, string agencyName, string formattedAmount)
     {
-        var cardJson = new JObject
+        var body = new JArray
         {
-            ["type"] = "AdaptiveCard",
-            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
-            ["version"] = "1.3",
-            ["body"] = new JArray
+            new JObject
             {
-                new JObject
+                ["type"] = "TextBlock",
+                ["text"] = $"You're about to approve FAP-{shortId} ({agencyName}, {formattedAmount}). Do you want to continue?",
+                ["wrap"] = true,
+                ["weight"] = "Bolder"
+            }
+        };
+        var actions = new JArray
+        {
+            new JObject
+            {
+                ["type"] = "Action.Submit",
+                ["title"] = "Approve Invoice",
+                ["style"] = "positive",
+                ["data"] = new JObject
                 {
-                    ["type"] = "TextBlock",
-                    ["text"] = $"You're about to approve FAP-{shortId} ({agencyName}, {formattedAmount}). Do you want to continue?",
-                    ["wrap"] = true,
-                    ["weight"] = "Bolder"
+                    ["action"] = "confirm_approve",
+                    ["fapId"] = fapId.ToString(),
+                    ["cardVersion"] = "1.0"
                 }
             },
-            ["actions"] = new JArray
+            new JObject
             {
-                new JObject
+                ["type"] = "Action.Submit",
+                ["title"] = "Cancel",
+                ["data"] = new JObject
                 {
-                    ["type"] = "Action.Submit",
-                    ["title"] = "Approve Invoice",
-                    ["style"] = "positive",
-                    ["data"] = new JObject
-                    {
-                        ["action"] = "confirm_approve",
-                        ["fapId"] = fapId.ToString(),
-                        ["cardVersion"] = "1.0"
-                    }
-                },
-                new JObject
-                {
-                    ["type"] = "Action.Submit",
-                    ["title"] = "Cancel",
-                    ["data"] = new JObject
-                    {
-                        ["action"] = "cancel_approve",
-                        ["fapId"] = fapId.ToString(),
-                        ["cardVersion"] = "1.0"
-                    }
+                    ["action"] = "cancel_approve",
+                    ["fapId"] = fapId.ToString(),
+                    ["cardVersion"] = "1.0"
                 }
             }
         };
@@ -950,7 +963,7 @@ public class TeamsBotService : TeamsActivityHandler
         {
             StatusCode = 200,
             Type = "application/vnd.microsoft.card.adaptive",
-            Value = cardJson
+            Value = BuildCardWithWhiteBackground(body, actions)
         };
     }
 
@@ -960,52 +973,46 @@ public class TeamsBotService : TeamsActivityHandler
     /// </summary>
     private AdaptiveCardInvokeResponse BuildCommentsCard(Guid fapId, string shortId)
     {
-        var cardJson = new JObject
+        var body = new JArray
         {
-            ["type"] = "AdaptiveCard",
-            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
-            ["version"] = "1.3",
-            ["body"] = new JArray
+            new JObject
             {
-                new JObject
+                ["type"] = "TextBlock",
+                ["text"] = "Any comments? (optional — type or tap Skip)",
+                ["wrap"] = true
+            },
+            new JObject
+            {
+                ["type"] = "Input.Text",
+                ["id"] = "comments",
+                ["placeholder"] = "Enter comments (optional)",
+                ["isMultiline"] = true,
+                ["maxLength"] = 500
+            }
+        };
+        var actions = new JArray
+        {
+            new JObject
+            {
+                ["type"] = "Action.Submit",
+                ["title"] = "Submit",
+                ["style"] = "positive",
+                ["data"] = new JObject
                 {
-                    ["type"] = "TextBlock",
-                    ["text"] = "Any comments? (optional — type or tap Skip)",
-                    ["wrap"] = true
-                },
-                new JObject
-                {
-                    ["type"] = "Input.Text",
-                    ["id"] = "comments",
-                    ["placeholder"] = "Enter comments (optional)",
-                    ["isMultiline"] = true,
-                    ["maxLength"] = 500
+                    ["action"] = "submit_approval",
+                    ["fapId"] = fapId.ToString(),
+                    ["cardVersion"] = "1.0"
                 }
             },
-            ["actions"] = new JArray
+            new JObject
             {
-                new JObject
+                ["type"] = "Action.Submit",
+                ["title"] = "Skip",
+                ["data"] = new JObject
                 {
-                    ["type"] = "Action.Submit",
-                    ["title"] = "Submit",
-                    ["style"] = "positive",
-                    ["data"] = new JObject
-                    {
-                        ["action"] = "submit_approval",
-                        ["fapId"] = fapId.ToString(),
-                        ["cardVersion"] = "1.0"
-                    }
-                },
-                new JObject
-                {
-                    ["type"] = "Action.Submit",
-                    ["title"] = "Skip",
-                    ["data"] = new JObject
-                    {
-                        ["action"] = "submit_approval",
-                        ["fapId"] = fapId.ToString(),
-                        ["cardVersion"] = "1.0"
-                    }
+                    ["action"] = "submit_approval",
+                    ["fapId"] = fapId.ToString(),
+                    ["cardVersion"] = "1.0"
                 }
             }
         };
@@ -1014,7 +1021,7 @@ public class TeamsBotService : TeamsActivityHandler
         {
             StatusCode = 200,
             Type = "application/vnd.microsoft.card.adaptive",
-            Value = cardJson
+            Value = BuildCardWithWhiteBackground(body, actions)
         };
     }
 
@@ -1124,55 +1131,47 @@ public class TeamsBotService : TeamsActivityHandler
     /// </summary>
     private AdaptiveCardInvokeResponse BuildRejectionReasonCard(Guid fapId, string shortId)
     {
-        // Build as raw JSON to ensure maximum compatibility with Bot Framework Emulator
-        // (Emulator's Adaptive Card renderer may not support all v1.5 features)
-        var cardJson = new JObject
+        var body = new JArray
         {
-            ["type"] = "AdaptiveCard",
-            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
-            ["version"] = "1.3",
-            ["body"] = new JArray
+            new JObject
             {
-                new JObject
+                ["type"] = "TextBlock",
+                ["text"] = $"Rejecting FAP-{shortId}. Please provide a reason (minimum 10 characters):",
+                ["wrap"] = true,
+                ["weight"] = "Bolder"
+            },
+            new JObject
+            {
+                ["type"] = "Input.Text",
+                ["id"] = "rejectionReason",
+                ["placeholder"] = "Enter rejection reason (required, min 10 characters)",
+                ["isMultiline"] = true,
+                ["maxLength"] = 500
+            }
+        };
+        var actions = new JArray
+        {
+            new JObject
+            {
+                ["type"] = "Action.Submit",
+                ["title"] = "Submit Rejection",
+                ["style"] = "destructive",
+                ["data"] = new JObject
                 {
-                    ["type"] = "TextBlock",
-                    ["text"] = $"Rejecting FAP-{shortId}. Please provide a reason (minimum 10 characters):",
-                    ["wrap"] = true,
-                    ["weight"] = "Bolder"
-                },
-                new JObject
-                {
-                    ["type"] = "Input.Text",
-                    ["id"] = "rejectionReason",
-                    ["placeholder"] = "Enter rejection reason (required, min 10 characters)",
-                    ["isMultiline"] = true,
-                    ["maxLength"] = 500
+                    ["action"] = "submit_rejection_from_review",
+                    ["fapId"] = fapId.ToString(),
+                    ["cardVersion"] = "1.0"
                 }
             },
-            ["actions"] = new JArray
+            new JObject
             {
-                new JObject
+                ["type"] = "Action.Submit",
+                ["title"] = "Cancel",
+                ["data"] = new JObject
                 {
-                    ["type"] = "Action.Submit",
-                    ["title"] = "Submit Rejection",
-                    ["style"] = "destructive",
-                    ["data"] = new JObject
-                    {
-                        ["action"] = "submit_rejection_from_review",
-                        ["fapId"] = fapId.ToString(),
-                        ["cardVersion"] = "1.0"
-                    }
-                },
-                new JObject
-                {
-                    ["type"] = "Action.Submit",
-                    ["title"] = "Cancel",
-                    ["data"] = new JObject
-                    {
-                        ["action"] = "review_details",
-                        ["fapId"] = fapId.ToString(),
-                        ["cardVersion"] = "1.0"
-                    }
+                    ["action"] = "review_details",
+                    ["fapId"] = fapId.ToString(),
+                    ["cardVersion"] = "1.0"
                 }
             }
         };
@@ -1181,7 +1180,7 @@ public class TeamsBotService : TeamsActivityHandler
         {
             StatusCode = 200,
             Type = "application/vnd.microsoft.card.adaptive",
-            Value = cardJson
+            Value = BuildCardWithWhiteBackground(body, actions)
         };
     }
 
@@ -1213,7 +1212,7 @@ public class TeamsBotService : TeamsActivityHandler
 
         var package = await context.DocumentPackages
             .Include(p => p.Agency)
-            .Include(p => p.CampaignInvoices)
+            .Include(p => p.Teams).ThenInclude(t => t.Invoices)
             .FirstOrDefaultAsync(p => p.Id == fapId, cancellationToken);
 
         if (package == null)
@@ -1372,7 +1371,32 @@ public class TeamsBotService : TeamsActivityHandler
 
     private static AdaptiveCardInvokeResponse CreateAdaptiveCardResponse(string message, int statusCode = 200)
     {
-        var cardJson = new JObject
+        var body = new JArray
+        {
+            new JObject
+            {
+                ["type"] = "TextBlock",
+                ["text"] = message,
+                ["wrap"] = true
+            }
+        };
+        var cardJson = BuildCardWithWhiteBackground(body);
+
+        return new AdaptiveCardInvokeResponse
+        {
+            StatusCode = statusCode,
+            Type = "application/vnd.microsoft.card.adaptive",
+            Value = cardJson
+        };
+    }
+
+    /// <summary>
+    /// Wraps a body JArray and optional actions JArray into a complete Adaptive Card
+    /// with a full-bleed white Container to override the emulator's gold background.
+    /// </summary>
+    private static JObject BuildCardWithWhiteBackground(JArray bodyItems, JArray? actions = null)
+    {
+        var card = new JObject
         {
             ["type"] = "AdaptiveCard",
             ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -1381,18 +1405,19 @@ public class TeamsBotService : TeamsActivityHandler
             {
                 new JObject
                 {
-                    ["type"] = "TextBlock",
-                    ["text"] = message,
-                    ["wrap"] = true
+                    ["type"] = "Container",
+                    ["style"] = "default",
+                    ["bleed"] = true,
+                    ["items"] = bodyItems
                 }
             }
         };
 
-        return new AdaptiveCardInvokeResponse
+        if (actions != null)
         {
-            StatusCode = statusCode,
-            Type = "application/vnd.microsoft.card.adaptive",
-            Value = cardJson
-        };
+            card["actions"] = actions;
+        }
+
+        return card;
     }
 }

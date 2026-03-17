@@ -43,7 +43,10 @@ public class TeamsCardServiceTests
         var cardJson = _sut.BuildNewSubmissionCard(data);
         var doc = JsonDocument.Parse(cardJson);
         var body = doc.RootElement.GetProperty("body");
-        var columnSet = body[0];
+        // Body items are wrapped in a Container with style=default and bleed=true
+        var container = body[0];
+        var items = container.GetProperty("items");
+        var columnSet = items[0];
         var leftColumn = columnSet.GetProperty("columns")[0];
         var titleBlock = leftColumn.GetProperty("items")[0];
 
@@ -64,7 +67,10 @@ public class TeamsCardServiceTests
         var cardJson = _sut.BuildNewSubmissionCard(data);
         var doc = JsonDocument.Parse(cardJson);
         var body = doc.RootElement.GetProperty("body");
-        var columnSet = body[0];
+        // Body items are wrapped in a Container with style=default and bleed=true
+        var container = body[0];
+        var items = container.GetProperty("items");
+        var columnSet = items[0];
         var rightColumn = columnSet.GetProperty("columns")[1];
         var timestampBlock = rightColumn.GetProperty("items")[0];
 
@@ -101,7 +107,7 @@ public class TeamsCardServiceTests
         // Assert — parseable JSON with AdaptiveCard type
         var doc = JsonDocument.Parse(cardJson);
         Assert.Equal("AdaptiveCard", doc.RootElement.GetProperty("type").GetString());
-        Assert.Equal("1.4", doc.RootElement.GetProperty("version").GetString());
+        Assert.Equal("1.3", doc.RootElement.GetProperty("version").GetString());
     }
 
     [Fact]

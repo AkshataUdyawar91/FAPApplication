@@ -43,7 +43,10 @@ public class ApprovalCardBuilderTests
             _submittedDate, 85, "APPROVE", "Summary", PortalBaseUrl);
 
         var card = (JObject)attachment.Content;
-        var body = (JArray)card["body"]!;
+        // Body items are inside a Container with style=default and bleed=true
+        var container = (JObject)((JArray)card["body"]!)[0];
+        Assert.Equal("Container", container["type"]?.ToString());
+        var body = (JArray)container["items"]!;
 
         // Find the FactSet element in the body
         var factSet = body.Children<JObject>()
@@ -97,7 +100,8 @@ public class ApprovalCardBuilderTests
             _submittedDate, score, "REVIEW", "Summary", PortalBaseUrl);
 
         var card = (JObject)attachment.Content;
-        var body = (JArray)card["body"]!;
+        var container = (JObject)((JArray)card["body"]!)[0];
+        var body = (JArray)container["items"]!;
 
         // Find the confidence text block
         var confidenceBlock = body.Children<JObject>()
@@ -129,7 +133,8 @@ public class ApprovalCardBuilderTests
             FapNumber, "approve", "John ASM", DateTime.UtcNow);
 
         var card = (JObject)attachment.Content;
-        var body = (JArray)card["body"]!;
+        var container = (JObject)((JArray)card["body"]!)[0];
+        var body = (JArray)container["items"]!;
 
         var statusBlock = body.Children<JObject>()
             .FirstOrDefault(e => e["text"]?.ToString()?.Contains("Approved") == true);
@@ -146,7 +151,8 @@ public class ApprovalCardBuilderTests
             FapNumber, "reject", "Jane ASM", DateTime.UtcNow, reason);
 
         var card = (JObject)attachment.Content;
-        var body = (JArray)card["body"]!;
+        var container = (JObject)((JArray)card["body"]!)[0];
+        var body = (JArray)container["items"]!;
 
         var statusBlock = body.Children<JObject>()
             .FirstOrDefault(e => e["text"]?.ToString()?.Contains("Rejected") == true);

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import '../../../../core/constants/api_constants.dart';
 
 enum UserRole { agency, asm, hq }
 
@@ -13,7 +14,7 @@ class NewLoginPage extends StatefulWidget {
 class _NewLoginPageState extends State<NewLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
   
   bool _isLoading = false;
   String? _errorMessage;
@@ -64,6 +65,8 @@ class _NewLoginPageState extends State<NewLoginPage> {
   }
 
   Future<void> _handleLogin() async {
+    debugPrint('=== LOGIN ATTEMPT === URL: ${_dio.options.baseUrl}/auth/login');
+    debugPrint('Email: ${_emailController.text}');
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       setState(() {
         _errorMessage = 'Please enter email and password';
@@ -94,12 +97,22 @@ class _NewLoginPageState extends State<NewLoginPage> {
         );
       }
     } on DioException catch (e) {
+      debugPrint('Login DioException: type=${e.type}, message=${e.message}');
+      debugPrint('Login DioException response: ${e.response?.statusCode} ${e.response?.data}');
       setState(() {
         if (e.response?.statusCode == 401) {
           _errorMessage = 'Invalid email or password';
+        } else if (e.type == DioExceptionType.connectionError || 
+                   e.type == DioExceptionType.connectionTimeout) {
+          _errorMessage = 'Cannot connect to server. Check if backend is running.';
         } else {
-          _errorMessage = 'Login failed. Please try again.';
+          _errorMessage = 'Login failed: ${e.message ?? e.type.name}';
         }
+      });
+    } catch (e) {
+      debugPrint('Login unexpected error: $e');
+      setState(() {
+        _errorMessage = 'Unexpected error: $e';
       });
     } finally {
       if (mounted) {
