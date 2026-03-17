@@ -700,12 +700,11 @@ public class NotificationDataService : INotificationDataService
     {
         var groups = new List<ValidationCheckGroup>();
 
-        // Non-invoice document types use the generic 6 checks
+        // PO, Cost Summary, Enquiry Document use the generic 6 checks
         var docEntries = new List<(string DocName, Guid? DocId, Domain.Enums.DocumentType DocType)>
         {
             ("PO", package.PO?.Id, Domain.Enums.DocumentType.PO),
             ("Cost Summary", package.CostSummary?.Id, Domain.Enums.DocumentType.CostSummary),
-            ("Activity Summary", package.ActivitySummary?.Id, Domain.Enums.DocumentType.ActivitySummary),
             ("Enquiry Document", package.EnquiryDocument?.Id, Domain.Enums.DocumentType.EnquiryDocument)
         };
 
@@ -753,6 +752,72 @@ public class NotificationDataService : INotificationDataService
                     Evidence = evidence
                 });
             }
+        }
+
+        // Activity Summary: use the same validation as the conversational chatbot
+        var actSummary = package.ActivitySummary;
+        if (actSummary != null && !actSummary.IsDeleted)
+        {
+            string? dealerName = actSummary.DealerName;
+            string? location = null;
+
+            if (!string.IsNullOrEmpty(actSummary.ExtractedDataJson))
+            {
+                try
+                {
+                    var json = JsonDocument.Parse(actSummary.ExtractedDataJson).RootElement;
+                    if (string.IsNullOrWhiteSpace(dealerName))
+                    {
+                        if (json.TryGetProperty("DealerName", out var dn) || json.TryGetProperty("dealerName", out dn))
+                            dealerName = dn.GetString();
+                    }
+                    if (json.TryGetProperty("Rows", out var rows) || json.TryGetProperty("rows", out rows))
+                    {
+                        if (rows.ValueKind == JsonValueKind.Array && rows.GetArrayLength() > 0)
+                        {
+                            var first = rows[0];
+                            if (string.IsNullOrWhiteSpace(dealerName))
+                            {
+                                if (first.TryGetProperty("DealerName", out var rdn) || first.TryGetProperty("dealerName", out rdn))
+                                    dealerName = rdn.GetString();
+                            }
+                            if (first.TryGetProperty("Location", out var loc) || first.TryGetProperty("location", out loc))
+                                location = loc.GetString();
+                        }
+                    }
+                }
+                catch { /* malformed JSON */ }
+            }
+
+            bool dealerPresent = !string.IsNullOrWhiteSpace(dealerName);
+            bool locationPresent = !string.IsNullOrWhiteSpace(location);
+            bool dealerLocationPassed = dealerPresent && locationPresent;
+
+            string evidence;
+            if (dealerLocationPassed)
+            {
+                evidence = string.Join(", ", new[] { dealerName, location }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            }
+            else if (!dealerPresent && !locationPresent)
+            {
+                evidence = "Dealer name and location not detected";
+            }
+            else if (!dealerPresent)
+            {
+                evidence = $"Location: {location} — Dealer name not detected";
+            }
+            else
+            {
+                evidence = $"Dealer: {dealerName} — Location not detected";
+            }
+
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Activity Summary",
+                Status = dealerLocationPassed ? "Pass" : "Fail",
+                Details = "Dealer & Location Details",
+                Evidence = evidence
+            });
         }
 
         // Invoice: use the same 9 specific checks as the conversational chatbot
