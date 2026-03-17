@@ -28,13 +28,13 @@ final dioProvider = Provider<Dio>((ref) {
       }
       return handler.next(options);
     },
-  ));
+  ),);
 
   // Add logging interceptor
   dio.interceptors.add(LogInterceptor(
     requestBody: true,
     responseBody: true,
-  ));
+  ),);
 
   return dio;
 });

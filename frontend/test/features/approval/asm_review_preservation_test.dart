@@ -50,7 +50,7 @@ void main() {
           
           // This test documents the expected API call pattern
           expect(true, isTrue, 
-            reason: 'Approval workflow should call PATCH /submissions/{id}/asm-approve with notes');
+            reason: 'Approval workflow should call PATCH /submissions/{id}/asm-approve with notes',);
         },
       );
 
@@ -65,7 +65,7 @@ void main() {
           // - This returns to the previous screen (submissions list)
           
           expect(true, isTrue,
-            reason: 'Approval should navigate back after success');
+            reason: 'Approval should navigate back after success',);
         },
       );
 
@@ -80,7 +80,7 @@ void main() {
           // - Background color: AppColors.approvedText (green)
           
           expect(true, isTrue,
-            reason: 'Approval should show success SnackBar');
+            reason: 'Approval should show success SnackBar',);
         },
       );
 
@@ -96,7 +96,7 @@ void main() {
           // - Line 72: setState(() => _isProcessing = true) before API call
           
           expect(true, isTrue,
-            reason: 'Approve button should disable during processing');
+            reason: 'Approve button should disable during processing',);
         },
       );
 
@@ -112,7 +112,7 @@ void main() {
           // - Shows 'Approve FAP' text when _isProcessing is false
           
           expect(true, isTrue,
-            reason: 'Approve button should show loading indicator during processing');
+            reason: 'Approve button should show loading indicator during processing',);
         },
       );
     });
@@ -131,7 +131,7 @@ void main() {
           // - Background color: AppColors.rejectedText (red)
           
           expect(true, isTrue,
-            reason: 'Rejection should require non-empty comments');
+            reason: 'Rejection should require non-empty comments',);
         },
       );
 
@@ -148,7 +148,7 @@ void main() {
           // - Navigates back: Navigator.pop(context)
           
           expect(true, isTrue,
-            reason: 'Rejection workflow should call PATCH /submissions/{id}/asm-reject with reason');
+            reason: 'Rejection workflow should call PATCH /submissions/{id}/asm-reject with reason',);
         },
       );
 
@@ -162,7 +162,7 @@ void main() {
           // - Line 126: Navigator.pop(context) after response.statusCode == 200
           
           expect(true, isTrue,
-            reason: 'Rejection should navigate back after success');
+            reason: 'Rejection should navigate back after success',);
         },
       );
 
@@ -177,7 +177,7 @@ void main() {
           // - Button is disabled (null onPressed) when _isProcessing is true
           
           expect(true, isTrue,
-            reason: 'Reject button should disable during processing');
+            reason: 'Reject button should disable during processing',);
         },
       );
     });
@@ -197,7 +197,7 @@ void main() {
           // - Shows success SnackBar: 'Opening {filename}...'
           
           expect(true, isTrue,
-            reason: 'Download should open blob URL in new tab');
+            reason: 'Download should open blob URL in new tab',);
         },
       );
 
@@ -214,7 +214,7 @@ void main() {
           // - Returns early without attempting to open
           
           expect(true, isTrue,
-            reason: 'Download should show error for missing blob URL');
+            reason: 'Download should show error for missing blob URL',);
         },
       );
 
@@ -231,7 +231,7 @@ void main() {
           // - Duration: 2 seconds
           
           expect(true, isTrue,
-            reason: 'Download should show success SnackBar');
+            reason: 'Download should show success SnackBar',);
         },
       );
     });
@@ -250,7 +250,7 @@ void main() {
           // - Color value: const Color(0xFF10B981)
           
           expect(true, isTrue,
-            reason: 'Confidence ≥85% should display in green (0xFF10B981)');
+            reason: 'Confidence ≥85% should display in green (0xFF10B981)',);
         },
       );
 
@@ -267,7 +267,7 @@ void main() {
           // - Color values: 0xFFF59E0B (warning icon), 0xFFD97706 (text)
           
           expect(true, isTrue,
-            reason: 'Confidence 70-84% should display in yellow/orange');
+            reason: 'Confidence 70-84% should display in yellow/orange',);
         },
       );
 
@@ -284,7 +284,7 @@ void main() {
           // - Color value: const Color(0xFFEF4444)
           
           expect(true, isTrue,
-            reason: 'Confidence <70% should display in red (0xFFEF4444)');
+            reason: 'Confidence <70% should display in red (0xFFEF4444)',);
         },
       );
 
@@ -301,7 +301,7 @@ void main() {
           // - Displayed with % symbol
           
           expect(true, isTrue,
-            reason: 'Confidence should display as integer percentage with % symbol');
+            reason: 'Confidence should display as integer percentage with % symbol',);
         },
       );
     });
@@ -320,7 +320,7 @@ void main() {
           // - Lines 429-510: Displays red banner with rejection details
           
           expect(true, isTrue,
-            reason: 'HQ rejection banner should display only when state is RejectedByHQ');
+            reason: 'HQ rejection banner should display only when state is RejectedByHQ',);
         },
       );
 
@@ -337,7 +337,7 @@ void main() {
           // - Styled with red colors (0xFFB91C1C, 0xFF7F1D1D)
           
           expect(true, isTrue,
-            reason: 'HQ rejection banner should display rejection reason from hqReviewNotes');
+            reason: 'HQ rejection banner should display rejection reason from hqReviewNotes',);
         },
       );
 
@@ -353,7 +353,7 @@ void main() {
           // - Styled with red color (0xFFB91C1C)
           
           expect(true, isTrue,
-            reason: 'HQ rejection banner should display rejection date');
+            reason: 'HQ rejection banner should display rejection date',);
         },
       );
 
@@ -370,7 +370,7 @@ void main() {
           // - Styled with AppColors.primary background
           
           expect(true, isTrue,
-            reason: 'HQ rejection banner should have resubmit button');
+            reason: 'HQ rejection banner should have resubmit button',);
         },
       );
 
@@ -387,7 +387,7 @@ void main() {
           // - Only calls _resubmitToHQ if notes are provided
           
           expect(true, isTrue,
-            reason: 'Resubmit to HQ should require notes');
+            reason: 'Resubmit to HQ should require notes',);
         },
       );
 
@@ -404,7 +404,7 @@ void main() {
           // - Navigates back: Navigator.pop(context)
           
           expect(true, isTrue,
-            reason: 'Resubmit should call PATCH /submissions/{id}/resubmit-to-hq with notes');
+            reason: 'Resubmit should call PATCH /submissions/{id}/resubmit-to-hq with notes',);
         },
       );
     });
@@ -422,7 +422,7 @@ void main() {
           // - Returns to previous screen (submissions list)
           
           expect(true, isTrue,
-            reason: 'AppBar back button should navigate back to submissions list');
+            reason: 'AppBar back button should navigate back to submissions list',);
         },
       );
 
@@ -439,7 +439,7 @@ void main() {
           // - This pattern ensures list is refreshed after approval/rejection
           
           expect(true, isTrue,
-            reason: 'Returning from detail page should refresh submissions list');
+            reason: 'Returning from detail page should refresh submissions list',);
         },
       );
     });
@@ -458,7 +458,7 @@ void main() {
           // - Line 67: _isLoading set to false after successful load
           
           expect(true, isTrue,
-            reason: 'Page should show CircularProgressIndicator during initial load');
+            reason: 'Page should show CircularProgressIndicator during initial load',);
         },
       );
 
@@ -473,7 +473,7 @@ void main() {
           // - This occurs if API returns no data or invalid submission ID
           
           expect(true, isTrue,
-            reason: 'Page should show error message if submission not found');
+            reason: 'Page should show error message if submission not found',);
         },
       );
 
@@ -489,7 +489,7 @@ void main() {
           // - Background color: AppColors.rejectedText (red)
           
           expect(true, isTrue,
-            reason: 'API errors should show SnackBar with error message');
+            reason: 'API errors should show SnackBar with error message',);
         },
       );
     });
@@ -509,7 +509,7 @@ void main() {
           // - _isProcessing set to false in finally block after operation completes
           
           expect(true, isTrue,
-            reason: 'Action buttons should disable during processing');
+            reason: 'Action buttons should disable during processing',);
         },
       );
 
@@ -526,7 +526,7 @@ void main() {
           // - Label text also changes: 'Processing...' vs 'Approve FAP'
           
           expect(true, isTrue,
-            reason: 'Approve button should show loading indicator during processing');
+            reason: 'Approve button should show loading indicator during processing',);
         },
       );
 
@@ -543,7 +543,7 @@ void main() {
           // - Uses mounted check before setState
           
           expect(true, isTrue,
-            reason: 'Button state should reset after operation completes');
+            reason: 'Button state should reset after operation completes',);
         },
       );
     });

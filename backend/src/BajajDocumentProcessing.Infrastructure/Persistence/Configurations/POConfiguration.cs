@@ -58,6 +58,16 @@ public class POConfiguration : IEntityTypeConfiguration<PO>
             .IsRequired()
             .HasDefaultValue(false);
 
+        // Conversational submission search/filter fields
+        builder.Property(p => p.VendorCode)
+            .HasMaxLength(50);
+
+        builder.Property(p => p.POStatus)
+            .HasMaxLength(50);
+
+        builder.Property(p => p.RemainingBalance)
+            .HasColumnType("decimal(18,2)");
+
         builder.Property(p => p.VersionNumber)
             .IsRequired()
             .HasDefaultValue(1);

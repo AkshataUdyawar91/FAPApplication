@@ -64,4 +64,11 @@ public class ValidationResult : BaseEntity
     /// Gets or sets the reason for validation failure, if any checks failed
     /// </summary>
     public string? FailureReason { get; set; }
+
+    /// <summary>
+    /// Gets or sets the JSON array of proactive validation rule results.
+    /// Each element contains: ruleCode, type, passed, extractedValue, expectedValue.
+    /// Populated by ProactiveValidationService during conversational submission.
+    /// </summary>
+    public string? RuleResultsJson { get; set; }
 }

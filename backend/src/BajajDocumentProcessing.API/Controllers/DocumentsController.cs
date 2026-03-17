@@ -20,6 +20,7 @@ public class DocumentsController : ControllerBase
     private readonly ILogger<DocumentsController> _logger;
     private readonly IApplicationDbContext _context;
     private readonly IFileStorageService _fileStorageService;
+    private readonly IProactiveValidationService? _proactiveValidationService;
     private readonly IProactiveValidator _proactiveValidator;
 
     public DocumentsController(
@@ -27,12 +28,14 @@ public class DocumentsController : ControllerBase
         ILogger<DocumentsController> logger,
         IApplicationDbContext context,
         IFileStorageService fileStorageService,
-        IProactiveValidator proactiveValidator)
+        IProactiveValidationService? proactiveValidationService = null,
+        IProactiveValidator proactiveValidator = null!)
     {
         _documentService = documentService;
         _logger = logger;
         _context = context;
         _fileStorageService = fileStorageService;
+        _proactiveValidationService = proactiveValidationService;
         _proactiveValidator = proactiveValidator;
     }
 
@@ -42,6 +45,7 @@ public class DocumentsController : ControllerBase
     /// <param name="file">Document file to upload (PDF, JPG, PNG)</param>
     /// <param name="documentType">Type of document (PO, Invoice, CostSummary, Activity, Photo)</param>
     /// <param name="packageId">Optional package ID to associate document with existing package</param>
+    /// <param name="submissionId">Optional submission ID (alias for packageId, used in conversational flow)</param>
     /// <returns>Upload response with document ID and blob URL</returns>
     /// <response code="200">Document uploaded successfully</response>
     /// <response code="400">Bad request - no file provided or validation failed</response>
@@ -56,6 +60,7 @@ public class DocumentsController : ControllerBase
         [FromForm] IFormFile file,
         [FromForm] DocumentType documentType,
         [FromForm] Guid? packageId,
+        [FromForm] Guid? submissionId = null,
         [FromForm] DateTime? campaignStartDate = null,
         [FromForm] DateTime? campaignEndDate = null,
         [FromForm] int? campaignWorkingDays = null,
@@ -66,10 +71,16 @@ public class DocumentsController : ControllerBase
     {
         try
         {
+            _logger.LogInformation("=== DOCUMENTS UPLOAD === File: {FileName}, Size: {Size}, DocType: {DocType}, PackageId: {PkgId}, SubmissionId: {SubId}",
+                file?.FileName, file?.Length, documentType, packageId, submissionId);
+
             if (file == null || file.Length == 0)
             {
                 return BadRequest(new { message = "No file provided" });
             }
+
+            // submissionId is an alias for packageId (conversational flow)
+            var effectivePackageId = packageId ?? submissionId;
 
             // Get user ID from claims
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
@@ -87,7 +98,7 @@ public class DocumentsController : ControllerBase
             }
 
             // Upload document
-            var response = await _documentService.UploadDocumentAsync(file, documentType, packageId, userId);
+            var response = await _documentService.UploadDocumentAsync(file, documentType, effectivePackageId, userId);
 
             // Update package with campaign and dealership data if provided
             if (response.PackageId != Guid.Empty && 
@@ -140,6 +151,33 @@ public class DocumentsController : ControllerBase
             _logger.LogInformation(
                 "Document uploaded by user {UserId}: {DocumentId}",
                 userId, response.DocumentId);
+
+            // Trigger proactive validation for conversational flow documents
+            if (effectivePackageId.HasValue && _proactiveValidationService != null &&
+                (documentType == DocumentType.Invoice || documentType == DocumentType.CostSummary || documentType == DocumentType.ActivitySummary))
+            {
+                try
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _proactiveValidationService.ValidateDocumentAsync(
+                                response.DocumentId, documentType, effectivePackageId.Value);
+                        }
+                        catch (Exception valEx)
+                        {
+                            _logger.LogError(valEx, "Proactive validation failed for document {DocumentId}", response.DocumentId);
+                        }
+                    });
+                    _logger.LogInformation("Proactive validation triggered for document {DocumentId}", response.DocumentId);
+                }
+                catch (Exception valEx)
+                {
+                    _logger.LogError(valEx, "Failed to trigger proactive validation for document {DocumentId}", response.DocumentId);
+                    // Don't fail the upload if validation trigger fails
+                }
+            }
 
             return Ok(response);
         }
@@ -254,6 +292,138 @@ public class DocumentsController : ControllerBase
         {
             _logger.LogError(ex, "Error retrieving document {DocumentId}", id);
             return StatusCode(500, new { message = "An error occurred while retrieving the document" });
+        }
+    }
+
+    /// <summary>
+    /// Get extraction status for a document (polling endpoint for conversational flow)
+    /// </summary>
+    /// <param name="id">Document ID</param>
+    /// <param name="documentType">Optional document type hint</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Extraction status (Pending, Processing, Completed, Failed)</returns>
+    /// <response code="200">Returns extraction status</response>
+    /// <response code="404">Document not found</response>
+    [HttpGet("{id}/status")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetDocumentStatus(
+        Guid id,
+        [FromQuery] DocumentType? documentType = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            DocumentInfoDto? document = null;
+            if (documentType.HasValue)
+            {
+                document = await _documentService.GetDocumentAsync(id, documentType.Value);
+            }
+            else
+            {
+                var typesToTry = new[]
+                {
+                    DocumentType.PO, DocumentType.Invoice, DocumentType.CostSummary,
+                    DocumentType.ActivitySummary, DocumentType.EnquiryDocument, DocumentType.TeamPhoto
+                };
+                foreach (var type in typesToTry)
+                {
+                    document = await _documentService.GetDocumentAsync(id, type);
+                    if (document != null) break;
+                }
+            }
+
+            if (document == null)
+            {
+                return NotFound(new { message = "Document not found" });
+            }
+
+            // Determine extraction status based on extracted data
+            string status;
+            string? error = null;
+
+            if (!string.IsNullOrEmpty(document.ExtractedDataJson) && document.ExtractedDataJson != "{}")
+            {
+                status = "Completed";
+            }
+            else if (document.ExtractionConfidence.HasValue && document.ExtractionConfidence < 0)
+            {
+                status = "Failed";
+                error = "Extraction failed";
+            }
+            else
+            {
+                status = "Processing";
+            }
+
+            return Ok(new
+            {
+                documentId = id,
+                status,
+                error
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting document status {DocumentId}", id);
+            return StatusCode(500, new { message = "An error occurred while retrieving document status" });
+        }
+    }
+
+    /// <summary>
+    /// Get proactive validation results for a document (conversational flow)
+    /// </summary>
+    /// <param name="id">Document ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Per-rule validation results</returns>
+    /// <response code="200">Returns validation results</response>
+    /// <response code="404">Document or validation results not found</response>
+    [HttpGet("{id}/validation-results")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetDocumentValidationResults(
+        Guid id,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Look for validation results by DocumentId
+            var validationResult = await _context.ValidationResults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(vr => vr.DocumentId == id, cancellationToken);
+
+            if (validationResult == null)
+            {
+                return NotFound(new { message = "Validation results not found for this document" });
+            }
+
+            // Parse RuleResultsJson if available
+            List<object>? rules = null;
+            if (!string.IsNullOrEmpty(validationResult.RuleResultsJson))
+            {
+                try
+                {
+                    rules = System.Text.Json.JsonSerializer.Deserialize<List<object>>(validationResult.RuleResultsJson);
+                }
+                catch
+                {
+                    _logger.LogWarning("Failed to parse RuleResultsJson for document {DocumentId}", id);
+                }
+            }
+
+            return Ok(new
+            {
+                documentId = id,
+                documentType = validationResult.DocumentType.ToString(),
+                allPassed = validationResult.AllValidationsPassed,
+                rules = rules ?? new List<object>(),
+                failureReason = validationResult.FailureReason
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting validation results for document {DocumentId}", id);
+            return StatusCode(500, new { message = "An error occurred while retrieving validation results" });
         }
     }
 

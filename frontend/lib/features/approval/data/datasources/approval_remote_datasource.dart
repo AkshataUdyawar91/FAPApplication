@@ -28,11 +28,11 @@ class ApprovalRemoteDataSourceImpl implements ApprovalRemoteDataSource {
 
   @override
   Future<EnhancedValidationReportModel> getValidationReport(
-      String packageId) async {
+      String packageId,) async {
     final response =
         await dio.get('/submissions/$packageId/validation-report');
     return EnhancedValidationReportModel.fromJson(
-        response.data as Map<String, dynamic>);
+        response.data as Map<String, dynamic>,);
   }
 
   @override

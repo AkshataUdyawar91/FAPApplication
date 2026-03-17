@@ -115,6 +115,21 @@ public static class DependencyInjection
             services.AddScoped<IAnalyticsAgent, NullAnalyticsAgent>();
         }
 
+        // Submission Number Service
+        services.AddScoped<ISubmissionNumberService, SubmissionNumberService>();
+
+        // Submission Notification Service (no-op stub until SignalR hub is implemented in Task 11)
+        services.AddScoped<ISubmissionNotificationService, NullSubmissionNotificationService>();
+
+        // Proactive Validation Service
+        services.AddScoped<IProactiveValidationService, ProactiveValidationService>();
+
+        // CIRCLE HEAD Auto-Assignment Service
+        services.AddScoped<ICircleHeadAssignmentService, CircleHeadAssignmentService>();
+
+        // Conversational Submission Service (State Machine)
+        services.AddScoped<IConversationalSubmissionService, ConversationalSubmissionService>();
+
         // Workflow Orchestrator
         services.AddScoped<IWorkflowOrchestrator, WorkflowOrchestrator>();
 

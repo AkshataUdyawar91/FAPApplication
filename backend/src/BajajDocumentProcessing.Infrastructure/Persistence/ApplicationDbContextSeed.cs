@@ -24,23 +24,110 @@ public static class ApplicationDbContextSeed
 
     public static async Task SeedAsync(ApplicationDbContext context)
     {
+        // Seed default agency if none exist
+        Guid agencyId;
+        var existingAgency = await context.Agencies.FirstOrDefaultAsync();
+        if (existingAgency != null)
+        {
+            agencyId = existingAgency.Id;
+        }
+        else
+        {
+            agencyId = Guid.NewGuid();
+            context.Agencies.Add(new Agency
+            {
+                Id = agencyId,
+                SupplierCode = "V001",
+                SupplierName = "Demo Agency",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await context.SaveChangesAsync();
+        }
+
         // Seed default users if none exist
         if (!await context.Users.AnyAsync())
         {
             var users = new List<User>
             {
-                CreateUser("agency@bajaj.com", "Agency User", UserRole.Agency),
-                CreateUser("asm@bajaj.com", "ASM User", UserRole.ASM),
-                CreateUser("ra@bajaj.com", "RA User", UserRole.RA),
-                CreateUser("admin@bajaj.com", "Admin User", UserRole.Admin)
+                CreateUser("agency@bajaj.com", "Agency User", UserRole.Agency, agencyId),
+                CreateUser("asm@bajaj.com", "ASM User", UserRole.ASM, null),
+                CreateUser("ra@bajaj.com", "RA User", UserRole.RA, null),
+                CreateUser("admin@bajaj.com", "Admin User", UserRole.Admin, null)
             };
 
             await context.Users.AddRangeAsync(users);
             await context.SaveChangesAsync();
         }
 
+        // Ensure agency user has AgencyId set (fix for existing databases)
+        var agencyUser = await context.Users
+            .FirstOrDefaultAsync(u => u.Email == "agency@bajaj.com");
+        if (agencyUser != null && agencyUser.AgencyId == null)
+        {
+            agencyUser.AgencyId = agencyId;
+            await context.SaveChangesAsync();
+            Console.WriteLine($"[SeedFix] Linked agency user to agency {agencyId}");
+        }
+
         // Always fix roles on startup — self-healing guard
         await CorrectUserRolesAsync(context);
+
+        // Seed sample POs for the agency (simulates SAP sync)
+        if (!await context.POs.AnyAsync())
+        {
+            var agencyUser2 = await context.Users.FirstOrDefaultAsync(u => u.Email == "agency@bajaj.com");
+            var submitterId = agencyUser2?.Id ?? Guid.NewGuid();
+
+            var poData = new[]
+            {
+                ("PO-2026-001", new DateTime(2026, 1, 15), 500000m, 350000m, "Open"),
+                ("PO-2026-002", new DateTime(2026, 2, 20), 250000m, 250000m, "Open"),
+                ("PO-2025-045", new DateTime(2025, 11, 10), 750000m, 120000m, "PartiallyConsumed"),
+                ("8110011482", new DateTime(2026, 3, 1), 1200000m, 800000m, "Open"),
+                ("8110011617", new DateTime(2026, 3, 5), 950000m, 950000m, "Open"),
+                ("8110011618", new DateTime(2026, 3, 5), 680000m, 400000m, "PartiallyConsumed"),
+                ("8110011700", new DateTime(2026, 2, 28), 320000m, 320000m, "Open"),
+                ("8110011755", new DateTime(2026, 3, 10), 1500000m, 1100000m, "Open"),
+            };
+
+            foreach (var (poNum, poDate, total, remaining, status) in poData)
+            {
+                var pkgId = Guid.NewGuid();
+                context.DocumentPackages.Add(new DocumentPackage
+                {
+                    Id = pkgId,
+                    AgencyId = agencyId,
+                    SubmittedByUserId = submitterId,
+                    State = PackageState.Uploaded,
+                    CurrentStep = 0,
+                    VersionNumber = 1,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+
+                context.POs.Add(new PO
+                {
+                    Id = Guid.NewGuid(),
+                    PackageId = pkgId,
+                    AgencyId = agencyId,
+                    PONumber = poNum,
+                    PODate = poDate,
+                    VendorName = "Demo Agency",
+                    TotalAmount = total,
+                    RemainingBalance = remaining,
+                    POStatus = status,
+                    FileName = "seed.pdf",
+                    BlobUrl = $"seed://{poNum}",
+                    ContentType = "application/pdf",
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+
+            await context.SaveChangesAsync();
+            Console.WriteLine("[Seed] Added 8 sample POs for Demo Agency");
+        }
     }
 
     /// <summary>
@@ -74,7 +161,7 @@ public static class ApplicationDbContextSeed
         }
     }
 
-    private static User CreateUser(string email, string fullName, UserRole role)
+    private static User CreateUser(string email, string fullName, UserRole role, Guid? agencyId)
     {
         return new User
         {
@@ -83,6 +170,7 @@ public static class ApplicationDbContextSeed
             PasswordHash = BCrypt.Net.BCrypt.HashPassword("Password123!"),
             FullName = fullName,
             Role = role,
+            AgencyId = agencyId,
             IsActive = true,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow

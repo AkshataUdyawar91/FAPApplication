@@ -31,7 +31,7 @@ class ChatSidePanel extends StatefulWidget {
 class _ChatSidePanelState extends State<ChatSidePanel> {
   final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
   final _chatController = TextEditingController();
-  List<Map<String, dynamic>> _chatMessages = [];
+  final List<Map<String, dynamic>> _chatMessages = [];
   bool _isSendingMessage = false;
   String? _conversationId;
 
@@ -181,7 +181,7 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.chat_bubble_outline, size: 56, color: AppColors.textTertiary),
+            const Icon(Icons.chat_bubble_outline, size: 56, color: AppColors.textTertiary),
             const SizedBox(height: 16),
             Text(
               'Start a conversation',
@@ -266,7 +266,7 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
         spans.add(TextSpan(
           text: text.substring(lastEnd, match.start),
           style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
-        ));
+        ),);
       }
       // Add the clickable link
       final linkText = match.group(1)!;
@@ -282,7 +282,7 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
             ),
           ),
         ),
-      ));
+      ),);
       lastEnd = match.end;
     }
 
@@ -291,7 +291,7 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
       spans.add(TextSpan(
         text: text.substring(lastEnd),
         style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
-      ));
+      ),);
     }
 
     // If no links found, return simple text
@@ -332,7 +332,7 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
             'submissionId': submissionId,
             'token': widget.token,
             'userName': widget.userName,
-          });
+          },);
         }
       }
     } else {
@@ -420,7 +420,7 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
         setState(() => _chatMessages.add({
               'text': response.data['message'] ?? 'I received your message.',
               'isUser': false,
-            }));
+            }),);
       }
     } catch (e) {
       await Future.delayed(const Duration(seconds: 1));
@@ -428,7 +428,7 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
         setState(() => _chatMessages.add({
               'text': _getMockResponse(userMessage),
               'isUser': false,
-            }));
+            }),);
       }
     } finally {
       if (mounted) setState(() => _isSendingMessage = false);

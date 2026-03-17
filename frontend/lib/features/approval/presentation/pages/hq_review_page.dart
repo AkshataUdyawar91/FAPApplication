@@ -55,7 +55,9 @@ class _HQReviewPageState extends State<HQReviewPage> {
     if (state == 'approved') return 'approved';
     if (state == 'rejectedbyhq') return 'rejected';
     if (state == 'pendingasmapproval' || state == 'uploaded' || state == 'extracting' ||
-        state == 'validating' || state == 'scoring' || state == 'recommending') return 'processing';
+        state == 'validating' || state == 'scoring' || state == 'recommending') {
+      return 'processing';
+    }
     return 'processing';
   }
 
@@ -209,10 +211,10 @@ class _HQReviewPageState extends State<HQReviewPage> {
       NavItem(icon: Icons.dashboard, label: 'Dashboard', isActive: true, onTap: () {}),
       NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      }),
+      },),
       NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      }),
+      },),
     ];
   }
 
@@ -349,13 +351,13 @@ class _HQReviewPageState extends State<HQReviewPage> {
         color: AppColors.cardBackground,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
-      child: Row(children: [
+      child: const Row(children: [
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('HQ/RA Review', style: AppTextStyles.h2),
-          const SizedBox(height: 4),
+          SizedBox(height: 4),
           Text('Review and approve agency submissions', style: AppTextStyles.bodySmall),
-        ])),
-      ]),
+        ],),),
+      ],),
     );
   }
 
@@ -370,9 +372,9 @@ class _HQReviewPageState extends State<HQReviewPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (device == DeviceType.mobile) ...[
-              Text('HQ/RA Review', style: AppTextStyles.h2),
+              const Text('HQ/RA Review', style: AppTextStyles.h2),
               const SizedBox(height: 4),
-              Text('Review and approve agency submissions', style: AppTextStyles.bodySmall),
+              const Text('Review and approve agency submissions', style: AppTextStyles.bodySmall),
               const SizedBox(height: 16),
             ],
             _buildKpiSection(),
@@ -497,7 +499,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                   }
                   return Row(children: cards.asMap().entries.map((e) => Expanded(
                     child: Padding(padding: EdgeInsets.only(right: e.key == 0 ? 16 : 0), child: e.value),
-                  )).toList());
+                  ),).toList(),);
                 },
               ),
           ],
@@ -511,7 +513,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
       width: 150,
       child: DropdownButtonFormField<String>(
         key: ValueKey('status_$_statusFilter'),
-        value: _statusFilter,
+        initialValue: _statusFilter,
         isExpanded: true,
         decoration: const InputDecoration(
           labelText: 'Status',
@@ -537,7 +539,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
       width: 150,
       child: DropdownButtonFormField<String>(
         key: ValueKey('sort_$_sortBy'),
-        value: _sortBy,
+        initialValue: _sortBy,
         isExpanded: true,
         decoration: const InputDecoration(
           labelText: 'Sort by',
@@ -694,7 +696,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
               Text(fapNumber, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w700, color: AppColors.primary)),
               _buildStatusBadge(status),
-            ]),
+            ],),
             const SizedBox(height: 12),
             _buildInfoRow('PO Number', poNumber),
             _buildInfoRow('PO Amount', poAmountStr),
@@ -715,7 +717,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                 ),
               ],
             ),
-          ]),
+          ],),
         ),
       ),
     );
@@ -727,7 +729,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
         Text(value, style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600)),
-      ]),
+      ],),
     );
   }
 
@@ -736,7 +738,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
       'submissionId': id,
       'token': widget.token,
       'userName': widget.userName,
-    });
+    },);
     if (result == true || result == null) _loadDocuments();
   }
 
@@ -830,8 +832,8 @@ class _HQReviewPageState extends State<HQReviewPage> {
             tooltip: 'View Details',
           ),
         ],
-      )),
-    ]);
+      ),),
+    ],);
   }
 
   Widget _buildStatusBadge(String? status) {

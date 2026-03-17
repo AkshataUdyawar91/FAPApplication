@@ -30,6 +30,21 @@ public class DocumentPackageConfiguration : IEntityTypeConfiguration<DocumentPac
             .IsRequired()
             .HasConversion<int>();
 
+        // Conversational submission fields
+        builder.Property(p => p.ActivityState)
+            .HasMaxLength(100);
+
+        builder.Property(p => p.SubmissionNumber)
+            .HasMaxLength(20);
+
+        builder.Property(p => p.CurrentStep)
+            .IsRequired()
+            .HasDefaultValue(0);
+
+        builder.Property(p => p.AssignedCircleHeadUserId);
+
+        builder.Property(p => p.SelectedPOId);
+
         // Deprecated properties (commented out for future removal)
         // builder.Property(p => p.ReviewNotes)
         //     .HasMaxLength(2000);
