@@ -1038,7 +1038,42 @@ public class AssistantController : ControllerBase
         if (costSummary == null)
             return new AssistantResponse { Type = "error", Message = "Cost Summary document not found. Please try uploading again." };
 
-        var rules = RunCostSummaryValidationRules(costSummary);
+        // Wait for background extraction to complete (up to 60s)
+        if (string.IsNullOrEmpty(costSummary.ExtractedDataJson))
+        {
+            _logger.LogInformation("Waiting for cost summary extraction to complete for {DocId}", docId);
+            for (int i = 0; i < 30; i++)
+            {
+                await Task.Delay(2000, ct);
+                var refreshed = await _context.CostSummaries
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Id == docId && !c.IsDeleted, ct);
+                if (!string.IsNullOrEmpty(refreshed?.ExtractedDataJson))
+                {
+                    costSummary = refreshed;
+                    break;
+                }
+            }
+        }
+
+        _logger.LogInformation(
+            "=== CS VALIDATION STATE === DocId: {DocId} | ExtractedDataJson null: {JsonNull} | PlaceOfSupply: {Pos} | Days: {Days} | Activations: {Act} | Teams: {Teams} | TotalCost: {Cost} | ElementWiseCosts null: {EwcNull}",
+            docId,
+            string.IsNullOrEmpty(costSummary.ExtractedDataJson),
+            costSummary.PlaceOfSupply,
+            costSummary.NumberOfDays,
+            costSummary.NumberOfActivations,
+            costSummary.NumberOfTeams,
+            costSummary.TotalCost,
+            string.IsNullOrEmpty(costSummary.ElementWiseCostsJson));
+
+        // Fetch latest invoice for the same package (for CS_TOTAL_VS_INVOICE check)
+        var latestInvoice = await _context.Invoices
+            .Where(i => i.PackageId == costSummary.PackageId && !i.IsDeleted)
+            .OrderByDescending(i => i.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        var rules = RunCostSummaryValidationRules(costSummary, latestInvoice?.TotalAmount);
 
         int passCount = rules.Count(r => r.Passed && !r.IsWarning);
         int failCount = rules.Count(r => !r.Passed && !r.IsWarning);
@@ -1137,7 +1172,7 @@ public class AssistantController : ControllerBase
         };
     }
 
-    private List<ValidationRuleResult> RunCostSummaryValidationRules(Domain.Entities.CostSummary costSummary)
+    private List<ValidationRuleResult> RunCostSummaryValidationRules(Domain.Entities.CostSummary costSummary, decimal? invoiceAmount = null)
     {
         var rules = new List<ValidationRuleResult>();
 
@@ -1147,6 +1182,7 @@ public class AssistantController : ControllerBase
         int? numberOfTeams = costSummary.NumberOfTeams;
         string? elementWiseCosts = costSummary.ElementWiseCostsJson;
         string? elementWiseQuantity = costSummary.ElementWiseQuantityJson;
+        decimal? totalCost = costSummary.TotalCost;
 
         // Fallback: parse from ExtractedDataJson if dedicated columns are empty
         bool needsFallback = string.IsNullOrWhiteSpace(placeOfSupply)
@@ -1154,41 +1190,67 @@ public class AssistantController : ControllerBase
             || numberOfActivations == null
             || numberOfTeams == null
             || string.IsNullOrWhiteSpace(elementWiseCosts)
-            || string.IsNullOrWhiteSpace(elementWiseQuantity);
+            || string.IsNullOrWhiteSpace(elementWiseQuantity)
+            || totalCost == null;
 
         if (needsFallback && !string.IsNullOrEmpty(costSummary.ExtractedDataJson))
         {
             try
             {
-                var json = JsonSerializer.Deserialize<JsonElement>(costSummary.ExtractedDataJson);
+                var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var json = JsonSerializer.Deserialize<JsonElement>(costSummary.ExtractedDataJson, opts);
 
                 if (string.IsNullOrWhiteSpace(placeOfSupply))
                 {
-                    if (json.TryGetProperty("PlaceOfSupply", out var pos) || json.TryGetProperty("placeOfSupply", out pos))
+                    if (json.TryGetProperty("placeOfSupply", out var pos) && pos.ValueKind != JsonValueKind.Null)
                         placeOfSupply = pos.GetString();
                     if (string.IsNullOrWhiteSpace(placeOfSupply))
-                        if (json.TryGetProperty("State", out var st) || json.TryGetProperty("state", out st))
+                        if (json.TryGetProperty("state", out var st) && st.ValueKind != JsonValueKind.Null)
                             placeOfSupply = st.GetString();
                 }
+
                 if (numberOfDays == null)
-                    if (json.TryGetProperty("NumberOfDays", out var nd) || json.TryGetProperty("numberOfDays", out nd))
+                    if (json.TryGetProperty("numberOfDays", out var nd) && nd.ValueKind == JsonValueKind.Number)
                         try { numberOfDays = nd.GetInt32(); } catch { }
 
                 if (numberOfActivations == null)
-                    if (json.TryGetProperty("NumberOfActivations", out var na) || json.TryGetProperty("numberOfActivations", out na))
+                    if (json.TryGetProperty("numberOfActivations", out var na) && na.ValueKind == JsonValueKind.Number)
                         try { numberOfActivations = na.GetInt32(); } catch { }
 
                 if (numberOfTeams == null)
-                    if (json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                    if (json.TryGetProperty("numberOfTeams", out var nt) && nt.ValueKind == JsonValueKind.Number)
                         try { numberOfTeams = nt.GetInt32(); } catch { }
 
-                if (string.IsNullOrWhiteSpace(elementWiseCosts))
-                    if (json.TryGetProperty("ElementWiseCostsJson", out var ewc) || json.TryGetProperty("elementWiseCostsJson", out ewc))
-                        elementWiseCosts = ewc.GetString();
+                if (totalCost == null)
+                    if (json.TryGetProperty("totalCost", out var tc) && tc.ValueKind == JsonValueKind.Number)
+                        try { totalCost = tc.GetDecimal(); } catch { }
 
-                if (string.IsNullOrWhiteSpace(elementWiseQuantity))
-                    if (json.TryGetProperty("ElementWiseQuantityJson", out var ewq) || json.TryGetProperty("elementWiseQuantityJson", out ewq))
-                        elementWiseQuantity = ewq.GetString();
+                // CostBreakdowns array → build elementWiseCosts and elementWiseQuantity
+                if ((string.IsNullOrWhiteSpace(elementWiseCosts) || string.IsNullOrWhiteSpace(elementWiseQuantity))
+                    && json.TryGetProperty("costBreakdowns", out var breakdowns)
+                    && breakdowns.ValueKind == JsonValueKind.Array
+                    && breakdowns.GetArrayLength() > 0)
+                {
+                    var costsArr = new System.Text.StringBuilder("[");
+                    var qtyArr = new System.Text.StringBuilder("[");
+                    bool first = true;
+                    foreach (var b in breakdowns.EnumerateArray())
+                    {
+                        if (!first) { costsArr.Append(','); qtyArr.Append(','); }
+                        first = false;
+                        var cat = b.TryGetProperty("category", out var c) ? c.GetString() : "";
+                        var elem = b.TryGetProperty("elementName", out var e) ? e.GetString() : cat;
+                        var amt = b.TryGetProperty("amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0;
+                        var qty = b.TryGetProperty("quantity", out var q) && q.ValueKind == JsonValueKind.Number ? q.GetInt32() : 0;
+                        var unit = b.TryGetProperty("unit", out var u) ? u.GetString() : "";
+                        costsArr.Append($"{{\"category\":\"{cat}\",\"elementName\":\"{elem}\",\"amount\":{amt}}}");
+                        qtyArr.Append($"{{\"category\":\"{cat}\",\"quantity\":{qty},\"unit\":\"{unit}\"}}");
+                    }
+                    costsArr.Append(']');
+                    qtyArr.Append(']');
+                    if (string.IsNullOrWhiteSpace(elementWiseCosts)) elementWiseCosts = costsArr.ToString();
+                    if (string.IsNullOrWhiteSpace(elementWiseQuantity)) elementWiseQuantity = qtyArr.ToString();
+                }
             }
             catch { }
         }
@@ -1270,6 +1332,40 @@ public class AssistantController : ControllerBase
             ExtractedValue = qtyPresent ? elementWiseQuantity : null,
             Message = qtyPresent ? null : "Element-wise quantity breakdown not detected",
         });
+
+        // CS_TOTAL_VS_INVOICE: Total Cost <= Invoice Amount
+        if (totalCost == null || invoiceAmount == null)
+        {
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = "CS_TOTAL_VS_INVOICE",
+                Type = "Required",
+                Passed = false,
+                IsWarning = true,
+                Label = "Total Cost vs Invoice Amount",
+                ExtractedValue = totalCost.HasValue ? $"₹{totalCost.Value:F2}" : null,
+                Message = totalCost == null
+                    ? "Cost Summary total amount not detected — cannot compare with invoice"
+                    : "Invoice amount not available — cannot compare",
+            });
+        }
+        else
+        {
+            bool withinLimit = totalCost.Value <= invoiceAmount.Value;
+            decimal diff = totalCost.Value - invoiceAmount.Value;
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = "CS_TOTAL_VS_INVOICE",
+                Type = "Required",
+                Passed = withinLimit,
+                IsWarning = false,
+                Label = "Total Cost vs Invoice Amount",
+                ExtractedValue = $"Cost: ₹{totalCost.Value:F2} | Invoice: ₹{invoiceAmount.Value:F2}",
+                Message = withinLimit
+                    ? null
+                    : $"Cost Summary (₹{totalCost.Value:F2}) exceeds Invoice (₹{invoiceAmount.Value:F2}) by ₹{diff:F2}",
+            });
+        }
 
         return rules;
     }

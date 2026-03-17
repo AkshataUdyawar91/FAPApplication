@@ -30,10 +30,10 @@ public class PoBalanceService : IPoBalanceService
     {
         _db = db;
         _logger = logger;
-        _sapUrl       = configuration["SAP:PoData:Url"]       ?? throw new InvalidOperationException("SAP:PoData:Url is not configured.");
-        _sapApiKey    = configuration["SAP:PoData:ApiKey"]    ?? throw new InvalidOperationException("SAP:PoData:ApiKey is not configured.");
-        _sapBasicAuth = configuration["SAP:PoData:BasicAuth"] ?? throw new InvalidOperationException("SAP:PoData:BasicAuth is not configured.");
-        _sapCookie    = configuration["SAP:PoData:Cookie"]    ?? string.Empty;
+        _sapUrl       = configuration["SAP:PoBalanceApi:Url"]       ?? throw new InvalidOperationException("SAP:PoBalanceApi:Url is not configured.");
+        _sapApiKey    = configuration["SAP:PoBalanceApi:ApiKey"]    ?? throw new InvalidOperationException("SAP:PoBalanceApi:ApiKey is not configured.");
+        _sapBasicAuth = configuration["SAP:PoBalanceApi:BasicAuth"] ?? throw new InvalidOperationException("SAP:PoBalanceApi:BasicAuth is not configured.");
+        _sapCookie    = configuration["SAP:PoBalanceApi:Cookie"]    ?? string.Empty;
     }
 
     /// <inheritdoc />
