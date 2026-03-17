@@ -4,6 +4,7 @@ using System.Text.Json;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.PO;
 using BajajDocumentProcessing.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -75,6 +76,9 @@ public class PoBalanceService : IPoBalanceService
             log.Currency  = result.Currency;
             log.IsSuccess = true;
 
+            // Write RemainingBalance and RefreshedAt back to the POs table
+            await UpdatePoRemainingBalanceAsync(poNum, result.Balance, result.CalculatedAt, cancellationToken);
+
             return result;
         }
         catch (Exception ex)
@@ -98,6 +102,42 @@ public class PoBalanceService : IPoBalanceService
             {
                 _logger.LogError(dbEx, "Failed to persist POBalanceLog for PO {PoNum}", poNum);
             }
+        }
+    }
+
+    /// <summary>
+    /// Updates RemainingBalance and RefreshedAt on the matching PO row.
+    /// Failures are swallowed so they never break the primary balance response.
+    /// </summary>
+    private async Task UpdatePoRemainingBalanceAsync(
+        string poNum,
+        decimal balance,
+        DateTime refreshedAt,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var po = await _db.POs
+                .FirstOrDefaultAsync(p => p.PONumber == poNum && !p.IsDeleted, cancellationToken);
+
+            if (po == null)
+            {
+                _logger.LogWarning("PO {PoNum} not found in POs table — skipping balance write-back", poNum);
+                return;
+            }
+
+            po.RemainingBalance = balance;
+            po.RefreshedAt      = refreshedAt;
+
+            await _db.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "Updated POs table for PO {PoNum}: RemainingBalance={Balance}, RefreshedAt={RefreshedAt}",
+                poNum, balance, refreshedAt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to write balance back to POs table for PO {PoNum}", poNum);
         }
     }
 
@@ -172,9 +212,6 @@ public class PoBalanceService : IPoBalanceService
     /// <summary>
     /// Normalises a JsonElement that may be either a JSON array or a JSON object
     /// into an enumerable of JsonElement values.
-    /// - Array: delegates to EnumerateArray() (existing behaviour, unchanged).
-    /// - Object: yields the element itself as a single-item sequence (fixes the bug).
-    /// - Anything else: yields nothing (defensive fallback).
     /// </summary>
     private static IEnumerable<JsonElement> EnumerateArrayOrObject(JsonElement element)
     {
