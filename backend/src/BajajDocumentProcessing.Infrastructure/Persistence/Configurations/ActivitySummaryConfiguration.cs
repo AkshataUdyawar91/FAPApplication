@@ -38,6 +38,13 @@ public class ActivitySummaryConfiguration : IEntityTypeConfiguration<ActivitySum
             .IsRequired()
             .HasMaxLength(200);
 
+        builder.Property(a => a.DealerName)
+            .HasMaxLength(500);
+
+        builder.Property(a => a.TotalDays);
+
+        builder.Property(a => a.TotalWorkingDays);
+
         builder.Property(a => a.ExtractedDataJson)
             .HasColumnType("nvarchar(max)");
 

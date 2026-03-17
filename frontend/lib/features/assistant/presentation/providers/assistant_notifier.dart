@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:equatable/equatable.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -197,6 +197,63 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
         action: 'invoice_uploaded',
         message: docId,
       );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> uploadActivitySummary(Uint8List bytes, String fileName) async {
+    _addUserMessage('Uploading activity summary: $fileName');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final sid = state.submissionId;
+      if (sid == null) {
+        state = state.copyWith(isLoading: false, error: 'No active submission. Please start over.');
+        return;
+      }
+      final uploadResult = await _dataSource.uploadActivitySummary(
+        fileBytes: bytes,
+        fileName: fileName,
+        submissionId: sid,
+      );
+      final docId = uploadResult['documentId']?.toString() ?? '';
+      state = state.copyWith(lastDocumentId: docId);
+
+      // Poll until extraction completes (max 60s, every 3s)
+      const maxAttempts = 20;
+      for (var i = 0; i < maxAttempts; i++) {
+        final status = await _dataSource.getDocumentExtractionStatus(docId);
+        if (status == 'extracted') break;
+        await Future.delayed(const Duration(seconds: 3));
+      }
+
+      final response = await _dataSource.sendMessage(
+        action: 'activity_summary_uploaded',
+        message: docId,
+      );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> continueAfterActivity() async {
+    _addUserMessage('Continue');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(action: 'continue_after_activity');
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> reUploadActivitySummary() async {
+    _addUserMessage('Re-upload activity summary');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(action: 'reupload_activity_summary');
       _addBotMessage(response);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());

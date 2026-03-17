@@ -95,6 +95,10 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("DealerName")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
                     b.Property<string>("ExtractedDataJson")
                         .HasColumnType("nvarchar(max)");
 
@@ -119,6 +123,12 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.Property<Guid>("PackageId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("TotalDays")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("TotalWorkingDays")
+                        .HasColumnType("int");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
