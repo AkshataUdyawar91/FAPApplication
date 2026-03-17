@@ -508,6 +508,33 @@ public class DocumentService : IDocumentService
                             csEntity.ExtractedDataJson = extractedJson;
                             csEntity.ExtractionConfidence = confidence;
                             csEntity.UpdatedAt = DateTime.UtcNow;
+
+                            try
+                            {
+                                var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                                var parsed = System.Text.Json.JsonSerializer.Deserialize<BajajDocumentProcessing.Application.DTOs.Documents.CostSummaryData>(extractedJson, opts);
+                                if (parsed != null)
+                                {
+                                    csEntity.PlaceOfSupply = parsed.PlaceOfSupply ?? parsed.State;
+                                    csEntity.NumberOfDays = parsed.NumberOfDays;
+                                    csEntity.NumberOfActivations = parsed.NumberOfActivations;
+                                    csEntity.NumberOfTeams = parsed.NumberOfTeams;
+                                    if (parsed.TotalCost > 0) csEntity.TotalCost = parsed.TotalCost;
+
+                                    // Element-wise costs: Category + ElementName + Amount per row
+                                    if (parsed.CostBreakdowns?.Count > 0)
+                                    {
+                                        csEntity.ElementWiseCostsJson = System.Text.Json.JsonSerializer.Serialize(
+                                            parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount }));
+                                        csEntity.ElementWiseQuantityJson = System.Text.Json.JsonSerializer.Serialize(
+                                            parsed.CostBreakdowns.Select(b => new { b.Category, b.Quantity, b.Unit }));
+                                    }
+                                }
+                            }
+                            catch (Exception parseEx)
+                            {
+                                _logger.LogWarning(parseEx, "Could not parse CostSummaryData JSON to map columns for document {DocumentId}", documentId);
+                            }
                         }
                         break;
 

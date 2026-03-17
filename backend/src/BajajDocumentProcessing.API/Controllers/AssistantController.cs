@@ -63,6 +63,9 @@ public class AssistantController : ControllerBase
                 "activity_summary_uploaded" => await HandleActivitySummaryUploaded(request, agencyId.Value, ct),
                 "reupload_activity_summary" => HandleReuploadActivitySummary(),
                 "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId.Value, ct),
+                "cost_summary_uploaded" => await HandleCostSummaryUploaded(request, agencyId.Value, ct),
+                "reupload_cost_summary" => HandleReuploadCostSummary(),
+                "continue_after_cost_summary" => HandleContinueAfterCostSummary(request),
                 _ => BuildGreeting(),
             };
 
@@ -750,17 +753,17 @@ public class AssistantController : ControllerBase
     private async Task<AssistantResponse> HandleContinueInvoice(
         AssistantRequest request, Guid agencyId, CancellationToken ct)
     {
-        // User confirmed invoice — move to Activity Summary upload
+        // User confirmed invoice — move to Cost Summary upload
         var submissionId = ExtractSubmissionId(request);
         return new AssistantResponse
         {
-            Type = "activity_summary_upload",
-            Message = "Invoice accepted. Now please upload the Activity Summary document.",
+            Type = "cost_summary_upload",
+            Message = "Invoice accepted. Now please upload the Cost Summary document.",
             AllowedFormats = new List<string> { "PDF", "JPG", "PNG", "XLS", "XLSX" },
             SubmissionId = submissionId,
             Cards = new List<WorkflowCard>
             {
-                new() { Id = "upload_activity", Title = "Upload Activity Summary", Subtitle = "Select a file from your device", Icon = "upload_file", Action = "upload_activity_summary" },
+                new() { Id = "upload_cost_summary", Title = "Upload Cost Summary", Subtitle = "Select a file from your device", Icon = "upload_file", Action = "upload_cost_summary" },
             },
         };
     }
@@ -968,6 +971,29 @@ public class AssistantController : ControllerBase
                 : "Location not detected",
         });
 
+        // Info rows — always pass, show extracted values
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "AS_TOTAL_DAYS",
+            Type = "Info",
+            Passed = true,
+            IsWarning = false,
+            Label = "Total No. of Days",
+            ExtractedValue = actSummary.TotalDays.HasValue ? actSummary.TotalDays.ToString() : "Not extracted",
+            Message = null,
+        });
+
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "AS_TOTAL_WORKING_DAYS",
+            Type = "Info",
+            Passed = true,
+            IsWarning = false,
+            Label = "Total No. of Working Days",
+            ExtractedValue = actSummary.TotalWorkingDays.HasValue ? actSummary.TotalWorkingDays.ToString() : "Not extracted",
+            Message = null,
+        });
+
         return rules;
     }
 
@@ -978,7 +1004,303 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "text",
-            Message = "Activity Summary accepted. Phase 7 (Enquiry Dump Upload) coming soon.",
+            Message = "Activity Summary accepted. Phase 8 (Team Details) coming soon.",
+        };
+    }
+
+    private async Task<AssistantResponse> HandleCostSummaryUploaded(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        string? documentId = request.Message?.Trim();
+        Guid? submissionIdFromPayload = null;
+
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var payload = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (string.IsNullOrEmpty(documentId) && payload.TryGetProperty("documentId", out var docProp))
+                    documentId = docProp.GetString();
+                if (payload.TryGetProperty("submissionId", out var subProp) && Guid.TryParse(subProp.GetString(), out var sid))
+                    submissionIdFromPayload = sid;
+            }
+            catch { }
+        }
+
+        if (string.IsNullOrWhiteSpace(documentId) || !Guid.TryParse(documentId, out var docId))
+            return new AssistantResponse { Type = "error", Message = "Cost Summary upload confirmation missing. Please try uploading again." };
+
+        _logger.LogInformation("=== COST SUMMARY VALIDATION === DocumentId: {DocId}", docId);
+
+        var costSummary = await _context.CostSummaries
+            .FirstOrDefaultAsync(c => c.Id == docId && !c.IsDeleted, ct);
+
+        if (costSummary == null)
+            return new AssistantResponse { Type = "error", Message = "Cost Summary document not found. Please try uploading again." };
+
+        var rules = RunCostSummaryValidationRules(costSummary);
+
+        int passCount = rules.Count(r => r.Passed && !r.IsWarning);
+        int failCount = rules.Count(r => !r.Passed && !r.IsWarning);
+        int warnCount = rules.Count(r => r.IsWarning);
+
+        string botMessage = failCount == 0 && warnCount == 0
+            ? $"Cost Summary analysed. All {rules.Count} checks passed!"
+            : $"Cost Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")}{(warnCount > 0 ? $" {warnCount} warning(s)." : "")} Review below and continue or re-upload.";
+
+        // Persist to ValidationResults
+        try
+        {
+            var ruleResultsJson = JsonSerializer.Serialize(rules.Select(r => new
+            {
+                ruleCode = r.RuleCode,
+                type = r.Type,
+                passed = r.Passed,
+                isWarning = r.IsWarning,
+                label = r.Label,
+                extractedValue = r.ExtractedValue,
+                message = r.Message,
+            }));
+
+            var failureReason = failCount > 0
+                ? string.Join("; ", rules.Where(r => !r.Passed && !r.IsWarning).Select(r => r.Message ?? r.Label))
+                : warnCount > 0 ? string.Join("; ", rules.Where(r => r.IsWarning).Select(r => r.Message ?? r.Label))
+                : null;
+
+            var existing = await _context.ValidationResults
+                .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
+
+            if (existing != null)
+            {
+                existing.AllValidationsPassed = failCount == 0;
+                existing.RuleResultsJson = ruleResultsJson;
+                existing.FailureReason = failureReason;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _context.ValidationResults.Add(new Domain.Entities.ValidationResult
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentType = DocumentType.CostSummary,
+                    DocumentId = docId,
+                    AllValidationsPassed = failCount == 0,
+                    RuleResultsJson = ruleResultsJson,
+                    FailureReason = failureReason,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
+                });
+            }
+            await _context.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist cost summary validation results for {DocId}", docId);
+        }
+
+        // Read back from DB
+        List<ValidationRuleResult> responseRules = rules;
+        try
+        {
+            var saved = await _context.ValidationResults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
+
+            if (saved?.RuleResultsJson != null)
+            {
+                var dbRules = JsonSerializer.Deserialize<List<ValidationRuleResult>>(
+                    saved.RuleResultsJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (dbRules != null && dbRules.Count > 0)
+                {
+                    responseRules = dbRules;
+                    passCount = responseRules.Count(r => r.Passed && !r.IsWarning);
+                    failCount = responseRules.Count(r => !r.Passed && !r.IsWarning);
+                    warnCount = responseRules.Count(r => r.IsWarning);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read back cost summary validation from DB for {DocId}", docId);
+        }
+
+        return new AssistantResponse
+        {
+            Type = "cost_summary_validation",
+            Message = botMessage,
+            ValidationRules = responseRules,
+            PassedCount = passCount,
+            FailedCount = failCount,
+            WarningCount = warnCount,
+            SubmissionId = submissionIdFromPayload ?? costSummary.PackageId,
+        };
+    }
+
+    private List<ValidationRuleResult> RunCostSummaryValidationRules(Domain.Entities.CostSummary costSummary)
+    {
+        var rules = new List<ValidationRuleResult>();
+
+        string? placeOfSupply = costSummary.PlaceOfSupply;
+        int? numberOfDays = costSummary.NumberOfDays;
+        int? numberOfActivations = costSummary.NumberOfActivations;
+        int? numberOfTeams = costSummary.NumberOfTeams;
+        string? elementWiseCosts = costSummary.ElementWiseCostsJson;
+        string? elementWiseQuantity = costSummary.ElementWiseQuantityJson;
+
+        // Fallback: parse from ExtractedDataJson if dedicated columns are empty
+        bool needsFallback = string.IsNullOrWhiteSpace(placeOfSupply)
+            || numberOfDays == null
+            || numberOfActivations == null
+            || numberOfTeams == null
+            || string.IsNullOrWhiteSpace(elementWiseCosts)
+            || string.IsNullOrWhiteSpace(elementWiseQuantity);
+
+        if (needsFallback && !string.IsNullOrEmpty(costSummary.ExtractedDataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(costSummary.ExtractedDataJson);
+
+                if (string.IsNullOrWhiteSpace(placeOfSupply))
+                {
+                    if (json.TryGetProperty("PlaceOfSupply", out var pos) || json.TryGetProperty("placeOfSupply", out pos))
+                        placeOfSupply = pos.GetString();
+                    if (string.IsNullOrWhiteSpace(placeOfSupply))
+                        if (json.TryGetProperty("State", out var st) || json.TryGetProperty("state", out st))
+                            placeOfSupply = st.GetString();
+                }
+                if (numberOfDays == null)
+                    if (json.TryGetProperty("NumberOfDays", out var nd) || json.TryGetProperty("numberOfDays", out nd))
+                        try { numberOfDays = nd.GetInt32(); } catch { }
+
+                if (numberOfActivations == null)
+                    if (json.TryGetProperty("NumberOfActivations", out var na) || json.TryGetProperty("numberOfActivations", out na))
+                        try { numberOfActivations = na.GetInt32(); } catch { }
+
+                if (numberOfTeams == null)
+                    if (json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                        try { numberOfTeams = nt.GetInt32(); } catch { }
+
+                if (string.IsNullOrWhiteSpace(elementWiseCosts))
+                    if (json.TryGetProperty("ElementWiseCostsJson", out var ewc) || json.TryGetProperty("elementWiseCostsJson", out ewc))
+                        elementWiseCosts = ewc.GetString();
+
+                if (string.IsNullOrWhiteSpace(elementWiseQuantity))
+                    if (json.TryGetProperty("ElementWiseQuantityJson", out var ewq) || json.TryGetProperty("elementWiseQuantityJson", out ewq))
+                        elementWiseQuantity = ewq.GetString();
+            }
+            catch { }
+        }
+
+        // CS_PLACE_OF_SUPPLY_PRESENT
+        bool posPresent = !string.IsNullOrWhiteSpace(placeOfSupply);
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "CS_PLACE_OF_SUPPLY_PRESENT",
+            Type = "Required",
+            Passed = posPresent,
+            IsWarning = false,
+            Label = "Place of Supply",
+            ExtractedValue = posPresent ? placeOfSupply : null,
+            Message = posPresent ? null : "Place of supply / state not detected",
+        });
+
+        // CS_TOTAL_DAYS_PRESENT
+        bool daysPresent = numberOfDays.HasValue && numberOfDays.Value > 0;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "CS_TOTAL_DAYS_PRESENT",
+            Type = "Required",
+            Passed = daysPresent,
+            IsWarning = false,
+            Label = "No. of Days",
+            ExtractedValue = daysPresent ? numberOfDays.ToString() : null,
+            Message = daysPresent ? null : "Total number of days not detected",
+        });
+
+        // CS_ACTIVATIONS_PRESENT
+        bool activationsPresent = numberOfActivations.HasValue && numberOfActivations.Value > 0;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "CS_ACTIVATIONS_PRESENT",
+            Type = "Required",
+            Passed = activationsPresent,
+            IsWarning = false,
+            Label = "No. of Activations",
+            ExtractedValue = activationsPresent ? numberOfActivations.ToString() : null,
+            Message = activationsPresent ? null : "Number of activations not detected",
+        });
+
+        // CS_TEAMS_PRESENT
+        bool teamsPresent = numberOfTeams.HasValue && numberOfTeams.Value > 0;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "CS_TEAMS_PRESENT",
+            Type = "Required",
+            Passed = teamsPresent,
+            IsWarning = false,
+            Label = "No. of Teams",
+            ExtractedValue = teamsPresent ? numberOfTeams.ToString() : null,
+            Message = teamsPresent ? null : "Number of teams not detected",
+        });
+
+        // CS_ELEMENT_WISE_COSTS_PRESENT
+        bool costsPresent = !string.IsNullOrWhiteSpace(elementWiseCosts) && elementWiseCosts != "[]";
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "CS_ELEMENT_WISE_COSTS_PRESENT",
+            Type = "Required",
+            Passed = costsPresent,
+            IsWarning = false,
+            Label = "Element-wise Cost",
+            ExtractedValue = costsPresent ? elementWiseCosts : null,
+            Message = costsPresent ? null : "Element-wise cost breakdown not detected",
+        });
+
+        // CS_ELEMENT_WISE_QUANTITY_PRESENT
+        bool qtyPresent = !string.IsNullOrWhiteSpace(elementWiseQuantity) && elementWiseQuantity != "[]";
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "CS_ELEMENT_WISE_QUANTITY_PRESENT",
+            Type = "Required",
+            Passed = qtyPresent,
+            IsWarning = false,
+            Label = "Element-wise Quantity",
+            ExtractedValue = qtyPresent ? elementWiseQuantity : null,
+            Message = qtyPresent ? null : "Element-wise quantity breakdown not detected",
+        });
+
+        return rules;
+    }
+
+    private AssistantResponse HandleReuploadCostSummary()
+    {
+        return new AssistantResponse
+        {
+            Type = "cost_summary_upload",
+            Message = "Please upload the corrected Cost Summary document.",
+            AllowedFormats = new List<string> { "PDF", "JPG", "PNG", "XLS", "XLSX" },
+            Cards = new List<WorkflowCard>
+            {
+                new() { Id = "upload_cost_summary", Title = "Upload Cost Summary", Subtitle = "Select a file from your device", Icon = "upload_file", Action = "upload_cost_summary" },
+            },
+        };
+    }
+
+    private AssistantResponse HandleContinueAfterCostSummary(AssistantRequest request)
+    {
+        var submissionId = ExtractSubmissionId(request);
+        return new AssistantResponse
+        {
+            Type = "activity_summary_upload",
+            Message = "Cost Summary accepted. Now please upload the Activity Summary document.",
+            AllowedFormats = new List<string> { "PDF", "JPG", "PNG", "XLS", "XLSX" },
+            SubmissionId = submissionId,
+            Cards = new List<WorkflowCard>
+            {
+                new() { Id = "upload_activity", Title = "Upload Activity Summary", Subtitle = "Select a file from your device", Icon = "upload_file", Action = "upload_activity_summary" },
+            },
         };
     }
 
