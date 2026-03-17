@@ -41,7 +41,7 @@ class _NewLoginPageState extends State<NewLoginPage> {
         'password': _passwordController.text,
       });
       if (response.statusCode == 200 && mounted) {
-        Navigator.pushReplacementNamed(context, '/agency/assistant', arguments: {
+        Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: {
           'token': response.data['token'],
           'userName': response.data['fullName'],
         });

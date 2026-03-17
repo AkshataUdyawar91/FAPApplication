@@ -81,11 +81,11 @@ class WorkflowCardModel {
 
   factory WorkflowCardModel.fromJson(Map<String, dynamic> json) {
     return WorkflowCardModel(
-      id: json['id'] as String,
-      title: json['title'] as String,
-      subtitle: json['subtitle'] as String,
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      subtitle: json['subtitle'] as String? ?? '',
       icon: json['icon'] as String? ?? 'help_outline',
-      action: json['action'] as String,
+      action: json['action'] as String? ?? '',
     );
   }
 }
