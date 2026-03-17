@@ -550,6 +550,7 @@ public class NotificationDataService : INotificationDataService
 
         var package = await _context.DocumentPackages
             .Include(p => p.PO)
+            .Include(p => p.Invoices)
             .Include(p => p.CostSummary)
             .Include(p => p.ActivitySummary)
             .Include(p => p.EnquiryDocument)
@@ -569,6 +570,8 @@ public class NotificationDataService : INotificationDataService
         if (package.CostSummary != null) documentIds.Add(package.CostSummary.Id);
         if (package.ActivitySummary != null) documentIds.Add(package.ActivitySummary.Id);
         if (package.EnquiryDocument != null) documentIds.Add(package.EnquiryDocument.Id);
+        foreach (var inv in package.Invoices.Where(i => !i.IsDeleted))
+            documentIds.Add(inv.Id);
         foreach (var inv in package.Teams.SelectMany(t => t.Invoices))
             documentIds.Add(inv.Id);
 
@@ -594,7 +597,7 @@ public class NotificationDataService : INotificationDataService
             missingDocTypes.Add(Domain.Enums.DocumentType.ActivitySummary);
         if (package.EnquiryDocument != null && !foundDocTypes.Contains(Domain.Enums.DocumentType.EnquiryDocument))
             missingDocTypes.Add(Domain.Enums.DocumentType.EnquiryDocument);
-        if (package.Teams.SelectMany(t => t.Invoices).Any() && !foundDocTypes.Contains(Domain.Enums.DocumentType.Invoice))
+        if (package.Invoices.Any(i => !i.IsDeleted) && !foundDocTypes.Contains(Domain.Enums.DocumentType.Invoice))
             missingDocTypes.Add(Domain.Enums.DocumentType.Invoice);
 
         if (missingDocTypes.Count > 0)
@@ -697,6 +700,7 @@ public class NotificationDataService : INotificationDataService
     {
         var groups = new List<ValidationCheckGroup>();
 
+        // Non-invoice document types use the generic 6 checks
         var docEntries = new List<(string DocName, Guid? DocId, Domain.Enums.DocumentType DocType)>
         {
             ("PO", package.PO?.Id, Domain.Enums.DocumentType.PO),
@@ -704,15 +708,6 @@ public class NotificationDataService : INotificationDataService
             ("Activity Summary", package.ActivitySummary?.Id, Domain.Enums.DocumentType.ActivitySummary),
             ("Enquiry Document", package.EnquiryDocument?.Id, Domain.Enums.DocumentType.EnquiryDocument)
         };
-
-        var allTeamInvoices = package.Teams.SelectMany(t => t.Invoices).ToList();
-        var firstTeamInvoice = allTeamInvoices.FirstOrDefault();
-        if (firstTeamInvoice != null)
-        {
-            var invoiceCount = allTeamInvoices.Count;
-            var invoiceLabel = invoiceCount > 1 ? $"Invoices ({invoiceCount})" : "Invoice";
-            docEntries.Add((invoiceLabel, firstTeamInvoice.Id, Domain.Enums.DocumentType.Invoice));
-        }
 
         foreach (var (docName, docId, docType) in docEntries)
         {
@@ -733,7 +728,6 @@ public class NotificationDataService : INotificationDataService
                 continue;
             }
 
-            // Parse evidence descriptions for ALL checks (pass and fail)
             var evidenceMap = ParseValidationEvidenceJson(vr.ValidationDetailsJson);
 
             var checks = new (string CheckName, bool Passed, string DetailKey)[]
@@ -759,6 +753,187 @@ public class NotificationDataService : INotificationDataService
                     Evidence = evidence
                 });
             }
+        }
+
+        // Invoice: use the same 9 specific checks as the conversational chatbot
+        var allInvoices = package.Invoices.Where(i => !i.IsDeleted).ToList();
+        var firstInvoice = allInvoices.FirstOrDefault();
+        if (firstInvoice != null)
+        {
+            var invoiceCount = allInvoices.Count;
+            var invoiceLabel = invoiceCount > 1 ? $"Invoices ({invoiceCount})" : "Invoice";
+            var po = package.PO;
+
+            // Parse ExtractedDataJson once for field lookups
+            JsonElement? extractedJson = null;
+            if (!string.IsNullOrEmpty(firstInvoice.ExtractedDataJson))
+            {
+                try { extractedJson = JsonDocument.Parse(firstInvoice.ExtractedDataJson).RootElement; }
+                catch { /* malformed JSON */ }
+            }
+
+            // 1. Invoice Number
+            var invNumPresent = !string.IsNullOrWhiteSpace(firstInvoice.InvoiceNumber);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = invNumPresent ? "Pass" : "Fail",
+                Details = "Invoice Number",
+                Evidence = invNumPresent ? firstInvoice.InvoiceNumber! : "Invoice number not detected"
+            });
+
+            // 2. Invoice Date
+            var datePresent = firstInvoice.InvoiceDate.HasValue && firstInvoice.InvoiceDate.Value != default;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = datePresent ? "Pass" : "Fail",
+                Details = "Invoice Date",
+                Evidence = datePresent ? firstInvoice.InvoiceDate!.Value.ToString("dd-MMM-yyyy") : "Invoice date not detected"
+            });
+
+            // 3. Invoice Amount
+            var amountPresent = firstInvoice.TotalAmount.HasValue && firstInvoice.TotalAmount.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = amountPresent ? "Pass" : "Fail",
+                Details = "Invoice Amount",
+                Evidence = amountPresent ? $"₹{firstInvoice.TotalAmount!.Value:N0}" : "Invoice amount not detected"
+            });
+
+            // 4. GST Number (15-char alphanumeric)
+            var gstPresent = !string.IsNullOrWhiteSpace(firstInvoice.GSTNumber) && firstInvoice.GSTNumber.Length == 15;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = gstPresent ? "Pass" : "Fail",
+                Details = "GST Number",
+                Evidence = gstPresent
+                    ? firstInvoice.GSTNumber!
+                    : (string.IsNullOrWhiteSpace(firstInvoice.GSTNumber) ? "Not detected" : "Invalid format (must be 15 chars)")
+            });
+
+            // 5. GST %
+            decimal? gstPercent = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("GSTPercentage", out var gp) ||
+                    extractedJson.Value.TryGetProperty("gstPercentage", out gp) ||
+                    extractedJson.Value.TryGetProperty("gstPercent", out gp))
+                {
+                    try { gstPercent = gp.GetDecimal(); } catch { /* not a number */ }
+                }
+            }
+            var gstPercentPresent = gstPercent.HasValue && gstPercent.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = gstPercentPresent ? "Pass" : "Fail",
+                Details = "GST %",
+                Evidence = gstPercentPresent ? $"{gstPercent!.Value}%" : "GST percentage not detected"
+            });
+
+            // 6. HSN/SAC Code
+            string? hsnSac = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("HSNSACCode", out var hp) ||
+                    extractedJson.Value.TryGetProperty("hsnSacCode", out hp) ||
+                    extractedJson.Value.TryGetProperty("hsnCode", out hp) ||
+                    extractedJson.Value.TryGetProperty("sacCode", out hp))
+                {
+                    hsnSac = hp.GetString();
+                }
+            }
+            var hsnPresent = !string.IsNullOrWhiteSpace(hsnSac);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = hsnPresent ? "Pass" : "Fail",
+                Details = "HSN/SAC Code",
+                Evidence = hsnPresent ? hsnSac! : "HSN/SAC code not detected"
+            });
+
+            // 7. Vendor Code
+            string? vendorCode = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("VendorCode", out var vc) ||
+                    extractedJson.Value.TryGetProperty("vendorCode", out vc))
+                {
+                    vendorCode = vc.GetString();
+                }
+            }
+            var vendorCodePresent = !string.IsNullOrWhiteSpace(vendorCode);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = vendorCodePresent ? "Pass" : "Fail",
+                Details = "Vendor Code",
+                Evidence = vendorCodePresent ? vendorCode! : "Vendor code not detected"
+            });
+
+            // 8. PO Number (cross-check against PO)
+            string? extractedPoNumber = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("PONumber", out var pn) ||
+                    extractedJson.Value.TryGetProperty("poNumber", out pn))
+                {
+                    extractedPoNumber = pn.GetString();
+                }
+            }
+            bool poMatch;
+            string poEvidence;
+            if (po == null)
+            {
+                poMatch = false;
+                poEvidence = "PO master data not found";
+            }
+            else if (string.IsNullOrWhiteSpace(extractedPoNumber))
+            {
+                poMatch = false;
+                poEvidence = "PO number not extracted from invoice";
+            }
+            else
+            {
+                poMatch = extractedPoNumber.Equals(po.PONumber, StringComparison.OrdinalIgnoreCase);
+                poEvidence = poMatch
+                    ? $"{extractedPoNumber} matches selected PO"
+                    : $"{extractedPoNumber} does NOT match selected PO {po.PONumber}";
+            }
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = poMatch ? "Pass" : "Fail",
+                Details = "PO Number",
+                Evidence = poEvidence
+            });
+
+            // 9. Amount vs PO Balance
+            bool amountOk;
+            string balanceEvidence;
+            if (po == null || !firstInvoice.TotalAmount.HasValue)
+            {
+                amountOk = po == null ? false : true;
+                balanceEvidence = po == null ? "PO balance not available" : "Invoice amount not detected";
+            }
+            else
+            {
+                var balance = po.RemainingBalance ?? po.TotalAmount ?? 0;
+                amountOk = firstInvoice.TotalAmount.Value <= balance;
+                balanceEvidence = amountOk
+                    ? $"₹{firstInvoice.TotalAmount.Value:N0} within PO balance (₹{balance:N0})"
+                    : $"₹{firstInvoice.TotalAmount.Value:N0} exceeds PO balance (₹{balance:N0})";
+            }
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = amountOk ? "Pass" : "Fail",
+                Details = "Amount vs PO Balance",
+                Evidence = balanceEvidence
+            });
         }
 
         if (groups.Count == 0)

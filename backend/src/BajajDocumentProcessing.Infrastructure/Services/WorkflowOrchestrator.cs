@@ -154,6 +154,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 await _notificationDispatcher.DispatchNewSubmissionNotificationAsync(package.Id, cancellationToken);
             }
             catch (Exception dispatchEx)
+            {
                 _logger.LogWarning(dispatchEx,
                     "Failed to dispatch ASM notification for package {PackageId} — workflow continues",
                     packageId);

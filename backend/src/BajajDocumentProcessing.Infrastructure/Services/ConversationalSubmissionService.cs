@@ -642,7 +642,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
         if (request.Action == "add_team" && !string.IsNullOrEmpty(request.PayloadJson))
         {
             var payload = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
-            var team = new Teams
+            var team = new Domain.Entities.Teams
             {
                 Id = Guid.NewGuid(),
                 PackageId = package.Id,
@@ -1272,8 +1272,8 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
 
     private static ConversationResponse BuildTeamLoopResponse(
         DocumentPackage package,
-        List<Teams> allTeams,
-        Teams? currentTeam,
+        List<Domain.Entities.Teams> allTeams,
+        Domain.Entities.Teams? currentTeam,
         string message)
     {
         var photoCount = currentTeam?.Photos.Count(p => !p.IsDeleted) ?? 0;

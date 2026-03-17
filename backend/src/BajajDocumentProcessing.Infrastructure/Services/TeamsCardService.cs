@@ -288,103 +288,87 @@ public class TeamsCardService : ITeamsCardService
             });
         }
 
-        // Validation Checks header
-        body.Add(new Newtonsoft.Json.Linq.JObject
-        {
-            ["type"] = "TextBlock",
-            ["text"] = "Validation Checks",
-            ["weight"] = "Bolder",
-            ["separator"] = true,
-            ["spacing"] = "Medium"
-        });
-
-        // Build validation table rows from check groups
-        var factsArray = new Newtonsoft.Json.Linq.JArray();
+        // Validation Checks — grouped by document type
         if (data.CheckGroups != null && data.CheckGroups.Count > 0)
         {
-            // Table header row
-            body.Add(new Newtonsoft.Json.Linq.JObject
-            {
-                ["type"] = "ColumnSet",
-                ["spacing"] = "Small",
-                ["columns"] = new Newtonsoft.Json.Linq.JArray
-                {
-                    new Newtonsoft.Json.Linq.JObject
-                    {
-                        ["type"] = "Column",
-                        ["width"] = "30px",
-                        ["items"] = new Newtonsoft.Json.Linq.JArray
-                        {
-                            new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = "#", ["weight"] = "Bolder", ["size"] = "Small" }
-                        }
-                    },
-                    new Newtonsoft.Json.Linq.JObject
-                    {
-                        ["type"] = "Column",
-                        ["width"] = "80px",
-                        ["items"] = new Newtonsoft.Json.Linq.JArray
-                        {
-                            new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = "Doc Type", ["weight"] = "Bolder", ["size"] = "Small" }
-                        }
-                    },
-                    new Newtonsoft.Json.Linq.JObject
-                    {
-                        ["type"] = "Column",
-                        ["width"] = "50px",
-                        ["items"] = new Newtonsoft.Json.Linq.JArray
-                        {
-                            new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = "Status", ["weight"] = "Bolder", ["size"] = "Small" }
-                        }
-                    },
-                    new Newtonsoft.Json.Linq.JObject
-                    {
-                        ["type"] = "Column",
-                        ["width"] = "stretch",
-                        ["items"] = new Newtonsoft.Json.Linq.JArray
-                        {
-                            new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = "Evidence", ["weight"] = "Bolder", ["size"] = "Small" }
-                        }
-                    }
-                }
-            });
+            // Group checks by document type (GroupName)
+            var grouped = new List<(string DocName, List<ValidationCheckGroup> Checks)>();
+            string? currentDoc = null;
+            List<ValidationCheckGroup>? currentList = null;
 
-            var rowNum = 1;
             foreach (var g in data.CheckGroups)
             {
-                var statusText = NullFallback(g.Status, "Fail") == "Pass" ? "PASS" : "FAIL";
-                var statusColor = g.Status == "Pass" ? "Good" : "Attention";
+                if (g.GroupName != currentDoc)
+                {
+                    currentDoc = g.GroupName;
+                    currentList = new List<ValidationCheckGroup>();
+                    grouped.Add((currentDoc, currentList));
+                }
+                currentList!.Add(g);
+            }
+
+            foreach (var (docName, checks) in grouped)
+            {
+                var passCount = checks.Count(c => c.Status == "Pass");
+                var failCount = checks.Count - passCount;
+
+                // Document header: name on left, pass/fail summary on right
+                var summaryParts = new Newtonsoft.Json.Linq.JArray();
+                summaryParts.Add(new Newtonsoft.Json.Linq.JObject
+                {
+                    ["type"] = "TextBlock",
+                    ["text"] = $"{passCount}/{checks.Count} passed",
+                    ["size"] = "Small",
+                    ["color"] = "Good",
+                    ["weight"] = "Bolder"
+                });
+                // Issue count badge removed per requirement
 
                 body.Add(new Newtonsoft.Json.Linq.JObject
                 {
                     ["type"] = "ColumnSet",
-                    ["spacing"] = "None",
+                    ["separator"] = true,
+                    ["spacing"] = "Medium",
                     ["columns"] = new Newtonsoft.Json.Linq.JArray
                     {
                         new Newtonsoft.Json.Linq.JObject
                         {
                             ["type"] = "Column",
-                            ["width"] = "30px",
+                            ["width"] = "stretch",
                             ["items"] = new Newtonsoft.Json.Linq.JArray
                             {
-                                new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = rowNum.ToString(), ["size"] = "Small" }
+                                new Newtonsoft.Json.Linq.JObject
+                                {
+                                    ["type"] = "TextBlock",
+                                    ["text"] = NullFallback(docName),
+                                    ["weight"] = "Bolder",
+                                    ["size"] = "Small"
+                                }
                             }
                         },
                         new Newtonsoft.Json.Linq.JObject
                         {
                             ["type"] = "Column",
-                            ["width"] = "80px",
-                            ["items"] = new Newtonsoft.Json.Linq.JArray
-                            {
-                                new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = NullFallback(g.GroupName), ["size"] = "Small", ["wrap"] = true }
-                            }
-                        },
+                            ["width"] = "auto",
+                            ["items"] = summaryParts
+                        }
+                    }
+                });
+
+                // Column headers: #, WHAT WAS CHECKED, RESULT, WHAT WAS FOUND
+                body.Add(new Newtonsoft.Json.Linq.JObject
+                {
+                    ["type"] = "ColumnSet",
+                    ["spacing"] = "Small",
+                    ["columns"] = new Newtonsoft.Json.Linq.JArray
+                    {
                         new Newtonsoft.Json.Linq.JObject
                         {
                             ["type"] = "Column",
-                            ["width"] = "50px",
+                            ["width"] = "25px",
                             ["items"] = new Newtonsoft.Json.Linq.JArray
                             {
-                                new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = statusText, ["size"] = "Small", ["color"] = statusColor, ["weight"] = "Bolder" }
+                                new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = "#", ["weight"] = "Bolder", ["size"] = "Small", ["isSubtle"] = true }
                             }
                         },
                         new Newtonsoft.Json.Linq.JObject
@@ -393,24 +377,94 @@ public class TeamsCardService : ITeamsCardService
                             ["width"] = "stretch",
                             ["items"] = new Newtonsoft.Json.Linq.JArray
                             {
-                                new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = NullFallback(g.Evidence, "—"), ["size"] = "Small", ["wrap"] = true }
+                                new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = "WHAT WAS CHECKED", ["weight"] = "Bolder", ["size"] = "Small", ["isSubtle"] = true }
+                            }
+                        },
+                        new Newtonsoft.Json.Linq.JObject
+                        {
+                            ["type"] = "Column",
+                            ["width"] = "55px",
+                            ["items"] = new Newtonsoft.Json.Linq.JArray
+                            {
+                                new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = "RESULT", ["weight"] = "Bolder", ["size"] = "Small", ["isSubtle"] = true }
+                            }
+                        },
+                        new Newtonsoft.Json.Linq.JObject
+                        {
+                            ["type"] = "Column",
+                            ["width"] = "stretch",
+                            ["items"] = new Newtonsoft.Json.Linq.JArray
+                            {
+                                new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = "WHAT WAS FOUND", ["weight"] = "Bolder", ["size"] = "Small", ["isSubtle"] = true }
                             }
                         }
                     }
                 });
-                rowNum++;
+
+                // Data rows
+                for (var i = 0; i < checks.Count; i++)
+                {
+                    var c = checks[i];
+                    var statusText = c.Status == "Pass" ? "PASS" : "FAIL";
+                    var statusColor = c.Status == "Pass" ? "Good" : "Attention";
+                    var checkName = NullFallback(c.Details, "Check");
+
+                    body.Add(new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["type"] = "ColumnSet",
+                        ["spacing"] = "None",
+                        ["columns"] = new Newtonsoft.Json.Linq.JArray
+                        {
+                            new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["type"] = "Column",
+                                ["width"] = "25px",
+                                ["items"] = new Newtonsoft.Json.Linq.JArray
+                                {
+                                    new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = (i + 1).ToString(), ["size"] = "Small" }
+                                }
+                            },
+                            new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["type"] = "Column",
+                                ["width"] = "stretch",
+                                ["items"] = new Newtonsoft.Json.Linq.JArray
+                                {
+                                    new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = checkName, ["size"] = "Small", ["wrap"] = true }
+                                }
+                            },
+                            new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["type"] = "Column",
+                                ["width"] = "55px",
+                                ["items"] = new Newtonsoft.Json.Linq.JArray
+                                {
+                                    new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = statusText, ["size"] = "Small", ["color"] = statusColor, ["weight"] = "Bolder" }
+                                }
+                            },
+                            new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["type"] = "Column",
+                                ["width"] = "stretch",
+                                ["items"] = new Newtonsoft.Json.Linq.JArray
+                                {
+                                    new Newtonsoft.Json.Linq.JObject { ["type"] = "TextBlock", ["text"] = NullFallback(c.Evidence, "—"), ["size"] = "Small", ["wrap"] = true }
+                                }
+                            }
+                        }
+                    });
+                }
             }
         }
-
-        // If no check groups, show fallback
-        if (data.CheckGroups == null || data.CheckGroups.Count == 0)
+        else
         {
             body.Add(new Newtonsoft.Json.Linq.JObject
             {
                 ["type"] = "TextBlock",
                 ["text"] = "No validation data available",
                 ["size"] = "Small",
-                ["isSubtle"] = true
+                ["isSubtle"] = true,
+                ["separator"] = true
             });
         }
 

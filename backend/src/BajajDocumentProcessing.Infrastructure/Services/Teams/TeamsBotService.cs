@@ -290,9 +290,29 @@ public class TeamsBotService : TeamsActivityHandler
             using var scope = _scopeFactory.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
 
-            var pendingPackages = await context.DocumentPackages
+            // Resolve the Teams user to a system user for role-based filtering
+            var teamsUserId = turnContext.Activity.From?.AadObjectId
+                              ?? turnContext.Activity.From?.Id
+                              ?? string.Empty;
+            var systemUser = await ResolveSystemUserAsync(context, teamsUserId, cancellationToken);
+
+            // Build query: show PendingASM packages assigned to this user
+            var query = context.DocumentPackages
                 .Where(p => p.State == PackageState.PendingASM)
+                .Where(p => !p.IsDeleted);
+
+            // Filter by assigned Circle Head if user is resolved
+            if (systemUser != null)
+            {
+                query = query.Where(p => p.AssignedCircleHeadUserId == systemUser.Id);
+                _logger.LogInformation(
+                    "Filtering pending submissions for user {UserId} ({UserName})",
+                    systemUser.Id, systemUser.FullName);
+            }
+
+            var pendingPackages = await query
                 .Include(p => p.Agency)
+                .Include(p => p.Invoices)
                 .Include(p => p.Teams).ThenInclude(t => t.Invoices)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.PO)
@@ -304,7 +324,7 @@ public class TeamsBotService : TeamsActivityHandler
             if (pendingPackages.Count == 0)
             {
                 await turnContext.SendActivityAsync(
-                    MessageFactory.Text("No pending requests at this time."),
+                    MessageFactory.Text("No pending requests assigned to you at this time."),
                     cancellationToken);
                 return;
             }
@@ -321,8 +341,8 @@ public class TeamsBotService : TeamsActivityHandler
             await turnContext.SendActivityAsync(activity, cancellationToken);
 
             _logger.LogInformation(
-                "Returned {Count} pending submission(s) to Teams user",
-                pendingPackages.Count);
+                "Returned {Count} pending submission(s) to Teams user {UserId}",
+                pendingPackages.Count, systemUser?.Id);
         }
         catch (Exception ex)
         {
