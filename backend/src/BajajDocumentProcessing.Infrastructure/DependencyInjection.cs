@@ -127,6 +127,9 @@ public static class DependencyInjection
         // Correlation ID Service
         services.AddScoped<ICorrelationIdService, CorrelationIdService>();
 
+        // PO Balance Service
+        services.AddScoped<IPoBalanceService, PoBalanceService>();
+
         // Azure services configuration will be added in subsequent tasks
         
         // Background workflow processor
