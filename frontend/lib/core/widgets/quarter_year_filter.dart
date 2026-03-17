@@ -34,7 +34,7 @@ class QuarterYearFilter extends StatelessWidget {
         SizedBox(
           width: 120,
           child: DropdownButtonFormField<String>(
-            value: selectedQuarter,
+            initialValue: selectedQuarter,
             isExpanded: true,
             decoration: const InputDecoration(
               labelText: 'Quarter',
@@ -58,7 +58,7 @@ class QuarterYearFilter extends StatelessWidget {
         SizedBox(
           width: 120,
           child: DropdownButtonFormField<int>(
-            value: selectedYear,
+            initialValue: selectedYear,
             isExpanded: true,
             decoration: const InputDecoration(
               labelText: 'Year',

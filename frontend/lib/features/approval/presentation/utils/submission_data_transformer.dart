@@ -108,7 +108,7 @@ class SubmissionDataTransformer {
         remarks: remarks,
         blobUrl: blobUrl,
         documentId: docId,
-      ));
+      ),);
       serialNumber++;
     }
 
@@ -176,7 +176,7 @@ class SubmissionDataTransformer {
           documentId: docId,
           downloadPath: invoiceId.isNotEmpty ? '/hierarchical/invoices/$invoiceId/download' : null,
           isFirstInGroup: false,
-        ));
+        ),);
         serialNumber++;
       }
 
@@ -202,7 +202,7 @@ class SubmissionDataTransformer {
           documentId: costDocId,
           downloadPath: campaignId.isNotEmpty ? '/hierarchical/campaigns/$campaignId/download/cost-summary' : null,
           isFirstInGroup: false,
-        ));
+        ),);
         serialNumber++;
       }
 
@@ -228,7 +228,7 @@ class SubmissionDataTransformer {
           documentId: actDocId,
           downloadPath: campaignId.isNotEmpty ? '/hierarchical/campaigns/$campaignId/download/activity-summary' : null,
           isFirstInGroup: false,
-        ));
+        ),);
         serialNumber++;
       }
 
@@ -258,7 +258,7 @@ class SubmissionDataTransformer {
           documentId: photoDocId,
           downloadPath: photoId.isNotEmpty ? '/hierarchical/photos/$photoId/download' : null,
           isFirstInGroup: false,
-        ));
+        ),);
         serialNumber++;
       }
     }

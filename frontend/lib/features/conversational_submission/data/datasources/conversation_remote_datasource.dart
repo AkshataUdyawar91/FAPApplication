@@ -9,7 +9,7 @@ import '../models/dealer_result_model.dart';
 abstract class ConversationRemoteDataSource {
   /// Sends a conversation action and returns the bot response.
   Future<ConversationResponseModel> sendMessage(
-      ConversationRequestModel request);
+      ConversationRequestModel request,);
 
   /// Gets the current conversation state for a submission.
   Future<Map<String, dynamic>> getConversationState(String submissionId);
@@ -40,18 +40,18 @@ class ConversationRemoteDataSourceImpl
 
   @override
   Future<ConversationResponseModel> sendMessage(
-      ConversationRequestModel request) async {
+      ConversationRequestModel request,) async {
     final response = await dio.post(
       ApiConstants.conversationMessage,
       data: request.toJson(),
     );
     return ConversationResponseModel.fromJson(
-        response.data as Map<String, dynamic>);
+        response.data as Map<String, dynamic>,);
   }
 
   @override
   Future<Map<String, dynamic>> getConversationState(
-      String submissionId) async {
+      String submissionId,) async {
     final response = await dio.get(
       ApiConstants.conversationState(submissionId),
     );
@@ -60,12 +60,12 @@ class ConversationRemoteDataSourceImpl
 
   @override
   Future<ConversationResponseModel> resumeSubmission(
-      String submissionId) async {
+      String submissionId,) async {
     final response = await dio.post(
       ApiConstants.conversationResume(submissionId),
     );
     return ConversationResponseModel.fromJson(
-        response.data as Map<String, dynamic>);
+        response.data as Map<String, dynamic>,);
   }
 
   @override
@@ -85,7 +85,7 @@ class ConversationRemoteDataSourceImpl
     final data = response.data as List<dynamic>;
     return data
         .map((e) =>
-            POSearchResultModel.fromJson(e as Map<String, dynamic>))
+            POSearchResultModel.fromJson(e as Map<String, dynamic>),)
         .toList();
   }
 
@@ -106,7 +106,7 @@ class ConversationRemoteDataSourceImpl
     final data = response.data as List<dynamic>;
     return data
         .map((e) =>
-            DealerResultModel.fromJson(e as Map<String, dynamic>))
+            DealerResultModel.fromJson(e as Map<String, dynamic>),)
         .toList();
   }
 }

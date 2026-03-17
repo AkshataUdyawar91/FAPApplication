@@ -32,7 +32,7 @@ class ConversationResponseModel {
       botMessage: json['botMessage'] as String,
       buttons: (json['buttons'] as List<dynamic>?)
               ?.map((e) =>
-                  ActionButtonModel.fromJson(e as Map<String, dynamic>))
+                  ActionButtonModel.fromJson(e as Map<String, dynamic>),)
               .toList() ??
           [],
       card: json['card'] != null

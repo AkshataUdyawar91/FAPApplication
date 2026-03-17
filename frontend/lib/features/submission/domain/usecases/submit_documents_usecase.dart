@@ -19,17 +19,17 @@ class SubmitDocumentsUseCase {
   }) async {
     // Validate required documents
     if (poFile == null || invoiceFile == null || costSummaryFile == null) {
-      return Left(ValidationFailure('All required documents must be provided'));
+      return const Left(ValidationFailure('All required documents must be provided'));
     }
 
     // Validate photo count
     if (photoFiles.isEmpty) {
-      return Left(ValidationFailure('At least one photo is required'));
+      return const Left(ValidationFailure('At least one photo is required'));
     }
 
     // CHANGE: Increased photo limit from 20 to 50
     if (photoFiles.length > 50) {
-      return Left(ValidationFailure('Maximum 50 photos allowed'));
+      return const Left(ValidationFailure('Maximum 50 photos allowed'));
     }
 
     return await repository.submitDocuments(

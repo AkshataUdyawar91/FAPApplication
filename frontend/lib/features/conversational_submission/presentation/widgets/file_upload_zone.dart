@@ -97,7 +97,7 @@ class _FileUploadZoneState extends State<FileUploadZone> {
       fileName: xFile.name,
       bytes: compressed,
       mimeType: xFile.mimeType ?? 'image/jpeg',
-    ));
+    ),);
   }
 
   Future<void> _pickDocument() async {
@@ -130,7 +130,7 @@ class _FileUploadZoneState extends State<FileUploadZone> {
       fileName: file.name,
       bytes: bytes,
       mimeType: _mimeFromExtension(ext),
-    ));
+    ),);
   }
 
   /// Compresses an image to target ≤500KB using quality 70 and max 1920px.

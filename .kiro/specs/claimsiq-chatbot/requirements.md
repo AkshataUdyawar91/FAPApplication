@@ -20,7 +20,8 @@
 | Phase 2 | PO Search & Selection | ✅ DONE |
 | Phase 3 | State & Activity Region Selection | ✅ DONE |
 | Phase 4 | Invoice Upload | ✅ DONE |
-| Phase 5–10 | Full Submission Flow | ✅ Previously implemented |
+| Phase 5 | Invoice Validation (9 rules, inline card, save to DB) | ✅ DONE |
+| Phase 6–10 | Full Submission Flow | ✅ Previously implemented |
 
 ---
 
@@ -198,16 +199,90 @@ After state confirmation, assistant prompts for invoice upload with two action b
 
 ---
 
-## PHASES 5–10 — Full Submission Flow (Previously Implemented ✅)
+## PHASES 5–10 — Full Submission Flow
 
-The following were implemented in the prior conversational submission system and remain functional. They will be integrated into the guided workflow assistant in future phases.
-
-- **Phase 5**: Proactive Document Validation at Upload Time (Invoice: 9 rules, Activity Summary: 3 rules, Cost Summary: 4 rules)
+- **Phase 5**: ✅ DONE — Proactive Invoice Validation at Upload Time (see below)
 - **Phase 6**: Team Details Entry Loop (team name, dealer, dates, working days, photo proofs with AI vision)
 - **Phase 7**: Enquiry Dump Upload (mandatory, Excel/CSV/PDF)
 - **Phase 8**: Additional Documents Upload (optional with skip)
 - **Phase 9**: Final Review & Submit (summary card, Draft → Submitted, CIRCLE HEAD auto-assigned)
 - **Phase 10**: Draft Persistence & Session Resume
+
+---
+
+## PHASE 5 — Invoice Validation ✅
+
+### Requirement P5.1: Proactive Validation After Invoice Upload
+
+After invoice upload, the assistant waits for AI extraction to complete, then runs 9 validation rules and shows a structured validation card.
+
+#### End-to-End Flow
+
+1. User uploads invoice → `POST /api/documents/upload` → new row in `Invoices` table (new `Guid` per upload)
+2. Background job runs AI extraction (Azure Document Intelligence + OpenAI) → writes `InvoiceNumber`, `InvoiceDate`, `TotalAmount`, `GSTNumber`, `ExtractedDataJson` back to the same `Invoices` row
+3. Frontend polls `GET /api/documents/{id}/extraction-status` every 3s (max 60s) until status = `"extracted"`
+4. Frontend sends `invoice_uploaded` action with `documentId`
+5. Backend loads `Invoices` row + linked `POs` row, runs 9 rules, saves to `ValidationResults`, returns `invoice_validation` response
+6. Bot shows validation card with rule rows + action buttons
+
+#### 9 Validation Rules
+
+| Rule Code | Type | Logic |
+|-----------|------|-------|
+| INV_INVOICE_NUMBER_PRESENT | Required | `InvoiceNumber` not null/empty |
+| INV_DATE_PRESENT | Required | `InvoiceDate` has value |
+| INV_AMOUNT_PRESENT | Required | `TotalAmount` > 0 |
+| INV_GST_NUMBER_PRESENT | Required | `GSTNumber` present and 15 chars |
+| INV_GST_PERCENT_PRESENT | Required | `GSTPercentage` in `ExtractedDataJson` > 0 |
+| INV_HSN_SAC_PRESENT | Required | `HSNSACCode` in `ExtractedDataJson` not empty |
+| INV_VENDOR_CODE_PRESENT | Required | `VendorCode` in `ExtractedDataJson` not empty |
+| INV_PO_NUMBER_MATCH | Check | Extracted `PONumber` matches `POs.PONumber` |
+| INV_AMOUNT_VS_PO_BALANCE | Warning | `TotalAmount` ≤ `POs.RemainingBalance` (warning only, not hard block) |
+
+#### Database — What Gets Saved
+
+- `Invoices` table — new row per upload (never replaced/updated on re-upload)
+- `ValidationResults` table — upsert by `DocumentId` (Invoice Id): `AllValidationsPassed`, `RuleResultsJson` (all 9 rules as JSON array), `FailureReason`, `DocumentType = Invoice`
+- `DocumentPackages` table — already created in Phase 4, `CurrentStep` stays at 4 until user continues
+
+#### Backend (AssistantController.cs)
+
+- `HandleInvoiceUploaded` — loads Invoice + PO, calls `RunInvoiceValidationRules`, persists to `ValidationResults`, then reads back the saved `ValidationResults` row and deserializes `RuleResultsJson` to build the response (UI always reflects DB data, not in-memory rules)
+- `RunInvoiceValidationRules` — all 9 rules, reads direct DB columns for rules 1–4, reads `ExtractedDataJson` for rules 5–8, compares against PO for rules 8–9
+- `HandleContinueInvoice` — returns `activity_upload_prompt` (Phase 6 placeholder)
+- `HandleReuploadInvoice` — returns `invoice_upload` type so user can upload again
+- `GET /api/documents/{id}/extraction-status` — polls `Invoices` row, returns `"extracted"` or `"processing"`
+- Bot message is a short summary: "Invoice analysed. X of 9 checks passed." — detail is in the card
+- Fallback: if DB read-back fails, in-memory rules are used so the response is never empty
+
+#### Frontend
+
+- `assistant_notifier.dart`
+  - `uploadInvoice` — uploads file, stores `lastDocumentId` in state, polls extraction status (max 60s/3s interval), then sends `invoice_uploaded`
+  - `continueAfterValidation()` — sends `continue_invoice` with `documentId`
+  - `reUploadInvoice()` — sends `reupload_invoice`, bot shows upload prompt again
+  - `AssistantState` has `lastDocumentId` field to track current invoice
+- `chat_screen.dart`
+  - `invoice_validation` case → calls `_invoiceValidationCard(r)`
+  - `_invoiceValidationCard` — renders pass/fail/warn count chips, rule rows, two action buttons
+  - `_validationRuleRow` — ✅ green / ❌ red / ⚠️ orange icon + label + extracted value + message
+  - `_validationChip` — colored pill badge for counts
+  - Buttons: "Re-upload invoice" (red outlined) + "Continue with warnings" or "Continue" (navy filled)
+- `assistant_response_model.dart` — `validationRules`, `passedCount`, `failedCount`, `warningCount` fields + `ValidationRuleResultModel` class
+- `assistant_remote_datasource.dart` — `getDocumentExtractionStatus(documentId)` method
+
+#### Acceptance Criteria — ALL MET ✅
+- AC1: After upload, frontend polls extraction status before firing validation
+- AC2: All 9 rules run against real extracted data + PO master
+- AC3: Results always saved to `ValidationResults` table regardless of pass/fail
+- AC3a: Response is built by reading back from `ValidationResults.RuleResultsJson` (not in-memory) — UI always reflects DB state
+- AC4: Bot shows short summary message + styled validation card below
+- AC5: Card shows color-coded rule rows with extracted values
+- AC6: Pass/fail/warn count chips shown
+- AC7: "Re-upload invoice" button works — shows upload prompt again
+- AC8: "Continue with warnings" / "Continue" button works — moves to next phase
+- AC9: `INV_AMOUNT_VS_PO_BALANCE` is warning only, not a hard block
+- AC10: Each invoice upload creates a new `Invoices` row (no replace)
 
 ---
 
@@ -245,9 +320,9 @@ The following were implemented in the prior conversational submission system and
 | File | Purpose |
 |------|---------|
 | `chat_screen.dart` | Main chat page, message list, input mode switching (none/po/state) |
-| `assistant_notifier.dart` | StateNotifier: greet, sendAction, searchPO, selectPO, searchState, selectState, listAllStates, uploadInvoice, uploadPOFile |
-| `assistant_remote_datasource.dart` | Dio API calls to /assistant/message, /upload/po, /documents/upload (invoice) |
-| `assistant_response_model.dart` | Response DTO: type, message, cards, poItems, states, selectedPO, allowedFormats, submissionId |
+| `assistant_notifier.dart` | StateNotifier: greet, sendAction, searchPO, selectPO, searchState, selectState, listAllStates, uploadInvoice, continueAfterValidation, reUploadInvoice, uploadPOFile. State includes `lastDocumentId` |
+| `assistant_remote_datasource.dart` | Dio API calls to /assistant/message, /upload/po, /documents/upload (invoice), /documents/{id}/extraction-status |
+| `assistant_response_model.dart` | Response DTO: type, message, cards, poItems, states, selectedPO, allowedFormats, submissionId, validationRules, passedCount, failedCount, warningCount. Includes `ValidationRuleResultModel` |
 | `assistant_providers.dart` | Riverpod provider definitions |
 | `po_search_list.dart` | PO results as OutlinedButton list (number only) |
 | `workflow_action_card.dart` | Tappable workflow card with icon |

@@ -317,7 +317,7 @@ class _SubmissionReviewPageState extends ConsumerState<SubmissionReviewPage> {
           ),
         ),
         const SizedBox(width: 16),
-        Expanded(
+        const Expanded(
           flex: 1,
           child: Column(
             children: [
@@ -342,7 +342,7 @@ class _SubmissionReviewPageState extends ConsumerState<SubmissionReviewPage> {
               //       state.currentPackage!.recommendation!,
               //     ),
               //   ),
-              const Text('Validation details will appear here'),
+              Text('Validation details will appear here'),
             ],
           ),
         ),

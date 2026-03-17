@@ -4,11 +4,11 @@ import '../../../../core/constants/api_constants.dart';
 
 /// Callback types for SignalR push events.
 typedef ExtractionCompleteCallback = void Function(
-    Map<String, dynamic> payload);
+    Map<String, dynamic> payload,);
 typedef ValidationCompleteCallback = void Function(
-    Map<String, dynamic> payload);
+    Map<String, dynamic> payload,);
 typedef SubmissionStatusChangedCallback = void Function(
-    Map<String, dynamic> payload);
+    Map<String, dynamic> payload,);
 
 /// Manages the SignalR connection lifecycle for real-time
 /// submission notifications.
@@ -33,7 +33,7 @@ abstract class SignalRDataSource {
 
   /// Registers a callback for SubmissionStatusChanged events.
   void onSubmissionStatusChanged(
-      SubmissionStatusChangedCallback callback);
+      SubmissionStatusChangedCallback callback,);
 
   /// Whether the connection is currently active.
   bool get isConnected;
@@ -74,21 +74,21 @@ class SignalRDataSourceImpl implements SignalRDataSource {
     _hubConnection!.on('ExtractionComplete', (arguments) {
       if (_onExtractionComplete != null && arguments != null && arguments.isNotEmpty) {
         _onExtractionComplete!(
-            Map<String, dynamic>.from(arguments[0] as Map));
+            Map<String, dynamic>.from(arguments[0] as Map),);
       }
     });
 
     _hubConnection!.on('ValidationComplete', (arguments) {
       if (_onValidationComplete != null && arguments != null && arguments.isNotEmpty) {
         _onValidationComplete!(
-            Map<String, dynamic>.from(arguments[0] as Map));
+            Map<String, dynamic>.from(arguments[0] as Map),);
       }
     });
 
     _hubConnection!.on('SubmissionStatusChanged', (arguments) {
       if (_onSubmissionStatusChanged != null && arguments != null && arguments.isNotEmpty) {
         _onSubmissionStatusChanged!(
-            Map<String, dynamic>.from(arguments[0] as Map));
+            Map<String, dynamic>.from(arguments[0] as Map),);
       }
     });
   }
@@ -130,7 +130,7 @@ class SignalRDataSourceImpl implements SignalRDataSource {
 
   @override
   void onSubmissionStatusChanged(
-      SubmissionStatusChangedCallback callback) {
+      SubmissionStatusChangedCallback callback,) {
     _onSubmissionStatusChanged = callback;
   }
 }

@@ -23,19 +23,19 @@ void main() {
                     1: FixedColumnWidth(150),
                     2: FixedColumnWidth(150),
                   },
-                  children: [
+                  children: const [
                     TableRow(
                       children: [
                         Padding(
-                          padding: const EdgeInsets.all(12),
+                          padding: EdgeInsets.all(12),
                           child: Text('Column 1'),
                         ),
                         Padding(
-                          padding: const EdgeInsets.all(12),
+                          padding: EdgeInsets.all(12),
                           child: Text('Column 2'),
                         ),
                         Padding(
-                          padding: const EdgeInsets.all(12),
+                          padding: EdgeInsets.all(12),
                           child: Text('Column 3'),
                         ),
                       ],
@@ -114,7 +114,7 @@ void main() {
 }
 
 Future<void> _testTablePaddingAtWidth(
-    WidgetTester tester, double width) async {
+    WidgetTester tester, double width,) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
@@ -123,12 +123,12 @@ Future<void> _testTablePaddingAtWidth(
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Table(
-              children: [
+              children: const [
                 TableRow(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
+                      padding: EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8,),
                       child: Text('Test Cell'),
                     ),
                   ],
@@ -144,5 +144,5 @@ Future<void> _testTablePaddingAtWidth(
   // Verify padding exists
   final paddingWidget = tester.widget<Padding>(find.byType(Padding).first);
   expect(paddingWidget.padding,
-      const EdgeInsets.symmetric(horizontal: 12, vertical: 8));
+      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),);
 }

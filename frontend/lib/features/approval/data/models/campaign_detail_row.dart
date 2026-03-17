@@ -105,7 +105,7 @@ class CampaignDetailRow {
   @override
   int get hashCode {
     return Object.hash(serialNumber, dealerName, campaignDate, documentName,
-        status, remarks, blobUrl, documentId, downloadPath, isFirstInGroup);
+        status, remarks, blobUrl, documentId, downloadPath, isFirstInGroup,);
   }
 
   @override
