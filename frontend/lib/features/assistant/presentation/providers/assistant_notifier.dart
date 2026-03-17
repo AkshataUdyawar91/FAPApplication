@@ -286,6 +286,62 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     }
   }
 
+  Future<void> uploadCostSummary(Uint8List bytes, String fileName) async {
+    _addUserMessage('Uploading cost summary: $fileName');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final sid = state.submissionId;
+      if (sid == null) {
+        state = state.copyWith(isLoading: false, error: 'No active submission. Please start over.');
+        return;
+      }
+      final uploadResult = await _dataSource.uploadCostSummary(
+        fileBytes: bytes,
+        fileName: fileName,
+        submissionId: sid,
+      );
+      final docId = uploadResult['documentId']?.toString() ?? '';
+      state = state.copyWith(lastDocumentId: docId);
+
+      const maxAttempts = 20;
+      for (var i = 0; i < maxAttempts; i++) {
+        final status = await _dataSource.getDocumentExtractionStatus(docId);
+        if (status == 'extracted') break;
+        await Future.delayed(const Duration(seconds: 3));
+      }
+
+      final response = await _dataSource.sendMessage(
+        action: 'cost_summary_uploaded',
+        message: docId,
+      );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> continueAfterCostSummary() async {
+    _addUserMessage('Continue');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(action: 'continue_after_cost_summary');
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> reUploadCostSummary() async {
+    _addUserMessage('Re-upload cost summary');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(action: 'reupload_cost_summary');
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
   Future<void> uploadPOFile(Uint8List bytes, String fileName) async {
     _addUserMessage('Uploading: $fileName');
     state = state.copyWith(isLoading: true, error: null);

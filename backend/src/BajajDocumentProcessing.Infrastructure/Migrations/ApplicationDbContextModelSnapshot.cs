@@ -703,6 +703,25 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<Guid>("PackageId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("PlaceOfSupply")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int?>("NumberOfDays")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("NumberOfActivations")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("NumberOfTeams")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ElementWiseCostsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ElementWiseQuantityJson")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<decimal?>("TotalCost")
                         .HasColumnType("decimal(18,2)");
 
