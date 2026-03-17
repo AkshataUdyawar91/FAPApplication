@@ -68,7 +68,7 @@ class FinalReviewCard extends StatelessWidget {
               value: '₹${summary['remainingBalance']}',
             ),
         ],
-      ));
+      ),);
     }
 
     // State
@@ -80,7 +80,7 @@ class FinalReviewCard extends StatelessWidget {
         fields: [
           ReviewField(label: 'State', value: '${summary['state']}'),
         ],
-      ));
+      ),);
     }
 
     // Invoice
@@ -100,7 +100,7 @@ class FinalReviewCard extends StatelessWidget {
               status: _parseStatus(summary['invoiceValidationStatus']),
             ),
         ],
-      ));
+      ),);
     }
 
     // Activity Summary
@@ -116,7 +116,7 @@ class FinalReviewCard extends StatelessWidget {
             status: _parseStatus(summary['activitySummaryValidation']),
           ),
         ],
-      ));
+      ),);
     }
 
     // Cost Summary
@@ -132,7 +132,7 @@ class FinalReviewCard extends StatelessWidget {
             status: _parseStatus(summary['costSummaryValidation']),
           ),
         ],
-      ));
+      ),);
     }
 
     // Teams
@@ -150,7 +150,7 @@ class FinalReviewCard extends StatelessWidget {
         icon: Icons.groups,
         editStep: 6,
         fields: teamFields,
-      ));
+      ),);
     }
 
     // Enquiry Dump
@@ -170,7 +170,7 @@ class FinalReviewCard extends StatelessWidget {
               value: '${summary['enquiryComplete']}',
             ),
         ],
-      ));
+      ),);
     }
 
     return FinalReviewCard(

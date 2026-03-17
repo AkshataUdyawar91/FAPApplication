@@ -59,6 +59,18 @@ class AssistantRemoteDataSource {
       options: Options(contentType: 'multipart/form-data'));
     return response.data as Map<String, dynamic>;
   }
+
+  /// Poll extraction status for a document.
+  /// Returns 'extracted' or 'processing'.
+  Future<String> getDocumentExtractionStatus(String documentId) async {
+    try {
+      final response = await dio.get('/documents/$documentId/extraction-status');
+      final data = response.data as Map<String, dynamic>;
+      return data['status'] as String? ?? 'processing';
+    } catch (_) {
+      return 'processing';
+    }
+  }
 }
 
 /// Placeholder for Guid type (just a String alias in Dart).

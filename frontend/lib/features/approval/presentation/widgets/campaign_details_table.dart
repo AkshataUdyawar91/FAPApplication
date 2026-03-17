@@ -34,7 +34,7 @@ class CampaignDetailsTable extends StatelessWidget {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.border),
+        side: const BorderSide(color: AppColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -76,7 +76,7 @@ class CampaignDetailsTable extends StatelessWidget {
 
   Widget _buildTable(List<CampaignDetailRow> rows) {
     return Table(
-      border: TableBorder(
+      border: const TableBorder(
         horizontalInside: BorderSide(color: AppColors.border),
         top: BorderSide(color: AppColors.border),
       ),
@@ -99,7 +99,7 @@ class CampaignDetailsTable extends StatelessWidget {
 
   TableRow _buildHeaderRow() {
     return TableRow(
-      decoration: BoxDecoration(color: AppColors.primary),
+      decoration: const BoxDecoration(color: AppColors.primary),
       children: [
         _buildHeaderCell('S. No'),
         _buildHeaderCell('Category'),

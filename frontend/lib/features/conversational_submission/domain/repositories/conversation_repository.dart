@@ -16,11 +16,11 @@ abstract class ConversationRepository {
 
   /// Gets the current conversation state for a submission.
   Future<Either<Failure, Map<String, dynamic>>> getConversationState(
-      String submissionId);
+      String submissionId,);
 
   /// Resumes a draft submission from the last completed step.
   Future<Either<Failure, ConversationResponseData>> resumeSubmission(
-      String submissionId);
+      String submissionId,);
 
   /// Searches purchase orders by partial PO number.
   Future<Either<Failure, List<POSearchResult>>> searchPurchaseOrders({

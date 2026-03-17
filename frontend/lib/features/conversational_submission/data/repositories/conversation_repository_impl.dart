@@ -38,7 +38,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
         fileUploadType: result.fileUploadType,
         progressPercent: result.progressPercent,
         error: result.error,
-      ));
+      ),);
     } on DioException catch (e) {
       return Left(_handleDioError(e));
     } catch (e) {
@@ -48,7 +48,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
 
   @override
   Future<Either<Failure, Map<String, dynamic>>> getConversationState(
-      String submissionId) async {
+      String submissionId,) async {
     try {
       final result =
           await remoteDataSource.getConversationState(submissionId);
@@ -62,7 +62,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
 
   @override
   Future<Either<Failure, ConversationResponseData>> resumeSubmission(
-      String submissionId) async {
+      String submissionId,) async {
     try {
       final result =
           await remoteDataSource.resumeSubmission(submissionId);
@@ -76,7 +76,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
         fileUploadType: result.fileUploadType,
         progressPercent: result.progressPercent,
         error: result.error,
-      ));
+      ),);
     } on DioException catch (e) {
       return Left(_handleDioError(e));
     } catch (e) {

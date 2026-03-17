@@ -10,6 +10,10 @@ class AssistantResponseModel {
   final String? inputHint;
   final int? minSearchLength;
   final String? submissionId;
+  final List<ValidationRuleResultModel>? validationRules;
+  final int? passedCount;
+  final int? failedCount;
+  final int? warningCount;
 
   const AssistantResponseModel({
     required this.type,
@@ -22,6 +26,10 @@ class AssistantResponseModel {
     this.inputHint,
     this.minSearchLength,
     this.submissionId,
+    this.validationRules,
+    this.passedCount,
+    this.failedCount,
+    this.warningCount,
   });
 
   factory AssistantResponseModel.fromJson(Map<String, dynamic> json) {
@@ -46,6 +54,12 @@ class AssistantResponseModel {
       inputHint: json['inputHint'] as String?,
       minSearchLength: json['minSearchLength'] as int?,
       submissionId: json['submissionId'] as String?,
+      validationRules: (json['validationRules'] as List<dynamic>?)
+          ?.map((e) => ValidationRuleResultModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      passedCount: json['passedCount'] as int?,
+      failedCount: json['failedCount'] as int?,
+      warningCount: json['warningCount'] as int?,
     );
   }
 }
@@ -104,6 +118,38 @@ class POItemModel {
       totalAmount: (json['totalAmount'] as num).toDouble(),
       remainingBalance: (json['remainingBalance'] as num?)?.toDouble(),
       poStatus: json['poStatus'] as String? ?? 'Unknown',
+    );
+  }
+}
+
+class ValidationRuleResultModel {
+  final String ruleCode;
+  final String type;
+  final bool passed;
+  final bool isWarning;
+  final String label;
+  final String? extractedValue;
+  final String? message;
+
+  const ValidationRuleResultModel({
+    required this.ruleCode,
+    required this.type,
+    required this.passed,
+    required this.isWarning,
+    required this.label,
+    this.extractedValue,
+    this.message,
+  });
+
+  factory ValidationRuleResultModel.fromJson(Map<String, dynamic> json) {
+    return ValidationRuleResultModel(
+      ruleCode: json['ruleCode'] as String? ?? '',
+      type: json['type'] as String? ?? 'Required',
+      passed: json['passed'] as bool? ?? false,
+      isWarning: json['isWarning'] as bool? ?? false,
+      label: json['label'] as String? ?? '',
+      extractedValue: json['extractedValue'] as String?,
+      message: json['message'] as String?,
     );
   }
 }

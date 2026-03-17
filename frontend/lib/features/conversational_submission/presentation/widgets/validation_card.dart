@@ -158,7 +158,7 @@ class ValidationCard extends StatelessWidget {
         .split('_')
         .map((w) => w.isNotEmpty
             ? '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}'
-            : '')
+            : '',)
         .join(' ');
   }
 }

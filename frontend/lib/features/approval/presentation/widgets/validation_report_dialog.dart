@@ -34,7 +34,7 @@ class ValidationReportDialog extends ConsumerWidget {
     final reportState = ref.watch(validationReportProvider(packageId));
 
     return Dialog(
-      child: Container(
+      child: SizedBox(
         width: MediaQuery.of(context).size.width * 0.9,
         height: MediaQuery.of(context).size.height * 0.9,
         child: Column(

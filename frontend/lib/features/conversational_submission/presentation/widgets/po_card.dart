@@ -114,21 +114,21 @@ class POCard extends StatelessWidget {
               ),
               if (isSelected) ...[
                 const SizedBox(height: 8),
-                Row(
+                const Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     Icon(
                       Icons.check_circle,
                       size: 18,
-                      color: const Color(0xFF003087),
+                      color: Color(0xFF003087),
                     ),
-                    const SizedBox(width: 4),
+                    SizedBox(width: 4),
                     Text(
                       'Selected',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: const Color(0xFF003087),
+                        color: Color(0xFF003087),
                       ),
                     ),
                   ],

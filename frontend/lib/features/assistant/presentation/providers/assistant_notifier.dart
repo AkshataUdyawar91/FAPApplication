@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:typed_data';
 import 'package:equatable/equatable.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -30,6 +30,7 @@ class AssistantState extends Equatable {
   final String? error;
   final POItemModel? selectedPO;
   final String? submissionId;
+  final String? lastDocumentId;
 
   const AssistantState({
     this.messages = const [],
@@ -37,6 +38,7 @@ class AssistantState extends Equatable {
     this.error,
     this.selectedPO,
     this.submissionId,
+    this.lastDocumentId,
   });
 
   AssistantState copyWith({
@@ -47,6 +49,7 @@ class AssistantState extends Equatable {
     bool clearSelectedPO = false,
     String? submissionId,
     bool clearSubmissionId = false,
+    String? lastDocumentId,
   }) {
     return AssistantState(
       messages: messages ?? this.messages,
@@ -54,11 +57,12 @@ class AssistantState extends Equatable {
       error: error,
       selectedPO: clearSelectedPO ? null : (selectedPO ?? this.selectedPO),
       submissionId: clearSubmissionId ? null : (submissionId ?? this.submissionId),
+      lastDocumentId: lastDocumentId ?? this.lastDocumentId,
     );
   }
 
   @override
-  List<Object?> get props => [messages, isLoading, error, selectedPO, submissionId];
+  List<Object?> get props => [messages, isLoading, error, selectedPO, submissionId, lastDocumentId];
 }
 
 class AssistantNotifier extends StateNotifier<AssistantState> {
@@ -77,7 +81,11 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
   }
 
   Future<void> sendAction(String action, {String? payloadJson}) async {
-    _addUserMessage(action.replaceAll('_', ' ').split(' ').map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase()).join(' '));
+    _addUserMessage(action
+        .replaceAll('_', ' ')
+        .split(' ')
+        .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase())
+        .join(' '));
     state = state.copyWith(isLoading: true, error: null);
     try {
       final response = await _dataSource.sendMessage(action: action, payloadJson: payloadJson);
@@ -105,7 +113,10 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     _addUserMessage('Selected: ${po.poNumber}');
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final response = await _dataSource.sendMessage(action: 'select_po', payloadJson: jsonEncode({'poId': po.id}));
+      final response = await _dataSource.sendMessage(
+        action: 'select_po',
+        payloadJson: jsonEncode({'poId': po.id}),
+      );
       _addBotMessage(response);
       if (response.selectedPO != null) {
         state = state.copyWith(selectedPO: response.selectedPO);
@@ -172,10 +183,46 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
         submissionId: sid,
       );
       final docId = uploadResult['documentId']?.toString() ?? '';
+      state = state.copyWith(lastDocumentId: docId);
+
+      // Poll until AI extraction completes (max 60s, every 3s)
+      const maxAttempts = 20;
+      for (var i = 0; i < maxAttempts; i++) {
+        final status = await _dataSource.getDocumentExtractionStatus(docId);
+        if (status == 'extracted') break;
+        await Future.delayed(const Duration(seconds: 3));
+      }
+
       final response = await _dataSource.sendMessage(
         action: 'invoice_uploaded',
         message: docId,
       );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> continueAfterValidation() async {
+    _addUserMessage('Continue with warnings');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final docId = state.lastDocumentId;
+      final response = await _dataSource.sendMessage(
+        action: 'continue_invoice',
+        payloadJson: docId != null ? jsonEncode({'documentId': docId}) : null,
+      );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> reUploadInvoice() async {
+    _addUserMessage('Re-upload invoice');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(action: 'reupload_invoice');
       _addBotMessage(response);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());

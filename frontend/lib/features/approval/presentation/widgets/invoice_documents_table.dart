@@ -32,7 +32,7 @@ class InvoiceDocumentsTable extends StatelessWidget {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.border),
+        side: const BorderSide(color: AppColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -63,7 +63,7 @@ class InvoiceDocumentsTable extends StatelessWidget {
           child: ConstrainedBox(
             constraints: BoxConstraints(minWidth: constraints.maxWidth < 600 ? 600 : constraints.maxWidth),
             child: Table(
-          border: TableBorder(
+          border: const TableBorder(
             horizontalInside: BorderSide(color: AppColors.border),
             top: BorderSide(color: AppColors.border),
           ),
@@ -94,7 +94,7 @@ class InvoiceDocumentsTable extends StatelessWidget {
 
   TableRow _buildHeaderRow() {
     return TableRow(
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: AppColors.primary,
       ),
       children: [
