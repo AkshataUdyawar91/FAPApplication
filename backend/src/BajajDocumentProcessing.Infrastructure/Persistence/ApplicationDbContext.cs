@@ -61,6 +61,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<CostMaster> CostMasters => Set<CostMaster>();
     public DbSet<CostMasterStateRate> CostMasterStateRates => Set<CostMasterStateRate>();
 
+    // Audit logs
+    public DbSet<PoBalanceLog> POBalanceLogs => Set<PoBalanceLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

@@ -3,15 +3,22 @@ using BajajDocumentProcessing.Application.DTOs.PO;
 namespace BajajDocumentProcessing.Application.Common.Interfaces;
 
 /// <summary>
-/// Provides PO balance calculation by calling the SAP PO_Data API.
+/// Fetches PO balance from SAP and persists an audit log to POBalanceLogs.
 /// </summary>
 public interface IPoBalanceService
 {
     /// <summary>
-    /// Fetches PO data from SAP and returns the calculated balance.
+    /// Calls the SAP PO_Data API, calculates the balance, and writes an audit record.
     /// </summary>
     /// <param name="companyCode">SAP company code (e.g. "BAL").</param>
-    /// <param name="poNum">SAP Purchase Order number (e.g. "5110014001").</param>
+    /// <param name="poNum">SAP Purchase Order number.</param>
+    /// <param name="requestedBy">JWT userId of the caller (for audit).</param>
+    /// <param name="correlationId">Request correlation ID (for audit).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<PoBalanceResponse> GetPoBalanceAsync(string companyCode, string poNum, CancellationToken cancellationToken = default);
+    Task<PoBalanceResponse> GetPoBalanceAsync(
+        string companyCode,
+        string poNum,
+        string? requestedBy = null,
+        string? correlationId = null,
+        CancellationToken cancellationToken = default);
 }
