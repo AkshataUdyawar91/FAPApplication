@@ -82,11 +82,6 @@ public class Teams : BaseEntity
     public DocumentPackage Package { get; set; } = null!;
     
     /// <summary>
-    /// Gets or sets the collection of invoices associated with this team
-    /// </summary>
-    public ICollection<CampaignInvoice> Invoices { get; set; } = new List<CampaignInvoice>();
-    
-    /// <summary>
     /// Gets or sets the collection of photos associated with this team
     /// </summary>
     public ICollection<TeamPhotos> Photos { get; set; } = new List<TeamPhotos>();

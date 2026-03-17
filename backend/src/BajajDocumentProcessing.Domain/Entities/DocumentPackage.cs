@@ -269,11 +269,6 @@ public class DocumentPackage : BaseEntity
     public ICollection<TeamPhotos> TeamPhotos { get; set; } = new List<TeamPhotos>();
     
     /// <summary>
-    /// Gets or sets the collection of campaign invoices in this package (for easier querying)
-    /// </summary>
-    public ICollection<CampaignInvoice> CampaignInvoices { get; set; } = new List<CampaignInvoice>();
-    
-    /// <summary>
     /// Gets or sets the collection of approval history records for this package
     /// </summary>
     public ICollection<RequestApprovalHistory> RequestApprovalHistory { get; set; } = new List<RequestApprovalHistory>();

@@ -60,6 +60,9 @@ public class AssistantController : ControllerBase
                 "invoice_uploaded" => await HandleInvoiceUploaded(request, agencyId.Value, ct),
                 "continue_invoice" => await HandleContinueInvoice(request, agencyId.Value, ct),
                 "reupload_invoice" => HandleReuploadInvoice(),
+                "activity_summary_uploaded" => await HandleActivitySummaryUploaded(request, agencyId.Value, ct),
+                "reupload_activity_summary" => HandleReuploadActivitySummary(),
+                "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId.Value, ct),
                 _ => BuildGreeting(),
             };
 
@@ -747,18 +750,249 @@ public class AssistantController : ControllerBase
     private async Task<AssistantResponse> HandleContinueInvoice(
         AssistantRequest request, Guid agencyId, CancellationToken ct)
     {
-        // User chose to continue despite warnings — next step is Activity Summary upload
-        // (Phase 6 will handle this fully; for now return a placeholder)
+        // User confirmed invoice — move to Activity Summary upload
+        var submissionId = ExtractSubmissionId(request);
         return new AssistantResponse
         {
-            Type = "activity_upload_prompt",
-            Message = "Invoice accepted. Next, please upload the Activity Summary document.",
-            AllowedFormats = new List<string> { "PDF", "JPG", "PNG" },
+            Type = "activity_summary_upload",
+            Message = "Invoice accepted. Now please upload the Activity Summary document.",
+            AllowedFormats = new List<string> { "PDF", "JPG", "PNG", "XLS", "XLSX" },
+            SubmissionId = submissionId,
             Cards = new List<WorkflowCard>
             {
-                new() { Id = "upload_activity", Title = "Upload Activity Summary", Subtitle = "Select a file from your device", Icon = "upload_file", Action = "upload_activity" },
+                new() { Id = "upload_activity", Title = "Upload Activity Summary", Subtitle = "Select a file from your device", Icon = "upload_file", Action = "upload_activity_summary" },
             },
         };
+    }
+
+    private static AssistantResponse HandleReuploadActivitySummary()
+    {
+        return new AssistantResponse
+        {
+            Type = "activity_summary_upload",
+            Message = "Please upload the corrected Activity Summary document.",
+            AllowedFormats = new List<string> { "PDF", "JPG", "PNG", "XLS", "XLSX" },
+            Cards = new List<WorkflowCard>
+            {
+                new() { Id = "upload_activity", Title = "Upload Activity Summary", Subtitle = "Select a file from your device", Icon = "upload_file", Action = "upload_activity_summary" },
+            },
+        };
+    }
+
+    private async Task<AssistantResponse> HandleActivitySummaryUploaded(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        string? documentId = request.Message?.Trim();
+        Guid? submissionIdFromPayload = null;
+
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var payload = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (string.IsNullOrEmpty(documentId) && payload.TryGetProperty("documentId", out var docProp))
+                    documentId = docProp.GetString();
+                if (payload.TryGetProperty("submissionId", out var subProp) && Guid.TryParse(subProp.GetString(), out var sid))
+                    submissionIdFromPayload = sid;
+            }
+            catch { }
+        }
+
+        if (string.IsNullOrWhiteSpace(documentId) || !Guid.TryParse(documentId, out var docId))
+            return new AssistantResponse { Type = "error", Message = "Activity Summary upload confirmation missing. Please try uploading again." };
+
+        _logger.LogInformation("=== ACTIVITY SUMMARY VALIDATION === DocumentId: {DocId}", docId);
+
+        var actSummary = await _context.ActivitySummaries
+            .FirstOrDefaultAsync(a => a.Id == docId && !a.IsDeleted, ct);
+
+        if (actSummary == null)
+            return new AssistantResponse { Type = "error", Message = "Activity Summary document not found. Please try uploading again." };
+
+        // Run validation rules
+        var rules = RunActivitySummaryValidationRules(actSummary);
+
+        int passCount = rules.Count(r => r.Passed && !r.IsWarning);
+        int failCount = rules.Count(r => !r.Passed && !r.IsWarning);
+        int warnCount = rules.Count(r => r.IsWarning);
+
+        string botMessage = failCount == 0 && warnCount == 0
+            ? $"Activity Summary analysed. All {rules.Count} checks passed!"
+            : $"Activity Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")}{(warnCount > 0 ? $" {warnCount} warning(s)." : "")} Review below and continue or re-upload.";
+
+        // Persist to ValidationResults table
+        try
+        {
+            var ruleResultsJson = JsonSerializer.Serialize(rules.Select(r => new
+            {
+                ruleCode = r.RuleCode,
+                type = r.Type,
+                passed = r.Passed,
+                isWarning = r.IsWarning,
+                label = r.Label,
+                extractedValue = r.ExtractedValue,
+                message = r.Message,
+            }));
+
+            var failureReason = failCount > 0
+                ? string.Join("; ", rules.Where(r => !r.Passed && !r.IsWarning).Select(r => r.Message ?? r.Label))
+                : warnCount > 0 ? string.Join("; ", rules.Where(r => r.IsWarning).Select(r => r.Message ?? r.Label))
+                : null;
+
+            var existing = await _context.ValidationResults
+                .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
+
+            if (existing != null)
+            {
+                existing.AllValidationsPassed = failCount == 0;
+                existing.RuleResultsJson = ruleResultsJson;
+                existing.FailureReason = failureReason;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _context.ValidationResults.Add(new Domain.Entities.ValidationResult
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentType = DocumentType.ActivitySummary,
+                    DocumentId = docId,
+                    AllValidationsPassed = failCount == 0,
+                    RuleResultsJson = ruleResultsJson,
+                    FailureReason = failureReason,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
+                });
+            }
+            await _context.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist activity summary validation results for {DocId}", docId);
+        }
+
+        // Read back from DB — UI always reflects persisted data
+        List<ValidationRuleResult> responseRules = rules;
+        try
+        {
+            var saved = await _context.ValidationResults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
+
+            if (saved?.RuleResultsJson != null)
+            {
+                var dbRules = JsonSerializer.Deserialize<List<ValidationRuleResult>>(
+                    saved.RuleResultsJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (dbRules != null && dbRules.Count > 0)
+                {
+                    responseRules = dbRules;
+                    passCount = responseRules.Count(r => r.Passed && !r.IsWarning);
+                    failCount = responseRules.Count(r => !r.Passed && !r.IsWarning);
+                    warnCount = responseRules.Count(r => r.IsWarning);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read back activity summary validation from DB for {DocId}", docId);
+        }
+
+        return new AssistantResponse
+        {
+            Type = "activity_summary_validation",
+            Message = botMessage,
+            ValidationRules = responseRules,
+            PassedCount = passCount,
+            FailedCount = failCount,
+            WarningCount = warnCount,
+            SubmissionId = submissionIdFromPayload ?? actSummary.PackageId,
+        };
+    }
+
+    private List<ValidationRuleResult> RunActivitySummaryValidationRules(Domain.Entities.ActivitySummary actSummary)
+    {
+        var rules = new List<ValidationRuleResult>();
+
+        // Parse extracted JSON once
+        string? dealerName = actSummary.DealerName;
+        string? location = null;
+
+        if (!string.IsNullOrEmpty(actSummary.ExtractedDataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(actSummary.ExtractedDataJson);
+                if (string.IsNullOrWhiteSpace(dealerName))
+                {
+                    if (json.TryGetProperty("DealerName", out var dn) || json.TryGetProperty("dealerName", out dn))
+                        dealerName = dn.GetString();
+                }
+                if (json.TryGetProperty("Rows", out var rows) || json.TryGetProperty("rows", out rows))
+                {
+                    if (rows.ValueKind == JsonValueKind.Array && rows.GetArrayLength() > 0)
+                    {
+                        var first = rows[0];
+                        if (string.IsNullOrWhiteSpace(dealerName))
+                        {
+                            if (first.TryGetProperty("DealerName", out var rdn) || first.TryGetProperty("dealerName", out rdn))
+                                dealerName = rdn.GetString();
+                        }
+                        if (first.TryGetProperty("Location", out var loc) || first.TryGetProperty("location", out loc))
+                            location = loc.GetString();
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // AS_DEALER_LOCATION_PRESENT — dealer name AND location must both be present
+        bool dealerPresent = !string.IsNullOrWhiteSpace(dealerName);
+        bool locationPresent = !string.IsNullOrWhiteSpace(location);
+        bool dealerLocationPassed = dealerPresent && locationPresent;
+
+        string extractedDisplay = dealerPresent || locationPresent
+            ? string.Join(", ", new[] { dealerName, location }.Where(s => !string.IsNullOrWhiteSpace(s)))
+            : null!;
+
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "AS_DEALER_LOCATION_PRESENT",
+            Type = "Required",
+            Passed = dealerLocationPassed,
+            IsWarning = false,
+            Label = "Dealer & Location Details",
+            ExtractedValue = string.IsNullOrWhiteSpace(extractedDisplay) ? null : extractedDisplay,
+            Message = dealerLocationPassed ? null
+                : !dealerPresent && !locationPresent ? "Dealer name and location not detected"
+                : !dealerPresent ? "Dealer name not detected"
+                : "Location not detected",
+        });
+
+        return rules;
+    }
+
+
+    private async Task<AssistantResponse> HandleContinueAfterActivity(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        return new AssistantResponse
+        {
+            Type = "text",
+            Message = "Activity Summary accepted. Phase 7 (Enquiry Dump Upload) coming soon.",
+        };
+    }
+
+    private Guid? ExtractSubmissionId(AssistantRequest request)
+    {
+        if (string.IsNullOrEmpty(request.PayloadJson)) return null;
+        try
+        {
+            var pl = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+            if (pl.TryGetProperty("submissionId", out var sp) && Guid.TryParse(sp.GetString(), out var sid))
+                return sid;
+        }
+        catch { }
+        return null;
     }
 
     private static AssistantResponse HandleReuploadInvoice()

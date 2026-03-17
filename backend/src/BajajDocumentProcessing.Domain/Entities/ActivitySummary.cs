@@ -39,6 +39,21 @@ public class ActivitySummary : BaseEntity
     public string ContentType { get; set; } = string.Empty;
 
     /// <summary>
+    /// Extracted dealer name from the activity summary rows.
+    /// </summary>
+    public string? DealerName { get; set; }
+
+    /// <summary>
+    /// Total number of days (Day column) across all activity rows.
+    /// </summary>
+    public int? TotalDays { get; set; }
+
+    /// <summary>
+    /// Total working days (WorkingDay column) across all activity rows.
+    /// </summary>
+    public int? TotalWorkingDays { get; set; }
+
+    /// <summary>
     /// Full extracted data in JSON format from Azure OpenAI.
     /// </summary>
     public string? ExtractedDataJson { get; set; }

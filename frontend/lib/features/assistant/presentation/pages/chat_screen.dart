@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/assistant_notifier.dart';
@@ -53,8 +53,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (!_scrollCtrl.hasClients) return;
     Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollCtrl.hasClients) {
-        _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+        _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
       }
     });
   }
@@ -80,8 +83,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final state = ref.watch(assistantNotifierProvider);
     ref.listen<AssistantState>(assistantNotifierProvider, (prev, next) {
       if ((prev?.messages.length ?? 0) < next.messages.length) _scrollToBottom();
-      final lastBot = next.messages.lastWhere((m) => m.isBot,
-          orElse: () => AssistantMessage(id: '', content: '', isBot: true, timestamp: DateTime(2000)));
+      final lastBot = next.messages.lastWhere(
+        (m) => m.isBot,
+        orElse: () => AssistantMessage(id: '', content: '', isBot: true, timestamp: DateTime(2000)),
+      );
       final t = lastBot.response?.type ?? '';
       String newMode;
       if (t == 'po_search' || t == 'po_search_results') {
@@ -118,17 +123,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Widget _bottomInput(AssistantState state) {
-    if (_inputMode == 'po') return _searchBar(_poSearchCtrl, 'Search PO number (min 3 chars)...', Icons.search, _onPOSearch);
-    if (_inputMode == 'state') return _searchBar(_stateSearchCtrl, 'Type state name to search...', Icons.location_on, _onStateSearch);
-    return ChatInputBar(onSend: (text) => ref.read(assistantNotifierProvider.notifier).sendAction('message'), enabled: !state.isLoading);
+    if (_inputMode == 'po') {
+      return _searchBar(_poSearchCtrl, 'Search PO number (min 3 chars)...', Icons.search, _onPOSearch);
+    }
+    if (_inputMode == 'state') {
+      return _searchBar(_stateSearchCtrl, 'Type state name to search...', Icons.location_on, _onStateSearch);
+    }
+    return ChatInputBar(
+      onSend: (text) => ref.read(assistantNotifierProvider.notifier).sendAction('message'),
+      enabled: !state.isLoading,
+    );
   }
 
-  Widget _searchBar(TextEditingController ctrl, String hint, IconData icon, ValueChanged<String> onChanged) {
+  Widget _searchBar(
+    TextEditingController ctrl,
+    String hint,
+    IconData icon,
+    ValueChanged<String> onChanged,
+  ) {
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 4, offset: const Offset(0, -2))],
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 4, offset: const Offset(0, -2))
+        ],
       ),
       child: SafeArea(
         top: false,
@@ -154,9 +173,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       itemBuilder: (context, index) {
         final msg = state.messages[index];
         if (!msg.isBot) return UserBubble(message: msg.content);
-        return _botMsg(msg);
+        // isLastBot: true if no later bot message exists after this index
+        final isLastBot = !state.messages.sublist(index + 1).any((m) => m.isBot);
+        return _botMsg(msg, isLast: isLastBot);
       },
     );
+  }
+
+  Future<void> _pickActivitySummaryFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png', 'xls', 'xlsx'],
+      withData: true,
+    );
+    if (result != null && result.files.single.bytes != null) {
+      final file = result.files.single;
+      if (file.size > 10 * 1024 * 1024) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('File size exceeds 10 MB limit')),
+          );
+        }
+        return;
+      }
+      ref.read(assistantNotifierProvider.notifier).uploadActivitySummary(file.bytes!, file.name);
+    }
   }
 
   Future<void> _pickInvoiceFile() async {
@@ -168,7 +209,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (result != null && result.files.single.bytes != null) {
       final file = result.files.single;
       if (file.size > 10 * 1024 * 1024) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('File size exceeds 10 MB limit')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File size exceeds 10 MB limit')),
+        );
         return;
       }
       ref.read(assistantNotifierProvider.notifier).uploadInvoice(file.bytes!, file.name);
@@ -188,13 +231,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             side: BorderSide(color: Colors.grey.shade300),
           ),
-          child: Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087)),
+          ),
         ),
       ),
     );
   }
 
-  Widget _botMsg(AssistantMessage msg) {
+  Widget _botMsg(AssistantMessage msg, {bool isLast = false}) {
     final r = msg.response;
     if (r == null) return AssistantBubble(message: msg.content);
     switch (r.type) {
@@ -238,7 +284,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   children: [
                     const Padding(
                       padding: EdgeInsets.only(bottom: 8),
-                      child: Text('Select State', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+                      child: Text('Select State',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
                     ),
                     ...r.cards!.map((c) {
                       if (c.action == 'list_states') {
@@ -249,7 +296,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                             child: OutlinedButton.icon(
                               onPressed: () => ref.read(assistantNotifierProvider.notifier).listAllStates(),
                               icon: const Icon(Icons.search, size: 18, color: Color(0xFF003087)),
-                              label: Text(c.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                              label: Text(c.title,
+                                  style: const TextStyle(
+                                      fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
                               style: OutlinedButton.styleFrom(
                                 alignment: Alignment.centerLeft,
                                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -260,7 +309,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           ),
                         );
                       }
-                      return _stateButton(c.title, () => ref.read(assistantNotifierProvider.notifier).selectState(c.title));
+                      return _stateButton(
+                          c.title, () => ref.read(assistantNotifierProvider.notifier).selectState(c.title));
                     }),
                   ],
                 )
@@ -275,7 +325,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   children: [
                     const Padding(
                       padding: EdgeInsets.only(bottom: 8),
-                      child: Text('States', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+                      child: Text('States',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
                     ),
                     ...r.states!.map((s) => _stateButton(s, () {
                           _stateSearchCtrl.clear();
@@ -291,7 +342,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           child: const Row(children: [
             Icon(Icons.check_circle, color: Colors.green, size: 20),
             SizedBox(width: 6),
-            Text('State confirmed', style: TextStyle(color: Colors.green, fontWeight: FontWeight.w500, fontSize: 13)),
+            Text('State confirmed',
+                style: TextStyle(color: Colors.green, fontWeight: FontWeight.w500, fontSize: 13)),
           ]),
         );
       case 'invoice_upload':
@@ -302,7 +354,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             children: [
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
-                child: Text('Upload Invoice', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+                child: Text('Upload Invoice',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
               ),
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
@@ -311,7 +364,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   child: OutlinedButton.icon(
                     onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _pickInvoiceFile,
                     icon: const Icon(Icons.upload_file, size: 18, color: Color(0xFF003087)),
-                    label: const Text('Upload from device', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                    label: const Text('Upload from device',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
                     style: OutlinedButton.styleFrom(
                       alignment: Alignment.centerLeft,
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -328,7 +382,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   child: OutlinedButton.icon(
                     onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _pickInvoiceFile,
                     icon: const Icon(Icons.camera_alt, size: 18, color: Color(0xFF003087)),
-                    label: const Text('Take photo', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                    label: const Text('Take photo',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
                     style: OutlinedButton.styleFrom(
                       alignment: Alignment.centerLeft,
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -338,11 +393,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ),
                 ),
               ),
-              if (ref.watch(assistantNotifierProvider).isLoading)
+              if (ref.watch(assistantNotifierProvider).isLoading && isLast)
                 const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
               Padding(
                 padding: const EdgeInsets.only(top: 6),
-                child: Text('Accepted: PDF, JPG, PNG (max 10 MB)', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                child: Text('Accepted: PDF, JPG, PNG (max 10 MB)',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
               ),
             ],
           ),
@@ -353,7 +409,59 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           child: const Row(children: [
             Icon(Icons.check_circle, color: Colors.green, size: 20),
             SizedBox(width: 6),
-            Text('Invoice uploaded', style: TextStyle(color: Colors.green, fontWeight: FontWeight.w500, fontSize: 13)),
+            Text('Invoice uploaded',
+                style: TextStyle(color: Colors.green, fontWeight: FontWeight.w500, fontSize: 13)),
+          ]),
+        );
+      case 'activity_summary_upload':
+        return AssistantBubble(
+          message: msg.content,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('Upload Activity Summary',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _pickActivitySummaryFile,
+                    icon: const Icon(Icons.upload_file, size: 18, color: Color(0xFF003087)),
+                    label: const Text('Upload from device',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                    style: OutlinedButton.styleFrom(
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      side: BorderSide(color: Colors.grey.shade300),
+                    ),
+                  ),
+                ),
+              ),
+              if (ref.watch(assistantNotifierProvider).isLoading && isLast)
+                const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text('Accepted: PDF, JPG, PNG, XLS, XLSX (max 10 MB)',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              ),
+            ],
+          ),
+        );
+      case 'activity_summary_validation':
+        return AssistantBubble(message: msg.content, child: _activitySummaryValidationCard(r));
+      case 'activity_summary_extracted':
+        return AssistantBubble(
+          message: msg.content,
+          child: Row(children: [
+            const Icon(Icons.check_circle, color: Colors.green, size: 20),
+            const SizedBox(width: 6),
+            const Text('Activity Summary extracted',
+                style: TextStyle(color: Colors.green, fontWeight: FontWeight.w500, fontSize: 13)),
           ]),
         );
       case 'invoice_validation':
@@ -365,7 +473,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             label: 'Upload Purchase Order',
             allowedFormats: r.allowedFormats ?? ['PDF', 'Word', 'JPG', 'PNG'],
             isUploading: ref.watch(assistantNotifierProvider).isLoading,
-            onFileSelected: (bytes, name) => ref.read(assistantNotifierProvider.notifier).uploadPOFile(bytes, name),
+            onFileSelected: (bytes, name) =>
+                ref.read(assistantNotifierProvider.notifier).uploadPOFile(bytes, name),
           ),
         );
       case 'upload_success':
@@ -391,6 +500,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+
   Widget _invoiceValidationCard(AssistantResponseModel r) {
     final rules = r.validationRules ?? [];
     final passed = r.passedCount ?? 0;
@@ -409,7 +519,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ],
           if (warned > 0) ...[
             const SizedBox(width: 6),
-            _validationChip('$warned warning${warned > 1 ? "s" : ""}', Colors.orange.shade700, Colors.orange.shade50),
+            _validationChip('$warned warning${warned > 1 ? 's' : ''}', Colors.orange.shade700, Colors.orange.shade50),
           ],
         ]),
         const SizedBox(height: 10),
@@ -418,7 +528,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).reUploadInvoice(),
+              onPressed: isLoading
+                  ? null
+                  : () => ref.read(assistantNotifierProvider.notifier).reUploadInvoice(),
               icon: const Icon(Icons.upload_file, size: 16),
               label: const Text('Re-upload invoice'),
               style: OutlinedButton.styleFrom(
@@ -432,9 +544,72 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
+              onPressed: isLoading
+                  ? null
+                  : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
               icon: const Icon(Icons.arrow_forward, size: 16),
-              label: Text(hasIssues ? 'Continue with warnings' : 'Continue'),
+              label: Text(hasIssues ? 'Continue with warnings' : 'Continue →'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF003087),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ]),
+      ],
+    );
+  }
+
+  Widget _activitySummaryValidationCard(AssistantResponseModel r) {
+    final rules = r.validationRules ?? [];
+    final passed = r.passedCount ?? 0;
+    final failed = r.failedCount ?? 0;
+    final warned = r.warningCount ?? 0;
+    final hasIssues = failed > 0 || warned > 0;
+    final isLoading = ref.watch(assistantNotifierProvider).isLoading;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          _validationChip('$passed passed', Colors.green.shade600, Colors.green.shade50),
+          if (failed > 0) ...[
+            const SizedBox(width: 6),
+            _validationChip('$failed failed', Colors.red.shade600, Colors.red.shade50),
+          ],
+          if (warned > 0) ...[
+            const SizedBox(width: 6),
+            _validationChip('$warned warning${warned > 1 ? 's' : ''}', Colors.orange.shade700, Colors.orange.shade50),
+          ],
+        ]),
+        const SizedBox(height: 10),
+        ...rules.map(_validationRuleRow),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: isLoading
+                  ? null
+                  : () => ref.read(assistantNotifierProvider.notifier).reUploadActivitySummary(),
+              icon: const Icon(Icons.upload_file, size: 16),
+              label: const Text('Re-upload'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.red.shade700,
+                side: BorderSide(color: Colors.red.shade300),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: isLoading
+                  ? null
+                  : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(),
+              icon: const Icon(Icons.arrow_forward, size: 16),
+              label: Text(hasIssues ? 'Continue with warnings' : 'Continue →'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF003087),
                 foregroundColor: Colors.white,
@@ -480,8 +655,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             if (rule.extractedValue != null)
               Text(rule.extractedValue!, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
             if (rule.message != null && !rule.passed)
-              Text(rule.message!,
-                  style: TextStyle(fontSize: 12, color: rule.isWarning ? Colors.orange.shade700 : Colors.red.shade600)),
+              Text(
+                rule.message!,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: rule.isWarning ? Colors.orange.shade700 : Colors.red.shade600,
+                ),
+              ),
           ]),
         ),
       ]),

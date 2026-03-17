@@ -37,7 +37,6 @@ public interface IApplicationDbContext
     // Hierarchical structure: Package -> Teams -> Photos
     DbSet<Teams> Teams { get; }
     DbSet<Campaign> Campaigns { get; }  // Alias for Teams for backward compatibility
-    DbSet<CampaignInvoice> CampaignInvoices { get; }
     DbSet<TeamPhotos> TeamPhotos { get; }
     DbSet<CampaignPhoto> CampaignPhotos { get; }  // Alias for TeamPhotos for backward compatibility
 
@@ -54,6 +53,9 @@ public interface IApplicationDbContext
     DbSet<HsnMaster> HsnMasters { get; }
     DbSet<CostMaster> CostMasters { get; }
     DbSet<CostMasterStateRate> CostMasterStateRates { get; }
+
+    // Audit logs
+    DbSet<PoBalanceLog> POBalanceLogs { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

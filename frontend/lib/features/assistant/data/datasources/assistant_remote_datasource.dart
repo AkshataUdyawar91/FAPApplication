@@ -60,6 +60,25 @@ class AssistantRemoteDataSource {
     return response.data as Map<String, dynamic>;
   }
 
+  /// Upload an activity summary document.
+  Future<Map<String, dynamic>> uploadActivitySummary({
+    required Uint8List fileBytes,
+    required String fileName,
+    required String submissionId,
+  }) async {
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(fileBytes, filename: fileName),
+      'documentType': 'ActivitySummary',
+      'submissionId': submissionId,
+    });
+    final response = await dio.post(
+      '/documents/upload',
+      data: formData,
+      options: Options(contentType: 'multipart/form-data'),
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
   /// Poll extraction status for a document.
   /// Returns 'extracted' or 'processing'.
   Future<String> getDocumentExtractionStatus(String documentId) async {
