@@ -1,11 +1,11 @@
 {
-    "name": "Bajaj Document Processing",
-    "short_name": "Bajaj",
-    "start_url": ".",
+    "name": "ClaimsIQ",
+    "short_name": "ClaimsIQ",
+    "start_url": "/",
     "display": "standalone",
-    "background_color": "#003087",
+    "background_color": "#FFFFFF",
     "theme_color": "#003087",
-    "description": "Bajaj Document Processing System",
+    "description": "ClaimsIQ — Agency FAP Claim Submission & Tracking",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

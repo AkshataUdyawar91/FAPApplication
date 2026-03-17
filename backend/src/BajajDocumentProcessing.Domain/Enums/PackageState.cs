@@ -5,6 +5,7 @@ namespace BajajDocumentProcessing.Domain.Enums;
 /// </summary>
 public enum PackageState
 {
+    Draft = 0,
     Uploaded = 1,
     Extracting = 2,
     Validating = 3,

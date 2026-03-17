@@ -53,7 +53,7 @@ class CampaignDocumentsSection extends StatelessWidget {
               '/hierarchical/invoices/${inv['invoiceId']}/download',
           status: _getStatusForType('Invoice'),
           remarks: _getRemarksForType('Invoice'),
-        ));
+        ),);
       }
 
       for (final photo in photos) {
@@ -65,7 +65,7 @@ class CampaignDocumentsSection extends StatelessWidget {
               '/hierarchical/photos/${photo['photoId']}/download',
           status: _getStatusForType('Photo'),
           remarks: _getRemarksForType('Photo'),
-        ));
+        ),);
       }
 
       if (costFile != null && costFile.isNotEmpty) {
@@ -77,7 +77,7 @@ class CampaignDocumentsSection extends StatelessWidget {
               '/hierarchical/campaigns/$campaignId/download/cost-summary',
           status: _getStatusForType('CostSummary'),
           remarks: _getRemarksForType('CostSummary'),
-        ));
+        ),);
       }
 
       if (activityFile != null && activityFile.isNotEmpty) {
@@ -89,7 +89,7 @@ class CampaignDocumentsSection extends StatelessWidget {
               '/hierarchical/campaigns/$campaignId/download/activity-summary',
           status: _getStatusForType('Activity'),
           remarks: _getRemarksForType('Activity'),
-        ));
+        ),);
       }
     }
 

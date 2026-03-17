@@ -3,14 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/pages/new_login_page.dart';
 import 'features/submission/presentation/pages/agency_dashboard_page.dart';
-import 'features/submission/presentation/pages/agency_upload_page.dart';
-import 'features/submission/presentation/pages/agency_submission_detail_page.dart';
-import 'features/approval/presentation/pages/asm_review_page.dart';
-import 'features/approval/presentation/pages/asm_review_detail_page.dart';
-import 'features/approval/presentation/pages/hq_review_page.dart';
-import 'features/approval/presentation/pages/hq_review_detail_page.dart';
-import 'features/analytics/presentation/pages/hq_analytics_page.dart';
-import 'features/chat/presentation/pages/chat_page.dart';
+import 'features/conversational_submission/presentation/pages/conversational_submission_page.dart';
+import 'features/assistant/presentation/pages/chat_screen.dart';
+import 'core/network/dio_client.dart';
 
 void main() {
   runApp(
@@ -26,7 +21,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Bajaj Document Processing',
+      title: 'ClaimsIQ',
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
       initialRoute: '/',
@@ -39,77 +34,27 @@ class MyApp extends StatelessWidget {
           case '/agency/dashboard':
             final args = settings.arguments as Map<String, dynamic>?;
             return MaterialPageRoute(
-              builder: (context) => AgencyDashboardPage(
+              builder: (context) => _AuthWrapper(
                 token: args?['token'] ?? '',
-                userName: args?['userName'] ?? 'User',
+                child: AgencyDashboardPage(
+                  token: args?['token'] ?? '',
+                  userName: args?['userName'] ?? '',
+                ),
               ),
             );
-          case '/agency/upload':
+          case '/agency/assistant':
             final args = settings.arguments as Map<String, dynamic>?;
             return MaterialPageRoute(
-              builder: (context) => AgencyUploadPage(
+              builder: (context) => _AuthWrapper(
                 token: args?['token'] ?? '',
-                userName: args?['userName'] ?? 'User',
-                submissionId: args?['submissionId'],
+                child: const ChatScreen(),
               ),
             );
-          case '/agency/submission-detail':
+          case '/agency/conversational-submission':
             final args = settings.arguments as Map<String, dynamic>?;
             return MaterialPageRoute(
-              builder: (context) => AgencySubmissionDetailPage(
-                submissionId: args?['submissionId'] ?? '',
+              builder: (context) => _ConversationalSubmissionWrapper(
                 token: args?['token'] ?? '',
-                userName: args?['userName'] ?? 'User',
-              ),
-            );
-          case '/asm/review':
-            final args = settings.arguments as Map<String, dynamic>?;
-            return MaterialPageRoute(
-              builder: (context) => ASMReviewPage(
-                token: args?['token'] ?? '',
-                userName: args?['userName'] ?? 'User',
-              ),
-            );
-          case '/asm/review-detail':
-            final args = settings.arguments as Map<String, dynamic>?;
-            return MaterialPageRoute(
-              builder: (context) => ASMReviewDetailPage(
-                submissionId: args?['submissionId'] ?? '',
-                token: args?['token'] ?? '',
-                userName: args?['userName'] ?? 'User',
-              ),
-            );
-          case '/hq/review':
-            final args = settings.arguments as Map<String, dynamic>?;
-            return MaterialPageRoute(
-              builder: (context) => HQReviewPage(
-                token: args?['token'] ?? '',
-                userName: args?['userName'] ?? 'User',
-              ),
-            );
-          case '/hq/review-detail':
-            final args = settings.arguments as Map<String, dynamic>?;
-            return MaterialPageRoute(
-              builder: (context) => HQReviewDetailPage(
-                submissionId: args?['submissionId'] ?? '',
-                token: args?['token'] ?? '',
-                userName: args?['userName'] ?? 'User',
-              ),
-            );
-          case '/hq/analytics':
-            final args = settings.arguments as Map<String, dynamic>?;
-            return MaterialPageRoute(
-              builder: (context) => HQAnalyticsPage(
-                token: args?['token'] ?? '',
-                userName: args?['userName'] ?? 'User',
-              ),
-            );
-          case '/chat':
-            final args = settings.arguments as Map<String, dynamic>?;
-            return MaterialPageRoute(
-              builder: (context) => ChatPage(
-                token: args?['token'] ?? '',
-                userName: args?['userName'] ?? 'User',
               ),
             );
           default:
@@ -119,5 +64,75 @@ class MyApp extends StatelessWidget {
         }
       },
     );
+  }
+}
+
+
+/// Wrapper that sets the [authTokenProvider] so the conversational
+/// submission feature (which uses Riverpod Dio client) can authenticate.
+class _ConversationalSubmissionWrapper extends ConsumerStatefulWidget {
+  final String token;
+  const _ConversationalSubmissionWrapper({required this.token});
+
+  @override
+  ConsumerState<_ConversationalSubmissionWrapper> createState() =>
+      _ConversationalSubmissionWrapperState();
+}
+
+class _ConversationalSubmissionWrapperState
+    extends ConsumerState<_ConversationalSubmissionWrapper> {
+  bool _tokenSet = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(authTokenProvider.notifier).state = widget.token;
+      if (mounted) setState(() => _tokenSet = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_tokenSet) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return const ConversationalSubmissionPage();
+  }
+}
+
+
+/// Generic auth wrapper that sets the token before rendering the child.
+class _AuthWrapper extends ConsumerStatefulWidget {
+  final String token;
+  final Widget child;
+  const _AuthWrapper({required this.token, required this.child});
+
+  @override
+  ConsumerState<_AuthWrapper> createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends ConsumerState<_AuthWrapper> {
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(authTokenProvider.notifier).state = widget.token;
+      if (mounted) setState(() => _ready = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return widget.child;
   }
 }

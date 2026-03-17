@@ -42,28 +42,28 @@ class DocumentRemoteDataSourceImpl implements DocumentRemoteDataSource {
         formData.files.add(MapEntry(
           'po',
           await MultipartFile.fromFile(poFile.path, filename: 'po.pdf'),
-        ));
+        ),);
       }
 
       if (invoiceFile != null) {
         formData.files.add(MapEntry(
           'invoice',
           await MultipartFile.fromFile(invoiceFile.path, filename: 'invoice.pdf'),
-        ));
+        ),);
       }
 
       if (costSummaryFile != null) {
         formData.files.add(MapEntry(
           'costSummary',
           await MultipartFile.fromFile(costSummaryFile.path, filename: 'cost_summary.pdf'),
-        ));
+        ),);
       }
 
       for (var i = 0; i < photoFiles.length; i++) {
         formData.files.add(MapEntry(
           'photos',
           await MultipartFile.fromFile(photoFiles[i].path, filename: 'photo_$i.jpg'),
-        ));
+        ),);
       }
 
       if (additionalFiles != null) {
@@ -71,7 +71,7 @@ class DocumentRemoteDataSourceImpl implements DocumentRemoteDataSource {
           formData.files.add(MapEntry(
             'additional',
             await MultipartFile.fromFile(additionalFiles[i].path, filename: 'additional_$i.pdf'),
-          ));
+          ),);
         }
       }
 

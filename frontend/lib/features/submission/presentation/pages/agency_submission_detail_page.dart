@@ -89,7 +89,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     Navigator.pushNamed(context, '/agency/upload', arguments: {
       'token': widget.token,
       'userName': widget.userName,
-    });
+    },);
   }
 
   List<NavItem> _getNavItems(BuildContext context) {
@@ -99,10 +99,10 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       NavItem(icon: Icons.visibility, label: 'View Request', isActive: true, onTap: () {}),
       NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      }),
+      },),
       NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      }),
+      },),
     ];
   }
 
@@ -269,7 +269,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Submission Details', style: AppTextStyles.h2),
+                const Text('Submission Details', style: AppTextStyles.h2),
                 const SizedBox(height: 4),
                 Text(fapNumber, style: AppTextStyles.bodySmall),
               ],
@@ -332,7 +332,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Submission Details', style: AppTextStyles.h2),
+                      const Text('Submission Details', style: AppTextStyles.h2),
                       Text(fapNumber, style: AppTextStyles.bodySmall),
                     ],
                   ),
@@ -459,7 +459,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
       child: ExpansionTile(
         leading: const Icon(Icons.description, color: Color(0xFF3B82F6), size: 32),
-        title: Text('Purchase Order', style: AppTextStyles.h3),
+        title: const Text('Purchase Order', style: AppTextStyles.h3),
         subtitle: Text('${poDocs.length} document(s)'),
         children: poDocs.map((doc) {
           Map<String, dynamic>? data;
@@ -548,14 +548,14 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     ).join(' ');
   }
 
-  bool _isResubmitting = false;
+  final bool _isResubmitting = false;
 
   void _enterEditMode() {
     Navigator.pushNamed(context, '/agency/upload', arguments: {
       'token': widget.token,
       'userName': widget.userName,
       'submissionId': widget.submissionId,
-    });
+    },);
   }
 
   Future<bool> _showDeleteConfirmation(String title, String message) async {
@@ -958,7 +958,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Approval Flow', style: AppTextStyles.h3),
+            const Text('Approval Flow', style: AppTextStyles.h3),
             const SizedBox(height: 20),
             // Step 1: Submitted
             _buildTimelineStep(
@@ -1290,7 +1290,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                                   const SizedBox(height: 8),
                                   Text('Preview not available for this file type.\nClick "Download" to save.',
                                     textAlign: TextAlign.center,
-                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
+                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),),
                                 ],
                               ),
                             ),

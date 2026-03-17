@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace BajajDocumentProcessing.API.Controllers;
 
@@ -23,17 +24,26 @@ public class SubmissionsController : ControllerBase
     private readonly IWorkflowOrchestrator _orchestrator;
     private readonly IBackgroundWorkflowQueue _backgroundQueue;
     private readonly ILogger<SubmissionsController> _logger;
+    private readonly ISubmissionNumberService _submissionNumberService;
+    private readonly ICircleHeadAssignmentService _circleHeadAssignmentService;
+    private readonly ISubmissionNotificationService _submissionNotificationService;
 
     public SubmissionsController(
         IApplicationDbContext context,
         IWorkflowOrchestrator orchestrator,
         IBackgroundWorkflowQueue backgroundQueue,
-        ILogger<SubmissionsController> logger)
+        ILogger<SubmissionsController> logger,
+        ISubmissionNumberService submissionNumberService,
+        ICircleHeadAssignmentService circleHeadAssignmentService,
+        ISubmissionNotificationService submissionNotificationService)
     {
         _context = context;
         _orchestrator = orchestrator;
         _backgroundQueue = backgroundQueue;
         _logger = logger;
+        _submissionNumberService = submissionNumberService;
+        _circleHeadAssignmentService = circleHeadAssignmentService;
+        _submissionNotificationService = submissionNotificationService;
     }
 
     /// <summary>
@@ -99,6 +109,138 @@ public class SubmissionsController : ControllerBase
         {
             _logger.LogError(ex, "Error creating submission");
             return StatusCode(500, new { error = "An error occurred while creating the submission" });
+        }
+    }
+
+    /// <summary>
+    /// Create a draft submission from the conversational flow (Agency role only)
+    /// </summary>
+    /// <param name="request">Draft creation request with PO ID and Agency ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Created draft submission ID</returns>
+    /// <response code="201">Draft submission created</response>
+    /// <response code="400">Bad request - invalid PO</response>
+    /// <response code="401">Unauthorized</response>
+    [HttpPost("draft")]
+    [Authorize(Roles = "Agency")]
+    [ProducesResponseType(typeof(CreateDraftResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateDraft(
+        [FromBody] CreateDraftRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+
+            // Verify PO exists
+            var po = await _context.POs.FirstOrDefaultAsync(p => p.Id == request.PoId, cancellationToken);
+            if (po == null)
+            {
+                return BadRequest(new { error = "PO not found" });
+            }
+
+            var package = new Domain.Entities.DocumentPackage
+            {
+                Id = Guid.NewGuid(),
+                SubmittedByUserId = userId,
+                AgencyId = request.AgencyId,
+                State = PackageState.Draft,
+                SelectedPOId = request.PoId,
+                CurrentStep = 1,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _context.DocumentPackages.Add(package);
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Draft submission {PackageId} created for PO {PoId} by user {UserId}",
+                package.Id, request.PoId, userId);
+
+            var response = new CreateDraftResponse
+            {
+                SubmissionId = package.Id,
+                SubmissionNumber = null // Generated at submit time
+            };
+
+            return CreatedAtAction(nameof(GetSubmission), new { id = package.Id }, response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating draft submission");
+            return StatusCode(500, new { error = "An error occurred while creating the draft submission" });
+        }
+    }
+
+    /// <summary>
+    /// Update submission fields such as activity state (Agency role only)
+    /// </summary>
+    /// <param name="id">Submission ID</param>
+    /// <param name="request">Fields to update</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>204 No Content on success</returns>
+    /// <response code="204">Submission updated</response>
+    /// <response code="400">Bad request</response>
+    /// <response code="404">Submission not found</response>
+    [HttpPatch("{id}")]
+    [Authorize(Roles = "Agency")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> PatchSubmission(
+        Guid id,
+        [FromBody] PatchSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            // Verify ownership
+            if (package.SubmittedByUserId != userId)
+            {
+                return Forbid();
+            }
+
+            // Only allow patching Draft submissions
+            if (package.State != PackageState.Draft)
+            {
+                return BadRequest(new { error = $"Can only update Draft submissions. Current state: {package.State}" });
+            }
+
+            package.ActivityState = request.State;
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Submission {Id} state updated to {State} by user {UserId}", id, request.State, userId);
+
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error patching submission {Id}", id);
+            return StatusCode(500, new { error = "An error occurred while updating the submission" });
         }
     }
 
@@ -220,7 +362,12 @@ public class SubmissionsController : ControllerBase
                 {
                     Type = package.Recommendation.Type.ToString(),
                     Evidence = package.Recommendation.Evidence
-                } : null
+                } : null,
+                CurrentStep = package.CurrentStep,
+                SubmissionNumber = package.SubmissionNumber,
+                AssignedCircleHeadUserId = package.AssignedCircleHeadUserId,
+                ActivityState = package.ActivityState,
+                SelectedPOId = package.SelectedPOId
             };
 
             return Ok(response);
@@ -482,6 +629,12 @@ public class SubmissionsController : ControllerBase
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.PendingRA.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
+
             _logger.LogInformation("Submission {Id} approved by ASM {UserId}, moved to RA approval", id, userId);
 
             var response = new SubmissionStatusResponse
@@ -558,6 +711,12 @@ public class SubmissionsController : ControllerBase
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.ASMRejected.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
+
             _logger.LogInformation("Submission {Id} rejected by ASM {UserId} with reason: {Reason}", id, userId, request.Reason);
 
             var response = new SubmissionStatusResponse
@@ -632,6 +791,12 @@ public class SubmissionsController : ControllerBase
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.Approved.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
+
             _logger.LogInformation("Submission {Id} approved by RA {UserId} - final approval", id, userId);
 
             var response = new SubmissionStatusResponse
@@ -705,6 +870,12 @@ public class SubmissionsController : ControllerBase
             _context.RequestApprovalHistories.Add(rejectionHistory);
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
+
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.RARejected.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
 
             _logger.LogInformation("Submission {Id} rejected by HQ {UserId} with reason: {Reason}", id, userId, request.Reason);
 
@@ -1074,7 +1245,10 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// Submit/finalize a package for AI processing workflow (Agency role only)
+    /// Submit/finalize a package for AI processing workflow (Agency role only).
+    /// For Draft packages (conversational flow): validates completeness, generates submission number,
+    /// auto-assigns CIRCLE HEAD, transitions Draft → Uploaded, and queues workflow.
+    /// For Uploaded packages (legacy flow): validates minimum docs and queues workflow.
     /// </summary>
     /// <param name="packageId">Unique identifier of the package to submit</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
@@ -1107,8 +1281,12 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.PO)
                 .Include(p => p.Invoices)
                 .Include(p => p.Teams.Where(c => !c.IsDeleted))
+                    .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
+                .Include(p => p.Teams.Where(c => !c.IsDeleted))
                     .ThenInclude(c => c.Photos.Where(ph => !ph.IsDeleted))
                 .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
+                .Include(p => p.EnquiryDocument)
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
@@ -1126,10 +1304,11 @@ public class SubmissionsController : ControllerBase
                 return Forbid();
             }
 
-            if (package.State != PackageState.Uploaded)
+            // State enforcement: only Draft or Uploaded can be submitted
+            if (package.State != PackageState.Draft && package.State != PackageState.Uploaded)
             {
                 _logger.LogWarning("Package {PackageId} is in state {State}, cannot submit", packageId, package.State);
-                return BadRequest(new { error = $"Package is already in {package.State} state" });
+                return BadRequest(new { error = $"Package is already in {package.State} state. Only Draft or Uploaded packages can be submitted." });
             }
 
             // Verify minimum required documents
@@ -1156,9 +1335,81 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = "Cost Summary document is required" });
             }
 
-            var docCount = (package.PO != null ? 1 : 0) + package.Invoices.Count(i => !i.IsDeleted) + (package.CostSummary != null ? 1 : 0);
+            // Conversational flow (Draft) additional validations
+            if (package.State == PackageState.Draft)
+            {
+                // Activity Summary is mandatory
+                if (package.ActivitySummary == null)
+                {
+                    return BadRequest(new { error = "Activity Summary document is required" });
+                }
+
+                // Enquiry Dump is mandatory
+                if (package.EnquiryDocument == null)
+                {
+                    return BadRequest(new { error = "Enquiry Dump document is required" });
+                }
+
+                // At least 1 team with at least 3 photos
+                var teamsWithPhotos = package.Teams.Where(t => t.Photos.Count(p => !p.IsDeleted) >= 3).ToList();
+                if (!teamsWithPhotos.Any())
+                {
+                    return BadRequest(new { error = "At least one team with a minimum of 3 photos is required" });
+                }
+
+                // State must be set
+                if (string.IsNullOrEmpty(package.ActivityState))
+                {
+                    return BadRequest(new { error = "Activity state/region must be set before submission" });
+                }
+
+                // Generate submission number
+                var submissionNumber = await _submissionNumberService.GenerateAsync(cancellationToken);
+                package.SubmissionNumber = submissionNumber;
+
+                // Auto-assign CIRCLE HEAD
+                var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, cancellationToken);
+                package.AssignedCircleHeadUserId = circleHeadUserId;
+
+                if (circleHeadUserId == null)
+                {
+                    _logger.LogWarning("No CIRCLE HEAD found for state {State}, flagging for manual assignment", package.ActivityState);
+                    _context.AuditLogs.Add(new Domain.Entities.AuditLog
+                    {
+                        Id = Guid.NewGuid(),
+                        UserId = userId,
+                        Action = "ManualAssignmentRequired",
+                        EntityType = "DocumentPackage",
+                        EntityId = package.Id,
+                        NewValuesJson = JsonSerializer.Serialize(new { State = package.ActivityState, Reason = "No CIRCLE HEAD found" }),
+                        IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        UserAgent = Request.Headers.UserAgent.ToString(),
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+
+                // Transition Draft → Uploaded (triggers workflow)
+                package.State = PackageState.Uploaded;
+                package.CurrentStep = 10; // Submitted step
+            }
+
+            var docCount = (package.PO != null ? 1 : 0) + package.Invoices.Count(i => !i.IsDeleted) + (package.CostSummary != null ? 1 : 0) + package.Teams.SelectMany(t => t.Invoices).Count();
             _logger.LogInformation("Submitting package {PackageId} for processing with {Count} documents", 
                 packageId, docCount);
+
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                packageId,
+                new
+                {
+                    submissionId = packageId,
+                    newStatus = package.State.ToString(),
+                    assignedTo = package.AssignedCircleHeadUserId
+                },
+                cancellationToken);
 
             // Queue workflow for background processing
             await _backgroundQueue.QueueWorkflowAsync(packageId);
@@ -1171,7 +1422,9 @@ public class SubmissionsController : ControllerBase
                 State = package.State.ToString(),
                 DocumentCount = docCount,
                 Status = "Queued for processing",
-                Message = "Package submitted for processing"
+                Message = package.SubmissionNumber != null 
+                    ? $"Package submitted successfully. Submission number: {package.SubmissionNumber}" 
+                    : "Package submitted for processing"
             };
 
             return Ok(response);

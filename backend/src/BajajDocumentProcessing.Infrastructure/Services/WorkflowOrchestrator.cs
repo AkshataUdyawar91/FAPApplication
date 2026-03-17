@@ -17,6 +17,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
     private readonly IRecommendationAgent _recommendationAgent;
     private readonly INotificationAgent _notificationAgent;
     private readonly INotificationDispatcher _notificationDispatcher;
+    private readonly ISubmissionNotificationService _submissionNotificationService;
     private readonly ILogger<WorkflowOrchestrator> _logger;
     private readonly ICorrelationIdService _correlationIdService;
 
@@ -28,6 +29,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         IRecommendationAgent recommendationAgent,
         INotificationAgent notificationAgent,
         INotificationDispatcher notificationDispatcher,
+        ISubmissionNotificationService submissionNotificationService,
         ILogger<WorkflowOrchestrator> logger,
         ICorrelationIdService correlationIdService)
     {
@@ -38,12 +40,11 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         _recommendationAgent = recommendationAgent;
         _notificationAgent = notificationAgent;
         _notificationDispatcher = notificationDispatcher;
+        _submissionNotificationService = submissionNotificationService;
         _logger = logger;
         _correlationIdService = correlationIdService;
     }
-
     /// <summary>
-    /// Processes a document submission through the complete workflow pipeline
     /// </summary>
     /// <param name="packageId">The ID of the package to process</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -133,6 +134,17 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                package.Id,
+                new
+                {
+                    submissionId = package.Id,
+                    newStatus = package.State.ToString(),
+                    assignedTo = package.AssignedCircleHeadUserId
+                },
+                cancellationToken);
+
             // Send notification to agency user
             await _notificationAgent.NotifySubmissionReceivedAsync(package.SubmittedByUserId, package.Id, cancellationToken);
 
@@ -142,7 +154,6 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 await _notificationDispatcher.DispatchNewSubmissionNotificationAsync(package.Id, cancellationToken);
             }
             catch (Exception dispatchEx)
-            {
                 _logger.LogWarning(dispatchEx,
                     "Failed to dispatch ASM notification for package {PackageId} — workflow continues",
                     packageId);
@@ -361,6 +372,19 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
             await _context.SaveChangesAsync(cancellationToken);
             _logger.LogInformation("Extraction completed for package {PackageId}", package.Id);
+
+            // Push ExtractionComplete event via SignalR
+            await _submissionNotificationService.SendExtractionCompleteAsync(
+                package.Id,
+                new
+                {
+                    documentId = package.Id,
+                    documentType = "Package",
+                    status = "Completed",
+                    extractedFields = new { hasPackageLevelDocs }
+                },
+                cancellationToken);
+
             return true;
         }
         catch (Exception ex)

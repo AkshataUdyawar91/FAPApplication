@@ -25,6 +25,7 @@ public class WorkflowOrchestratorTests : IDisposable
     private readonly Mock<IRecommendationAgent> _mockRecommendationAgent;
     private readonly Mock<INotificationAgent> _mockNotificationAgent;
     private readonly Mock<INotificationDispatcher> _mockNotificationDispatcher;
+    private readonly Mock<ISubmissionNotificationService> _mockSubmissionNotificationService;
     private readonly Mock<ILogger<WorkflowOrchestrator>> _mockLogger;
     private readonly Mock<ICorrelationIdService> _mockCorrelationIdService;
     private readonly WorkflowOrchestrator _orchestrator;
@@ -42,6 +43,7 @@ public class WorkflowOrchestratorTests : IDisposable
         _mockRecommendationAgent = new Mock<IRecommendationAgent>();
         _mockNotificationAgent = new Mock<INotificationAgent>();
         _mockNotificationDispatcher = new Mock<INotificationDispatcher>();
+        _mockSubmissionNotificationService = new Mock<ISubmissionNotificationService>();
         _mockLogger = new Mock<ILogger<WorkflowOrchestrator>>();
         _mockCorrelationIdService = new Mock<ICorrelationIdService>();
 
@@ -55,6 +57,7 @@ public class WorkflowOrchestratorTests : IDisposable
             _mockRecommendationAgent.Object,
             _mockNotificationAgent.Object,
             _mockNotificationDispatcher.Object,
+            _mockSubmissionNotificationService.Object,
             _mockLogger.Object,
             _mockCorrelationIdService.Object);
     }

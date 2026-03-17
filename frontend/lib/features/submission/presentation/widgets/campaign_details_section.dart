@@ -16,7 +16,7 @@ class CampaignDetailsSection extends StatefulWidget {
 
 class _CampaignDetailsSectionState extends State<CampaignDetailsSection> {
   // List of teams/campaigns
-  List<TeamData> _teams = [];
+  final List<TeamData> _teams = [];
   
   // Activity Duration fields (for primary campaign)
   final _startDateController = TextEditingController();
@@ -89,7 +89,7 @@ class _CampaignDetailsSectionState extends State<CampaignDetailsSection> {
         teamName: '',
         memberCount: '',
         role: '',
-      ));
+      ),);
     });
     _notifyParent();
   }
@@ -385,12 +385,12 @@ class _CampaignDetailsSectionState extends State<CampaignDetailsSection> {
           border: Border.all(color: AppColors.primary.withOpacity(0.5), style: BorderStyle.solid),
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Row(
+        child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.add, color: AppColors.primary, size: 20),
-            const SizedBox(width: 8),
-            const Text(
+            SizedBox(width: 8),
+            Text(
               'Add New Team',
               style: TextStyle(
                 color: AppColors.primary,

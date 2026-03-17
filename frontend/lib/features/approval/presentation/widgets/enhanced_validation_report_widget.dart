@@ -41,7 +41,7 @@ class EnhancedValidationReportWidget extends StatelessWidget {
       color: AppColors.primary.withOpacity(0.05),
       child: Row(
         children: [
-          Icon(
+          const Icon(
             Icons.assessment,
             color: AppColors.primary,
             size: 28,
@@ -108,7 +108,7 @@ class EnhancedValidationReportWidget extends StatelessWidget {
   }
 
   Widget _buildConfidenceCard(
-      BuildContext context, double confidence, String riskLevel) {
+      BuildContext context, double confidence, String riskLevel,) {
     Color confidenceColor;
     IconData confidenceIcon;
 
@@ -171,7 +171,7 @@ class EnhancedValidationReportWidget extends StatelessWidget {
   }
 
   Widget _buildValidationStats(
-      BuildContext context, ValidationSummaryModel summary) {
+      BuildContext context, ValidationSummaryModel summary,) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -229,7 +229,7 @@ class EnhancedValidationReportWidget extends StatelessWidget {
   }
 
   Widget _buildStatRow(
-      BuildContext context, String label, String value, Color color) {
+      BuildContext context, String label, String value, Color color,) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -277,7 +277,7 @@ class EnhancedValidationReportWidget extends StatelessWidget {
   }
 
   Widget _buildValidationCategoryCard(
-      BuildContext context, ValidationCategoryModel category) {
+      BuildContext context, ValidationCategoryModel category,) {
     Color severityColor;
     IconData statusIcon;
 
@@ -334,7 +334,7 @@ class EnhancedValidationReportWidget extends StatelessWidget {
   }
 
   Widget _buildValidationDetails(
-      BuildContext context, ValidationDetailModel details) {
+      BuildContext context, ValidationDetailModel details,) {
     return Container(
       padding: const EdgeInsets.all(16),
       color: Colors.grey[50],
@@ -420,7 +420,7 @@ class EnhancedValidationReportWidget extends StatelessWidget {
   }
 
   Widget _buildDetailBox(
-      BuildContext context, String label, String value, Color color) {
+      BuildContext context, String label, String value, Color color,) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -495,7 +495,7 @@ class EnhancedValidationReportWidget extends StatelessWidget {
                     const SizedBox(height: 4),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 4),
+                          horizontal: 12, vertical: 4,),
                       decoration: BoxDecoration(
                         color: actionColor,
                         borderRadius: BorderRadius.circular(12),
@@ -560,7 +560,7 @@ class EnhancedValidationReportWidget extends StatelessWidget {
   }
 
   Widget _buildIssuesList(
-      BuildContext context, String title, List<IssueModel> issues, Color color) {
+      BuildContext context, String title, List<IssueModel> issues, Color color,) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

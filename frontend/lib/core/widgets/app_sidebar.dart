@@ -68,7 +68,7 @@ class AppSidebar extends StatelessWidget {
               children: navItems
                   .map<Widget>((item) => isCollapsed
                       ? _buildCollapsedNavItem(item)
-                      : _buildNavItem(item))
+                      : _buildNavItem(item),)
                   .toList(),
             ),
           ),

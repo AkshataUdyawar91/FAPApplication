@@ -5,10 +5,14 @@ using BajajDocumentProcessing.Infrastructure;
 using BajajDocumentProcessing.Infrastructure.Persistence;
 using BajajDocumentProcessing.API.Middleware;
 using BajajDocumentProcessing.API.Filters;
+using BajajDocumentProcessing.API.Hubs;
+using BajajDocumentProcessing.API.Services;
+using BajajDocumentProcessing.Application.Common.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
+builder.Services.AddSignalR();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -50,6 +54,9 @@ builder.Services.AddSwaggerGen(options =>
 // Add Infrastructure layer
 builder.Services.AddInfrastructure(builder.Configuration);
 
+// Override the no-op notification service with the real SignalR implementation
+builder.Services.AddScoped<ISubmissionNotificationService, SignalRSubmissionNotificationService>();
+
 // Add HttpContextAccessor for CorrelationIdService
 builder.Services.AddHttpContextAccessor();
 
@@ -74,7 +81,24 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidAudience = jwtAudience,
         ValidateLifetime = true,
-        ClockSkew = TimeSpan.FromMinutes(5)
+        ClockSkew = TimeSpan.FromMinutes(5),
+        RoleClaimType = System.Security.Claims.ClaimTypes.Role,
+        NameClaimType = System.Security.Claims.ClaimTypes.NameIdentifier
+    };
+
+    // SignalR sends JWT via query string for WebSocket connections
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.HttpContext.Request.Path;
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+            {
+                context.Token = accessToken;
+            }
+            return Task.CompletedTask;
+        }
     };
 });
 
@@ -87,14 +111,15 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("ASMOrRA", policy => policy.RequireRole("ASM", "HQ")); // HQ role name kept for DB compatibility
 });
 
-// Configure CORS for Flutter frontend
+// Configure CORS for Flutter frontend and SignalR
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFlutterApp", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.SetIsOriginAllowed(_ => true)
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 
@@ -141,5 +166,6 @@ app.UseAuthentication();
 app.UseAuditLogging();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<SubmissionNotificationHub>("/hubs/submission");
 
 app.Run();

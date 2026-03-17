@@ -44,6 +44,10 @@ public interface IApplicationDbContext
     DbSet<RequestApprovalHistory> RequestApprovalHistories { get; }
     DbSet<RequestComments> RequestComments { get; }
 
+    // Conversational submission
+    DbSet<StateMapping> StateMappings { get; }
+    DbSet<SubmissionSequence> SubmissionSequences { get; }
+
     // Reference data
     DbSet<StateGstMaster> StateGstMasters { get; }
     DbSet<HsnMaster> HsnMasters { get; }
