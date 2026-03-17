@@ -33,13 +33,14 @@ class _ConversationalChatPanelState
   @override
   void initState() {
     super.initState();
+    // Defer initialization to avoid competing with dashboard load
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initConversation();
+      Future.delayed(const Duration(milliseconds: 300), _initConversation);
     });
   }
 
   Future<void> _initConversation() async {
-    if (_initialized) return;
+    if (_initialized || !mounted) return;
     _initialized = true;
 
     // Ensure auth token is set
@@ -51,14 +52,8 @@ class _ConversationalChatPanelState
     // Reset conversation state for a fresh start
     ref.read(conversationNotifierProvider.notifier).reset();
 
-    // Start the conversation
+    // Start the conversation — SignalR connects lazily when submissionId arrives
     await ref.read(conversationNotifierProvider.notifier).startConversation();
-
-    // Connect SignalR
-    final token = ref.read(authTokenProvider);
-    if (token != null && token.isNotEmpty) {
-      await ref.read(signalRNotifierProvider.notifier).connect(token);
-    }
   }
 
   void _handleSendMessage(String text) {
@@ -300,10 +295,24 @@ class _ConversationalChatPanelState
     SignalRState signalRState,
   ) {
     final submissionId = chatState.submissionId;
-    if (submissionId != null &&
-        signalRState.status == SignalRConnectionStatus.connected &&
+    if (submissionId == null) return;
+
+    // Connect SignalR lazily — only once we have a submissionId
+    if (signalRState.status == SignalRConnectionStatus.disconnected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        final token = ref.read(authTokenProvider);
+        if (token != null && token.isNotEmpty) {
+          await ref.read(signalRNotifierProvider.notifier).connect(token);
+        }
+      });
+      return;
+    }
+
+    if (signalRState.status == SignalRConnectionStatus.connected &&
         signalRState.currentSubmissionId != submissionId) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
         ref.read(signalRNotifierProvider.notifier).joinSubmission(submissionId);
       });
     }

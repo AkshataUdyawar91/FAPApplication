@@ -1281,8 +1281,6 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.PO)
                 .Include(p => p.Invoices)
                 .Include(p => p.Teams.Where(c => !c.IsDeleted))
-                    .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
-                .Include(p => p.Teams.Where(c => !c.IsDeleted))
                     .ThenInclude(c => c.Photos.Where(ph => !ph.IsDeleted))
                 .Include(p => p.CostSummary)
                 .Include(p => p.ActivitySummary)
@@ -1393,7 +1391,7 @@ public class SubmissionsController : ControllerBase
                 package.CurrentStep = 10; // Submitted step
             }
 
-            var docCount = (package.PO != null ? 1 : 0) + package.Invoices.Count(i => !i.IsDeleted) + (package.CostSummary != null ? 1 : 0) + package.Teams.SelectMany(t => t.Invoices).Count();
+            var docCount = (package.PO != null ? 1 : 0) + package.Invoices.Count(i => !i.IsDeleted) + (package.CostSummary != null ? 1 : 0);
             _logger.LogInformation("Submitting package {PackageId} for processing with {Count} documents", 
                 packageId, docCount);
 

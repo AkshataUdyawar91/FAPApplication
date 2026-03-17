@@ -56,6 +56,8 @@ public interface IApplicationDbContext
 
     // Teams bot conversations
     DbSet<TeamsConversation> TeamsConversations { get; }
+    // Audit logs
+    DbSet<PoBalanceLog> POBalanceLogs { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

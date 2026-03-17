@@ -518,6 +518,23 @@ public class DocumentService : IDocumentService
                             actEntity.ExtractedDataJson = extractedJson;
                             actEntity.ExtractionConfidence = confidence;
                             actEntity.UpdatedAt = DateTime.UtcNow;
+
+                            // Parse and map extracted fields to dedicated columns
+                            try
+                            {
+                                var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                                var parsed = System.Text.Json.JsonSerializer.Deserialize<BajajDocumentProcessing.Application.DTOs.Documents.ActivityData>(extractedJson, opts);
+                                if (parsed?.Rows != null && parsed.Rows.Count > 0)
+                                {
+                                    actEntity.DealerName = parsed.Rows[0].DealerName;
+                                    actEntity.TotalDays = parsed.Rows.Sum(r => r.Day);
+                                    actEntity.TotalWorkingDays = parsed.Rows.Sum(r => r.WorkingDay);
+                                }
+                            }
+                            catch (Exception parseEx)
+                            {
+                                _logger.LogWarning(parseEx, "Could not parse ActivityData JSON to map columns for document {DocumentId}", documentId);
+                            }
                         }
                         break;
 

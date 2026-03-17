@@ -42,7 +42,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   String? _currentPackageId;
   String? _currentPOId; // PO entity ID for linking invoices
   PlatformFile? _purchaseOrder;
-  String? _existingPOFileName;
+  String? _existingPOFileName; // Server-side PO file name for edit mode
   List<InvoiceItemData> _invoices = []; // Invoices linked to PO (package level)
   PlatformFile? _costSummaryFile;
   String? _existingCostSummaryFileName;

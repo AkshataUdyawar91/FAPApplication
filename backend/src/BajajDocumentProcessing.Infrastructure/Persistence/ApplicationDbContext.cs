@@ -67,6 +67,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
 
     // Teams bot conversations
     public DbSet<TeamsConversation> TeamsConversations => Set<TeamsConversation>();
+    // Audit logs
+    public DbSet<PoBalanceLog> POBalanceLogs => Set<PoBalanceLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
