@@ -119,7 +119,6 @@ public class ValidationAgent : IValidationAgent
                 .Include(p => p.CostSummary)
                 .Include(p => p.ActivitySummary)
                 .Include(p => p.EnquiryDocument)
-                .Include(p => p.Teams).ThenInclude(c => c.Invoices)
                 .Include(p => p.Teams).ThenInclude(c => c.Photos)
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
@@ -138,14 +137,12 @@ public class ValidationAgent : IValidationAgent
             }
 
             // Extract document data from dedicated navigation properties
-            var firstTeamInvoice = package.Teams.SelectMany(c => c.Invoices).FirstOrDefault();
             var allTeamPhotos = package.Teams.SelectMany(c => c.Photos).ToList();
 
             // Populate FileNames dictionary so validation output shows which file each check refers to
             result.FileNames = new Dictionary<string, string>();
             if (package.PO != null) result.FileNames["PO"] = package.PO.FileName ?? "PO document";
             if (package.Invoices.Any()) result.FileNames["Invoice"] = package.Invoices.First().FileName ?? "Invoice document";
-            else if (firstTeamInvoice != null) result.FileNames["Invoice"] = firstTeamInvoice.FileName ?? "Invoice document";
             if (package.CostSummary != null) result.FileNames["CostSummary"] = package.CostSummary.FileName ?? "Cost Summary document";
             if (package.ActivitySummary != null) result.FileNames["Activity"] = package.ActivitySummary.FileName ?? "Activity document";
             if (package.EnquiryDocument != null) result.FileNames["EnquiryDump"] = package.EnquiryDocument.FileName ?? "Enquiry Dump document";
@@ -168,15 +165,11 @@ public class ValidationAgent : IValidationAgent
                 poData = JsonSerializer.Deserialize<POData>(package.PO.ExtractedDataJson);
             }
 
-            // Invoice data: check package-level Invoices first, then TeamInvoices
+            // Invoice data: check package-level Invoices (linked to PO)
             var firstInvoice = package.Invoices.FirstOrDefault();
             if (firstInvoice?.ExtractedDataJson != null)
             {
                 invoiceData = JsonSerializer.Deserialize<InvoiceData>(firstInvoice.ExtractedDataJson);
-            }
-            else if (firstTeamInvoice?.ExtractedDataJson != null)
-            {
-                invoiceData = JsonSerializer.Deserialize<InvoiceData>(firstTeamInvoice.ExtractedDataJson);
             }
 
             // Cost Summary data from dedicated entity
@@ -683,7 +676,6 @@ public class ValidationAgent : IValidationAgent
             .Include(p => p.PO)
             .Include(p => p.Invoices)
             .Include(p => p.CostSummary)
-            .Include(p => p.Teams).ThenInclude(c => c.Invoices)
             .Include(p => p.Teams).ThenInclude(c => c.Photos)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
@@ -706,10 +698,9 @@ public class ValidationAgent : IValidationAgent
             missingItems.Add("PO");
         }
 
-        // Invoice: check both package-level Invoices AND hierarchical TeamInvoices
+        // Invoice: check package-level Invoices (linked to PO)
         var hasInvoiceInPackage = package.Invoices.Any();
-        var hasInvoiceInTeams = package.Teams.Any(c => c.Invoices.Any());
-        if (!hasInvoiceInPackage && !hasInvoiceInTeams)
+        if (!hasInvoiceInPackage)
         {
             missingItems.Add("Invoice");
         }
@@ -730,7 +721,7 @@ public class ValidationAgent : IValidationAgent
         // Count present items (PO + Invoice + CostSummary + Photos)
         var presentItemCount = 0;
         if (package.PO != null) presentItemCount++;
-        if (hasInvoiceInPackage || hasInvoiceInTeams) presentItemCount++;
+        if (hasInvoiceInPackage) presentItemCount++;
         if (package.CostSummary != null) presentItemCount++;
         if (photoCountInTeams > 0) presentItemCount++;
 
@@ -1681,26 +1672,7 @@ public class ValidationAgent : IValidationAgent
 
         // Invoice: field presence + cross-document
         var invoiceDoc = package.Invoices.FirstOrDefault();
-        if (invoiceDoc == null)
-        {
-            var teamInvoice = package.Teams.SelectMany(t => t.Invoices).FirstOrDefault();
-            if (teamInvoice != null)
-            {
-                var invPassed = (result.InvoiceFieldPresence?.AllFieldsPresent ?? true)
-                                && (result.InvoiceCrossDocument?.AllChecksPass ?? true);
-                var invDetails = new { result.InvoiceFieldPresence, result.InvoiceCrossDocument };
-                var invIssues = new List<string>();
-                if (result.InvoiceFieldPresence != null && !result.InvoiceFieldPresence.AllFieldsPresent)
-                    invIssues.AddRange(result.InvoiceFieldPresence.MissingFields);
-                if (result.InvoiceCrossDocument != null && !result.InvoiceCrossDocument.AllChecksPass)
-                    invIssues.AddRange(result.InvoiceCrossDocument.Issues);
-
-                items.Add((DocumentType.Invoice, teamInvoice.Id, invPassed,
-                    JsonSerializer.Serialize(invDetails),
-                    invIssues.Count > 0 ? string.Join("; ", invIssues) : null));
-            }
-        }
-        else if (result.InvoiceFieldPresence != null || result.InvoiceCrossDocument != null)
+        if (invoiceDoc != null && (result.InvoiceFieldPresence != null || result.InvoiceCrossDocument != null))
         {
             var invPassed = (result.InvoiceFieldPresence?.AllFieldsPresent ?? true)
                             && (result.InvoiceCrossDocument?.AllChecksPass ?? true);

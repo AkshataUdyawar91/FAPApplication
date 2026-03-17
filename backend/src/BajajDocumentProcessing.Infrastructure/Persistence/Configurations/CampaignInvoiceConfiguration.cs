@@ -45,15 +45,15 @@ public class CampaignInvoiceConfiguration : IEntityTypeConfiguration<CampaignInv
             .IsRequired()
             .HasMaxLength(100);
 
-        // Relationship: CampaignInvoice belongs to Team
+        // Relationship: CampaignInvoice belongs to Team (no inverse navigation — Teams.Invoices removed)
         builder.HasOne(ci => ci.Team)
-            .WithMany(c => c.Invoices)
+            .WithMany()
             .HasForeignKey(ci => ci.CampaignId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Relationship: CampaignInvoice belongs to Package (for easier querying)
+        // Relationship: CampaignInvoice belongs to Package (no inverse navigation — CampaignInvoices removed from DocumentPackage)
         builder.HasOne(ci => ci.Package)
-            .WithMany(p => p.CampaignInvoices)
+            .WithMany()
             .HasForeignKey(ci => ci.PackageId)
             .OnDelete(DeleteBehavior.Restrict);
 

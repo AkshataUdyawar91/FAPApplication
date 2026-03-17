@@ -159,7 +159,7 @@ public class DedicatedTableEdgeCaseTests
         var team = new Teams
         {
             Id = Guid.NewGuid(), PackageId = packageId, CampaignName = "Test",
-            Photos = new List<TeamPhotos>(), Invoices = new List<CampaignInvoice>()
+            Photos = new List<TeamPhotos>()
         };
         for (int i = 0; i < photoCount; i++)
         {

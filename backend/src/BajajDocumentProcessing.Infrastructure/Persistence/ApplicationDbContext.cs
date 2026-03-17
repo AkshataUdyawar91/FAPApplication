@@ -37,7 +37,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<Campaign> Campaigns => Set<Teams>();  // Alias for backward compatibility
     public DbSet<TeamPhotos> TeamPhotos => Set<TeamPhotos>();
     public DbSet<CampaignPhoto> CampaignPhotos => Set<TeamPhotos>();  // Alias for backward compatibility
-    public DbSet<CampaignInvoice> CampaignInvoices => Set<CampaignInvoice>();  // Legacy - kept for backward compatibility
     
     // Validation and scoring
     public DbSet<ValidationResult> ValidationResults => Set<ValidationResult>();
@@ -86,7 +85,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<AdditionalDocument>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Teams>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<TeamPhotos>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<CampaignInvoice>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ValidationResult>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ConfidenceScore>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Recommendation>().HasQueryFilter(e => !e.IsDeleted);

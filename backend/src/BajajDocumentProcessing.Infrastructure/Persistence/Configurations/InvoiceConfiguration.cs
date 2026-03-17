@@ -59,7 +59,7 @@ public class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasOne(i => i.PO)
-            .WithMany()
+            .WithMany(po => po.Invoices)
             .HasForeignKey(i => i.POId)
             .OnDelete(DeleteBehavior.Restrict);
 

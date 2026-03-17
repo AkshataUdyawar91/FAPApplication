@@ -23,7 +23,7 @@ public class FileStorageService : IFileStorageService
         _containerName = configuration["AzureBlobStorage:ContainerName"] ?? "documents";
         _logger = logger;
 
-        if (string.IsNullOrEmpty(connectionString))
+        if (string.IsNullOrEmpty(connectionString) || connectionString.Contains("YOUR_"))
         {
             // For development without Azure, use local storage simulation
             _logger.LogWarning("Azure Blob Storage connection string not configured. Using local file storage simulation.");

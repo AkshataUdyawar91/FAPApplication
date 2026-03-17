@@ -40,23 +40,37 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   bool _isLoadingExisting = false;
 
   String? _currentPackageId;
+  String? _currentPOId; // PO entity ID for linking invoices
   PlatformFile? _purchaseOrder;
   String? _existingPOFileName; // Server-side PO file name for edit mode
-  final List<PlatformFile> _additionalDocs = [];
+  List<InvoiceItemData> _invoices = []; // Invoices linked to PO (package level)
+  PlatformFile? _costSummaryFile;
+  String? _existingCostSummaryFileName;
+  PlatformFile? _activitySummaryFile;
+  String? _existingActivitySummaryFileName;
+  PlatformFile? _enquiryDocFile;
+  String? _existingEnquiryDocFileName;
+  List<PlatformFile> _additionalDocs = [];
   Set<int> _selectedAdditionalDocIndices = {};
   Map<String, dynamic>? _poData;
   Map<String, String> _poFields = {};
-  List<CampaignItemData> _campaigns = [];
+  List<CampaignItemData> _campaigns = []; // Teams (independent of invoices)
 
   bool get _isEditMode => widget.submissionId != null;
 
+  static const int _totalSteps = 7;
+
   final List<Map<String, dynamic>> _steps = [
     {'number': 1, 'title': 'Purchase Order', 'icon': Icons.description},
-    {'number': 2, 'title': 'Campaigns', 'icon': Icons.campaign},
-    {'number': 3, 'title': 'Additional Documents', 'icon': Icons.upload_file},
+    {'number': 2, 'title': 'Invoice', 'icon': Icons.receipt_long},
+    {'number': 3, 'title': 'Team', 'icon': Icons.groups},
+    {'number': 4, 'title': 'Cost Summary', 'icon': Icons.attach_money},
+    {'number': 5, 'title': 'Activity Summary', 'icon': Icons.summarize},
+    {'number': 6, 'title': 'Enquiry Doc', 'icon': Icons.find_in_page},
+    {'number': 7, 'title': 'Additional Docs', 'icon': Icons.upload_file},
   ];
 
-  double get _progressPercentage => (_currentStep / 3) * 100;
+  double get _progressPercentage => (_currentStep / _totalSteps) * 100;
 
   @override
   void initState() {
@@ -105,13 +119,31 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           }
         }
 
-        // Extract campaigns
-        final campaigns = data['campaigns'] as List? ?? [];
-        _campaigns = campaigns.map((c) {
-          final campaignId = c['id']?.toString() ?? UniqueKey().toString();
+        // Extract package-level documents
+        _existingCostSummaryFileName = data['costSummaryFileName']?.toString();
+        _existingActivitySummaryFileName = data['activitySummaryFileName']?.toString();
+        _existingEnquiryDocFileName = data['enquiryDocFileName']?.toString();
 
-          // Map invoices
-          final invoices = (c['invoices'] as List? ?? []).map((inv) {
+        // Extract invoices at package level (linked to PO)
+        final invoicesData = data['invoices'] as List? ?? [];
+        if (invoicesData.isEmpty) {
+          // Fallback: check inside campaigns for legacy data
+          final campaignsForInv = data['campaigns'] as List? ?? [];
+          for (final c in campaignsForInv) {
+            final campInvoices = c['invoices'] as List? ?? [];
+            for (final inv in campInvoices) {
+              _invoices.add(InvoiceItemData(
+                id: inv['id']?.toString() ?? UniqueKey().toString(),
+                invoiceNumber: inv['invoiceNumber']?.toString() ?? '',
+                invoiceDate: _formatDateForField(inv['invoiceDate']),
+                totalAmount: inv['totalAmount']?.toString() ?? '',
+                gstNumber: inv['gstNumber']?.toString() ?? '',
+                existingFileName: inv['fileName']?.toString(),
+              ));
+            }
+          }
+        } else {
+          _invoices = invoicesData.map((inv) {
             return InvoiceItemData(
               id: inv['id']?.toString() ?? UniqueKey().toString(),
               invoiceNumber: inv['invoiceNumber']?.toString() ?? '',
@@ -121,8 +153,12 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
               existingFileName: inv['fileName']?.toString(),
             );
           }).toList();
+        }
 
-          // Map photos
+        // Extract teams (independent of invoices)
+        final campaigns = data['campaigns'] as List? ?? [];
+        _campaigns = campaigns.map((c) {
+          final campaignId = c['id']?.toString() ?? UniqueKey().toString();
           final photos = (c['photos'] as List? ?? []);
           final existingPhotoNames = photos.map((p) => p['fileName']?.toString() ?? '').toList();
 
@@ -134,10 +170,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             workingDays: c['workingDays']?.toString() ?? '',
             dealershipName: c['dealershipName']?.toString() ?? '',
             dealershipAddress: c['dealershipAddress']?.toString() ?? '',
-            invoices: invoices.isNotEmpty ? invoices : null,
           );
-          campaign.existingCostSummaryFileName = c['costSummaryFileName']?.toString();
-          campaign.existingActivitySummaryFileName = c['activitySummaryFileName']?.toString();
           campaign.existingPhotoFileNames = existingPhotoNames.where((n) => n.isNotEmpty).toList();
 
           return campaign;
@@ -368,15 +401,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   void _handleNext() {
     if (_currentStep == 1 && _purchaseOrder == null && _existingPOFileName == null) { _showError('Please upload Purchase Order'); return; }
     if (_currentStep == 2) {
-      if (_campaigns.isEmpty) { _showError('Please add at least one campaign'); return; }
-      final hasValidCampaign = _campaigns.any((camp) =>
-        camp.campaignName.isNotEmpty &&
-        (camp.invoices.any((inv) => inv.file != null || inv.existingFileName != null)) &&
-        (camp.photos.isNotEmpty || (camp.existingPhotoFileNames?.isNotEmpty ?? false)) &&
-        (camp.costSummaryFile != null || camp.existingCostSummaryFileName != null),);
-      if (!hasValidCampaign) { _showError('Please complete at least one campaign with name, invoice, photos, and cost summary'); return; }
+      final hasInvoice = _invoices.any((inv) => inv.file != null || inv.existingFileName != null);
+      if (!hasInvoice) { _showError('Please add at least one invoice'); return; }
     }
-    if (_currentStep < 3) setState(() => _currentStep++);
+    if (_currentStep < _totalSteps) setState(() => _currentStep++);
   }
 
   void _handleBack() {
@@ -392,9 +420,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
 
   Future<void> _handleSubmit() async {
     if (_purchaseOrder == null && _existingPOFileName == null) { _showError('Please upload Purchase Order'); return; }
-    if (_campaigns.isEmpty || !_campaigns.any((camp) => camp.invoices.any((inv) => inv.file != null || inv.existingFileName != null))) {
-      _showError('Please add at least one campaign with invoice'); return;
-    }
     setState(() => _isUploading = true);
     try {
       String? packageId = _currentPackageId;
@@ -426,18 +451,30 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         }
       }
 
-      _showSuccess('Uploading campaigns and documents...');
+      _showSuccess('Uploading documents...');
 
+      // Upload invoices (linked to PO at package level)
+      for (final invoice in _invoices) {
+        if (invoice.file?.bytes != null) {
+          await _dio.post(
+            '/documents/upload',
+            data: FormData.fromMap({
+              'file': MultipartFile.fromBytes(invoice.file!.bytes!, filename: invoice.file!.name),
+              'documentType': 'Invoice',
+              'packageId': packageId,
+            }),
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+        }
+      }
+
+      // Upload teams (independent of invoices)
       for (final campaign in _campaigns) {
-        // In edit mode, campaigns already exist on server — only upload NEW files
-        // For new campaigns (no server-side data), create them
         String? campaignId;
 
         if (_isEditMode && campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_')) {
-          // Existing campaign — use its ID
           campaignId = campaign.id;
         } else {
-          // New campaign — create it
           final campaignResponse = await _dio.post(
             '/hierarchical/$packageId/campaigns',
             data: {
@@ -451,27 +488,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
           campaignId = campaignResponse.data['campaignId']?.toString();
-          if (campaignId == null) { debugPrint('Failed to create campaign: ${campaign.campaignName}'); continue; }
+          if (campaignId == null) { debugPrint('Failed to create team: ${campaign.campaignName}'); continue; }
         }
 
-        // Upload only NEW invoices (ones with file bytes, not existing server files)
-        for (final invoice in campaign.invoices) {
-          if (invoice.file?.bytes != null) {
-            await _dio.post(
-              '/hierarchical/$packageId/campaigns/$campaignId/invoices',
-              data: FormData.fromMap({
-                'file': MultipartFile.fromBytes(invoice.file!.bytes!, filename: invoice.file!.name),
-                'invoiceNumber': invoice.invoiceNumber,
-                'invoiceDate': invoice.invoiceDate.isNotEmpty ? _parseDate(invoice.invoiceDate)?.toIso8601String() : null,
-                'totalAmount': invoice.totalAmount.isNotEmpty ? double.tryParse(invoice.totalAmount) : null,
-                'gstNumber': invoice.gstNumber,
-              }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-            );
-          }
-        }
-
-        // Upload only NEW photos
+        // Upload photos for this team
         if (campaign.photos.isNotEmpty) {
           final photoFiles = campaign.photos
               .where((p) => p.bytes != null)
@@ -485,44 +505,64 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             );
           }
         }
+      }
 
-        // Upload new cost summary only if a new file was picked
-        if (campaign.costSummaryFile?.bytes != null) {
-          await _dio.post(
-            '/hierarchical/$packageId/campaigns/$campaignId/cost-summary',
-            data: FormData.fromMap({
-              'file': MultipartFile.fromBytes(campaign.costSummaryFile!.bytes!, filename: campaign.costSummaryFile!.name),
-            }),
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-          );
-        }
-
-        // Upload new activity summary only if a new file was picked
-        if (campaign.activitySummaryFile?.bytes != null) {
-          await _dio.post(
-            '/hierarchical/$packageId/campaigns/$campaignId/activity-summary',
-            data: FormData.fromMap({
-              'file': MultipartFile.fromBytes(campaign.activitySummaryFile!.bytes!, filename: campaign.activitySummaryFile!.name),
-            }),
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-          );
+      // Get a campaignId for cost/activity summary upload (API requires it even though they're package-level)
+      String? anyCampaignId;
+      if (_campaigns.isNotEmpty) {
+        final firstCampaign = _campaigns.first;
+        if (firstCampaign.id.isNotEmpty && !firstCampaign.id.startsWith('campaign_')) {
+          anyCampaignId = firstCampaign.id;
+        } else {
+          // Fetch from server
+          try {
+            final structureResp = await _dio.get(
+              '/hierarchical/$packageId/structure',
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            );
+            final serverCampaigns = structureResp.data['campaigns'] as List? ?? [];
+            if (serverCampaigns.isNotEmpty) {
+              anyCampaignId = serverCampaigns.first['campaignId']?.toString();
+            }
+          } catch (_) {}
         }
       }
 
-      // Additional docs (same for new and edit)
-      final enquiryDoc = _additionalDocs.isNotEmpty ? _additionalDocs.first : null;
-      if (enquiryDoc?.bytes != null) {
+      // Upload cost summary (package level)
+      if (_costSummaryFile?.bytes != null && anyCampaignId != null) {
         await _dio.post(
-          '/hierarchical/$packageId/enquiry-doc',
+          '/hierarchical/$packageId/campaigns/$anyCampaignId/cost-summary',
           data: FormData.fromMap({
-            'file': MultipartFile.fromBytes(enquiryDoc!.bytes!, filename: enquiryDoc.name),
+            'file': MultipartFile.fromBytes(_costSummaryFile!.bytes!, filename: _costSummaryFile!.name),
           }),
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
       }
 
-      for (int i = 1; i < _additionalDocs.length; i++) {
-        final doc = _additionalDocs[i];
+      // Upload activity summary (package level)
+      if (_activitySummaryFile?.bytes != null && anyCampaignId != null) {
+        await _dio.post(
+          '/hierarchical/$packageId/campaigns/$anyCampaignId/activity-summary',
+          data: FormData.fromMap({
+            'file': MultipartFile.fromBytes(_activitySummaryFile!.bytes!, filename: _activitySummaryFile!.name),
+          }),
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+      }
+
+      // Upload enquiry document (package level)
+      if (_enquiryDocFile?.bytes != null) {
+        await _dio.post(
+          '/hierarchical/$packageId/enquiry-doc',
+          data: FormData.fromMap({
+            'file': MultipartFile.fromBytes(_enquiryDocFile!.bytes!, filename: _enquiryDocFile!.name),
+          }),
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+      }
+
+      // Upload additional documents
+      for (final doc in _additionalDocs) {
         if (doc.bytes != null) {
           await _dio.post('/documents/upload',
               data: FormData.fromMap({
@@ -535,14 +575,12 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       }
 
       if (_isEditMode) {
-        // Resubmit the package
         await _dio.patch(
           '/submissions/$packageId/resubmit',
           options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
         _showSuccess('Submission resubmitted successfully!');
       } else {
-        // New submission: trigger processing
         await _dio.post('/submissions/$packageId/process-async',
             options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),);
         _showSuccess('Submission complete! Processing in background...');

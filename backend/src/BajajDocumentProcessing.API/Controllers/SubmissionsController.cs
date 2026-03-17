@@ -278,8 +278,6 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.Recommendation)
                 .Include(p => p.SubmittedBy)
                 .Include(p => p.Teams)
-                    .ThenInclude(c => c.Invoices)
-                .Include(p => p.Teams)
                     .ThenInclude(c => c.Photos)
                 .Include(p => p.CostSummary)
                 .Include(p => p.EnquiryDocument)
@@ -338,17 +336,6 @@ public class SubmissionsController : ControllerBase
                     CostSummaryBlobUrl = package.CostSummary?.BlobUrl,
                     ActivitySummaryFileName = package.ActivitySummary?.FileName,
                     ActivitySummaryBlobUrl = package.ActivitySummary?.BlobUrl,
-                    Invoices = c.Invoices.Where(i => !i.IsDeleted).Select(i => new CampaignInvoiceDto
-                    {
-                        Id = i.Id,
-                        InvoiceNumber = i.InvoiceNumber,
-                        InvoiceDate = i.InvoiceDate,
-                        VendorName = i.VendorName,
-                        GSTNumber = i.GSTNumber,
-                        TotalAmount = i.TotalAmount,
-                        FileName = i.FileName,
-                        BlobUrl = i.BlobUrl
-                    }).ToList(),
                     Photos = c.Photos.Where(p2 => !p2.IsDeleted).OrderBy(p2 => p2.DisplayOrder).Select(p2 => new CampaignPhotoDto
                     {
                         Id = p2.Id,
@@ -469,8 +456,6 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.Invoices)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Teams.Where(c => !c.IsDeleted))
-                    .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
-                .Include(p => p.Teams.Where(c => !c.IsDeleted))
                     .ThenInclude(c => c.Photos.Where(ph => !ph.IsDeleted))
                 .AsSplitQuery()
                 .AsQueryable();
@@ -507,20 +492,16 @@ public class SubmissionsController : ControllerBase
 
             var items = packages.Select(p =>
             {
-                // Extract invoice data from CampaignInvoices (hierarchical model)
-                var firstInvoice = p.Teams
-                    .Where(c => !c.IsDeleted)
-                    .SelectMany(c => c.Invoices)
+                // Extract invoice data from Invoices (linked to PO)
+                var firstInvoice = p.Invoices
                     .Where(i => !i.IsDeleted)
                     .FirstOrDefault();
                 
                 string? invoiceNumber = firstInvoice?.InvoiceNumber;
                 decimal? invoiceAmount = firstInvoice?.TotalAmount;
 
-                // Calculate total invoice amount across all teams
-                var totalInvoiceAmount = p.Teams
-                    .Where(c => !c.IsDeleted)
-                    .SelectMany(c => c.Invoices)
+                // Calculate total invoice amount across all invoices
+                var totalInvoiceAmount = p.Invoices
                     .Where(i => !i.IsDeleted && i.TotalAmount != null && i.TotalAmount > 0)
                     .Sum(i => i.TotalAmount ?? 0);
                 
@@ -554,10 +535,9 @@ public class SubmissionsController : ControllerBase
                     catch { }
                 }
 
-                // Count documents: PO + package invoices + team invoices + team photos
-                var campaignInvoiceCount = p.Teams.Where(c => !c.IsDeleted).SelectMany(c => c.Invoices).Count(i => !i.IsDeleted);
+                // Count documents: PO + invoices + team photos
                 var campaignPhotoCount = p.Teams.Where(c => !c.IsDeleted).SelectMany(c => c.Photos).Count(ph => !ph.IsDeleted);
-                var totalDocCount = (p.PO != null ? 1 : 0) + p.Invoices.Count + campaignInvoiceCount + campaignPhotoCount;
+                var totalDocCount = (p.PO != null ? 1 : 0) + p.Invoices.Count(i => !i.IsDeleted) + campaignPhotoCount;
 
                 return new SubmissionListItemDto
                 {
@@ -1301,8 +1281,6 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.PO)
                 .Include(p => p.Invoices)
                 .Include(p => p.Teams.Where(c => !c.IsDeleted))
-                    .ThenInclude(c => c.Invoices.Where(i => !i.IsDeleted))
-                .Include(p => p.Teams.Where(c => !c.IsDeleted))
                     .ThenInclude(c => c.Photos.Where(ph => !ph.IsDeleted))
                 .Include(p => p.CostSummary)
                 .Include(p => p.ActivitySummary)
@@ -1333,13 +1311,12 @@ public class SubmissionsController : ControllerBase
 
             // Verify minimum required documents
             var hasPO = package.PO != null;
-            var hasInvoice = package.Invoices.Any() ||
-                             package.Teams.Any(c => c.Invoices.Any());
+            var hasInvoice = package.Invoices.Any(i => !i.IsDeleted);
             var hasCostSummary = package.CostSummary != null;
 
-            var campaignInvoiceCount = package.Teams.SelectMany(c => c.Invoices).Count();
-            _logger.LogInformation("Package {PackageId} document check: PO={HasPO}, Invoice={HasInvoice} (CampaignInvoices={CampaignInvCount}), CostSummary={HasCostSummary}", 
-                packageId, hasPO, hasInvoice, campaignInvoiceCount, hasCostSummary);
+            var invoiceCount = package.Invoices.Count(i => !i.IsDeleted);
+            _logger.LogInformation("Package {PackageId} document check: PO={HasPO}, Invoice={HasInvoice} (InvoiceCount={InvoiceCount}), CostSummary={HasCostSummary}", 
+                packageId, hasPO, hasInvoice, invoiceCount, hasCostSummary);
 
             if (!hasPO)
             {
@@ -1414,7 +1391,7 @@ public class SubmissionsController : ControllerBase
                 package.CurrentStep = 10; // Submitted step
             }
 
-            var docCount = (package.PO != null ? 1 : 0) + package.Invoices.Count + (package.CostSummary != null ? 1 : 0) + package.Teams.SelectMany(t => t.Invoices).Count();
+            var docCount = (package.PO != null ? 1 : 0) + package.Invoices.Count(i => !i.IsDeleted) + (package.CostSummary != null ? 1 : 0);
             _logger.LogInformation("Submitting package {PackageId} for processing with {Count} documents", 
                 packageId, docCount);
 

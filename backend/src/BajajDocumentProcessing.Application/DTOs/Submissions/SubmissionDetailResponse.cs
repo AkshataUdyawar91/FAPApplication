@@ -322,15 +322,12 @@ public class CampaignDto
     [JsonPropertyName("activitySummaryBlobUrl")]
     public string? ActivitySummaryBlobUrl { get; init; }
     
-    [JsonPropertyName("invoices")]
-    public List<CampaignInvoiceDto> Invoices { get; init; } = new();
-    
     [JsonPropertyName("photos")]
     public List<CampaignPhotoDto> Photos { get; init; } = new();
 }
 
 /// <summary>
-/// Invoice within a campaign
+/// Invoice within a submission (linked to PO)
 /// </summary>
 public class CampaignInvoiceDto
 {
