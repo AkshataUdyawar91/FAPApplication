@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
 using BajajDocumentProcessing.Infrastructure.Persistence;
@@ -47,16 +49,18 @@ public class PhotoUploadLimitProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/photo.jpg");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var packageId = Guid.NewGuid();
         var userId = Guid.NewGuid();
@@ -65,13 +69,13 @@ public class PhotoUploadLimitProperties
         for (int i = 0; i < 20; i++)
         {
             var file = CreateMockPhotoFile($"photo{i}.jpg");
-            await service.UploadDocumentAsync(file, DocumentType.Photo, packageId, userId);
+            await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, packageId, userId);
         }
 
         // Act & Assert - 21st photo should be rejected
         var file21 = CreateMockPhotoFile("photo20.jpg");
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await service.UploadDocumentAsync(file21, DocumentType.Photo, packageId, userId));
+            async () => await service.UploadDocumentAsync(file21, DocumentType.TeamPhoto, packageId, userId));
         
         Assert.Contains("Photo limit exceeded", exception.Message);
         Assert.Contains("20 photos", exception.Message);
@@ -82,16 +86,18 @@ public class PhotoUploadLimitProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/photo.jpg");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var packageId1 = Guid.NewGuid();
         var packageId2 = Guid.NewGuid();
@@ -101,12 +107,12 @@ public class PhotoUploadLimitProperties
         for (int i = 0; i < 20; i++)
         {
             var file = CreateMockPhotoFile($"package1_photo{i}.jpg");
-            await service.UploadDocumentAsync(file, DocumentType.Photo, packageId1, userId);
+            await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, packageId1, userId);
         }
 
         // Act - Upload photo to package 2 should succeed
         var file2 = CreateMockPhotoFile("package2_photo0.jpg");
-        var response = await service.UploadDocumentAsync(file2, DocumentType.Photo, packageId2, userId);
+        var response = await service.UploadDocumentAsync(file2, DocumentType.TeamPhoto, packageId2, userId);
 
         // Assert
         Assert.NotNull(response);
@@ -118,16 +124,18 @@ public class PhotoUploadLimitProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/photo.jpg");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var userId = Guid.NewGuid();
 
@@ -136,13 +144,13 @@ public class PhotoUploadLimitProperties
         for (int i = 0; i < 25; i++)
         {
             var file = CreateMockPhotoFile($"orphan_photo{i}.jpg");
-            var response = await service.UploadDocumentAsync(file, DocumentType.Photo, null, userId);
+            var response = await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, null, userId);
             Assert.NotNull(response);
         }
 
         // Assert - All uploads should succeed
-        var orphanPhotos = await context.Documents
-            .Where(d => d.Type == DocumentType.Photo && d.PackageId == Guid.Empty)
+        var orphanPhotos = await context.TeamPhotos
+            .Where(tp => tp.PackageId == Guid.Empty)
             .CountAsync();
         
         Assert.Equal(25, orphanPhotos);
@@ -153,16 +161,18 @@ public class PhotoUploadLimitProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/document.pdf");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var packageId = Guid.NewGuid();
         var userId = Guid.NewGuid();
@@ -171,7 +181,7 @@ public class PhotoUploadLimitProperties
         for (int i = 0; i < 20; i++)
         {
             var file = CreateMockPhotoFile($"photo{i}.jpg");
-            await service.UploadDocumentAsync(file, DocumentType.Photo, packageId, userId);
+            await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, packageId, userId);
         }
 
         // Act - Upload non-photo documents should still work
@@ -188,3 +198,4 @@ public class PhotoUploadLimitProperties
         Assert.Equal(DocumentType.PO, response.DocumentType);
     }
 }
+

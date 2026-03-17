@@ -1,0 +1,271 @@
+-- =============================================
+-- PART 2: DOCUMENT ENTITY TABLES
+-- Target: Azure Synapse Analytics Dedicated SQL Pool
+-- Database: Balsynwsdev | Prefix: BDP_
+-- =============================================
+
+-- POs: Purchase Order documents (one per package)
+-- Logical FK: PackageId -> BDP_DocumentPackages.Id, AgencyId -> BDP_Agencies.Id
+CREATE TABLE dbo.BDP_POs
+(
+    Id                      UNIQUEIDENTIFIER    NOT NULL,
+    PackageId               UNIQUEIDENTIFIER    NOT NULL,
+    AgencyId                UNIQUEIDENTIFIER    NOT NULL,
+    PONumber                NVARCHAR(100)       NULL,
+    PODate                  DATETIME2           NULL,
+    VendorName              NVARCHAR(500)       NULL,
+    TotalAmount             DECIMAL(18, 2)      NULL,
+    FileName                NVARCHAR(500)       NOT NULL,
+    BlobUrl                 NVARCHAR(2000)      NOT NULL,
+    FileSizeBytes           BIGINT              NOT NULL,
+    ContentType             NVARCHAR(200)       NOT NULL,
+    ExtractedDataJson       NVARCHAR(4000)      NULL,
+    ExtractionConfidence    FLOAT               NULL,
+    IsFlaggedForReview      BIT                 NOT NULL,
+    VersionNumber           INT                 NOT NULL,
+    IsDeleted               BIT                 NOT NULL,
+    CreatedAt               DATETIME2           NOT NULL,
+    UpdatedAt               DATETIME2           NULL,
+    CreatedBy               NVARCHAR(256)       NULL,
+    UpdatedBy               NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);
+
+-- CostSummaries: Cost summary documents (one per package)
+-- Logical FK: PackageId -> BDP_DocumentPackages.Id
+CREATE TABLE dbo.BDP_CostSummaries
+(
+    Id                      UNIQUEIDENTIFIER    NOT NULL,
+    PackageId               UNIQUEIDENTIFIER    NOT NULL,
+    TotalCost               DECIMAL(18, 2)      NULL,
+    CostBreakdownJson       NVARCHAR(4000)      NULL,
+    FileName                NVARCHAR(500)       NOT NULL,
+    BlobUrl                 NVARCHAR(2000)      NOT NULL,
+    FileSizeBytes           BIGINT              NOT NULL,
+    ContentType             NVARCHAR(200)       NOT NULL,
+    ExtractedDataJson       NVARCHAR(4000)      NULL,
+    ExtractionConfidence    FLOAT               NULL,
+    IsFlaggedForReview      BIT                 NOT NULL,
+    VersionNumber           INT                 NOT NULL,
+    IsDeleted               BIT                 NOT NULL,
+    CreatedAt               DATETIME2           NOT NULL,
+    UpdatedAt               DATETIME2           NULL,
+    CreatedBy               NVARCHAR(256)       NULL,
+    UpdatedBy               NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);
+
+-- ActivitySummaries: Activity summary documents (one per package)
+-- Logical FK: PackageId -> BDP_DocumentPackages.Id
+CREATE TABLE dbo.BDP_ActivitySummaries
+(
+    Id                      UNIQUEIDENTIFIER    NOT NULL,
+    PackageId               UNIQUEIDENTIFIER    NOT NULL,
+    ActivityDescription     NVARCHAR(2000)      NULL,
+    FileName                NVARCHAR(500)       NOT NULL,
+    BlobUrl                 NVARCHAR(2000)      NOT NULL,
+    FileSizeBytes           BIGINT              NOT NULL,
+    ContentType             NVARCHAR(200)       NOT NULL,
+    ExtractedDataJson       NVARCHAR(4000)      NULL,
+    ExtractionConfidence    FLOAT               NULL,
+    IsFlaggedForReview      BIT                 NOT NULL,
+    VersionNumber           INT                 NOT NULL,
+    IsDeleted               BIT                 NOT NULL,
+    CreatedAt               DATETIME2           NOT NULL,
+    UpdatedAt               DATETIME2           NULL,
+    CreatedBy               NVARCHAR(256)       NULL,
+    UpdatedBy               NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);
+
+-- EnquiryDocuments: Enquiry documents (one per package)
+-- Logical FK: PackageId -> BDP_DocumentPackages.Id
+CREATE TABLE dbo.BDP_EnquiryDocuments
+(
+    Id                      UNIQUEIDENTIFIER    NOT NULL,
+    PackageId               UNIQUEIDENTIFIER    NOT NULL,
+    FileName                NVARCHAR(500)       NOT NULL,
+    BlobUrl                 NVARCHAR(2000)      NOT NULL,
+    FileSizeBytes           BIGINT              NOT NULL,
+    ContentType             NVARCHAR(200)       NOT NULL,
+    ExtractedDataJson       NVARCHAR(4000)      NULL,
+    ExtractionConfidence    FLOAT               NULL,
+    IsFlaggedForReview      BIT                 NOT NULL,
+    VersionNumber           INT                 NOT NULL,
+    IsDeleted               BIT                 NOT NULL,
+    CreatedAt               DATETIME2           NOT NULL,
+    UpdatedAt               DATETIME2           NULL,
+    CreatedBy               NVARCHAR(256)       NULL,
+    UpdatedBy               NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);
+
+-- AdditionalDocuments: Supporting documents (multiple per package)
+-- Logical FK: PackageId -> BDP_DocumentPackages.Id
+CREATE TABLE dbo.BDP_AdditionalDocuments
+(
+    Id                  UNIQUEIDENTIFIER    NOT NULL,
+    PackageId           UNIQUEIDENTIFIER    NOT NULL,
+    DocumentType        NVARCHAR(100)       NOT NULL,
+    Description         NVARCHAR(500)       NULL,
+    FileName            NVARCHAR(255)       NOT NULL,
+    BlobUrl             NVARCHAR(1000)      NOT NULL,
+    FileSizeBytes       BIGINT              NOT NULL,
+    ContentType         NVARCHAR(100)       NOT NULL,
+    VersionNumber       INT                 NOT NULL,
+    IsDeleted           BIT                 NOT NULL,
+    CreatedAt           DATETIME2           NOT NULL,
+    UpdatedAt           DATETIME2           NULL,
+    CreatedBy           NVARCHAR(256)       NULL,
+    UpdatedBy           NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);
+
+-- Invoices: Invoice documents (multiple per package)
+-- Logical FK: PackageId -> BDP_DocumentPackages.Id, POId -> BDP_POs.Id
+CREATE TABLE dbo.BDP_Invoices
+(
+    Id                      UNIQUEIDENTIFIER    NOT NULL,
+    PackageId               UNIQUEIDENTIFIER    NOT NULL,
+    POId                    UNIQUEIDENTIFIER    NOT NULL,
+    VersionNumber           INT                 NOT NULL,
+    InvoiceNumber           NVARCHAR(100)       NULL,
+    InvoiceDate             DATETIME2           NULL,
+    VendorName              NVARCHAR(500)       NULL,
+    GSTNumber               NVARCHAR(50)        NULL,
+    SubTotal                DECIMAL(18, 2)      NULL,
+    TaxAmount               DECIMAL(18, 2)      NULL,
+    TotalAmount             DECIMAL(18, 2)      NULL,
+    FileName                NVARCHAR(512)       NOT NULL,
+    BlobUrl                 NVARCHAR(2048)      NOT NULL,
+    FileSizeBytes           BIGINT              NOT NULL,
+    ContentType             NVARCHAR(128)       NOT NULL,
+    ExtractedDataJson       NVARCHAR(4000)      NULL,
+    ExtractionConfidence    FLOAT               NULL,
+    IsFlaggedForReview      BIT                 NOT NULL,
+    IsDeleted               BIT                 NOT NULL,
+    CreatedAt               DATETIME2           NOT NULL,
+    UpdatedAt               DATETIME2           NULL,
+    CreatedBy               NVARCHAR(256)       NULL,
+    UpdatedBy               NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);
+
+-- Teams: Campaign/Team entities (multiple per package)
+-- Logical FK: PackageId -> BDP_DocumentPackages.Id
+CREATE TABLE dbo.BDP_Teams
+(
+    Id                  UNIQUEIDENTIFIER    NOT NULL,
+    PackageId           UNIQUEIDENTIFIER    NOT NULL,
+    CampaignName        NVARCHAR(500)       NULL,
+    TeamCode            NVARCHAR(100)       NULL,
+    StartDate           DATETIME2           NULL,
+    EndDate             DATETIME2           NULL,
+    WorkingDays         INT                 NULL,
+    DealershipName      NVARCHAR(500)       NULL,
+    DealershipAddress   NVARCHAR(1000)      NULL,
+    GPSLocation         NVARCHAR(100)       NULL,
+    State               NVARCHAR(100)       NULL,
+    TeamsJson           NVARCHAR(4000)      NULL,
+    VersionNumber       INT                 NOT NULL,
+    IsDeleted           BIT                 NOT NULL,
+    CreatedAt           DATETIME2           NOT NULL,
+    UpdatedAt           DATETIME2           NULL,
+    CreatedBy           NVARCHAR(256)       NULL,
+    UpdatedBy           NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);
+
+-- TeamPhotos: Photos linked to Teams (multiple per team)
+-- Logical FK: TeamId -> BDP_Teams.Id, PackageId -> BDP_DocumentPackages.Id
+CREATE TABLE dbo.BDP_TeamPhotos
+(
+    Id                      UNIQUEIDENTIFIER    NOT NULL,
+    TeamId                  UNIQUEIDENTIFIER    NOT NULL,
+    PackageId               UNIQUEIDENTIFIER    NOT NULL,
+    FileName                NVARCHAR(500)       NOT NULL,
+    BlobUrl                 NVARCHAR(2000)      NOT NULL,
+    FileSizeBytes           BIGINT              NOT NULL,
+    ContentType             NVARCHAR(100)       NOT NULL,
+    Caption                 NVARCHAR(1000)      NULL,
+    PhotoTimestamp          DATETIME2           NULL,
+    Latitude                FLOAT               NULL,
+    Longitude               FLOAT               NULL,
+    DeviceModel             NVARCHAR(200)       NULL,
+    ExtractedMetadataJson   NVARCHAR(4000)      NULL,
+    ExtractionConfidence    FLOAT               NULL,
+    IsFlaggedForReview      BIT                 NOT NULL,
+    DisplayOrder            INT                 NOT NULL,
+    VersionNumber           INT                 NOT NULL,
+    IsDeleted               BIT                 NOT NULL,
+    CreatedAt               DATETIME2           NOT NULL,
+    UpdatedAt               DATETIME2           NULL,
+    CreatedBy               NVARCHAR(256)       NULL,
+    UpdatedBy               NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);
+
+-- CampaignInvoices: Invoices linked to Teams (multiple per team)
+-- Logical FK: CampaignId -> BDP_Teams.Id, PackageId -> BDP_DocumentPackages.Id
+CREATE TABLE dbo.BDP_CampaignInvoices
+(
+    Id                      UNIQUEIDENTIFIER    NOT NULL,
+    CampaignId              UNIQUEIDENTIFIER    NOT NULL,
+    PackageId               UNIQUEIDENTIFIER    NOT NULL,
+    InvoiceNumber           NVARCHAR(100)       NULL,
+    InvoiceDate             DATETIME2           NULL,
+    VendorName              NVARCHAR(500)       NULL,
+    GSTNumber               NVARCHAR(50)        NULL,
+    SubTotal                DECIMAL(18, 2)      NULL,
+    TaxAmount               DECIMAL(18, 2)      NULL,
+    TotalAmount             DECIMAL(18, 2)      NULL,
+    FileName                NVARCHAR(500)       NOT NULL,
+    BlobUrl                 NVARCHAR(2000)      NOT NULL,
+    FileSizeBytes           BIGINT              NOT NULL,
+    ContentType             NVARCHAR(100)       NOT NULL,
+    ExtractedDataJson       NVARCHAR(4000)      NULL,
+    ExtractionConfidence    FLOAT               NULL,
+    IsFlaggedForReview      BIT                 NOT NULL,
+    IsDeleted               BIT                 NOT NULL,
+    CreatedAt               DATETIME2           NOT NULL,
+    UpdatedAt               DATETIME2           NULL,
+    CreatedBy               NVARCHAR(256)       NULL,
+    UpdatedBy               NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);

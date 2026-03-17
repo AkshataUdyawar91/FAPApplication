@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
 using BajajDocumentProcessing.Infrastructure.Persistence;
@@ -47,16 +49,18 @@ public class UploadConfirmationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/test.pdf");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var file = CreateMockFile("test.pdf", 2048, "application/pdf");
         var userId = Guid.NewGuid();
@@ -80,16 +84,18 @@ public class UploadConfirmationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/test.pdf");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var expectedSize = 5 * 1024 * 1024; // 5MB
         var file = CreateMockFile("large.pdf", expectedSize, "application/pdf");
@@ -106,16 +112,18 @@ public class UploadConfirmationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/unique-id.pdf");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var originalFileName = "My Important Document.pdf";
         var file = CreateMockFile(originalFileName, 1024, "application/pdf");
@@ -132,23 +140,26 @@ public class UploadConfirmationProperties
     {
         // Arrange
         var context = CreateInMemoryContext();
-        var fileStorageMock = new Mock<Application.Common.Interfaces.IFileStorageService>();
+        var fileStorageMock = new Mock<IFileStorageService>();
         fileStorageMock
             .Setup(f => f.UploadFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync("https://blob.com/test.jpg");
         
-        var malwareScanMock = new Mock<Application.Common.Interfaces.IMalwareScanService>();
+        var malwareScanMock = new Mock<IMalwareScanService>();
         malwareScanMock.Setup(m => m.ScanFileAsync(It.IsAny<IFormFile>())).ReturnsAsync(true);
+        var documentAgentMock = new Mock<IDocumentAgent>();
+        var serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
         
         var loggerMock = new Mock<ILogger<DocumentService>>();
-        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, loggerMock.Object);
+        var service = new DocumentService(context, fileStorageMock.Object, malwareScanMock.Object, documentAgentMock.Object, serviceScopeFactoryMock.Object, loggerMock.Object);
 
         var file = CreateMockFile("photo.jpg", 1024, "image/jpeg");
 
         // Act
-        var response = await service.UploadDocumentAsync(file, DocumentType.Photo, null, Guid.NewGuid());
+        var response = await service.UploadDocumentAsync(file, DocumentType.TeamPhoto, null, Guid.NewGuid());
 
         // Assert
-        Assert.Equal(DocumentType.Photo, response.DocumentType);
+        Assert.Equal(DocumentType.TeamPhoto, response.DocumentType);
     }
 }
+

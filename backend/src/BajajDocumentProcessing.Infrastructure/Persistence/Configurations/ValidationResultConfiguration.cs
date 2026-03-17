@@ -15,13 +15,23 @@ public class ValidationResultConfiguration : IEntityTypeConfiguration<Validation
 
         builder.HasKey(v => v.Id);
 
+        builder.Property(v => v.DocumentType)
+            .IsRequired()
+            .HasConversion<int>();
+
+        builder.Property(v => v.DocumentId)
+            .IsRequired();
+
         builder.Property(v => v.ValidationDetailsJson)
             .HasColumnType("nvarchar(max)");
 
         builder.Property(v => v.FailureReason)
             .HasMaxLength(2000);
 
-        builder.HasIndex(v => v.PackageId)
+        builder.Property(v => v.RuleResultsJson)
+            .HasColumnType("nvarchar(max)");
+
+        builder.HasIndex(v => new { v.DocumentType, v.DocumentId })
             .IsUnique();
     }
 }

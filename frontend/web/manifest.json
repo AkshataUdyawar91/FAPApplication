@@ -1,11 +1,11 @@
 {
-    "name": "bajaj_document_processing",
-    "short_name": "bajaj_document_processing",
-    "start_url": ".",
+    "name": "ClaimsIQ",
+    "short_name": "ClaimsIQ",
+    "start_url": "/",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFFFFF",
+    "theme_color": "#003087",
+    "description": "ClaimsIQ — Agency FAP Claim Submission & Tracking",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

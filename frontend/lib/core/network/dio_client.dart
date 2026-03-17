@@ -2,8 +2,11 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../constants/api_constants.dart';
 
-/// Dio client provider
-final dioClientProvider = Provider<Dio>((ref) {
+/// Provider for auth token (to be set by auth flow)
+final authTokenProvider = StateProvider<String?>((ref) => null);
+
+/// Dio provider with auth token
+final dioProvider = Provider<Dio>((ref) {
   final dio = Dio(
     BaseOptions(
       baseUrl: ApiConstants.baseUrl,
@@ -16,14 +19,25 @@ final dioClientProvider = Provider<Dio>((ref) {
     ),
   );
 
-  // Add interceptors
+  // Add auth interceptor
+  dio.interceptors.add(InterceptorsWrapper(
+    onRequest: (options, handler) {
+      final token = ref.read(authTokenProvider);
+      if (token != null && token.isNotEmpty) {
+        options.headers['Authorization'] = 'Bearer $token';
+      }
+      return handler.next(options);
+    },
+  ),);
+
+  // Add logging interceptor
   dio.interceptors.add(LogInterceptor(
     requestBody: true,
     responseBody: true,
-  ));
-
-  // Auth interceptor will be added in Task 25
-  // Error handling interceptor will be added in Task 25
+  ),);
 
   return dio;
 });
+
+/// Legacy dio client provider (for backward compatibility)
+final dioClientProvider = Provider<Dio>((ref) => ref.watch(dioProvider));

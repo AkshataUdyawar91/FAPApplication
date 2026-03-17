@@ -29,11 +29,17 @@ public class CompletenessValidationProperties
         _mockContext = new Mock<IApplicationDbContext>();
         var mockLogger = new Mock<ILogger<ValidationAgent>>();
         var mockHttpClientFactory = new Mock<IHttpClientFactory>();
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        var mockPerceptualHashService = new Mock<IPerceptualHashService>();
 
         _validationAgent = new ValidationAgent(
             _mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            mockPerceptualHashService.Object);
     }
 
     /// <summary>
@@ -273,55 +279,66 @@ public class CompletenessValidationProperties
             Id = packageId,
             State = PackageState.Uploaded,
             CreatedAt = DateTime.UtcNow,
-            Documents = new List<Document>()
+            Teams = new List<Teams>()
         };
 
         if (includePO)
         {
-            package.Documents.Add(new Document
+            package.PO = new PO
             {
                 Id = Guid.NewGuid(),
                 PackageId = packageId,
-                Type = DocumentType.PO,
                 FileName = "PO.pdf",
                 CreatedAt = DateTime.UtcNow
-            });
+            };
         }
 
         if (includeInvoice)
         {
-            package.Documents.Add(new Document
+            package.Invoices = new List<Invoice>
             {
-                Id = Guid.NewGuid(),
-                PackageId = packageId,
-                Type = DocumentType.Invoice,
-                FileName = "Invoice.pdf",
-                CreatedAt = DateTime.UtcNow
-            });
+                new Invoice
+                {
+                    Id = Guid.NewGuid(),
+                    PackageId = packageId,
+                    FileName = "Invoice.pdf",
+                    CreatedAt = DateTime.UtcNow
+                }
+            };
         }
 
         if (includeCostSummary)
         {
-            package.Documents.Add(new Document
+            package.CostSummary = new CostSummary
             {
                 Id = Guid.NewGuid(),
                 PackageId = packageId,
-                Type = DocumentType.CostSummary,
                 FileName = "CostSummary.pdf",
                 CreatedAt = DateTime.UtcNow
-            });
+            };
         }
 
-        for (int i = 0; i < photoCount; i++)
+        if (photoCount > 0)
         {
-            package.Documents.Add(new Document
+            var team = new Teams
             {
                 Id = Guid.NewGuid(),
                 PackageId = packageId,
-                Type = DocumentType.Photo,
-                FileName = $"Photo{i + 1}.jpg",
-                CreatedAt = DateTime.UtcNow
-            });
+                CampaignName = "Test Team",
+                Photos = new List<TeamPhotos>()
+            };
+            for (int i = 0; i < photoCount; i++)
+            {
+                team.Photos.Add(new TeamPhotos
+                {
+                    Id = Guid.NewGuid(),
+                    TeamId = team.Id,
+                    PackageId = packageId,
+                    FileName = $"Photo{i + 1}.jpg",
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+            package.Teams.Add(team);
         }
 
         return package;

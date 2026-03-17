@@ -14,17 +14,32 @@ public class NotificationAgent : INotificationAgent
     private readonly IApplicationDbContext _context;
     private readonly IEmailAgent _emailAgent;
     private readonly ILogger<NotificationAgent> _logger;
+    private readonly ICorrelationIdService _correlationIdService;
 
     public NotificationAgent(
         IApplicationDbContext context,
         IEmailAgent emailAgent,
-        ILogger<NotificationAgent> logger)
+        ILogger<NotificationAgent> logger,
+        ICorrelationIdService correlationIdService)
     {
         _context = context;
         _emailAgent = emailAgent;
         _logger = logger;
+        _correlationIdService = correlationIdService;
     }
 
+    /// <summary>
+    /// Sends a notification to a user with optional email delivery
+    /// </summary>
+    /// <param name="userId">The ID of the user to notify</param>
+    /// <param name="type">The type of notification</param>
+    /// <param name="title">The notification title</param>
+    /// <param name="message">The notification message content</param>
+    /// <param name="relatedEntityId">Optional ID of the related entity (e.g., package ID)</param>
+    /// <param name="sendEmail">Whether to also send an email notification</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the user is not found</exception>
     public async Task SendNotificationAsync(
         Guid userId,
         NotificationType type,
@@ -80,6 +95,13 @@ public class NotificationAgent : INotificationAgent
         }
     }
 
+    /// <summary>
+    /// Retrieves notifications for a specific user
+    /// </summary>
+    /// <param name="userId">The ID of the user</param>
+    /// <param name="unreadOnly">If true, returns only unread notifications</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A list of notifications ordered by unread status and creation date</returns>
     public async Task<List<Notification>> GetUserNotificationsAsync(
         Guid userId,
         bool unreadOnly = false,
@@ -123,9 +145,19 @@ public class NotificationAgent : INotificationAgent
         }
     }
 
+    /// <summary>
+    /// Marks a notification as read
+    /// </summary>
+    /// <param name="notificationId">The ID of the notification to mark as read</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the notification is not found</exception>
     public async Task MarkAsReadAsync(Guid notificationId, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Marking notification {NotificationId} as read", notificationId);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Marking notification {NotificationId} as read. CorrelationId: {CorrelationId}",
+            notificationId, correlationId);
 
         try
         {
@@ -135,7 +167,7 @@ public class NotificationAgent : INotificationAgent
             if (notification == null)
             {
                 _logger.LogWarning("Notification {NotificationId} not found", notificationId);
-                throw new InvalidOperationException($"Notification {notificationId} not found");
+                throw new Domain.Exceptions.NotFoundException($"Notification {notificationId} not found");
             }
 
             if (!notification.IsRead)
@@ -161,6 +193,38 @@ public class NotificationAgent : INotificationAgent
         }
     }
 
+    /// <summary>
+    /// Retrieves a notification by its ID
+    /// </summary>
+    /// <param name="notificationId">The ID of the notification</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The notification if found, otherwise null</returns>
+    public async Task<Notification?> GetNotificationByIdAsync(Guid notificationId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var notification = await _context.Notifications
+                .AsNoTracking()
+                .FirstOrDefaultAsync(n => n.Id == notificationId, cancellationToken);
+
+            return notification;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error getting notification {NotificationId}",
+                notificationId);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Gets the count of unread notifications for a user
+    /// </summary>
+    /// <param name="userId">The ID of the user</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The number of unread notifications</returns>
     public async Task<int> GetUnreadCountAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         try
@@ -184,6 +248,13 @@ public class NotificationAgent : INotificationAgent
     /// <summary>
     /// Sends email notification based on notification type
     /// </summary>
+    /// <param name="userId">The ID of the user to notify</param>
+    /// <param name="type">The type of notification</param>
+    /// <param name="title">The notification title</param>
+    /// <param name="message">The notification message</param>
+    /// <param name="relatedEntityId">Optional ID of the related entity</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
     private async Task SendEmailNotificationAsync(
         Guid userId,
         NotificationType type,
@@ -279,6 +350,13 @@ public class NotificationAgent : INotificationAgent
         }
     }
 
+    /// <summary>
+    /// Sends a notification when a submission is received
+    /// </summary>
+    /// <param name="userId">The ID of the user to notify</param>
+    /// <param name="packageId">The ID of the submitted package</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
     public async Task NotifySubmissionReceivedAsync(
         Guid userId,
         Guid packageId,
@@ -294,6 +372,13 @@ public class NotificationAgent : INotificationAgent
             cancellationToken);
     }
 
+    /// <summary>
+    /// Sends a notification when a submission is approved
+    /// </summary>
+    /// <param name="userId">The ID of the user to notify</param>
+    /// <param name="packageId">The ID of the approved package</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
     public async Task NotifyApprovedAsync(
         Guid userId,
         Guid packageId,
@@ -309,12 +394,36 @@ public class NotificationAgent : INotificationAgent
             cancellationToken);
     }
 
+    /// <summary>
+    /// Sends a notification when a submission is rejected
+    /// </summary>
+    /// <param name="userId">The ID of the user to notify</param>
+    /// <param name="packageId">The ID of the rejected package</param>
+    /// <param name="reason">The reason for rejection</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
     public async Task NotifyRejectedAsync(
         Guid userId,
         Guid packageId,
         string reason,
         CancellationToken cancellationToken = default)
     {
+        // Check if notification already exists for this package and type
+        var existingNotification = await _context.Notifications
+            .FirstOrDefaultAsync(
+                n => n.UserId == userId && 
+                     n.Type == NotificationType.Rejected && 
+                     n.RelatedEntityId == packageId,
+                cancellationToken);
+
+        if (existingNotification != null)
+        {
+            _logger.LogInformation(
+                "Rejected notification already exists for package {PackageId}, skipping duplicate",
+                packageId);
+            return;
+        }
+
         await SendNotificationAsync(
             userId,
             NotificationType.Rejected,
@@ -325,6 +434,14 @@ public class NotificationAgent : INotificationAgent
             cancellationToken);
     }
 
+    /// <summary>
+    /// Sends a notification when a re-upload is requested
+    /// </summary>
+    /// <param name="userId">The ID of the user to notify</param>
+    /// <param name="packageId">The ID of the package requiring re-upload</param>
+    /// <param name="reason">The reason for requesting re-upload</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
     public async Task NotifyReuploadRequestedAsync(
         Guid userId,
         Guid packageId,

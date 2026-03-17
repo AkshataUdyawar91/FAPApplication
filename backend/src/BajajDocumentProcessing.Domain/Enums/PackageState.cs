@@ -5,15 +5,13 @@ namespace BajajDocumentProcessing.Domain.Enums;
 /// </summary>
 public enum PackageState
 {
+    Draft = 0,
     Uploaded = 1,
     Extracting = 2,
     Validating = 3,
-    Validated = 4,
-    ValidationFailed = 5,
-    Scoring = 6,
-    Recommending = 7,
-    PendingApproval = 8,
-    Approved = 9,
-    Rejected = 10,
-    ReuploadRequested = 11
+    PendingASM = 4,
+    ASMRejected = 5,
+    PendingRA = 6,
+    RARejected = 7,
+    Approved = 8
 }

@@ -41,16 +41,23 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .IsRequired()
             .HasDefaultValue(true);
 
+        // Index on AgencyId for filtering users by agency
+        builder.HasIndex(u => u.AgencyId);
+
+        // Index on Role for filtering users by role
+        builder.HasIndex(u => u.Role);
+
+        // Index on IsActive for filtering active users
+        builder.HasIndex(u => u.IsActive);
+
         // Relationships
-        builder.HasMany(u => u.SubmittedPackages)
-            .WithOne(p => p.SubmittedBy)
-            .HasForeignKey(p => p.SubmittedByUserId)
+        builder.HasOne(u => u.Agency)
+            .WithMany(a => a.Users)
+            .HasForeignKey(u => u.AgencyId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasMany(u => u.ReviewedPackages)
-            .WithOne(p => p.ReviewedBy)
-            .HasForeignKey(p => p.ReviewedByUserId)
-            .OnDelete(DeleteBehavior.Restrict);
+        // NOTE: SubmittedPackages relationship is configured in DocumentPackageConfiguration
+        // to avoid duplicate configuration conflicts
 
         builder.HasMany(u => u.Notifications)
             .WithOne(n => n.User)

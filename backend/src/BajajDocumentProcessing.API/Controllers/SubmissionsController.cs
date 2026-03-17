@@ -1,43 +1,79 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Application.DTOs.Common;
+using BajajDocumentProcessing.Application.DTOs.Submissions;
 using BajajDocumentProcessing.Domain.Enums;
+using BajajDocumentProcessing.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace BajajDocumentProcessing.API.Controllers;
 
+/// <summary>
+/// Submissions controller for document package management and approval workflow
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
-// [Authorize] // DISABLED FOR TESTING
+[Authorize]
 public class SubmissionsController : ControllerBase
 {
     private readonly IApplicationDbContext _context;
     private readonly IWorkflowOrchestrator _orchestrator;
+    private readonly IBackgroundWorkflowQueue _backgroundQueue;
     private readonly ILogger<SubmissionsController> _logger;
+    private readonly ISubmissionNumberService _submissionNumberService;
+    private readonly ICircleHeadAssignmentService _circleHeadAssignmentService;
+    private readonly ISubmissionNotificationService _submissionNotificationService;
 
     public SubmissionsController(
         IApplicationDbContext context,
         IWorkflowOrchestrator orchestrator,
-        ILogger<SubmissionsController> logger)
+        IBackgroundWorkflowQueue backgroundQueue,
+        ILogger<SubmissionsController> logger,
+        ISubmissionNumberService submissionNumberService,
+        ICircleHeadAssignmentService circleHeadAssignmentService,
+        ISubmissionNotificationService submissionNotificationService)
     {
         _context = context;
         _orchestrator = orchestrator;
+        _backgroundQueue = backgroundQueue;
         _logger = logger;
+        _submissionNumberService = submissionNumberService;
+        _circleHeadAssignmentService = circleHeadAssignmentService;
+        _submissionNotificationService = submissionNotificationService;
     }
 
     /// <summary>
-    /// Create a new submission
+    /// Create a new document submission package (Agency role only)
     /// </summary>
+    /// <param name="request">Submission creation request</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Created submission with ID and initial status</returns>
+    /// <response code="201">Submission created and queued for processing</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - Agency role required</response>
+    /// <response code="500">Internal server error</response>
     [HttpPost]
     [Authorize(Roles = "Agency")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status201Created)]
     public async Task<IActionResult> CreateSubmission(
         [FromBody] CreateSubmissionRequest request,
         CancellationToken cancellationToken)
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                _logger.LogWarning("User ID claim not found in token");
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
 
             // Create document package
             var package = new Domain.Entities.DocumentPackage
@@ -52,23 +88,22 @@ public class SubmissionsController : ControllerBase
             _context.DocumentPackages.Add(package);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Start workflow orchestration asynchronously
-            _ = Task.Run(async () =>
+            // Queue workflow for background processing (non-blocking)
+            await _backgroundQueue.QueueWorkflowAsync(package.Id);
+            
+            _logger.LogInformation("Submission {PackageId} created and queued for processing", package.Id);
+
+            var response = new SubmissionStatusResponse
             {
-                try
-                {
-                    await _orchestrator.ProcessSubmissionAsync(package.Id, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing submission {PackageId}", package.Id);
-                }
-            }, cancellationToken);
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Submission received and is being processed"
+            };
 
             return CreatedAtAction(
                 nameof(GetSubmission),
                 new { id = package.Id },
-                new { id = package.Id, state = package.State.ToString() });
+                response);
         }
         catch (Exception ex)
         {
@@ -78,21 +113,176 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// Get submission details by ID
+    /// Create a draft submission from the conversational flow (Agency role only)
     /// </summary>
+    /// <param name="request">Draft creation request with PO ID and Agency ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Created draft submission ID</returns>
+    /// <response code="201">Draft submission created</response>
+    /// <response code="400">Bad request - invalid PO</response>
+    /// <response code="401">Unauthorized</response>
+    [HttpPost("draft")]
+    [Authorize(Roles = "Agency")]
+    [ProducesResponseType(typeof(CreateDraftResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateDraft(
+        [FromBody] CreateDraftRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+
+            // Verify PO exists
+            var po = await _context.POs.FirstOrDefaultAsync(p => p.Id == request.PoId, cancellationToken);
+            if (po == null)
+            {
+                return BadRequest(new { error = "PO not found" });
+            }
+
+            var package = new Domain.Entities.DocumentPackage
+            {
+                Id = Guid.NewGuid(),
+                SubmittedByUserId = userId,
+                AgencyId = request.AgencyId,
+                State = PackageState.Draft,
+                SelectedPOId = request.PoId,
+                CurrentStep = 1,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _context.DocumentPackages.Add(package);
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Draft submission {PackageId} created for PO {PoId} by user {UserId}",
+                package.Id, request.PoId, userId);
+
+            var response = new CreateDraftResponse
+            {
+                SubmissionId = package.Id,
+                SubmissionNumber = null // Generated at submit time
+            };
+
+            return CreatedAtAction(nameof(GetSubmission), new { id = package.Id }, response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating draft submission");
+            return StatusCode(500, new { error = "An error occurred while creating the draft submission" });
+        }
+    }
+
+    /// <summary>
+    /// Update submission fields such as activity state (Agency role only)
+    /// </summary>
+    /// <param name="id">Submission ID</param>
+    /// <param name="request">Fields to update</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>204 No Content on success</returns>
+    /// <response code="204">Submission updated</response>
+    /// <response code="400">Bad request</response>
+    /// <response code="404">Submission not found</response>
+    [HttpPatch("{id}")]
+    [Authorize(Roles = "Agency")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> PatchSubmission(
+        Guid id,
+        [FromBody] PatchSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            // Verify ownership
+            if (package.SubmittedByUserId != userId)
+            {
+                return Forbid();
+            }
+
+            // Only allow patching Draft submissions
+            if (package.State != PackageState.Draft)
+            {
+                return BadRequest(new { error = $"Can only update Draft submissions. Current state: {package.State}" });
+            }
+
+            package.ActivityState = request.State;
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Submission {Id} state updated to {State} by user {UserId}", id, request.State, userId);
+
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error patching submission {Id}", id);
+            return StatusCode(500, new { error = "An error occurred while updating the submission" });
+        }
+    }
+
+    /// <summary>
+    /// Get detailed information about a specific submission including documents, validation, confidence scores, and recommendations
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Complete submission details with all related data</returns>
+    /// <response code="200">Returns submission details</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="404">Not found - submission does not exist or user does not have access</response>
+    /// <response code="500">Internal server error</response>
     [HttpGet("{id}")]
+    [ProducesResponseType(typeof(SubmissionDetailResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetSubmission(Guid id, CancellationToken cancellationToken)
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
-            var userRole = User.FindFirst("role")?.Value;
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+            
+            var userId = Guid.Parse(userIdClaim);
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
 
             var query = _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
                 .Include(p => p.ValidationResult)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
+                .Include(p => p.SubmittedBy)
+                .Include(p => p.Teams)
+                    .ThenInclude(c => c.Photos)
+                .Include(p => p.CostSummary)
+                .Include(p => p.EnquiryDocument)
+                .Include(p => p.RequestApprovalHistory)
+                .AsSplitQuery()
                 .AsQueryable();
 
             // Agency users can only see their own submissions
@@ -108,41 +298,79 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            return Ok(new
+            // Get approval history for review fields
+            var asmApproval = package.RequestApprovalHistory
+                .Where(h => h.ApproverRole == Domain.Enums.UserRole.ASM)
+                .OrderByDescending(h => h.ActionDate)
+                .FirstOrDefault();
+            var raApproval = package.RequestApprovalHistory
+                .Where(h => h.ApproverRole == Domain.Enums.UserRole.RA)
+                .OrderByDescending(h => h.ActionDate)
+                .FirstOrDefault();
+
+            var response = new SubmissionDetailResponse
             {
-                id = package.Id,
-                state = package.State.ToString(),
-                createdAt = package.CreatedAt,
-                updatedAt = package.UpdatedAt,
-                documents = package.Documents.Select(d => new
+                Id = package.Id,
+                State = package.State.ToString(),
+                CreatedAt = package.CreatedAt,
+                UpdatedAt = package.UpdatedAt,
+                ASMReviewedAt = asmApproval?.ActionDate,
+                ASMReviewNotes = asmApproval?.Comments,
+                HQReviewedAt = raApproval?.ActionDate,
+                HQReviewNotes = raApproval?.Comments,
+                ReviewedAt = asmApproval?.ActionDate,
+                ReviewNotes = asmApproval?.Comments,
+                Documents = BuildDocumentDtos(package),
+                Campaigns = package.Teams.Where(c => !c.IsDeleted).Select(c => new CampaignDto
                 {
-                    id = d.Id,
-                    type = d.Type.ToString(),
-                    filename = d.FileName,
-                    blobUrl = d.BlobUrl,
-                    extractionConfidence = d.ExtractionConfidence,
-                    extractedData = d.ExtractedDataJson
-                }),
-                validationResult = package.ValidationResult != null ? new
+                    Id = c.Id,
+                    CampaignName = c.CampaignName,
+                    TeamCode = c.TeamCode,
+                    StartDate = c.StartDate,
+                    EndDate = c.EndDate,
+                    WorkingDays = c.WorkingDays,
+                    DealershipName = c.DealershipName,
+                    DealershipAddress = c.DealershipAddress,
+                    TotalCost = package.CostSummary?.TotalCost,
+                    CostSummaryFileName = package.CostSummary?.FileName,
+                    CostSummaryBlobUrl = package.CostSummary?.BlobUrl,
+                    ActivitySummaryFileName = package.ActivitySummary?.FileName,
+                    ActivitySummaryBlobUrl = package.ActivitySummary?.BlobUrl,
+                    Photos = c.Photos.Where(p2 => !p2.IsDeleted).OrderBy(p2 => p2.DisplayOrder).Select(p2 => new CampaignPhotoDto
+                    {
+                        Id = p2.Id,
+                        FileName = p2.FileName,
+                        BlobUrl = p2.BlobUrl,
+                        Caption = p2.Caption
+                    }).ToList()
+                }).ToList(),
+                ValidationResult = package.ValidationResult != null ? new ValidationResultDto
                 {
-                    allValidationsPassed = package.ValidationResult.AllValidationsPassed,
-                    failureReason = package.ValidationResult.FailureReason
+                    AllValidationsPassed = package.ValidationResult.AllValidationsPassed,
+                    FailureReason = package.ValidationResult.FailureReason
                 } : null,
-                confidenceScore = package.ConfidenceScore != null ? new
+                ConfidenceScore = package.ConfidenceScore != null ? new ConfidenceScoreDto
                 {
-                    overallConfidence = package.ConfidenceScore.OverallConfidence,
-                    poConfidence = package.ConfidenceScore.PoConfidence,
-                    invoiceConfidence = package.ConfidenceScore.InvoiceConfidence,
-                    costSummaryConfidence = package.ConfidenceScore.CostSummaryConfidence,
-                    activityConfidence = package.ConfidenceScore.ActivityConfidence,
-                    photosConfidence = package.ConfidenceScore.PhotosConfidence
+                    OverallConfidence = package.ConfidenceScore.OverallConfidence,
+                    PoConfidence = package.ConfidenceScore.PoConfidence,
+                    InvoiceConfidence = package.ConfidenceScore.InvoiceConfidence,
+                    CostSummaryConfidence = package.ConfidenceScore.CostSummaryConfidence,
+                    ActivityConfidence = package.ConfidenceScore.ActivityConfidence,
+                    PhotosConfidence = package.ConfidenceScore.PhotosConfidence
                 } : null,
-                recommendation = package.Recommendation != null ? new
+                Recommendation = package.Recommendation != null ? new RecommendationDto
                 {
-                    type = package.Recommendation.Type.ToString(),
-                    evidence = package.Recommendation.Evidence
-                } : null
-            });
+                    Type = package.Recommendation.Type.ToString(),
+                    Evidence = package.Recommendation.Evidence
+                } : null,
+                CurrentStep = package.CurrentStep,
+                SubmissionNumber = package.SubmissionNumber,
+                AssignedCircleHeadUserId = package.AssignedCircleHeadUserId,
+                ActivityState = package.ActivityState,
+                SelectedPOId = package.SelectedPOId
+            };
+
+            return Ok(response);
         }
         catch (Exception ex)
         {
@@ -152,9 +380,64 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// List submissions with filtering
+    /// Get enhanced validation report for a submission (ASM and RA roles only)
     /// </summary>
+    /// <param name="id">Submission package ID</param>
+    /// <param name="enhancedValidationReportService">Enhanced validation report service</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Enhanced validation report with detailed evidence and recommendations</returns>
+    /// <response code="200">Returns enhanced validation report</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - ASM or RA role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpGet("{id}/validation-report")]
+    [Authorize(Roles = "ASM,HQ")]
+    [ProducesResponseType(typeof(EnhancedValidationReportDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetValidationReport(
+        Guid id,
+        [FromServices] IEnhancedValidationReportService enhancedValidationReportService,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation("Generating enhanced validation report for package {PackageId}", id);
+
+            var report = await enhancedValidationReportService.GenerateReportAsync(id, cancellationToken);
+
+            return Ok(report);
+        }
+        catch (Domain.Exceptions.NotFoundException ex)
+        {
+            _logger.LogWarning(ex, "Package {PackageId} not found", id);
+            return NotFound(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating validation report for package {PackageId}", id);
+            return StatusCode(500, new { error = "An error occurred while generating the validation report" });
+        }
+    }
+
+    /// <summary>
+    /// List submissions with filtering and pagination (Agency users see only their own submissions)
+    /// </summary>
+    /// <param name="state">Optional filter by package state (Uploaded, PendingASMApproval, PendingHQApproval, Approved, etc.)</param>
+    /// <param name="page">Page number for pagination (default: 1)</param>
+    /// <param name="pageSize">Number of items per page (default: 20, max: 100)</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Paginated list of submissions with summary information</returns>
+    /// <response code="200">Returns paginated submission list</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="500">Internal server error</response>
     [HttpGet]
+    [ProducesResponseType(typeof(SubmissionListResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> ListSubmissions(
         [FromQuery] string? state = null,
         [FromQuery] int page = 1,
@@ -163,26 +446,29 @@ public class SubmissionsController : ControllerBase
     {
         try
         {
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            Guid userId;
-            
-            // For testing without authentication
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out userId))
-            {
-                _logger.LogWarning("No authenticated user found, listing all submissions for testing");
-                userId = Guid.Empty; // Will not filter by user
-            }
-            
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new System.UnauthorizedAccessException());
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            
+            _logger.LogInformation("ListSubmissions - UserId: {UserId}, Role: {Role}", userId, userRole);
 
             var query = _context.DocumentPackages
-                .Include(p => p.Documents)
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
+                .Include(p => p.ConfidenceScore)
+                .Include(p => p.Teams.Where(c => !c.IsDeleted))
+                    .ThenInclude(c => c.Photos.Where(ph => !ph.IsDeleted))
+                .AsSplitQuery()
                 .AsQueryable();
 
-            // Agency users can only see their own submissions (skip filter for testing)
-            if (userRole == "Agency" && userId != Guid.Empty)
+            // Agency users can only see their own submissions
+            if (userRole == "Agency" || userRole == "0")
             {
+                _logger.LogInformation("Filtering submissions for Agency user: {UserId}", userId);
                 query = query.Where(p => p.SubmittedByUserId == userId);
+            }
+            else
+            {
+                _logger.LogInformation("Showing all submissions for role: {Role}", userRole);
             }
 
             // Filter by state if provided
@@ -196,83 +482,87 @@ public class SubmissionsController : ControllerBase
 
             // Pagination
             var total = await query.CountAsync(cancellationToken);
+            
+            _logger.LogInformation("Total submissions found: {Total}", total);
+            
             var packages = await query
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync(cancellationToken);
 
-            return Ok(new
+            var items = packages.Select(p =>
             {
-                total,
-                page,
-                pageSize,
-                items = packages.Select(p =>
+                // Extract invoice data from Invoices (linked to PO)
+                var firstInvoice = p.Invoices
+                    .Where(i => !i.IsDeleted)
+                    .FirstOrDefault();
+                
+                string? invoiceNumber = firstInvoice?.InvoiceNumber;
+                decimal? invoiceAmount = firstInvoice?.TotalAmount;
+
+                // Calculate total invoice amount across all invoices
+                var totalInvoiceAmount = p.Invoices
+                    .Where(i => !i.IsDeleted && i.TotalAmount != null && i.TotalAmount > 0)
+                    .Sum(i => i.TotalAmount ?? 0);
+                
+                if (totalInvoiceAmount > 0)
+                    invoiceAmount = totalInvoiceAmount;
+
+                // Extract PO data from dedicated PO entity
+                string? poNumber = p.PO?.PONumber;
+                decimal? poAmount = p.PO?.TotalAmount;
+
+                // Fallback: try ExtractedDataJson if typed fields are empty
+                if (p.PO != null && string.IsNullOrEmpty(poNumber) && !string.IsNullOrEmpty(p.PO.ExtractedDataJson))
                 {
-                    // Extract invoice data from documents
-                    var invoiceDoc = p.Documents.FirstOrDefault(d => d.Type == DocumentType.Invoice);
-                    string? invoiceNumber = null;
-                    decimal? invoiceAmount = null;
-
-                    if (invoiceDoc != null && !string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
+                    try
                     {
-                        try
-                        {
-                            var invoiceData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(invoiceDoc.ExtractedDataJson);
-                            
-                            // Try to get invoice number
-                            if (invoiceData.TryGetProperty("InvoiceNumber", out var invNum))
-                            {
-                                invoiceNumber = invNum.GetString();
-                            }
-                            else if (invoiceData.TryGetProperty("invoiceNumber", out var invNum2))
-                            {
-                                invoiceNumber = invNum2.GetString();
-                            }
+                        var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(p.PO.ExtractedDataJson);
+                        
+                        if (poData.TryGetProperty("PONumber", out var poNum))
+                            poNumber = poNum.GetString();
+                        else if (poData.TryGetProperty("poNumber", out var poNum2))
+                            poNumber = poNum2.GetString();
 
-                            // Try to get invoice amount
-                            if (invoiceData.TryGetProperty("TotalAmount", out var amt))
-                            {
-                                if (amt.ValueKind == System.Text.Json.JsonValueKind.Number)
-                                {
-                                    invoiceAmount = amt.GetDecimal();
-                                }
-                                else if (amt.ValueKind == System.Text.Json.JsonValueKind.String)
-                                {
-                                    decimal.TryParse(amt.GetString(), out var parsedAmount);
-                                    invoiceAmount = parsedAmount;
-                                }
-                            }
-                            else if (invoiceData.TryGetProperty("totalAmount", out var amt2))
-                            {
-                                if (amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
-                                {
-                                    invoiceAmount = amt2.GetDecimal();
-                                }
-                                else if (amt2.ValueKind == System.Text.Json.JsonValueKind.String)
-                                {
-                                    decimal.TryParse(amt2.GetString(), out var parsedAmount);
-                                    invoiceAmount = parsedAmount;
-                                }
-                            }
-                        }
-                        catch
+                        if (poAmount == null || poAmount == 0)
                         {
-                            // If parsing fails, leave as null
+                            if (poData.TryGetProperty("TotalAmount", out var amt) && amt.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                poAmount = amt.GetDecimal();
+                            else if (poData.TryGetProperty("totalAmount", out var amt2) && amt2.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                poAmount = amt2.GetDecimal();
                         }
                     }
+                    catch { }
+                }
 
-                    return new
-                    {
-                        id = p.Id,
-                        state = p.State.ToString(),
-                        createdAt = p.CreatedAt,
-                        updatedAt = p.UpdatedAt,
-                        documentCount = p.Documents.Count,
-                        invoiceNumber = invoiceNumber,
-                        invoiceAmount = invoiceAmount
-                    };
-                })
-            });
+                // Count documents: PO + invoices + team photos
+                var campaignPhotoCount = p.Teams.Where(c => !c.IsDeleted).SelectMany(c => c.Photos).Count(ph => !ph.IsDeleted);
+                var totalDocCount = (p.PO != null ? 1 : 0) + p.Invoices.Count(i => !i.IsDeleted) + campaignPhotoCount;
+
+                return new SubmissionListItemDto
+                {
+                    Id = p.Id,
+                    State = p.State.ToString(),
+                    CreatedAt = p.CreatedAt,
+                    UpdatedAt = p.UpdatedAt,
+                    DocumentCount = totalDocCount,
+                    InvoiceNumber = invoiceNumber,
+                    InvoiceAmount = invoiceAmount,
+                    PoNumber = poNumber,
+                    PoAmount = poAmount,
+                    OverallConfidence = p.ConfidenceScore != null ? (decimal?)p.ConfidenceScore.OverallConfidence : null
+                };
+            }).ToList();
+
+            var response = new SubmissionListResponse
+            {
+                Total = total,
+                Page = page,
+                PageSize = pageSize,
+                Items = items
+            };
+
+            return Ok(response);
         }
         catch (Exception ex)
         {
@@ -282,14 +572,30 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// Approve a submission (ASM only)
+    /// Approve a submission at ASM level and move to HQ approval queue (ASM role only)
     /// </summary>
-    [HttpPatch("{id}/approve")]
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Optional approval notes</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Submission approved by ASM, moved to HQ approval</response>
+    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - ASM role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/asm-approve")]
     [Authorize(Roles = "ASM")]
-    public async Task<IActionResult> ApproveSubmission(Guid id, CancellationToken cancellationToken)
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ASMApproveSubmission(
+        Guid id,
+        [FromBody] ApproveSubmissionRequest? request,
+        CancellationToken cancellationToken)
     {
         try
         {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
             var package = await _context.DocumentPackages
                 .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
@@ -298,29 +604,318 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingApproval)
+            // Allow approval from PendingASM or RARejected states
+            if (package.State != PackageState.PendingASM && 
+                package.State != PackageState.RARejected)
             {
-                return BadRequest(new { error = "Submission is not in pending approval state" });
+                return BadRequest(new { error = $"Submission is not in a state that can be approved by ASM. Current state: {package.State}" });
             }
 
-            package.State = PackageState.Approved;
+            package.State = PackageState.PendingRA;
+            // Record approval in RequestApprovalHistory
+            var approvalHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.ASM,
+                Action = Domain.Enums.ApprovalAction.Approved,
+                Comments = request?.Notes ?? "Approved by ASM",
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(approvalHistory);
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} approved", id);
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.PendingRA.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
 
-            return Ok(new { id = package.Id, state = package.State.ToString() });
+            _logger.LogInformation("Submission {Id} approved by ASM {UserId}, moved to RA approval", id, userId);
+
+            var response = new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Approved by ASM, pending RA approval"
+            };
+
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error approving submission {Id}", id);
+            _logger.LogError(ex, "Error approving submission {Id} by ASM", id);
             return StatusCode(500, new { error = "An error occurred while approving the submission" });
         }
     }
 
     /// <summary>
-    /// Reject a submission (ASM only)
+    /// Reject a submission at ASM level and send back to Agency (ASM role only)
     /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Rejection reason (required)</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Submission rejected by ASM</response>
+    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - ASM role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/asm-reject")]
+    [Authorize(Roles = "ASM")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ASMRejectSubmission(
+        Guid id,
+        [FromBody] RejectSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            // Allow rejection from PendingASM or RARejected states
+            if (package.State != PackageState.PendingASM && 
+                package.State != PackageState.RARejected)
+            {
+                return BadRequest(new { error = $"Submission is not in a state that can be rejected by ASM. Current state: {package.State}" });
+            }
+
+            package.State = PackageState.ASMRejected;
+            // Record rejection in RequestApprovalHistory
+            var rejectionHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.ASM,
+                Action = Domain.Enums.ApprovalAction.Rejected,
+                Comments = request.Reason,
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(rejectionHistory);
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.ASMRejected.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
+
+            _logger.LogInformation("Submission {Id} rejected by ASM {UserId} with reason: {Reason}", id, userId, request.Reason);
+
+            var response = new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Rejected by ASM"
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error rejecting submission {Id} by ASM", id);
+            return StatusCode(500, new { error = "An error occurred while rejecting the submission" });
+        }
+    }
+
+    /// <summary>
+    /// Approve a submission at HQ level - final approval (HQ role only)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Optional approval notes</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Submission approved by HQ - final approval</response>
+    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - HQ role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/hq-approve")]
+    [Authorize(Roles = "HQ")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> HQApproveSubmission(
+        Guid id,
+        [FromBody] ApproveSubmissionRequest? request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            if (package.State != PackageState.PendingRA)
+            {
+                return BadRequest(new { error = $"Submission is not in pending RA approval state. Current state: {package.State}" });
+            }
+
+            package.State = PackageState.Approved;
+            // Record approval in RequestApprovalHistory
+            var approvalHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.RA,
+                Action = Domain.Enums.ApprovalAction.Approved,
+                Comments = request?.Notes ?? "Approved by RA",
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(approvalHistory);
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.Approved.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
+
+            _logger.LogInformation("Submission {Id} approved by RA {UserId} - final approval", id, userId);
+
+            var response = new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Final approval by RA"
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error approving submission {Id} by HQ", id);
+            return StatusCode(500, new { error = "An error occurred while approving the submission" });
+        }
+    }
+
+    /// <summary>
+    /// Reject a submission at HQ level and send back to ASM (HQ role only)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Rejection reason (required)</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Submission rejected by HQ, sent back to ASM</response>
+    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - HQ role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/hq-reject")]
+    [Authorize(Roles = "HQ")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> HQRejectSubmission(
+        Guid id,
+        [FromBody] RejectSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            if (package.State != PackageState.PendingRA)
+            {
+                return BadRequest(new { error = $"Submission is not in pending RA approval state. Current state: {package.State}" });
+            }
+
+            package.State = PackageState.RARejected;
+            // Record rejection in RequestApprovalHistory
+            var rejectionHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.RA,
+                Action = Domain.Enums.ApprovalAction.Rejected,
+                Comments = request.Reason,
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(rejectionHistory);
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.RARejected.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
+
+            _logger.LogInformation("Submission {Id} rejected by HQ {UserId} with reason: {Reason}", id, userId, request.Reason);
+
+            var response = new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Rejected by RA, sent back to Agency"
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error rejecting submission {Id} by HQ", id);
+            return StatusCode(500, new { error = "An error occurred while rejecting the submission" });
+        }
+    }
+
+    /// <summary>
+    /// Legacy approve endpoint - redirects to ASM approve for backward compatibility (ASM role only)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    [HttpPatch("{id}/approve")]
+    [Authorize(Roles = "ASM")]
+    public async Task<IActionResult> ApproveSubmission(Guid id, CancellationToken cancellationToken)
+    {
+        // Redirect to ASM approve
+        return await ASMApproveSubmission(id, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Legacy reject endpoint - redirects to ASM reject for backward compatibility (ASM role only)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Rejection reason</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
     [HttpPatch("{id}/reject")]
     [Authorize(Roles = "ASM")]
     public async Task<IActionResult> RejectSubmission(
@@ -328,8 +923,33 @@ public class SubmissionsController : ControllerBase
         [FromBody] RejectSubmissionRequest request,
         CancellationToken cancellationToken)
     {
+        // Redirect to ASM reject
+        return await ASMRejectSubmission(id, request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Agency resubmits a rejected package for review after making corrections (Agency role only)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status with resubmission count</returns>
+    /// <response code="200">Package resubmitted successfully and workflow triggered</response>
+    /// <response code="400">Bad request - can only resubmit packages rejected by ASM</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - Agency role required or user does not own package</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/resubmit")]
+    [Authorize(Roles = "Agency")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ResubmitPackage(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
         try
         {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
             var package = await _context.DocumentPackages
                 .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
@@ -338,31 +958,249 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingApproval)
+            // Can only resubmit if rejected by ASM or rejected by RA
+            if (package.State != PackageState.ASMRejected && 
+                package.State != PackageState.RARejected)
             {
-                return BadRequest(new { error = "Submission is not in pending approval state" });
+                return BadRequest(new { error = $"Can only resubmit packages rejected by ASM or RA. Current state: {package.State}" });
             }
 
-            package.State = PackageState.Rejected;
+            // Verify the package belongs to the user
+            if (package.SubmittedByUserId != userId)
+            {
+                return Forbid();
+            }
+
+            // Track resubmission via VersionNumber
+            package.VersionNumber += 1;
+            
+            // Reset to uploaded state to trigger workflow
+            package.State = PackageState.Uploaded;
+            // Record resubmission in RequestApprovalHistory
+            var resubmitHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.Agency,
+                Action = Domain.Enums.ApprovalAction.Resubmitted,
+                Comments = "Resubmitted by Agency",
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(resubmitHistory);
             package.UpdatedAt = DateTime.UtcNow;
+            
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} rejected with reason: {Reason}", id, request.Reason);
+            _logger.LogInformation("Package {Id} resubmitted by Agency user {UserId} (Version #{Version})", 
+                id, userId, package.VersionNumber);
 
-            return Ok(new { id = package.Id, state = package.State.ToString() });
+            // Trigger workflow processing
+            try
+            {
+                await _orchestrator.ProcessSubmissionAsync(id, cancellationToken);
+                _logger.LogInformation("Workflow triggered for resubmitted package {Id}", id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error triggering workflow for resubmitted package {Id}", id);
+                // Don't fail the resubmit if workflow fails - it can be triggered manually
+            }
+
+            var response = new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                ResubmissionCount = package.VersionNumber - 1,
+                Message = "Package resubmitted successfully and workflow triggered"
+            };
+
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error rejecting submission {Id}", id);
-            return StatusCode(500, new { error = "An error occurred while rejecting the submission" });
+            _logger.LogError(ex, "Error resubmitting package {Id}", id);
+            return StatusCode(500, new { error = "An error occurred while resubmitting the package" });
         }
     }
 
     /// <summary>
-    /// Request re-upload for a submission (ASM only)
+    /// ASM resubmits a package to HQ after HQ rejection with additional notes (ASM role only)
     /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Resubmission notes explaining changes or clarifications (required)</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status with HQ resubmission count</returns>
+    /// <response code="200">Package resubmitted to HQ successfully</response>
+    /// <response code="400">Bad request - can only resubmit packages rejected by HQ</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - ASM role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/resubmit-to-hq")]
+    [Authorize(Roles = "ASM")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ResubmitToHQ(
+        Guid id,
+        [FromBody] ResubmitToHQRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+            
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            // Can only resubmit if rejected by RA
+            if (package.State != PackageState.RARejected)
+            {
+                return BadRequest(new { error = $"Can only resubmit packages rejected by RA. Current state: {package.State}" });
+            }
+
+            // Track HQ resubmission via VersionNumber
+            package.VersionNumber += 1;
+            
+            // Move back to pending RA approval
+            package.State = PackageState.PendingRA;
+            
+            // Record resubmission in RequestApprovalHistory
+            var resubmitHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.ASM,
+                Action = Domain.Enums.ApprovalAction.Resubmitted,
+                Comments = request.Notes,
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(resubmitHistory);
+            
+            package.UpdatedAt = DateTime.UtcNow;
+            
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Package {Id} resubmitted to RA by ASM user {UserId} (Version #{Version})", 
+                id, userId, package.VersionNumber);
+
+            var response = new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                HQResubmissionCount = package.VersionNumber - 1,
+                Message = "Package resubmitted to RA successfully"
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resubmitting package {Id} to HQ", id);
+            return StatusCode(500, new { error = "An error occurred while resubmitting to HQ" });
+        }
+    }
+
+    /// <summary>
+    /// ASM sends an RA-rejected package back to Agency for corrections (ASM role only)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Reason for sending back to Agency</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Package sent back to Agency</response>
+    /// <response code="400">Bad request - can only send back packages rejected by HQ</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - ASM role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/send-back-to-agency")]
+    [Authorize(Roles = "ASM")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> SendBackToAgency(
+        Guid id,
+        [FromBody] RejectSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            if (package.State != PackageState.RARejected)
+            {
+                return BadRequest(new { error = $"Can only send back packages rejected by RA. Current state: {package.State}" });
+            }
+
+            // Move to ASMRejected so Agency can edit and resubmit
+            package.State = PackageState.ASMRejected;
+            // Record in RequestApprovalHistory
+            var sendBackHistory = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.ASM,
+                Action = Domain.Enums.ApprovalAction.Rejected,
+                Comments = $"Sent back to Agency: {request.Reason}",
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(sendBackHistory);
+
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Package {Id} sent back to Agency by ASM {UserId}. Reason: {Reason}",
+                id, userId, request.Reason);
+
+            return Ok(new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Package sent back to Agency for corrections"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending package {Id} back to Agency", id);
+            return StatusCode(500, new { error = "An error occurred while sending back to Agency" });
+        }
+    }
+
+    /// <summary>
+    /// Request document re-upload from Agency user (ASM role only, deprecated endpoint)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">List of fields/documents that need to be reuploaded</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Re-upload requested</response>
+    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - ASM role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
     [HttpPatch("{id}/request-reupload")]
     [Authorize(Roles = "ASM")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> RequestReupload(
         Guid id,
         [FromBody] RequestReuploadRequest request,
@@ -378,19 +1216,26 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingApproval)
+            if (package.State != PackageState.PendingASM)
             {
                 return BadRequest(new { error = "Submission is not in pending approval state" });
             }
 
-            package.State = PackageState.Rejected;
+            package.State = PackageState.ASMRejected;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Re-upload requested for submission {Id}, Fields: {Fields}", 
                 id, string.Join(", ", request.Fields));
 
-            return Ok(new { id = package.Id, state = package.State.ToString() });
+            var response = new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Re-upload requested"
+            };
+
+            return Ok(response);
         }
         catch (Exception ex)
         {
@@ -400,34 +1245,78 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// Submit/finalize a package for processing
+    /// Submit/finalize a package for AI processing workflow (Agency role only).
+    /// For Draft packages (conversational flow): validates completeness, generates submission number,
+    /// auto-assigns CIRCLE HEAD, transitions Draft → Uploaded, and queues workflow.
+    /// For Uploaded packages (legacy flow): validates minimum docs and queues workflow.
     /// </summary>
+    /// <param name="packageId">Unique identifier of the package to submit</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Submission status indicating package is queued for processing</returns>
+    /// <response code="200">Package submitted for processing</response>
+    /// <response code="400">Bad request - missing required documents or package not in correct state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - Agency role required or user does not own package</response>
+    /// <response code="404">Not found - package does not exist</response>
+    /// <response code="500">Internal server error</response>
     [HttpPost("{packageId}/submit")]
     [Authorize(Roles = "Agency")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> SubmitPackage(Guid packageId, CancellationToken cancellationToken)
     {
         try
         {
-            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new System.UnauthorizedAccessException());
+            // Try both claim types for compatibility
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                _logger.LogWarning("User ID claim not found in token");
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+            _logger.LogInformation("User {UserId} submitting package {PackageId}", userId, packageId);
 
             var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
-                .FirstOrDefaultAsync(p => p.Id == packageId && p.SubmittedByUserId == userId, cancellationToken);
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
+                .Include(p => p.Teams.Where(c => !c.IsDeleted))
+                    .ThenInclude(c => c.Photos.Where(ph => !ph.IsDeleted))
+                .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
+                .Include(p => p.EnquiryDocument)
+                .AsSplitQuery()
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
             {
-                return NotFound(new { error = "Package not found or access denied" });
+                _logger.LogWarning("Package {PackageId} not found", packageId);
+                return NotFound(new { error = "Package not found" });
             }
 
-            if (package.State != PackageState.Uploaded)
+            // Verify ownership
+            if (package.SubmittedByUserId != userId)
             {
-                return BadRequest(new { error = $"Package is already in {package.State} state" });
+                _logger.LogWarning("User {UserId} attempted to submit package {PackageId} owned by {OwnerId}", 
+                    userId, packageId, package.SubmittedByUserId);
+                return Forbid();
+            }
+
+            // State enforcement: only Draft or Uploaded can be submitted
+            if (package.State != PackageState.Draft && package.State != PackageState.Uploaded)
+            {
+                _logger.LogWarning("Package {PackageId} is in state {State}, cannot submit", packageId, package.State);
+                return BadRequest(new { error = $"Package is already in {package.State} state. Only Draft or Uploaded packages can be submitted." });
             }
 
             // Verify minimum required documents
-            var hasPO = package.Documents.Any(d => d.Type == DocumentType.PO);
-            var hasInvoice = package.Documents.Any(d => d.Type == DocumentType.Invoice);
-            var hasCostSummary = package.Documents.Any(d => d.Type == DocumentType.CostSummary);
+            var hasPO = package.PO != null;
+            var hasInvoice = package.Invoices.Any(i => !i.IsDeleted);
+            var hasCostSummary = package.CostSummary != null;
+
+            var invoiceCount = package.Invoices.Count(i => !i.IsDeleted);
+            _logger.LogInformation("Package {PackageId} document check: PO={HasPO}, Invoice={HasInvoice} (InvoiceCount={InvoiceCount}), CostSummary={HasCostSummary}", 
+                packageId, hasPO, hasInvoice, invoiceCount, hasCostSummary);
 
             if (!hasPO)
             {
@@ -444,27 +1333,99 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = "Cost Summary document is required" });
             }
 
-            _logger.LogInformation("Submitting package {PackageId} for processing", packageId);
-
-            // Trigger workflow orchestrator asynchronously
-            _ = Task.Run(async () =>
+            // Conversational flow (Draft) additional validations
+            if (package.State == PackageState.Draft)
             {
-                try
+                // Activity Summary is mandatory
+                if (package.ActivitySummary == null)
                 {
-                    await _orchestrator.ProcessSubmissionAsync(packageId, CancellationToken.None);
+                    return BadRequest(new { error = "Activity Summary document is required" });
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing package {PackageId}", packageId);
-                }
-            }, cancellationToken);
 
-            return Ok(new 
-            { 
-                message = "Package submitted for processing", 
+                // Enquiry Dump is mandatory
+                if (package.EnquiryDocument == null)
+                {
+                    return BadRequest(new { error = "Enquiry Dump document is required" });
+                }
+
+                // At least 1 team with at least 3 photos
+                var teamsWithPhotos = package.Teams.Where(t => t.Photos.Count(p => !p.IsDeleted) >= 3).ToList();
+                if (!teamsWithPhotos.Any())
+                {
+                    return BadRequest(new { error = "At least one team with a minimum of 3 photos is required" });
+                }
+
+                // State must be set
+                if (string.IsNullOrEmpty(package.ActivityState))
+                {
+                    return BadRequest(new { error = "Activity state/region must be set before submission" });
+                }
+
+                // Generate submission number
+                var submissionNumber = await _submissionNumberService.GenerateAsync(cancellationToken);
+                package.SubmissionNumber = submissionNumber;
+
+                // Auto-assign CIRCLE HEAD
+                var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, cancellationToken);
+                package.AssignedCircleHeadUserId = circleHeadUserId;
+
+                if (circleHeadUserId == null)
+                {
+                    _logger.LogWarning("No CIRCLE HEAD found for state {State}, flagging for manual assignment", package.ActivityState);
+                    _context.AuditLogs.Add(new Domain.Entities.AuditLog
+                    {
+                        Id = Guid.NewGuid(),
+                        UserId = userId,
+                        Action = "ManualAssignmentRequired",
+                        EntityType = "DocumentPackage",
+                        EntityId = package.Id,
+                        NewValuesJson = JsonSerializer.Serialize(new { State = package.ActivityState, Reason = "No CIRCLE HEAD found" }),
+                        IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        UserAgent = Request.Headers.UserAgent.ToString(),
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+
+                // Transition Draft → Uploaded (triggers workflow)
+                package.State = PackageState.Uploaded;
+                package.CurrentStep = 10; // Submitted step
+            }
+
+            var docCount = (package.PO != null ? 1 : 0) + package.Invoices.Count(i => !i.IsDeleted) + (package.CostSummary != null ? 1 : 0);
+            _logger.LogInformation("Submitting package {PackageId} for processing with {Count} documents", 
+                packageId, docCount);
+
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
                 packageId,
-                documentCount = package.Documents.Count
-            });
+                new
+                {
+                    submissionId = packageId,
+                    newStatus = package.State.ToString(),
+                    assignedTo = package.AssignedCircleHeadUserId
+                },
+                cancellationToken);
+
+            // Queue workflow for background processing
+            await _backgroundQueue.QueueWorkflowAsync(packageId);
+            
+            _logger.LogInformation("Package {PackageId} queued for background processing", packageId);
+
+            var response = new SubmissionStatusResponse
+            {
+                Id = packageId,
+                State = package.State.ToString(),
+                DocumentCount = docCount,
+                Status = "Queued for processing",
+                Message = package.SubmissionNumber != null 
+                    ? $"Package submitted successfully. Submission number: {package.SubmissionNumber}" 
+                    : "Package submitted for processing"
+            };
+
+            return Ok(response);
         }
         catch (Exception ex)
         {
@@ -474,10 +1435,19 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
-    /// Manually move submission to PendingApproval state (for testing without Azure services)
+    /// Manually move submission to PendingApproval state for testing without Azure services
     /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Submission moved to PendingApproval</response>
+    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
     [HttpPatch("{id}/move-to-pending")]
     [Authorize]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> MoveToPendingApproval(Guid id, CancellationToken cancellationToken)
     {
         try
@@ -493,16 +1463,23 @@ public class SubmissionsController : ControllerBase
             // Only allow moving from Uploaded state
             if (package.State != PackageState.Uploaded)
             {
-                return BadRequest(new { error = $"Cannot move submission from {package.State} to PendingApproval" });
+                return BadRequest(new { error = $"Cannot move submission from {package.State} to PendingASM" });
             }
 
-            package.State = PackageState.PendingApproval;
+            package.State = PackageState.PendingASM;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} manually moved to PendingApproval", id);
+            _logger.LogInformation("Submission {Id} manually moved to PendingASM", id);
 
-            return Ok(new { id = package.Id, state = package.State.ToString() });
+            var response = new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Moved to PendingASM"
+            };
+
+            return Ok(response);
         }
         catch (Exception ex)
         {
@@ -510,10 +1487,553 @@ public class SubmissionsController : ControllerBase
             return StatusCode(500, new { error = "An error occurred while updating submission state" });
         }
     }
+
+    /// <summary>
+    /// Update campaign and dealership details for a submission
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Campaign and dealership data to update</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Campaign data updated successfully</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/campaign-dates")]
+    [HttpPatch("{id}/campaign-data")] // Alias route
+    [Authorize] // Allow any authenticated user
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateCampaignData(Guid id, [FromBody] UpdateCampaignDataRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var package = await _context.DocumentPackages
+                .Include(p => p.Teams)
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+            
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            // Update first team's campaign fields (or create a team if none exists)
+            var team = package.Teams.FirstOrDefault();
+            if (team == null)
+            {
+                team = new Domain.Entities.Teams
+                {
+                    Id = Guid.NewGuid(),
+                    PackageId = id,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _context.Teams.Add(team);
+            }
+
+            // Update campaign fields on team
+            if (request.CampaignStartDate.HasValue)
+                team.StartDate = request.CampaignStartDate.Value;
+            if (request.CampaignEndDate.HasValue)
+                team.EndDate = request.CampaignEndDate.Value;
+            if (request.CampaignWorkingDays.HasValue)
+                team.WorkingDays = request.CampaignWorkingDays.Value;
+
+            // Update dealership fields on team
+            if (!string.IsNullOrEmpty(request.DealershipName))
+                team.DealershipName = request.DealershipName;
+            if (!string.IsNullOrEmpty(request.DealershipAddress))
+                team.DealershipAddress = request.DealershipAddress;
+            if (!string.IsNullOrEmpty(request.GpsLocation))
+                team.GPSLocation = request.GpsLocation;
+
+            team.UpdatedAt = DateTime.UtcNow;
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "Campaign/dealership data updated for submission {Id}: Dealership={Dealership}, GPS={GPS}",
+                id, request.DealershipName, request.GpsLocation);
+
+            return Ok(new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Campaign and dealership data updated successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating campaign data for submission {Id}", id);
+            return StatusCode(500, new { error = "An error occurred while updating campaign data" });
+        }
+    }
+
+    /// <summary>
+    /// Queue package for background processing (fast - returns immediately)
+    /// </summary>
+    /// <param name="packageId">Unique identifier of the package to process</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Acknowledgment that processing has been queued</returns>
+    [HttpPost("{packageId}/process-async")]
+    [Authorize]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status202Accepted)]
+    public async Task<IActionResult> ProcessPackageAsync(Guid packageId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Package not found" });
+            }
+
+            // Queue for background processing - returns immediately
+            await _backgroundQueue.QueueWorkflowAsync(packageId);
+            
+            _logger.LogInformation("Package {PackageId} queued for background processing", packageId);
+
+            return Accepted(new SubmissionStatusResponse
+            {
+                Id = packageId,
+                Success = true,
+                CurrentState = package.State.ToString(),
+                Message = "Submission received. Processing in background."
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error queuing package {PackageId}", packageId);
+            return StatusCode(500, new { error = "An error occurred" });
+        }
+    }
+
+    /// <summary>
+    /// Manually trigger synchronous workflow processing for a package (for testing and debugging)
+    /// </summary>
+    /// <param name="packageId">Unique identifier of the package to process</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Workflow execution result with success status and current package state</returns>
+    /// <response code="200">Workflow completed (check success flag and message for result)</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="404">Not found - package does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPost("{packageId}/process-now")]
+    [Authorize]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ProcessPackageNow(Guid packageId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation("Manual workflow trigger requested for package {PackageId}", packageId);
+
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Package not found" });
+            }
+
+            _logger.LogInformation("Starting synchronous workflow for package {PackageId}", packageId);
+            
+            // Run workflow synchronously for testing
+            var result = await _orchestrator.ProcessSubmissionAsync(packageId, cancellationToken);
+            
+            _logger.LogInformation("Workflow completed for package {PackageId}, Result: {Result}", packageId, result);
+
+            // Reload package to get updated state
+            package = await _context.DocumentPackages
+                .Include(p => p.ConfidenceScore)
+                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+
+            var response = new SubmissionStatusResponse
+            {
+                Id = packageId,
+                Success = result,
+                CurrentState = package?.State.ToString() ?? "Unknown",
+                Message = result ? "Workflow completed successfully" : "Workflow failed - check logs"
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing package {PackageId}", packageId);
+            return StatusCode(500, new { error = "An error occurred while processing the package" });
+        }
+    }
+
+    // CHANGE: Added BuildValidationDetails to show all validation checks with meaningful messages
+    // CHANGE: Rewritten BuildValidationDetails to show all 43+ checks individually, line by line
+    /// <summary>
+    /// Builds a single string showing ALL individual validation checks (43+) with pass/fail status
+    /// </summary>
+    private static string BuildValidationDetails(Domain.Entities.ValidationResult vr)
+    {
+        var checks = new List<string>();
+        System.Text.Json.JsonElement json = default;
+        bool hasJson = false;
+
+        if (!string.IsNullOrEmpty(vr.ValidationDetailsJson))
+        {
+            try
+            {
+                json = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(vr.ValidationDetailsJson);
+                hasJson = true;
+            }
+            catch { }
+        }
+
+        // CHANGE: Read FileNames from validation JSON to show which file each check refers to
+        var fileNames = new Dictionary<string, string>();
+        if (hasJson && json.TryGetProperty("FileNames", out var fnEl) && fnEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var prop in fnEl.EnumerateObject())
+            {
+                var val = prop.Value.GetString();
+                if (!string.IsNullOrEmpty(val)) fileNames[prop.Name] = val;
+            }
+        }
+        // CHANGE: Helper to get filename label like " (Invoice_March.pdf)" for a document type
+        string Fn(string docType) => fileNames.TryGetValue(docType, out var name) ? $" ({name})" : "";
+
+        // ===== GENERAL CHECKS (6) =====
+        if (vr.SapVerificationPassed)
+            checks.Add($"SAP Verification{Fn("PO")}: Pass - PO verified against SAP records");
+        else
+            checks.Add($"SAP Verification{Fn("PO")}: Fail - " + (hasJson ? SafeGetString(json, "SAPVerification", "Discrepancies") ?? "PO could not be verified in SAP" : "PO could not be verified in SAP"));
+
+        checks.Add(vr.AmountConsistencyPassed
+            ? "Amount Consistency: Pass - Invoice and Cost Summary amounts are consistent"
+            : "Amount Consistency: Fail - Invoice and Cost Summary amounts do not match");
+
+        if (vr.LineItemMatchingPassed)
+            checks.Add("Line Item Matching: Pass - All PO line items found in Invoice");
+        else
+        {
+            var detail = hasJson ? SafeGetString(json, "LineItemMatching", "MissingItemCodes") : null;
+            checks.Add("Line Item Matching: Fail - " + (detail != null ? $"Missing PO line items in Invoice: {detail}" : "Some PO line items missing in Invoice"));
+        }
+
+        if (vr.CompletenessCheckPassed)
+            checks.Add("Completeness Check: Pass - All required documents are present");
+        else
+            checks.Add("Completeness Check: Fail - " + (hasJson ? SafeGetString(json, "Completeness", "MissingItems") ?? "Some required documents are missing" : "Some required documents are missing"));
+
+        if (vr.DateValidationPassed)
+            checks.Add("Date Validation: Pass - All dates are valid and consistent");
+        else
+            checks.Add("Date Validation: Fail - " + (hasJson ? SafeGetString(json, "DateValidation", "DateIssues") ?? "Date inconsistencies found" : "Date inconsistencies found"));
+
+        checks.Add(vr.VendorMatchingPassed
+            ? "Vendor Matching: Pass - Vendor name matches across PO and Invoice"
+            : "Vendor Matching: Fail - Vendor name mismatch between PO and Invoice");
+
+        if (hasJson)
+        {
+            // CHANGE: Use Fn() to prepend filename to each document-specific check
+            var invLabel = $"Invoice{Fn("Invoice")}";
+            var csLabel = $"Cost Summary{Fn("CostSummary")}";
+            var actLabel = $"Activity{Fn("Activity")}";
+            var edLabel = $"Enquiry Dump{Fn("EnquiryDump")}";
+            // CHANGE: For photos, list all photo filenames together
+            var photoFileList = fileNames.Where(kv => kv.Key.StartsWith("Photo_")).Select(kv => kv.Value).ToList();
+            var photoLabel = photoFileList.Any() ? $"Photo ({string.Join(", ", photoFileList)})" : "Photo";
+
+            // ===== INVOICE FIELD PRESENCE — 13 individual checks =====
+            if (SafeSectionExists(json, "InvoiceFieldPresence"))
+            {
+                var mf = SafeGetStringList(json, "InvoiceFieldPresence", "MissingFields");
+                checks.Add(mf.Contains("Agency Name") ? $"{invLabel} - Agency Name: Fail - Missing" : $"{invLabel} - Agency Name: Pass - Present");
+                checks.Add(mf.Contains("Agency Address") ? $"{invLabel} - Agency Address: Fail - Missing" : $"{invLabel} - Agency Address: Pass - Present");
+                checks.Add(mf.Contains("Billing Name") ? $"{invLabel} - Billing Name: Fail - Missing" : $"{invLabel} - Billing Name: Pass - Present");
+                checks.Add(mf.Contains("Billing Address") ? $"{invLabel} - Billing Address: Fail - Missing" : $"{invLabel} - Billing Address: Pass - Present");
+                checks.Add(mf.Contains("State Name/Code") ? $"{invLabel} - State Name/Code: Fail - Missing" : $"{invLabel} - State Name/Code: Pass - Present");
+                checks.Add(mf.Contains("Invoice Number") ? $"{invLabel} - Invoice Number: Fail - Missing" : $"{invLabel} - Invoice Number: Pass - Present");
+                checks.Add(mf.Contains("Invoice Date") ? $"{invLabel} - Invoice Date: Fail - Missing" : $"{invLabel} - Invoice Date: Pass - Present");
+                checks.Add(mf.Contains("Vendor Code") ? $"{invLabel} - Vendor Code: Fail - Missing" : $"{invLabel} - Vendor Code: Pass - Present");
+                checks.Add(mf.Contains("PO Number") ? $"{invLabel} - PO Number: Fail - Missing" : $"{invLabel} - PO Number: Pass - Present");
+                checks.Add(mf.Contains("GST Number") ? $"{invLabel} - GST Number: Fail - Missing" : $"{invLabel} - GST Number: Pass - Present");
+                checks.Add(mf.Contains("GST Percentage") ? $"{invLabel} - GST Percentage: Fail - Missing" : $"{invLabel} - GST Percentage: Pass - Present");
+                checks.Add(mf.Contains("HSN/SAC Code") ? $"{invLabel} - HSN/SAC Code: Fail - Missing" : $"{invLabel} - HSN/SAC Code: Pass - Present");
+                checks.Add(mf.Contains("Invoice Amount") ? $"{invLabel} - Invoice Amount: Fail - Missing" : $"{invLabel} - Invoice Amount: Pass - Present");
+            }
+
+            // ===== INVOICE CROSS-DOCUMENT — 6 individual checks =====
+            if (SafeSectionExists(json, "InvoiceCrossDocument"))
+            {
+                var issues = SafeGetStringList(json, "InvoiceCrossDocument", "Issues");
+                var sec = SafeGetSection(json, "InvoiceCrossDocument");
+
+                var agencyCodeMatch = SafeGetBoolProp(sec, "AgencyCodeMatches");
+                checks.Add(agencyCodeMatch == true ? $"{invLabel} - Agency Code match with PO: Pass - Matches"
+                    : agencyCodeMatch == false ? $"{invLabel} - Agency Code match with PO: Fail - " + (FindIssue(issues, "Agency Code") ?? "Mismatch")
+                    : $"{invLabel} - Agency Code match with PO: Pass - Not applicable (field empty)");
+
+                var poMatch = SafeGetBoolProp(sec, "PONumberMatches");
+                checks.Add(poMatch == true ? $"{invLabel} - PO Number match with PO: Pass - Matches"
+                    : poMatch == false ? $"{invLabel} - PO Number match with PO: Fail - " + (FindIssue(issues, "PO Number") ?? "Mismatch")
+                    : $"{invLabel} - PO Number match with PO: Pass - Not applicable (field empty)");
+
+                var gstMatch = SafeGetBoolProp(sec, "GSTStateMatches");
+                checks.Add(gstMatch == true ? $"{invLabel} - GST Number match with State: Pass - GST matches state code"
+                    : gstMatch == false ? $"{invLabel} - GST Number match with State: Fail - " + (FindIssue(issues, "GST") ?? "GST-State mismatch")
+                    : $"{invLabel} - GST Number match with State: Pass - Not applicable (field empty)");
+
+                var hsnValid = SafeGetBoolProp(sec, "HSNSACCodeValid");
+                checks.Add(hsnValid == true ? $"{invLabel} - HSN/SAC Code valid: Pass - Valid code"
+                    : hsnValid == false ? $"{invLabel} - HSN/SAC Code valid: Fail - " + (FindIssue(issues, "HSN") ?? "Invalid code")
+                    : $"{invLabel} - HSN/SAC Code valid: Pass - Not applicable (field empty)");
+
+                var amtValid = SafeGetBoolProp(sec, "InvoiceAmountValid");
+                checks.Add(amtValid == true ? $"{invLabel} - Amount <= PO Amount: Pass - Invoice amount within PO limit"
+                    : $"{invLabel} - Amount <= PO Amount: Fail - " + (FindIssue(issues, "Invoice amount") ?? "Invoice exceeds PO amount"));
+
+                var gstPctValid = SafeGetBoolProp(sec, "GSTPercentageValid");
+                checks.Add(gstPctValid == true ? $"{invLabel} - GST% match with State: Pass - GST percentage matches state rate"
+                    : gstPctValid == false ? $"{invLabel} - GST% match with State: Fail - " + (FindIssue(issues, "GST Percentage") ?? "GST% mismatch")
+                    : $"{invLabel} - GST% match with State: Pass - Not applicable");
+            }
+
+            // ===== COST SUMMARY FIELD PRESENCE — 6 individual checks =====
+            if (SafeSectionExists(json, "CostSummaryFieldPresence"))
+            {
+                var mf = SafeGetStringList(json, "CostSummaryFieldPresence", "MissingFields");
+                checks.Add(mf.Any(f => f.Contains("Place of Supply") || f.Contains("State")) ? $"{csLabel} - State/Place of Supply: Fail - Missing" : $"{csLabel} - State/Place of Supply: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Element wise Cost")) ? $"{csLabel} - Element wise Cost: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Element wise Cost")) ?? "Missing") : $"{csLabel} - Element wise Cost: Pass - Present");
+                checks.Add(mf.Contains("Number of Days") ? $"{csLabel} - No of Days: Fail - Missing" : $"{csLabel} - No of Days: Pass - Present");
+                checks.Add(mf.Contains("Number of Activations") ? $"{csLabel} - No of Activations: Fail - Missing" : $"{csLabel} - No of Activations: Pass - Present");
+                checks.Add(mf.Contains("Number of Teams") ? $"{csLabel} - No of Teams: Fail - Missing" : $"{csLabel} - No of Teams: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Element wise Quantity")) ? $"{csLabel} - Element wise Quantity: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Element wise Quantity")) ?? "Missing") : $"{csLabel} - Element wise Quantity: Pass - Present");
+            }
+
+            // ===== COST SUMMARY CROSS-DOCUMENT — 4 individual checks =====
+            if (SafeSectionExists(json, "CostSummaryCrossDocument"))
+            {
+                var sec = SafeGetSection(json, "CostSummaryCrossDocument");
+                var issues = SafeGetStringList(json, "CostSummaryCrossDocument", "Issues");
+                checks.Add(SafeGetBoolProp(sec, "TotalCostValid") == true ? $"{csLabel} - Total Cost <= Invoice Amount: Pass - Within limit" : $"{csLabel} - Total Cost <= Invoice Amount: Fail - " + (FindIssue(issues, "total") ?? "Exceeds Invoice amount"));
+                checks.Add(SafeGetBoolProp(sec, "ElementCostsValid") == true ? $"{csLabel} - Element wise Cost match State rates: Pass - Matches" : $"{csLabel} - Element wise Cost match State rates: Fail - " + (FindIssue(issues, "Element") ?? "Does not match state rates"));
+                checks.Add(SafeGetBoolProp(sec, "FixedCostsValid") == true ? $"{csLabel} - Fixed Cost Limits: Pass - Within state limits" : $"{csLabel} - Fixed Cost Limits: Fail - " + (FindIssue(issues, "Fixed") ?? "Exceeds state limits"));
+                checks.Add(SafeGetBoolProp(sec, "VariableCostsValid") == true ? $"{csLabel} - Variable Cost Limits: Pass - Within state limits" : $"{csLabel} - Variable Cost Limits: Fail - " + (FindIssue(issues, "Variable") ?? "Exceeds state limits"));
+            }
+
+            // ===== ACTIVITY FIELD PRESENCE — 2 individual checks =====
+            if (SafeSectionExists(json, "ActivityFieldPresence"))
+            {
+                var mf = SafeGetStringList(json, "ActivityFieldPresence", "MissingFields");
+                checks.Add(mf.Any(f => f.Contains("Dealer") || f.Contains("Location")) ? $"{actLabel} - Dealer and Location details: Fail - " + string.Join(", ", mf.Where(f => f.Contains("Dealer") || f.Contains("Location"))) : $"{actLabel} - Dealer and Location details: Pass - Present");
+                checks.Add(mf.Any(f => f.Contains("days") || f.Contains("Day")) ? $"{actLabel} - No of days in each Location: Fail - Missing" : $"{actLabel} - No of days in each Location: Pass - Present");
+            }
+
+            // ===== ACTIVITY CROSS-DOCUMENT — 1 check =====
+            if (SafeSectionExists(json, "ActivityCrossDocument"))
+            {
+                var issues = SafeGetStringList(json, "ActivityCrossDocument", "Issues");
+                var sec = SafeGetSection(json, "ActivityCrossDocument");
+                checks.Add(SafeGetBoolProp(sec, "NumberOfDaysMatches") == true ? $"{actLabel} - No of days match with Cost Summary: Pass - Days match" : $"{actLabel} - No of days match with Cost Summary: Fail - " + (issues.FirstOrDefault() ?? "Days mismatch"));
+            }
+
+            // ===== PHOTO FIELD PRESENCE — 4 individual checks =====
+            if (SafeSectionExists(json, "PhotoFieldPresence"))
+            {
+                var mf = SafeGetStringList(json, "PhotoFieldPresence", "MissingFields");
+                checks.Add(mf.Any(f => f.Contains("Date")) ? $"{photoLabel} - Date: Fail - " + (mf.FirstOrDefault(f => f.Contains("Date")) ?? "Missing") : $"{photoLabel} - Date: Pass - Present");
+                checks.Add(mf.Any(f => f.Contains("Location") || f.Contains("coordinates")) ? $"{photoLabel} - Lat Long: Fail - " + (mf.FirstOrDefault(f => f.Contains("Location") || f.Contains("coordinates")) ?? "Missing") : $"{photoLabel} - Lat Long: Pass - Present");
+                checks.Add(mf.Any(f => f.Contains("blue t-shirt")) ? $"{photoLabel} - Person with Blue T-shirt: Fail - Not detected" : $"{photoLabel} - Person with Blue T-shirt: Pass - Detected");
+                checks.Add(mf.Any(f => f.Contains("Bajaj vehicle") || f.Contains("3W")) ? $"{photoLabel} - 3W Vehicle: Fail - Not detected" : $"{photoLabel} - 3W Vehicle: Pass - Detected");
+            }
+
+            // ===== PHOTO CROSS-DOCUMENT — 1 check =====
+            if (SafeSectionExists(json, "PhotoCrossDocument"))
+            {
+                var issues = SafeGetStringList(json, "PhotoCrossDocument", "Issues");
+                checks.Add(SafeGetBoolProp(SafeGetSection(json, "PhotoCrossDocument"), "PhotoCountMatchesManDays") == true ? $"{photoLabel} - No of days match with Cost Summary: Pass - Photo count matches" : $"{photoLabel} - No of days match with Cost Summary: Fail - " + (issues.FirstOrDefault() ?? "Photo count mismatch"));
+            }
+
+            // ===== ENQUIRY DUMP FIELD PRESENCE — 9 individual checks =====
+            if (SafeSectionExists(json, "EnquiryDumpFieldPresence"))
+            {
+                var mf = SafeGetStringList(json, "EnquiryDumpFieldPresence", "MissingFields");
+                checks.Add(mf.Any(f => f.StartsWith("State")) ? $"{edLabel} - State: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("State")) ?? "Missing") : $"{edLabel} - State: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Date")) ? $"{edLabel} - Date: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Date")) ?? "Missing") : $"{edLabel} - Date: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Dealer Code")) ? $"{edLabel} - Dealer Code: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Dealer Code")) ?? "Missing") : $"{edLabel} - Dealer Code: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Dealer Name")) ? $"{edLabel} - Dealer Name: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Dealer Name")) ?? "Missing") : $"{edLabel} - Dealer Name: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("District")) ? $"{edLabel} - District: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("District")) ?? "Missing") : $"{edLabel} - District: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Pincode")) ? $"{edLabel} - Pincode: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Pincode")) ?? "Missing") : $"{edLabel} - Pincode: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Customer Name")) ? $"{edLabel} - Customer Name: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Customer Name")) ?? "Missing") : $"{edLabel} - Customer Name: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Customer Number")) ? $"{edLabel} - Customer Number: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Customer Number")) ?? "Missing") : $"{edLabel} - Customer Number: Pass - Present");
+                checks.Add(mf.Any(f => f.StartsWith("Test Ride")) ? $"{edLabel} - Test Ride Taken: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Test Ride")) ?? "Missing") : $"{edLabel} - Test Ride Taken: Pass - Present");
+            }
+        }
+
+        return string.Join("; ", checks);
+    }
+
+    private static bool SafeSectionExists(System.Text.Json.JsonElement root, string section)
+    {
+        return root.TryGetProperty(section, out var el) && el.ValueKind != System.Text.Json.JsonValueKind.Null;
+    }
+
+    private static System.Text.Json.JsonElement? SafeGetSection(System.Text.Json.JsonElement root, string section)
+    {
+        if (root.TryGetProperty(section, out var el) && el.ValueKind != System.Text.Json.JsonValueKind.Null)
+            return el;
+        return null;
+    }
+
+    private static bool? SafeGetBoolProp(System.Text.Json.JsonElement? section, string property)
+    {
+        if (section == null) return null;
+        if (section.Value.TryGetProperty(property, out var prop))
+        {
+            if (prop.ValueKind == System.Text.Json.JsonValueKind.True) return true;
+            if (prop.ValueKind == System.Text.Json.JsonValueKind.False) return false;
+        }
+        return null;
+    }
+
+    private static List<string> SafeGetStringList(System.Text.Json.JsonElement root, string section, string arrayProp)
+    {
+        var result = new List<string>();
+        try
+        {
+            if (root.TryGetProperty(section, out var sectionEl) && sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
+            {
+                System.Text.Json.JsonElement arrEl;
+                if (sectionEl.TryGetProperty(arrayProp, out arrEl) || sectionEl.TryGetProperty(char.ToLower(arrayProp[0]) + arrayProp.Substring(1), out arrEl))
+                {
+                    if (arrEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        foreach (var item in arrEl.EnumerateArray())
+                        {
+                            var val = item.GetString();
+                            if (!string.IsNullOrEmpty(val)) result.Add(val);
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+        return result;
+    }
+
+    private static string? SafeGetString(System.Text.Json.JsonElement root, string section, string arrayProp)
+    {
+        var list = SafeGetStringList(root, section, arrayProp);
+        return list.Any() ? string.Join(", ", list) : null;
+    }
+
+    private static string? FindIssue(List<string> issues, string keyword)
+    {
+        return issues.FirstOrDefault(i => i.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Builds a list of SubmissionDocumentDto from dedicated entity navigation properties
+    /// </summary>
+    private static List<SubmissionDocumentDto> BuildDocumentDtos(Domain.Entities.DocumentPackage package)
+    {
+        var docs = new List<SubmissionDocumentDto>();
+
+        if (package.PO != null)
+        {
+            docs.Add(new SubmissionDocumentDto
+            {
+                Id = package.PO.Id,
+                Type = DocumentType.PO.ToString(),
+                Filename = package.PO.FileName,
+                BlobUrl = package.PO.BlobUrl,
+                ExtractionConfidence = package.PO.ExtractionConfidence,
+                ExtractedData = package.PO.ExtractedDataJson
+            });
+        }
+
+        foreach (var invoice in package.Invoices.Where(i => !i.IsDeleted))
+        {
+            docs.Add(new SubmissionDocumentDto
+            {
+                Id = invoice.Id,
+                Type = DocumentType.Invoice.ToString(),
+                Filename = invoice.FileName,
+                BlobUrl = invoice.BlobUrl,
+                ExtractionConfidence = invoice.ExtractionConfidence,
+                ExtractedData = invoice.ExtractedDataJson
+            });
+        }
+
+        return docs;
+    }
 }
 
-public record CreateSubmissionRequest();
+/// <summary>
+/// Request to create a new submission
+/// </summary>
+/// <param name="CampaignStartDate">Campaign start date</param>
+/// <param name="CampaignEndDate">Campaign end date</param>
+/// <param name="CampaignWorkingDays">Number of working days (excluding weekends)</param>
+public record CreateSubmissionRequest(
+    DateTime? CampaignStartDate = null,
+    DateTime? CampaignEndDate = null,
+    int? CampaignWorkingDays = null
+);
 
-public record RejectSubmissionRequest(string Reason);
+/// <summary>
+/// Request to approve a submission
+/// </summary>
+/// <param name="Notes">Optional approval notes</param>
+public record ApproveSubmissionRequest(
+    [StringLength(500, ErrorMessage = "Notes cannot exceed 500 characters")]
+    string? Notes
+);
 
-public record RequestReuploadRequest(List<string> Fields);
+/// <summary>
+/// Request to reject a submission
+/// </summary>
+/// <param name="Reason">Reason for rejection</param>
+public record RejectSubmissionRequest(
+    [Required(ErrorMessage = "Reason is required")]
+    [StringLength(500, MinimumLength = 10, ErrorMessage = "Reason must be between 10 and 500 characters")]
+    string Reason
+);
+
+/// <summary>
+/// Request to resubmit to HQ
+/// </summary>
+/// <param name="Notes">Notes for HQ resubmission</param>
+public record ResubmitToHQRequest(
+    [Required(ErrorMessage = "Notes are required")]
+    [StringLength(500, MinimumLength = 10, ErrorMessage = "Notes must be between 10 and 500 characters")]
+    string Notes
+);
+
+/// <summary>
+/// Request to request document reupload
+/// </summary>
+/// <param name="Fields">List of fields/documents that need to be reuploaded</param>
+public record RequestReuploadRequest(
+    [Required(ErrorMessage = "Fields list is required")]
+    [MinLength(1, ErrorMessage = "At least one field must be specified")]
+    List<string> Fields
+);
+
+/// <summary>
+/// Request to update campaign and dealership data
+/// </summary>
+/// <param name="CampaignStartDate">Campaign start date</param>
+/// <param name="CampaignEndDate">Campaign end date</param>
+/// <param name="CampaignWorkingDays">Number of working days</param>
+/// <param name="DealershipName">Dealership/dealer name</param>
+/// <param name="DealershipAddress">Full address of the dealership</param>
+/// <param name="GpsLocation">GPS coordinates of the location</param>
+/// <param name="TeamsJson">JSON string containing teams/campaign members data</param>
+public record UpdateCampaignDataRequest(
+    DateTime? CampaignStartDate = null,
+    DateTime? CampaignEndDate = null,
+    int? CampaignWorkingDays = null,
+    string? DealershipName = null,
+    string? DealershipAddress = null,
+    string? GpsLocation = null,
+    string? TeamsJson = null
+);

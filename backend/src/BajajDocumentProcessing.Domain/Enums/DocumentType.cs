@@ -1,13 +1,14 @@
 namespace BajajDocumentProcessing.Domain.Enums;
 
 /// <summary>
-/// Types of documents in the system
+/// Types of documents in the system for ValidationResult polymorphic relationships
 /// </summary>
 public enum DocumentType
 {
     PO = 1,
     Invoice = 2,
     CostSummary = 3,
-    Photo = 4,
-    AdditionalDocument = 5
+    ActivitySummary = 4,
+    EnquiryDocument = 5,
+    TeamPhoto = 6
 }

@@ -54,10 +54,17 @@ public class SAPConnectionFailureProperties
         
         mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns(Guid.NewGuid().ToString());
+        
         var validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = validationAgent.VerifySAPPOAsync(poNumber.Get, CancellationToken.None).Result;
@@ -95,10 +102,17 @@ public class SAPConnectionFailureProperties
         
         mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns(Guid.NewGuid().ToString());
+        
         var validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = validationAgent.VerifySAPPOAsync(poNumber.Get, CancellationToken.None).Result;
@@ -141,10 +155,17 @@ public class SAPConnectionFailureProperties
         
         mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns(Guid.NewGuid().ToString());
+        
         var validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = validationAgent.VerifySAPPOAsync(poNumber.Get, CancellationToken.None).Result;
@@ -217,10 +238,17 @@ public class SAPConnectionFailureProperties
         
         mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns(Guid.NewGuid().ToString());
+        
         var validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = validationAgent.VerifySAPPOAsync(poNumber.Get, CancellationToken.None).Result;
@@ -264,10 +292,17 @@ public class SAPConnectionFailureProperties
         
         mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns(Guid.NewGuid().ToString());
+        
         var validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);
@@ -305,10 +340,17 @@ public class SAPConnectionFailureProperties
         
         mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns(Guid.NewGuid().ToString());
+        
         var validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);
@@ -353,10 +395,17 @@ public class SAPConnectionFailureProperties
         
         mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns(Guid.NewGuid().ToString());
+        
         var validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);
@@ -407,10 +456,17 @@ public class SAPConnectionFailureProperties
         
         mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns(Guid.NewGuid().ToString());
+        
         var validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);
@@ -466,10 +522,17 @@ public class SAPConnectionFailureProperties
         
         mockHttpClientFactory.Setup(f => f.CreateClient("SAP")).Returns(httpClient);
 
+        var mockReferenceDataService = new Mock<IReferenceDataService>();
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns(Guid.NewGuid().ToString());
+        
         var validationAgent = new ValidationAgent(
             mockContext.Object,
             mockLogger.Object,
-            mockHttpClientFactory.Object);
+            mockHttpClientFactory.Object,
+            mockReferenceDataService.Object,
+            mockCorrelationIdService.Object,
+            new Mock<IPerceptualHashService>().Object);
 
         // Act
         var result = await validationAgent.VerifySAPPOAsync("PO-12345", CancellationToken.None);

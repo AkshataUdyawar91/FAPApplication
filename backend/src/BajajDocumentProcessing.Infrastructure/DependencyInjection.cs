@@ -25,6 +25,9 @@ public static class DependencyInjection
         services.AddScoped<IApplicationDbContext>(provider => 
             provider.GetRequiredService<ApplicationDbContext>());
 
+        // Add Memory Cache
+        services.AddMemoryCache();
+
         // Authentication service
         services.AddScoped<IAuthService, AuthService>();
 
@@ -32,6 +35,9 @@ public static class DependencyInjection
         services.AddScoped<IFileStorageService, FileStorageService>();
         services.AddScoped<IMalwareScanService, MalwareScanService>();
         services.AddScoped<IDocumentService, DocumentService>();
+        
+        // Azure Document Intelligence
+        services.AddScoped<AzureDocumentIntelligenceService>();
 
         // AI Agents
         services.AddHttpClient<IDocumentAgent, DocumentAgent>();
@@ -47,7 +53,14 @@ public static class DependencyInjection
             client.DefaultRequestHeaders.Add("APIKey", sapApiKey);
             client.Timeout = TimeSpan.FromSeconds(30);
         });
+        services.AddScoped<IReferenceDataService, ReferenceDataService>();
         services.AddScoped<IValidationAgent, ValidationAgent>();
+
+        // Proactive Validator (on-upload field presence checks)
+        services.AddScoped<IProactiveValidator, ProactiveValidator>();
+
+        // Perceptual Hash Service (duplicate image detection)
+        services.AddSingleton<IPerceptualHashService, PerceptualHashService>();
 
         // Confidence Score Service
         services.AddScoped<IConfidenceScoreService, ConfidenceScoreService>();
@@ -55,11 +68,19 @@ public static class DependencyInjection
         // Recommendation Agent
         services.AddScoped<IRecommendationAgent, RecommendationAgent>();
 
+        // Enhanced Validation Report Service
+        services.AddScoped<IEnhancedValidationReportService, EnhancedValidationReportService>();
+
         // Email Agent
         services.AddScoped<IEmailAgent, EmailAgent>();
 
         // Notification Agent
         services.AddScoped<INotificationAgent, NotificationAgent>();
+
+        // Guardrail Services (for Chat)
+        services.AddScoped<IInputGuardrailService, InputGuardrailService>();
+        services.AddScoped<IAuthorizationGuardrailService, AuthorizationGuardrailService>();
+        services.AddScoped<IOutputGuardrailService, OutputGuardrailService>();
 
         // Vector Search and Embedding Services (Optional - for Chat/Analytics features)
         var azureSearchEndpoint = configuration["AzureAISearch:Endpoint"];
@@ -70,8 +91,6 @@ public static class DependencyInjection
             services.AddSingleton<IVectorSearchService, AzureAISearchService>();
             services.AddScoped<IEmbeddingService, EmbeddingService>();
             services.AddScoped<IAnalyticsEmbeddingPipeline, AnalyticsEmbeddingPipeline>();
-            services.AddScoped<IChatService, ChatService>();
-            services.AddScoped<IAnalyticsAgent, AnalyticsAgent>();
         }
         else
         {
@@ -79,9 +98,37 @@ public static class DependencyInjection
             services.AddSingleton<IVectorSearchService, NullVectorSearchService>();
             services.AddScoped<IEmbeddingService, NullEmbeddingService>();
             services.AddScoped<IAnalyticsEmbeddingPipeline, NullAnalyticsEmbeddingPipeline>();
+        }
+        
+        // Chat and Analytics services - always register if Azure OpenAI is configured
+        var azureOpenAIEndpoint = configuration["AzureOpenAI:Endpoint"];
+        var azureOpenAIApiKey = configuration["AzureOpenAI:ApiKey"];
+        
+        if (!string.IsNullOrEmpty(azureOpenAIEndpoint) && !string.IsNullOrEmpty(azureOpenAIApiKey))
+        {
+            services.AddScoped<IChatService, ChatService>();
+            services.AddScoped<IAnalyticsAgent, AnalyticsAgent>();
+        }
+        else
+        {
             services.AddScoped<IChatService, NullChatService>();
             services.AddScoped<IAnalyticsAgent, NullAnalyticsAgent>();
         }
+
+        // Submission Number Service
+        services.AddScoped<ISubmissionNumberService, SubmissionNumberService>();
+
+        // Submission Notification Service (no-op stub until SignalR hub is implemented in Task 11)
+        services.AddScoped<ISubmissionNotificationService, NullSubmissionNotificationService>();
+
+        // Proactive Validation Service
+        services.AddScoped<IProactiveValidationService, ProactiveValidationService>();
+
+        // CIRCLE HEAD Auto-Assignment Service
+        services.AddScoped<ICircleHeadAssignmentService, CircleHeadAssignmentService>();
+
+        // Conversational Submission Service (State Machine)
+        services.AddScoped<IConversationalSubmissionService, ConversationalSubmissionService>();
 
         // Workflow Orchestrator
         services.AddScoped<IWorkflowOrchestrator, WorkflowOrchestrator>();
@@ -92,7 +139,15 @@ public static class DependencyInjection
         // Request Queue Service
         services.AddScoped<IRequestQueueService, RequestQueueService>();
 
+        // Correlation ID Service
+        services.AddScoped<ICorrelationIdService, CorrelationIdService>();
+
         // Azure services configuration will be added in subsequent tasks
+        
+        // Background workflow processor
+        services.AddSingleton<BackgroundWorkflowProcessor>();
+        services.AddHostedService(provider => provider.GetRequiredService<BackgroundWorkflowProcessor>());
+        services.AddSingleton<IBackgroundWorkflowQueue, BackgroundWorkflowQueue>();
         
         return services;
     }

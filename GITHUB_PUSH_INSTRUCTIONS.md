@@ -1,17 +1,39 @@
 # GitHub Push Instructions
 
+## ✅ RESOLVED: Successfully Pushed to GitHub
+
+The code has been successfully pushed to the `guidelines-update` branch.
+
+**Create Pull Request:** https://github.com/AkshataUdyawar91/FAPApplication/pull/new/guidelines-update
+
+## Issue Resolution
+
+The push was initially blocked by GitHub's Secret Scanning Push Protection because Azure API keys were committed in `appsettings.json`. 
+
+**Solution Applied:**
+1. Removed all Azure API keys and secrets from `appsettings.json`
+2. Replaced with placeholder values (e.g., `YOUR_AZURE_OPENAI_API_KEY`)
+3. Amended the commit to remove secrets from git history
+4. Successfully pushed to new branch `guidelines-update`
+
 ## Current Situation
 
-There are nested git repositories:
-- `backend/.git` - Git initialized in backend folder
-- Need to push entire project to: https://github.com/AkshataUdyawar91/FAPApplication.git
+Repository: https://github.com/AkshataUdyawar91/FAPApplication.git
+Branch: `guidelines-update` (successfully pushed)
 
-## Option 1: Push from Root (Recommended)
+## Next Steps
+
+1. **Create Pull Request**: Visit the link above to create a PR from `guidelines-update` to your target branch
+2. **Configure Secrets Locally**: Copy `appsettings.Development.TEMPLATE.json` and add your real Azure keys
+3. **Add to .gitignore**: Ensure `appsettings.Development.json` is in `.gitignore` to prevent future secret leaks
+
+## Important Security Notes
 
 Run these commands from the root `FAPLatest` directory:
 
 ```bash
 # Remove nested git folders
+Remove-Item -Path "backend\.git" -Recurse -Force
 Remove-Item -Path "backend\.git" -Recurse -Force
 Remove-Item -Path "frontend\.git" -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -70,7 +92,31 @@ git push -u origin main --force
 
 ## Important Notes
 
-### Before Pushing
+## Important Security Notes
+
+### GitHub Secret Scanning
+
+GitHub automatically scans commits for secrets (API keys, tokens, passwords). If detected:
+- Push will be blocked with error: "GH013: Repository rule violations found"
+- You'll see which files contain secrets
+- You must remove secrets before pushing
+
+### Best Practices
+
+1. **Never commit real API keys** - Use placeholders in committed files
+2. **Use appsettings.Development.json** for local secrets (add to .gitignore)
+3. **Use Azure Key Vault** in production
+4. **Use environment variables** for CI/CD pipelines
+5. **Rotate compromised keys immediately** if accidentally pushed
+
+### If You Accidentally Push Secrets
+
+1. **Rotate the keys immediately** in Azure Portal
+2. **Remove from git history**: Use `git filter-branch` or BFG Repo-Cleaner
+3. **Force push** the cleaned history
+4. **Notify your team** about the key rotation
+
+## Previous Instructions (For Reference)
 
 1. **Verify .gitignore** - Check that sensitive files are excluded:
    - `appsettings.Development.json` (contains Azure API keys)

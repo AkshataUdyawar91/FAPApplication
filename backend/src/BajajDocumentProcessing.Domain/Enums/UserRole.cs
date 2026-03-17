@@ -7,5 +7,6 @@ public enum UserRole
 {
     Agency = 1,
     ASM = 2,
-    HQ = 3
+    RA = 3,
+    Admin = 4
 }

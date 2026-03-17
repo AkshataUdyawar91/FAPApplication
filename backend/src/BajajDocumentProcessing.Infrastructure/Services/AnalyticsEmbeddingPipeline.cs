@@ -82,14 +82,16 @@ public class AnalyticsEmbeddingPipeline : IAnalyticsEmbeddingPipeline
         }
 
         // Group by state and aggregate (using a placeholder for now - will be enhanced with actual state/location data)
-        var stateGroups = packages.GroupBy(p => "Unknown"); // TODO: Add State/Location field to DocumentPackage
+        // NOTE: Future enhancement - Add State/Location field to DocumentPackage entity for geographic analytics.
+        // This requires domain model changes and database migration. Currently using "Unknown" as placeholder.
+        var stateGroups = packages.GroupBy(p => "Unknown");
         foreach (var stateGroup in stateGroups)
         {
             var state = stateGroup.Key;
             var statePackages = stateGroup.ToList();
 
             var approvedCount = statePackages.Count(p => p.State == PackageState.Approved);
-            var rejectedCount = statePackages.Count(p => p.State == PackageState.Rejected);
+            var rejectedCount = statePackages.Count(p => p.State == PackageState.ASMRejected || p.State == PackageState.RARejected);
             var totalCount = statePackages.Count;
 
             var avgConfidence = statePackages
@@ -123,7 +125,7 @@ public class AnalyticsEmbeddingPipeline : IAnalyticsEmbeddingPipeline
 
         // Also create an overall aggregate (all states)
         var allApprovedCount = packages.Count(p => p.State == PackageState.Approved);
-        var allRejectedCount = packages.Count(p => p.State == PackageState.Rejected);
+        var allRejectedCount = packages.Count(p => p.State == PackageState.ASMRejected || p.State == PackageState.RARejected);
         var allTotalCount = packages.Count;
 
         var allAvgConfidence = packages

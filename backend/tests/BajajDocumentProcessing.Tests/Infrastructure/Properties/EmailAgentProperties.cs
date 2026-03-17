@@ -250,7 +250,8 @@ public class EmailAgentProperties
         mockConfiguration.Setup(c => c["AzureCommunicationServices:ConnectionString"])
             .Returns("mock-connection-string");
 
-        var agent = new EmailAgent(mockContext.Object, mockConfiguration.Object, mockLogger.Object);
+        var mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        var agent = new EmailAgent(mockContext.Object, mockConfiguration.Object, mockLogger.Object, mockCorrelationIdService.Object);
 
         return (agent, mockContext);
     }
@@ -275,9 +276,8 @@ public class EmailAgentProperties
             Id = packageId,
             SubmittedByUserId = user.Id,
             SubmittedBy = user,
-            State = PackageState.Validated,
-            CreatedAt = DateTime.UtcNow,
-            Documents = new List<Document>()
+            State = PackageState.Validating,
+            CreatedAt = DateTime.UtcNow
         };
 
         var packages = new List<DocumentPackage> { package };

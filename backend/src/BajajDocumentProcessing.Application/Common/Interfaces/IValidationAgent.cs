@@ -61,7 +61,20 @@ public class PackageValidationResult
     public CompletenessResult? Completeness { get; set; }
     public DateValidationResult? DateValidation { get; set; }
     public VendorMatchingResult? VendorMatching { get; set; }
+    public InvoiceFieldPresenceResult? InvoiceFieldPresence { get; set; }
+    public InvoiceCrossDocumentResult? InvoiceCrossDocument { get; set; }
+    public CostSummaryFieldPresenceResult? CostSummaryFieldPresence { get; set; }
+    public CostSummaryCrossDocumentResult? CostSummaryCrossDocument { get; set; }
+    public ActivityFieldPresenceResult? ActivityFieldPresence { get; set; }
+    public ActivityCrossDocumentResult? ActivityCrossDocument { get; set; }
+    public PhotoFieldPresenceResult? PhotoFieldPresence { get; set; }
+    public PhotoCrossDocumentResult? PhotoCrossDocument { get; set; }
+    // CHANGE: Added EnquiryDump validation result properties
+    public EnquiryDumpFieldPresenceResult? EnquiryDumpFieldPresence { get; set; }
+    public EnquiryDumpCrossDocumentResult? EnquiryDumpCrossDocument { get; set; }
     public List<ValidationIssue> Issues { get; set; } = new();
+    // CHANGE: Added FileNames to store uploaded filenames for each document type, shown in validation output
+    public Dictionary<string, string> FileNames { get; set; } = new();
     public DateTime ValidatedAt { get; set; }
 }
 
@@ -148,4 +161,141 @@ public class ValidationIssue
     public string? ExpectedValue { get; set; }
     public string? ActualValue { get; set; }
     public string Severity { get; set; } = "Error"; // Error, Warning
+}
+
+/// <summary>
+/// Invoice field presence validation result
+/// </summary>
+public class InvoiceFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public List<string> MissingFields { get; set; } = new();
+}
+
+/// <summary>
+/// Invoice cross-document validation result
+/// </summary>
+public class InvoiceCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool AgencyCodeMatches { get; set; }
+    public bool PONumberMatches { get; set; }
+    public bool GSTStateMatches { get; set; }
+    public bool HSNSACCodeValid { get; set; }
+    public bool InvoiceAmountValid { get; set; }
+    public bool GSTPercentageValid { get; set; }
+    public List<string> Issues { get; set; } = new();
+}
+
+/// <summary>
+/// Cost Summary field presence validation result
+/// </summary>
+public class CostSummaryFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public List<string> MissingFields { get; set; } = new();
+}
+
+/// <summary>
+/// Cost Summary cross-document validation result
+/// </summary>
+public class CostSummaryCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool TotalCostValid { get; set; }
+    public bool ElementCostsValid { get; set; }
+    public bool FixedCostsValid { get; set; }
+    public bool VariableCostsValid { get; set; }
+    public List<string> Issues { get; set; } = new();
+}
+
+/// <summary>
+/// Activity Summary field presence validation result
+/// </summary>
+public class ActivityFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public List<string> MissingFields { get; set; } = new();
+}
+
+/// <summary>
+/// Activity Summary cross-document validation result
+/// </summary>
+public class ActivityCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool NumberOfDaysMatches { get; set; }
+    public List<string> Issues { get; set; } = new();
+}
+
+/// <summary>
+/// Photo Proofs field presence validation result
+/// </summary>
+public class PhotoFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public int TotalPhotos { get; set; }
+    public int PhotosWithDate { get; set; }
+    public int PhotosWithLocation { get; set; }
+    public int PhotosWithBlueTshirt { get; set; }
+    public int PhotosWithVehicle { get; set; }
+    public int PhotosWithFace { get; set; }
+    public List<DuplicatePhotoPair> DuplicatePhotos { get; set; } = new();
+    public List<string> MissingFields { get; set; } = new();
+}
+
+/// <summary>
+/// Represents a pair of photos detected as duplicates via perceptual hashing.
+/// </summary>
+public class DuplicatePhotoPair
+{
+    public string Photo1FileName { get; set; } = string.Empty;
+    public string Photo2FileName { get; set; } = string.Empty;
+    public double SimilarityScore { get; set; }
+}
+
+/// <summary>
+/// Photo Proofs cross-document validation result
+/// </summary>
+public class PhotoCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool PhotoCountMatchesManDays { get; set; }
+    public bool ManDaysWithinCostSummaryDays { get; set; }
+    public int PhotoCount { get; set; }
+    public int ManDays { get; set; }
+    public int CostSummaryDays { get; set; }
+    public List<string> Issues { get; set; } = new();
+}
+
+// CHANGE: Added EnquiryDumpFieldPresenceResult for Enquiry Dump field validation
+/// <summary>
+/// Enquiry Dump field presence validation result
+/// </summary>
+public class EnquiryDumpFieldPresenceResult
+{
+    public bool AllFieldsPresent { get; set; }
+    public int TotalRecords { get; set; }
+    public int RecordsWithState { get; set; }
+    public int RecordsWithDate { get; set; }
+    public int RecordsWithDealerCode { get; set; }
+    public int RecordsWithDealerName { get; set; }
+    public int RecordsWithDistrict { get; set; }
+    public int RecordsWithPincode { get; set; }
+    public int RecordsWithCustomerName { get; set; }
+    public int RecordsWithCustomerNumber { get; set; }
+    public int RecordsWithTestRide { get; set; }
+    public List<string> MissingFields { get; set; } = new();
+}
+
+// CHANGE: Added EnquiryDumpCrossDocumentResult for cross-document validation
+/// <summary>
+/// Enquiry Dump cross-document validation result
+/// </summary>
+public class EnquiryDumpCrossDocumentResult
+{
+    public bool AllChecksPass { get; set; }
+    public bool StateMatchesActivity { get; set; }
+    public bool DealerDetailsMatchActivity { get; set; }
+    public List<string> Issues { get; set; } = new();
 }

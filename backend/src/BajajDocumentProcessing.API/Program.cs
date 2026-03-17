@@ -5,10 +5,14 @@ using BajajDocumentProcessing.Infrastructure;
 using BajajDocumentProcessing.Infrastructure.Persistence;
 using BajajDocumentProcessing.API.Middleware;
 using BajajDocumentProcessing.API.Filters;
+using BajajDocumentProcessing.API.Hubs;
+using BajajDocumentProcessing.API.Services;
+using BajajDocumentProcessing.Application.Common.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
+builder.Services.AddSignalR();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -40,10 +44,21 @@ builder.Services.AddSwaggerGen(options =>
     
     // Enable file upload support in Swagger
     options.OperationFilter<FileUploadOperationFilter>();
+    
+    // Include XML comments for API documentation
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    options.IncludeXmlComments(xmlPath);
 });
 
 // Add Infrastructure layer
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// Override the no-op notification service with the real SignalR implementation
+builder.Services.AddScoped<ISubmissionNotificationService, SignalRSubmissionNotificationService>();
+
+// Add HttpContextAccessor for CorrelationIdService
+builder.Services.AddHttpContextAccessor();
 
 // Configure JWT Authentication
 var jwtSecret = builder.Configuration["Jwt:SecretKey"] ?? throw new InvalidOperationException("JWT Secret not configured");
@@ -66,7 +81,24 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidAudience = jwtAudience,
         ValidateLifetime = true,
-        ClockSkew = TimeSpan.Zero
+        ClockSkew = TimeSpan.FromMinutes(5),
+        RoleClaimType = System.Security.Claims.ClaimTypes.Role,
+        NameClaimType = System.Security.Claims.ClaimTypes.NameIdentifier
+    };
+
+    // SignalR sends JWT via query string for WebSocket connections
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.HttpContext.Request.Path;
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+            {
+                context.Token = accessToken;
+            }
+            return Task.CompletedTask;
+        }
     };
 });
 
@@ -75,18 +107,19 @@ builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AgencyOnly", policy => policy.RequireRole("Agency"));
     options.AddPolicy("ASMOnly", policy => policy.RequireRole("ASM"));
-    options.AddPolicy("HQOnly", policy => policy.RequireRole("HQ"));
-    options.AddPolicy("ASMOrHQ", policy => policy.RequireRole("ASM", "HQ"));
+    options.AddPolicy("RAOnly", policy => policy.RequireRole("HQ")); // HQ role name kept for DB compatibility
+    options.AddPolicy("ASMOrRA", policy => policy.RequireRole("ASM", "HQ")); // HQ role name kept for DB compatibility
 });
 
-// Configure CORS for Flutter frontend
+// Configure CORS for Flutter frontend and SignalR
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFlutterApp", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.SetIsOriginAllowed(_ => true)
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 
@@ -99,6 +132,9 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var context = services.GetRequiredService<ApplicationDbContext>();
+        // Drop and recreate to pick up all schema changes (dev only)
+        await context.Database.EnsureDeletedAsync();
+        await context.Database.EnsureCreatedAsync();
         await ApplicationDbContextSeed.SeedAsync(context);
     }
     catch (Exception ex)
@@ -109,15 +145,25 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Configure the HTTP request pipeline
-app.UseSwagger();
-app.UseSwaggerUI();
+if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 app.UseHttpsRedirection();
 app.UseCors("AllowFlutterApp");
-// TEMPORARILY DISABLED FOR TESTING
-// app.UseAuthentication();
+
+// Correlation ID middleware - must be early in pipeline
+app.UseMiddleware<CorrelationIdMiddleware>();
+
+// Global exception handling - must be early in pipeline
+app.UseMiddleware<GlobalExceptionMiddleware>();
+
+app.UseAuthentication();
 app.UseAuditLogging();
-// app.UseAuthorization();
+app.UseAuthorization();
 app.MapControllers();
+app.MapHub<SubmissionNotificationHub>("/hubs/submission");
 
 app.Run();

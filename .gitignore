@@ -32,6 +32,8 @@ Thumbs.db
 # Secrets (only exclude production)
 **/appsettings.Production.json
 **/appsettings.Development.json
+**/appsettings.Development.TEMPLATE.json
+**/appsettings.json
 **/*.env
 **/*.env.local
 

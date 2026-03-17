@@ -9,7 +9,7 @@ import '../../domain/usecases/request_reupload_usecase.dart';
 import 'approval_notifier.dart';
 
 final approvalRemoteDataSourceProvider = Provider<ApprovalRemoteDataSource>(
-  (ref) => ApprovalRemoteDataSourceImpl(ref.watch(dioProvider)),
+  (ref) => ApprovalRemoteDataSourceImpl(ref.watch(dioClientProvider)),
 );
 
 final approvalRepositoryProvider = Provider<ApprovalRepository>(

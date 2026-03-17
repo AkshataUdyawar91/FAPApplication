@@ -5,16 +5,20 @@ import 'document_model.dart';
 part 'document_package_model.g.dart';
 
 /// Document package model with JSON serialization
-@JsonSerializable()
+@JsonSerializable(explicitToJson: true)
 class DocumentPackageModel extends DocumentPackage {
+  @override
+  @JsonKey(name: 'documents')
+  final List<DocumentModel> documents;
+
   const DocumentPackageModel({
     required super.id,
     required super.userId,
     required super.state,
     required super.createdAt,
     super.updatedAt,
-    super.documents,
-  });
+    this.documents = const [],
+  }) : super(documents: documents);
 
   factory DocumentPackageModel.fromJson(Map<String, dynamic> json) =>
       _$DocumentPackageModelFromJson(json);
@@ -28,7 +32,20 @@ class DocumentPackageModel extends DocumentPackage {
       state: package.state,
       createdAt: package.createdAt,
       updatedAt: package.updatedAt,
-      documents: package.documents,
+      documents: package.documents.map((doc) {
+        if (doc is DocumentModel) return doc;
+        return DocumentModel(
+          id: doc.id,
+          packageId: doc.packageId,
+          type: doc.type,
+          fileName: doc.fileName,
+          blobUrl: doc.blobUrl,
+          fileSize: doc.fileSize,
+          classificationConfidence: doc.classificationConfidence,
+          extractionConfidence: doc.extractionConfidence,
+          extractedData: doc.extractedData,
+        );
+      }).toList(),
     );
   }
 }

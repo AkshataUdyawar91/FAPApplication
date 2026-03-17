@@ -1,0 +1,154 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Card-Based Layout Detection
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the current card-based layout instead of tabular format
+  - **Scoped PBT Approach**: Navigate to ASM review detail page and verify AI analysis displays as bullet points in colored container, document data displays as inline text within cards, and no table structures with Field-Value columns exist
+  - Test that AI analysis section uses bullet points with check icons in colored container (from Bug Condition in design)
+  - Test that document data appears as inline text strings rather than structured tables
+  - Test that no Table or DataTable widgets exist for document information display
+  - The test assertions should match the Expected Behavior Properties from design (tabular format with columns)
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bug exists)
+  - Document counterexamples found: "AI analysis displayed as bullet points", "Document data embedded in text strings", "No Field-Value table structure"
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3, 1.4_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Existing Functionality Unchanged
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for all non-layout interactions
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements
+  - Test approval workflow: clicking "Approve FAP" calls `/submissions/{id}/asm-approve` API and navigates back
+  - Test rejection workflow: clicking "Reject FAP" requires comments and calls `/submissions/{id}/asm-reject` API
+  - Test document download: clicking download buttons opens documents in new browser tab using blob URL
+  - Test confidence score display: percentage values show with color coding (green ≥85%, yellow ≥70%, red <70%)
+  - Test HQ rejection banner: displays when state is 'RejectedByHQ' with resubmit option
+  - Test navigation: back button refreshes the submissions list
+  - Test loading states: CircularProgressIndicator displays during API calls
+  - Test button states: action buttons disable during processing
+  - Property-based testing generates many test cases for stronger guarantees
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8_
+
+- [-] 3. Fix for ASM review tabular layout conversion
+
+  - [x] 3.1 Create table widget helper methods
+    - Create `_buildDocumentDataTable` method that accepts parsed document data and document type
+    - Return a Table widget with two columns: "Field" and "Value"
+    - Extract field-value pairs from parsed data (PO Number, Amount, Date, Status, etc.)
+    - Apply Bajaj brand styling: border (1px solid AppColors.border), header background (AppColors.primary with white text)
+    - Use alternating row backgrounds (white and AppColors.background)
+    - Apply cell padding: 12px horizontal, 8px vertical
+    - Use AppTextStyles.bodyMedium for cells, bodySmall with fontWeight.w600 for headers
+    - Apply border radius: 8px for table container
+    - Wrap table in SingleChildScrollView with horizontal axis for mobile responsiveness
+    - _Bug_Condition: isBugCondition(input) where input.documentDataSection.displayFormat == 'inline-text-in-card'_
+    - _Expected_Behavior: result.documentDataSection.displayFormat == 'table-with-rows' from design_
+    - _Preservation: All existing functionality (approval workflows, downloads, scoring, navigation) unchanged_
+    - _Requirements: 2.1, 2.3_
+
+  - [x] 3.2 Create AI analysis table helper method
+    - Create `_buildAIAnalysisTable` method that accepts list of analysis points
+    - Return a Table widget with three columns: "Check Item", "Status", "Details"
+    - Parse analysis points to extract check item description and status
+    - Apply consistent styling with document data table (same colors, borders, padding)
+    - Use check circle icon for status column (green for passed)
+    - Wrap table in SingleChildScrollView with horizontal axis for mobile responsiveness
+    - _Bug_Condition: isBugCondition(input) where input.aiAnalysisSection.displayFormat == 'bullet-points-in-card'_
+    - _Expected_Behavior: result.aiAnalysisSection.displayFormat == 'table-with-columns' from design_
+    - _Preservation: All existing functionality unchanged_
+    - _Requirements: 2.1, 2.2_
+
+  - [x] 3.3 Modify _buildDocumentSection to use tables
+    - Replace current Container with bullet points in AI analysis section
+    - Call `_buildDocumentDataTable` to display extracted document data as first table
+    - Call `_buildAIAnalysisTable` to display AI analysis summary as second table
+    - Maintain document header with title, confidence score, and download button (unchanged)
+    - Remove inline text and bullet point display logic
+    - Keep document preview card (icon and filename) unchanged
+    - Ensure responsive layout: tables stack vertically on mobile, display side-by-side on desktop where appropriate
+    - _Bug_Condition: isBugCondition(input) from design_
+    - _Expected_Behavior: expectedBehavior(result) from design_
+    - _Preservation: Preservation Requirements from design_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.4 Modify _buildPhotosSectionFromData to use table for analysis
+    - Keep photo grid/wrap display unchanged (preservation requirement)
+    - Replace analysis points container with call to `_buildAIAnalysisTable`
+    - Maintain photo count display and download all button (unchanged)
+    - Maintain confidence score display with color coding (unchanged)
+    - Ensure responsive layout for photo grid and analysis table
+    - _Bug_Condition: isBugCondition(input) where input.page includes photos section_
+    - _Expected_Behavior: Photos section displays AI analysis in table format_
+    - _Preservation: Photo display and download functionality unchanged_
+    - _Requirements: 2.2_
+
+  - [x] 3.5 Update comments field to show as optional
+    - In `_buildReviewDecisionPanel`, modify TextField decoration for comments
+    - Change label from "Comments" to "Comments (Optional)"
+    - Update hintText to clearly indicate field is optional: "Add your review comments here (optional for approval)..."
+    - Remove any implicit "required" styling or indicators
+    - Ensure rejection workflow still requires comments (validation unchanged)
+    - _Bug_Condition: isBugCondition(input) where input.commentsField may appear mandatory_
+    - _Expected_Behavior: result.commentsField.hasOptionalIndicator == true from design_
+    - _Preservation: Rejection validation requiring comments unchanged_
+    - _Requirements: 2.4_
+
+  - [x] 3.6 Implement responsive design for tables
+    - Ensure all tables are horizontally scrollable on mobile devices (<600px)
+    - Use LayoutBuilder to detect screen width and adjust table layout
+    - On mobile: single column layout, horizontally scrollable tables
+    - On tablet (600-900px): two column layout where appropriate
+    - On desktop (>900px): full width tables with optimal column sizing
+    - Test table rendering at breakpoints: 599px, 600px, 899px, 900px, 1024px
+    - Maintain readable font sizes and padding on all screen sizes
+    - _Bug_Condition: Tables must be usable on all screen sizes_
+    - _Expected_Behavior: Tables responsive and scrollable on mobile_
+    - _Preservation: Existing responsive layout for other sections unchanged_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.7 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Tabular Layout Display
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior (tabular format)
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run bug condition exploration test from step 1
+    - Verify AI analysis displays in table with "Check Item", "Status", "Details" columns
+    - Verify document data displays in table with "Field" and "Value" columns
+    - Verify tables are properly styled with Bajaj brand colors
+    - Verify tables are responsive and scrollable on mobile devices
+    - Verify comments field shows "(Optional)" indicator
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+    - _Requirements: Expected Behavior Properties from design (2.1, 2.2, 2.3, 2.4)_
+
+  - [ ] 3.8 Verify preservation tests still pass
+    - **Property 2: Preservation** - Existing Functionality Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - Verify approval workflow: API call to `/submissions/{id}/asm-approve` and navigation work correctly
+    - Verify rejection workflow: comments validation and API call to `/submissions/{id}/asm-reject` work correctly
+    - Verify document download: blob URL opens in new tab for all document types
+    - Verify confidence score display: color coding (green ≥85%, yellow ≥70%, red <70%) unchanged
+    - Verify HQ rejection banner: displays correctly with resubmit option
+    - Verify navigation: back button refreshes submissions list
+    - Verify loading states: CircularProgressIndicator displays during API calls
+    - Verify button states: action buttons disable during processing
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all tests still pass after fix (no regressions)
+    - _Requirements: Preservation Requirements from design (3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8)_
+
+- [ ] 4. Checkpoint - Ensure all tests pass
+  - Run all unit tests for table helper methods
+  - Run all widget tests for complete page render with tabular layout
+  - Run all integration tests for approval/rejection workflows
+  - Verify responsive behavior across different screen sizes (mobile, tablet, desktop)
+  - Verify all preservation tests pass (no regressions in existing functionality)
+  - Verify bug condition test passes (tabular layout implemented correctly)
+  - Test on actual devices or browser DevTools with different viewport sizes
+  - Ensure all tests pass, ask the user if questions arise

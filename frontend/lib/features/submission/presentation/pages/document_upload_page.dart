@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../providers/submission_providers.dart';
+import '../providers/submission_notifier.dart';
 import '../widgets/document_upload_card.dart';
 
 class DocumentUploadPage extends ConsumerWidget {
@@ -69,7 +70,7 @@ class DocumentUploadPage extends ConsumerWidget {
                       onRemove: () => ref.read(submissionNotifierProvider.notifier).setPOFile(null),
                       onFilePicked: (file) =>
                           ref.read(submissionNotifierProvider.notifier).setPOFile(file),
-                      allowedExtensions: ['pdf'],
+                      allowedExtensions: const ['pdf'],
                       icon: Icons.description,
                     ),
                     const SizedBox(height: 12),
@@ -83,7 +84,7 @@ class DocumentUploadPage extends ConsumerWidget {
                           ref.read(submissionNotifierProvider.notifier).setInvoiceFile(null),
                       onFilePicked: (file) =>
                           ref.read(submissionNotifierProvider.notifier).setInvoiceFile(file),
-                      allowedExtensions: ['pdf'],
+                      allowedExtensions: const ['pdf'],
                       icon: Icons.receipt_long,
                     ),
                     const SizedBox(height: 12),
@@ -97,7 +98,7 @@ class DocumentUploadPage extends ConsumerWidget {
                           ref.read(submissionNotifierProvider.notifier).setCostSummaryFile(null),
                       onFilePicked: (file) =>
                           ref.read(submissionNotifierProvider.notifier).setCostSummaryFile(file),
-                      allowedExtensions: ['pdf'],
+                      allowedExtensions: const ['pdf'],
                       icon: Icons.attach_money,
                     ),
                     const SizedBox(height: 24),

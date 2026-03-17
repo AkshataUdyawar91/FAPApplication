@@ -936,3 +936,269 @@ dev_dependencies:
 ```
 
 
+
+
+- [ ] 34. Implement PO Field Display and Auto-Population on Agency Submission Form
+  - [ ] 34.1 Create POFieldsSection widget with responsive layout
+    - Create POFieldsSection widget as ConsumerWidget
+    - Implement responsive layout switching (grid for desktop/tablet, stack for mobile)
+    - Use MediaQuery to detect screen width breakpoint (600px)
+    - Apply Bajaj branding (colors, spacing, typography)
+    - _Requirements: 20.1, 20.9, 20.10_
+  
+  - [ ] 34.2 Create individual PO field input widgets
+    - Create PONumberField widget with TextEditingController
+    - Create POAmountField widget with currency formatting
+    - Create PODateField widget with date picker and dd-mm-yyyy format
+    - Create VendorNameField widget with TextEditingController
+    - Add placeholder text for each field
+    - Implement proper styling (labels, borders, focus states)
+    - _Requirements: 20.1, 20.2_
+  
+  - [ ] 34.3 Implement currency and date formatting
+    - Create CurrencyInputFormatter for PO Amount field (₹ symbol, comma separators, 2 decimals)
+    - Create date formatting utilities (formatDateToDDMMYYYY, parseDDMMYYYY)
+    - Integrate DateFormat from intl package
+    - Test formatting with various input values
+    - _Requirements: 20.4, 20.5_
+  
+  - [ ] 34.4 Implement auto-population logic
+    - Update SubmissionNotifier to expose POData from extracted document
+    - Watch POData changes in POFieldsSection widget
+    - Auto-populate field controllers when POData is available
+    - Implement "manually edited" flag tracking per field
+    - Prevent overwriting manually edited fields on re-upload
+    - _Requirements: 20.3, 20.7_
+  
+  - [ ] 34.5 Implement field validation
+    - Add validation for PO Number (required, alphanumeric, max 50 chars)
+    - Add validation for PO Amount (required, positive, max 10,000,000)
+    - Add validation for PO Date (required, valid format, not in future)
+    - Add validation for Vendor Name (required, max 100 chars)
+    - Display inline error messages below fields
+    - _Requirements: 20.1_
+  
+  - [ ] 34.6 Handle incomplete or failed extraction
+    - Display empty fields with placeholders when POData is null
+    - Show info message when extraction fails: "Unable to extract PO data automatically. Please enter manually."
+    - Show info message for partial extraction: "Some PO data extracted. Please verify and complete missing fields."
+    - Allow manual entry in all cases
+    - _Requirements: 20.8_
+  
+  - [ ] 34.7 Integrate POFieldsSection into agency submission form
+    - Add POFieldsSection to agency_dashboard_page.dart after PO upload card
+    - Add 24px top margin for spacing
+    - Connect field values to submission state
+    - Include PO field values in form submission payload
+    - _Requirements: 20.11_
+  
+  - [ ] 34.8 Add accessibility features
+    - Add semantic labels to all fields ("PO Number input", "PO Amount input", etc.)
+    - Ensure 48x48 minimum touch targets
+    - Implement proper tab order (PO Number → PO Amount → PO Date → Vendor Name)
+    - Announce auto-population to screen readers
+    - Test with TalkBack/VoiceOver
+    - _Requirements: 20.1_
+  
+  - [ ] 34.9 Write comprehensive tests for PO fields feature
+    - Write widget test for initial empty state
+    - Write widget test for grid layout (desktop breakpoint)
+    - Write widget test for stack layout (mobile breakpoint)
+    - Write widget test for auto-population with POData
+    - Write widget test for manual edit preservation
+    - Write widget test for currency formatting
+    - Write widget test for date formatting
+    - Write widget test for validation errors
+    - Write integration test for upload → auto-populate flow
+    - Write integration test for edit preservation on re-upload
+    - _Requirements: 20.3, 20.4, 20.5, 20.7_
+
+
+- [ ] 35. Implement Invoice Field Display and Auto-Population on Agency Submission Form
+  - [ ] 35.1 Create InvoiceFieldsSection widget with responsive layout
+    - Create InvoiceFieldsSection widget as ConsumerWidget
+    - Implement responsive layout switching (grid for desktop/tablet, stack for mobile)
+    - Use MediaQuery to detect screen width breakpoint (600px)
+    - Apply Bajaj branding (colors, spacing, typography)
+    - _Requirements: 21.1, 21.9, 21.10_
+  
+  - [ ] 35.2 Create individual Invoice field input widgets
+    - Create InvoiceNoField widget with TextEditingController
+    - Create InvoiceDateField widget with date picker and dd-mm-yyyy format
+    - Create InvoiceAmountField widget with currency formatting
+    - Create GSTINField widget with TextEditingController and GSTIN validation
+    - Create VendorNameField widget with TextEditingController
+    - Add placeholder text for each field
+    - Implement proper styling (labels, borders, focus states)
+    - _Requirements: 21.1, 21.2_
+  
+  - [ ] 35.3 Implement currency, date, and GSTIN formatting
+    - Reuse CurrencyInputFormatter for Invoice Amount field (₹ symbol, comma separators, 2 decimals)
+    - Reuse date formatting utilities (formatDateToDDMMYYYY, parseDDMMYYYY)
+    - Create GSTIN validation regex (15 characters: 2 digits + 5 letters + 4 digits + 1 letter + 1 alphanumeric + Z + 1 alphanumeric)
+    - Test formatting with various input values
+    - _Requirements: 21.4, 21.5_
+  
+  - [ ] 35.4 Implement auto-population logic
+    - Update SubmissionNotifier to expose InvoiceData from extracted document
+    - Watch InvoiceData changes in InvoiceFieldsSection widget
+    - Auto-populate field controllers when InvoiceData is available
+    - Implement "manually edited" flag tracking per field
+    - Prevent overwriting manually edited fields on re-upload
+    - _Requirements: 21.3, 21.7_
+  
+  - [ ] 35.5 Create POCrossValidationSection widget
+    - Create POCrossValidationSection widget as StatelessWidget
+    - Accept poFromInvoice and poFromPODoc as parameters
+    - Display two read-only fields with gray background
+    - Implement match/mismatch logic (compare two PO numbers)
+    - Show green checkmark + "PO numbers match" when equal
+    - Show red warning + "PO numbers do not match. Please verify." when different
+    - Hide indicator when either field is empty
+    - Apply proper styling (section header, read-only fields, indicators)
+    - _Requirements: 21.11, 21.12, 21.13, 21.14, 21.15_
+  
+  - [ ] 35.6 Integrate cross-validation with PO and Invoice data
+    - Watch both POData and InvoiceData in InvoiceFieldsSection
+    - Show POCrossValidationSection only when both PO and Invoice uploaded
+    - Auto-populate "PO Number (from Invoice)" from InvoiceData.POReference
+    - Auto-populate "PO Number (from PO Document)" from POData.PONumber
+    - Update cross-validation in real-time when PO Number field is edited
+    - _Requirements: 21.11, 21.12, 21.13_
+  
+  - [ ] 35.7 Implement field validation
+    - Add validation for Invoice No (required, alphanumeric, max 50 chars)
+    - Add validation for Invoice Date (required, valid format, not in future)
+    - Add validation for Invoice Amount (required, positive, max 10,000,000)
+    - Add validation for GSTIN (required, 15 chars, specific pattern)
+    - Add validation for Vendor Name (required, max 100 chars)
+    - Display inline error messages below fields
+    - _Requirements: 21.1_
+  
+  - [ ] 35.8 Handle incomplete or failed extraction
+    - Display empty fields with placeholders when InvoiceData is null
+    - Show info message when extraction fails: "Unable to extract Invoice data automatically. Please enter manually."
+    - Show info message for partial extraction: "Some Invoice data extracted. Please verify and complete missing fields."
+    - Allow manual entry in all cases
+    - _Requirements: 21.8_
+  
+  - [ ] 35.9 Integrate InvoiceFieldsSection into agency submission form
+    - Add InvoiceFieldsSection to agency_dashboard_page.dart after Invoice upload card
+    - Add 24px top margin for spacing
+    - Connect field values to submission state
+    - Include Invoice field values in form submission payload
+    - _Requirements: 21.16_
+  
+  - [ ] 35.10 Add accessibility features
+    - Add semantic labels to all fields ("Invoice Number input", "Invoice Date input", etc.)
+    - Add semantic label to cross-validation section ("PO number cross-validation")
+    - Ensure 48x48 minimum touch targets
+    - Implement proper tab order (Invoice No → Invoice Date → Invoice Amount → GSTIN → Vendor Name)
+    - Announce auto-population to screen readers
+    - Announce cross-validation result to screen readers ("PO numbers match" or "PO numbers do not match")
+    - Test with TalkBack/VoiceOver
+    - _Requirements: 21.1_
+  
+  - [ ] 35.11 Write comprehensive tests for Invoice fields feature
+    - Write widget test for initial empty state
+    - Write widget test for grid layout (desktop breakpoint)
+    - Write widget test for stack layout (mobile breakpoint)
+    - Write widget test for auto-population with InvoiceData
+    - Write widget test for manual edit preservation
+    - Write widget test for currency formatting
+    - Write widget test for date formatting
+    - Write widget test for GSTIN validation
+    - Write widget test for cross-validation section appearance
+    - Write widget test for cross-validation match indicator (green checkmark)
+    - Write widget test for cross-validation mismatch indicator (red warning)
+    - Write widget test for cross-validation hidden when only one document uploaded
+    - Write integration test for upload → auto-populate flow
+    - Write integration test for edit preservation on re-upload
+    - Write integration test for cross-validation with matching PO numbers
+    - Write integration test for cross-validation with non-matching PO numbers
+    - _Requirements: 21.3, 21.4, 21.5, 21.7, 21.11, 21.14, 21.15_
+
+
+## Tasks for Requirements 22-24: Hierarchical Structure and Campaign Details Improvements
+
+- [x] 30. Restructure Campaign → Invoice hierarchy in Flutter UI
+  - [x] 30.1 Update data models to make Campaign parent of Invoice
+    - Modify CampaignData class to contain List<InvoiceData>
+    - Update InvoiceData to remove campaigns list
+    - _Requirements: 22.AC2, 22.AC3_
+  
+  - [x] 30.2 Add Campaign Name field
+    - Add campaignName field to CampaignData
+    - Add Campaign Name text input in campaign card
+    - Make Campaign Name required with validation
+    - _Requirements: 24.AC1, 24.AC2, 24.AC3_
+  
+  - [x] 30.3 Remove Campaign numbered headers
+    - Remove "Campaign 1", "Campaign 2" grid headers
+    - Display campaign by name or generic "Campaign" label
+    - _Requirements: 24.AC4_
+  
+  - [x] 30.4 Remove GPS capture feature
+    - Remove GPS Location field from campaign details
+    - Remove Capture GPS button
+    - Remove gpsLocation from CampaignData
+    - _Requirements: 24.AC5_
+  
+  - [x] 30.5 Fix Calendar widget
+    - Ensure date picker opens on tap for Start Date
+    - Ensure date picker opens on tap for End Date
+    - Verify date selection populates field correctly
+    - _Requirements: 24.AC6, 24.AC7, 24.AC8_
+  
+  - [x] 30.6 Update photo upload limit to 50
+    - Change max photos from 20 to 50 per campaign
+    - Add validation message when limit exceeded
+    - Disable upload button when 50 photos reached
+    - _Requirements: 24.AC9, 24.AC10, 24.AC11_
+  
+  - [x] 30.7 Update Step 2 title and structure
+    - Change "Invoices & Campaigns" to "Campaigns"
+    - Move "Add Campaign" button to top level
+    - Nest "Add Invoice" button within each campaign
+    - _Requirements: 23.AC2_
+
+- [x] 31. Update agency_upload_page.dart for new hierarchy
+  - [x] 31.1 Update step title from "Invoices & Campaigns" to "Campaigns"
+  - [x] 31.2 Update validation logic for Campaign → Invoice structure
+  - [x] 31.3 Update submission logic to handle new hierarchy
+  - _Requirements: 22, 23_
+
+- [x] 32. Update backend API for Campaign → Invoice hierarchy
+  - [x] 32.1 Update HierarchicalSubmissionController endpoints (already implemented)
+  - [x] 32.2 Update Campaign entity to reference invoices (already implemented)
+  - [x] 32.3 Update validation logic (already implemented)
+  - [x] 32.4 Update Flutter UI to use hierarchical API endpoints
+  - _Requirements: 22.AC8, 22.AC9_
+
+
+- [ ] 33. Implement Campaign Request Approval Workflow (Requirement 25)
+  - [ ] 33.1 Add `PATCH /api/submissions/{id}/send-back-to-agency` endpoint
+    - ASM role only
+    - Precondition: state == RejectedByHQ
+    - Sets state to RejectedByASM
+    - Clears HQ review fields
+    - Logs the action
+    - _Requirements: 25.AC7, 25.AC8_
+
+  - [ ] 33.2 Add "Resubmit" button to Agency detail page
+    - Show button when state is RejectedByASM
+    - Calls `PATCH /api/submissions/{id}/resubmit`
+    - Shows success/error feedback
+    - Navigates back to dashboard on success
+    - _Requirements: 25.AC5, 25.AC13_
+
+  - [ ] 33.3 Add "Resubmit to RA" and "Send Back to Agency" buttons to ASM detail page
+    - Show buttons when state is RejectedByHQ
+    - "Resubmit to RA" calls `PATCH /api/submissions/{id}/resubmit-to-hq` with notes dialog
+    - "Send Back to Agency" calls `PATCH /api/submissions/{id}/send-back-to-agency` with reason dialog
+    - _Requirements: 25.AC7, 25.AC14_
+
+  - [ ] 33.4 Update status display labels for role-appropriate text
+    - Agency: "Pending with ASM", "Pending with RA", "Rejected by ASM", "Rejected by RA"
+    - ASM: "Pending", "Pending with RA", "Rejected", "Rejected by RA"
+    - _Requirements: 25.AC11, 25.AC12_

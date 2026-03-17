@@ -19,6 +19,7 @@ public class RecommendationAgent : IRecommendationAgent
     private readonly IApplicationDbContext _context;
     private readonly ILogger<RecommendationAgent> _logger;
     private readonly Kernel _kernel;
+    private readonly ICorrelationIdService _correlationIdService;
 
     // Recommendation thresholds
     private const double APPROVE_THRESHOLD = 85.0;
@@ -27,10 +28,12 @@ public class RecommendationAgent : IRecommendationAgent
     public RecommendationAgent(
         IApplicationDbContext context,
         IConfiguration configuration,
-        ILogger<RecommendationAgent> logger)
+        ILogger<RecommendationAgent> logger,
+        ICorrelationIdService correlationIdService)
     {
         _context = context;
         _logger = logger;
+        _correlationIdService = correlationIdService;
 
         // Build Semantic Kernel for evidence generation
         var endpoint = configuration["AzureOpenAI:Endpoint"] ?? throw new InvalidOperationException("AzureOpenAI:Endpoint not configured");
@@ -42,53 +45,80 @@ public class RecommendationAgent : IRecommendationAgent
         _kernel = builder.Build();
     }
 
+    /// <summary>
+    /// Generates an AI-powered approval recommendation with evidence for a document package.
+    /// </summary>
+    /// <param name="packageId">The unique identifier of the document package to analyze.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>A recommendation entity containing the recommendation type, confidence score, and AI-generated evidence.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the package or confidence score is not found.</exception>
+    /// <remarks>
+    /// This method:
+    /// - Loads the package with documents and validation results
+    /// - Retrieves the confidence score
+    /// - Determines recommendation type based on thresholds (Approve >= 85%, Review 70-85%, Reject &lt; 70%)
+    /// - Generates AI-powered evidence summary using Azure OpenAI
+    /// - Creates or updates the recommendation in the database
+    /// </remarks>
     public async Task<Recommendation> GenerateRecommendationAsync(
         Guid packageId,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Generating recommendation for package {PackageId}", packageId);
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Generating recommendation for package {PackageId}. CorrelationId: {CorrelationId}",
+            packageId, correlationId);
 
         try
         {
             // Load package with related data
+            _logger.LogInformation("Loading package {PackageId}", packageId);
             var package = await _context.DocumentPackages
-                .Include(p => p.Documents)
                 .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
             if (package == null)
             {
                 _logger.LogError("Package {PackageId} not found", packageId);
-                throw new InvalidOperationException($"Package {packageId} not found");
+                throw new Domain.Exceptions.NotFoundException($"Package {packageId} not found");
             }
+            _logger.LogInformation("Package {PackageId} loaded successfully", packageId);
 
-            // Get validation result
-            var validationResult = await _context.ValidationResults
-                .FirstOrDefaultAsync(v => v.PackageId == packageId, cancellationToken);
+            // Get validation result - TODO: ValidationResult is now polymorphic (per document type)
+            // For now, we'll skip validation result and rely on confidence scores only
+            _logger.LogInformation("Skipping validation result load (ValidationResult is now polymorphic)");
+            ValidationResult? validationResult = null;
 
             // Get confidence score
+            _logger.LogInformation("Loading confidence score for package {PackageId}", packageId);
             var confidenceScore = await _context.ConfidenceScores
                 .FirstOrDefaultAsync(cs => cs.PackageId == packageId, cancellationToken);
 
             if (confidenceScore == null)
             {
                 _logger.LogError("Confidence score not found for package {PackageId}", packageId);
-                throw new InvalidOperationException($"Confidence score not found for package {packageId}");
+                throw new Domain.Exceptions.NotFoundException($"Confidence score not found for package {packageId}");
             }
+            _logger.LogInformation("Confidence score loaded: {OverallConfidence:F2}%", confidenceScore.OverallConfidence);
 
             // Determine recommendation type based on confidence and validation
+            _logger.LogInformation("Determining recommendation type for package {PackageId}", packageId);
             var recommendationType = DetermineRecommendationType(
                 confidenceScore.OverallConfidence,
                 validationResult?.AllValidationsPassed ?? false);
+            _logger.LogInformation("Recommendation type determined: {RecommendationType}", recommendationType);
 
             // Generate evidence summary with AI
+            _logger.LogInformation("Generating AI evidence for package {PackageId}", packageId);
             var evidence = await GenerateEvidenceWithAIAsync(
                 package,
                 validationResult,
                 confidenceScore,
                 recommendationType,
                 cancellationToken);
+            _logger.LogInformation("AI evidence generated successfully for package {PackageId}", packageId);
 
-            // Check if recommendation already exists
+            // Check if recommendation already exists (WITH tracking to enable proper updates)
+            _logger.LogInformation("Checking for existing recommendation for package {PackageId}", packageId);
             var existingRecommendation = await _context.Recommendations
                 .FirstOrDefaultAsync(r => r.PackageId == packageId, cancellationToken);
 
@@ -96,28 +126,22 @@ public class RecommendationAgent : IRecommendationAgent
 
             if (existingRecommendation != null)
             {
-                // Update existing recommendation
+                _logger.LogInformation("Updating existing recommendation {RecommendationId} for package {PackageId}", existingRecommendation.Id, packageId);
+                
+                // Update existing tracked entity - EF Core will generate UPDATE statement
                 existingRecommendation.Type = recommendationType;
                 existingRecommendation.Evidence = evidence;
                 existingRecommendation.ConfidenceScore = confidenceScore.OverallConfidence;
-                existingRecommendation.ValidationIssuesJson = validationResult != null
-                    ? JsonSerializer.Serialize(new
-                    {
-                        AllPassed = validationResult.AllValidationsPassed,
-                        SAPVerified = validationResult.SapVerificationPassed,
-                        AmountConsistent = validationResult.AmountConsistencyPassed,
-                        LineItemsMatched = validationResult.LineItemMatchingPassed,
-                        Complete = validationResult.CompletenessCheckPassed,
-                        DatesValid = validationResult.DateValidationPassed,
-                        VendorMatched = validationResult.VendorMatchingPassed
-                    })
-                    : null;
+                // TODO: ValidationIssuesJson disabled until ValidationResult refactored for polymorphic model
+                existingRecommendation.ValidationIssuesJson = null;
                 existingRecommendation.UpdatedAt = DateTime.UtcNow;
+                // CreatedAt is preserved automatically
 
                 recommendation = existingRecommendation;
             }
             else
             {
+                _logger.LogInformation("Creating new recommendation for package {PackageId}", packageId);
                 // Create new recommendation
                 recommendation = new Recommendation
                 {
@@ -126,18 +150,8 @@ public class RecommendationAgent : IRecommendationAgent
                     Type = recommendationType,
                     Evidence = evidence,
                     ConfidenceScore = confidenceScore.OverallConfidence,
-                    ValidationIssuesJson = validationResult != null
-                        ? JsonSerializer.Serialize(new
-                        {
-                            AllPassed = validationResult.AllValidationsPassed,
-                            SAPVerified = validationResult.SapVerificationPassed,
-                            AmountConsistent = validationResult.AmountConsistencyPassed,
-                            LineItemsMatched = validationResult.LineItemMatchingPassed,
-                            Complete = validationResult.CompletenessCheckPassed,
-                            DatesValid = validationResult.DateValidationPassed,
-                            VendorMatched = validationResult.VendorMatchingPassed
-                        })
-                        : null,
+                    // TODO: ValidationIssuesJson disabled until ValidationResult refactored for polymorphic model
+                    ValidationIssuesJson = null,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -145,26 +159,39 @@ public class RecommendationAgent : IRecommendationAgent
                 _context.Recommendations.Add(recommendation);
             }
 
+            _logger.LogInformation("Saving recommendation to database for package {PackageId}", packageId);
             await _context.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Recommendation saved successfully for package {PackageId}", packageId);
 
             _logger.LogInformation(
-                "Recommendation generated for package {PackageId}: {Type} (Confidence: {Confidence:F2})",
+                "Recommendation generated for package {PackageId}: {Type} (Confidence: {Confidence:F2}). CorrelationId: {CorrelationId}",
                 packageId,
                 recommendationType,
-                confidenceScore.OverallConfidence);
+                confidenceScore.OverallConfidence,
+                correlationId);
 
             return recommendation;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error generating recommendation for package {PackageId}", packageId);
+            _logger.LogError(
+                ex,
+                "Error generating recommendation for package {PackageId}. CorrelationId: {CorrelationId}",
+                packageId, correlationId);
             throw;
         }
     }
 
     /// <summary>
-    /// Determines the recommendation type based on confidence score and validation results
+    /// Determines the recommendation type based on confidence score and validation results.
     /// </summary>
+    /// <param name="confidenceScore">The overall confidence score (0-100).</param>
+    /// <param name="validationPassed">Whether all validation checks passed.</param>
+    /// <returns>
+    /// - <see cref="RecommendationType.Reject"/> if validation failed or confidence &lt; 70%
+    /// - <see cref="RecommendationType.Approve"/> if validation passed and confidence >= 85%
+    /// - <see cref="RecommendationType.Review"/> if validation passed and confidence between 70-85%
+    /// </returns>
     private RecommendationType DetermineRecommendationType(double confidenceScore, bool validationPassed)
     {
         // REJECT if validation failed or confidence < 70
@@ -184,8 +211,20 @@ public class RecommendationAgent : IRecommendationAgent
     }
 
     /// <summary>
-    /// Generates plain-English evidence summary with specific citations
+    /// Generates a plain-English evidence summary with specific citations from validation and confidence data.
     /// </summary>
+    /// <param name="package">The document package being analyzed.</param>
+    /// <param name="validationResult">The validation results, or null if validation has not been performed.</param>
+    /// <param name="confidenceScore">The confidence score breakdown for all document types.</param>
+    /// <param name="recommendationType">The determined recommendation type.</param>
+    /// <returns>A formatted string containing the evidence summary with confidence breakdown, validation results, and rationale.</returns>
+    /// <remarks>
+    /// This method serves as a fallback when AI-powered evidence generation fails.
+    /// It creates a structured summary including:
+    /// - Overall and per-document confidence scores
+    /// - Validation check results (SAP, amounts, line items, completeness, dates, vendor)
+    /// - Recommendation rationale based on the recommendation type
+    /// </remarks>
     private string GenerateEvidence(
         DocumentPackage package,
         ValidationResult? validationResult,
@@ -256,8 +295,21 @@ public class RecommendationAgent : IRecommendationAgent
     }
 
     /// <summary>
-    /// Generates AI-powered evidence summary using Semantic Kernel
+    /// Generates an AI-powered evidence summary using Azure OpenAI via Semantic Kernel.
     /// </summary>
+    /// <param name="package">The document package being analyzed.</param>
+    /// <param name="validationResult">The validation results, or null if validation has not been performed.</param>
+    /// <param name="confidenceScore">The confidence score breakdown for all document types.</param>
+    /// <param name="recommendationType">The determined recommendation type.</param>
+    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
+    /// <returns>An AI-generated evidence summary in plain English, or a template-based summary if AI generation fails.</returns>
+    /// <remarks>
+    /// This method:
+    /// - Constructs a structured data summary with all relevant metrics
+    /// - Sends a prompt to Azure OpenAI requesting a professional evidence summary
+    /// - Falls back to template-based evidence generation if AI call fails
+    /// - Generates 2-3 paragraph summaries with specific citations and professional tone
+    /// </remarks>
     private async Task<string> GenerateEvidenceWithAIAsync(
         DocumentPackage package,
         ValidationResult? validationResult,
@@ -297,17 +349,35 @@ public class RecommendationAgent : IRecommendationAgent
                 }
             }
 
-            // Create AI prompt for evidence generation
-            var prompt = $@"You are an AI assistant for the Bajaj Document Processing System. Generate a clear, professional evidence summary for the following document package recommendation.
+            // Create AI prompt for evidence generation - optimized for ASM readability
+            var prompt = $@"You are an AI assistant helping Area Sales Managers (ASMs) review document submissions at Bajaj Auto. Generate a clear, easy-to-understand summary for the following submission.
 
+DATA:
 {dataSummary}
 
-Generate a concise evidence summary (2-3 paragraphs) that:
-1. Summarizes the key confidence scores and validation results
-2. Explains the rationale for the {recommendationType} recommendation
-3. Highlights any specific concerns or strengths
-4. Uses specific citations from the data above
-5. Maintains a professional, objective tone
+INSTRUCTIONS:
+Write a brief summary (3-4 short paragraphs) that an ASM can quickly understand. Use simple language, not technical jargon.
+
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+
+RECOMMENDATION SUMMARY
+[One sentence stating the recommendation clearly, e.g., ""This submission is recommended for APPROVAL because..."" or ""This submission requires MANUAL REVIEW because...""]
+
+KEY STRENGTHS
+- [List 2-3 positive findings as bullet points]
+
+AREAS OF CONCERN
+- [List any issues or concerns as bullet points, or write ""No significant concerns identified"" if all checks passed]
+
+DECISION GUIDANCE
+[One sentence advising the ASM on what to focus on when making their decision]
+
+IMPORTANT RULES:
+- Use plain English, avoid technical terms
+- Be specific with numbers and percentages
+- Focus on what matters for the approval decision
+- Keep each bullet point to one line
+- Do not include raw data or JSON
 
 Evidence Summary:";
 

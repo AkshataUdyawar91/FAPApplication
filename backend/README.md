@@ -35,7 +35,9 @@ src/
 - Email notifications (Azure Communication Services)
 - Analytics with AI narratives
 - Conversational AI chat assistant (Semantic Kernel + Vector Database)
-- Role-based access control (Agency, ASM, HQ)
+- Role-based access control (Agency, ASM, RA, Admin)
+- Multi-level approval workflow (Agency → ASM → RA)
+- Document versioning and resubmission tracking
 
 ## Prerequisites
 

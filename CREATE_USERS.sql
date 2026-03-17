@@ -10,7 +10,7 @@ INSERT INTO Users (Id, Email, PasswordHash, FullName, Role, PhoneNumber, IsActiv
 VALUES (
     NEWID(),
     'agency@bajaj.com',
-    '$2a$12$LQv3c1yqBwWVHxkd0LHAkO.Ky8Zy8Zy8Zy8Zy8Zy8Zy8Zy8Zy8Zy8',
+    '$2a$12$LQv3c1yqBWEFRqvCpnGH.OMJmkImpbefqqHQXSNTLUpbRS2uKU/Iy',
     'Agency User',
     0, -- Agency role
     '+91-9876543210',
@@ -24,7 +24,7 @@ INSERT INTO Users (Id, Email, PasswordHash, FullName, Role, PhoneNumber, IsActiv
 VALUES (
     NEWID(),
     'asm@bajaj.com',
-    '$2a$12$LQv3c1yqBwWVHxkd0LHAkO.Ky8Zy8Zy8Zy8Zy8Zy8Zy8Zy8Zy8Zy8',
+    '$2a$12$LQv3c1yqBWEFRqvCpnGH.OMJmkImpbefqqHQXSNTLUpbRS2uKU/Iy',
     'ASM User',
     1, -- ASM role
     '+91-9876543211',
@@ -38,7 +38,7 @@ INSERT INTO Users (Id, Email, PasswordHash, FullName, Role, PhoneNumber, IsActiv
 VALUES (
     NEWID(),
     'hq@bajaj.com',
-    '$2a$12$LQv3c1yqBwWVHxkd0LHAkO.Ky8Zy8Zy8Zy8Zy8Zy8Zy8Zy8Zy8Zy8',
+    '$2a$12$LQv3c1yqBWEFRqvCpnGH.OMJmkImpbefqqHQXSNTLUpbRS2uKU/Iy',
     'HQ User',
     2, -- HQ role
     '+91-9876543212',
