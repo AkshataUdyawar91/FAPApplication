@@ -75,11 +75,24 @@ public class SubmissionsController : ControllerBase
 
             var userId = Guid.Parse(userIdClaim);
 
+            // Look up the user's AgencyId so the FK constraint is satisfied
+            var user = await _context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+            if (user?.AgencyId == null)
+            {
+                _logger.LogWarning("User {UserId} has no AgencyId — cannot create submission", userId);
+                return BadRequest(new { error = "User is not linked to an agency" });
+            }
+
             // Create document package
             var package = new Domain.Entities.DocumentPackage
             {
                 Id = Guid.NewGuid(),
                 SubmittedByUserId = userId,
+                AgencyId = user.AgencyId.Value,
+                SelectedPOId = request.SelectedPoId,
                 State = PackageState.Uploaded,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -1976,7 +1989,8 @@ public class SubmissionsController : ControllerBase
 public record CreateSubmissionRequest(
     DateTime? CampaignStartDate = null,
     DateTime? CampaignEndDate = null,
-    int? CampaignWorkingDays = null
+    int? CampaignWorkingDays = null,
+    Guid? SelectedPoId = null
 );
 
 /// <summary>
