@@ -169,7 +169,7 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
           Icons.bar_chart,
           const Color(0xFF3B82F6),
           '↑ 12% vs last month',
-        )),
+        ),),
         const SizedBox(width: 16),
         Expanded(child: _buildStatCard(
           'Approved',
@@ -177,7 +177,7 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
           Icons.check_circle,
           const Color(0xFF10B981),
           '75% approval rate',
-        )),
+        ),),
         const SizedBox(width: 16),
         Expanded(child: _buildStatCard(
           'Total Amount',
@@ -185,7 +185,7 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
           Icons.currency_rupee,
           const Color(0xFF3B82F6),
           '₹9.3Cr approved',
-        )),
+        ),),
         const SizedBox(width: 16),
         Expanded(child: _buildStatCard(
           'AI Confidence',
@@ -193,7 +193,7 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
           Icons.psychology,
           const Color(0xFF3B82F6),
           '↑ 3% improvement',
-        )),
+        ),),
       ],
     );
   }
@@ -336,7 +336,7 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                     drawVerticalLine: false,
                     horizontalInterval: 20,
                     getDrawingHorizontalLine: (value) {
-                      return FlLine(
+                      return const FlLine(
                         color: AppColors.border,
                         strokeWidth: 1,
                       );
@@ -464,7 +464,7 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                     drawVerticalLine: false,
                     horizontalInterval: 50,
                     getDrawingHorizontalLine: (value) {
-                      return FlLine(
+                      return const FlLine(
                         color: AppColors.border,
                         strokeWidth: 1,
                       );
@@ -625,7 +625,7 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
               child: BarChart(
                 BarChartData(
                   alignment: BarChartAlignment.spaceAround,
-                  gridData: FlGridData(
+                  gridData: const FlGridData(
                     show: true,
                     drawVerticalLine: false,
                     horizontalInterval: 5,
@@ -838,28 +838,28 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                   '87%',
                   '↑ +3% vs last month',
                   const Color(0xFF3B82F6),
-                )),
+                ),),
                 const SizedBox(width: 16),
                 Expanded(child: _buildAIMetricCard(
                   'Accuracy Rate',
                   '94%',
                   'AI predictions match ASM',
                   const Color(0xFF10B981),
-                )),
+                ),),
                 const SizedBox(width: 16),
                 Expanded(child: _buildAIMetricCard(
                   'Processing Time',
                   '2.3s',
                   'Average per document',
                   const Color(0xFF8B5CF6),
-                )),
+                ),),
                 const SizedBox(width: 16),
                 Expanded(child: _buildAIMetricCard(
                   'Flagged for Review',
                   '23',
                   '9% of total submissions',
                   const Color(0xFFF59E0B),
-                )),
+                ),),
               ],
             ),
           ],

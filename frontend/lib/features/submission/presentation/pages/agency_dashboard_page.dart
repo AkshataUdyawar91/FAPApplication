@@ -7,6 +7,7 @@ import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
+import '../../../conversational_submission/presentation/widgets/conversational_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';class AgencyDashboardPage extends StatefulWidget {
   final String token;
@@ -31,6 +32,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   bool _isLoading = true;
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
+  bool _isChatbotOpen = false;
 
   @override
   void initState() {
@@ -207,7 +209,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   title: const Text('Bajaj', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
                   actions: [
-                    IconButton(icon: const Icon(Icons.add, color: Colors.white), onPressed: _navigateToUpload),
+                    IconButton(icon: const Icon(Icons.add_comment, color: Colors.white), onPressed: _navigateToChatbot),
                   ],
                 )
               : null,
@@ -249,31 +251,27 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                       deviceType: device,
                       onClose: () => setState(() => _isChatOpen = false),
                     ),
+                    if (_isChatbotOpen && !isMobile) ConversationalChatPanel(
+                      token: widget.token,
+                      onClose: () => setState(() => _isChatbotOpen = false),
+                    ),
                   ],
                 ),
               ),
             ],
           ),
           endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
-          floatingActionButton: (_isChatOpen && !isMobile) ? null : Builder(
-            builder: (scaffoldContext) => Padding(
-              padding: const EdgeInsets.only(bottom: 16, right: 4),
-              child: FloatingActionButton(
-                onPressed: () {
-                  if (isMobile) {
-                    Scaffold.of(scaffoldContext).openEndDrawer();
-                  } else {
-                    setState(() => _isChatOpen = !_isChatOpen);
-                  }
-                },
-                backgroundColor: AppColors.primary,
-                child: Icon(
-                  isMobile ? Icons.smart_toy : Icons.smart_toy,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
+          floatingActionButton: isMobile
+              ? Padding(
+                  padding: const EdgeInsets.only(bottom: 16, right: 4),
+                  child: FloatingActionButton(
+                    onPressed: _navigateToChatbot,
+                    backgroundColor: AppColors.primary,
+                    tooltip: 'New Submission',
+                    child: const Icon(Icons.smart_toy, color: Colors.white),
+                  ),
+                )
+              : null,
           floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         );
       },
@@ -287,9 +285,18 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     });
   }
 
+  void _navigateToChatbot() {
+    setState(() {
+      _isChatbotOpen = !_isChatbotOpen;
+      // Close the AI assistant panel when opening chatbot
+      if (_isChatbotOpen) _isChatOpen = false;
+    });
+  }
+
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(icon: Icons.dashboard, label: 'Dashboard', isActive: true, onTap: () {}),
+      NavItem(icon: Icons.chat_bubble_outline, label: 'New Claim (Chat)', onTap: _navigateToChatbot),
       NavItem(icon: Icons.upload_file, label: 'Upload', onTap: _navigateToUpload),
       NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
@@ -367,10 +374,18 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
               ],
             ),
           ),
-          ElevatedButton.icon(
-            onPressed: _navigateToUpload,
-            icon: const Icon(Icons.add, size: 20),
-            label: const Text('New Request'),
+          // Toggle chatbot panel button
+          OutlinedButton.icon(
+            onPressed: _navigateToChatbot,
+            icon: Icon(
+              _isChatbotOpen ? Icons.close : Icons.smart_toy,
+              size: 18,
+            ),
+            label: Text(_isChatbotOpen ? 'Close Chat' : 'New Submission'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              side: const BorderSide(color: AppColors.primary),
+            ),
           ),
         ],
       ),

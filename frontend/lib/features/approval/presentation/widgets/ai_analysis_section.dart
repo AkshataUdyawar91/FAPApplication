@@ -53,7 +53,7 @@ class AiAnalysisSection extends StatelessWidget {
             const EdgeInsets.only(left: 20, right: 20, bottom: 20),
         backgroundColor: const Color(0xFFEFF6FF),
         collapsedBackgroundColor: const Color(0xFFEFF6FF),
-        leading: Icon(Icons.psychology, color: AppColors.primary, size: 22),
+        leading: const Icon(Icons.psychology, color: AppColors.primary, size: 22),
         title: Text(
           'AI Recommendation',
           style: AppTextStyles.h3.copyWith(
@@ -226,7 +226,7 @@ class AiAnalysisSection extends StatelessWidget {
   /// Quick summary with key metrics at a glance
   Widget _buildQuickSummary(int confidence, bool allPassed, String type, dynamic validationResult) {
     final passedChecks = _countPassedValidations(validationResult);
-    final totalChecks = 6; // SAP, Amount, LineItems, Completeness, Date, Vendor
+    const totalChecks = 6; // SAP, Amount, LineItems, Completeness, Date, Vendor
     
     return Container(
       padding: const EdgeInsets.all(16),
@@ -630,7 +630,7 @@ class AiAnalysisSection extends StatelessWidget {
                 ),
               ],
             ),
-          )),
+          ),),
         ],
       ),
     );

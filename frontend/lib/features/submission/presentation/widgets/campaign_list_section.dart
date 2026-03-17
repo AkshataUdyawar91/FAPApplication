@@ -155,7 +155,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       final campaign = _campaigns[campaignIndex];
       campaign.invoices.add(InvoiceItemData(
         id: '${campaign.id}_invoice_${campaign.invoices.length + 1}',
-      ));
+      ),);
     });
     widget.onCampaignsChanged(_campaigns);
   }
@@ -631,7 +631,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                         ),
                         Text(
                           '${campaign.invoices.length} invoice${campaign.invoices.length > 1 ? 's' : ''} • ${campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0)} photo${(campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0)) != 1 ? 's' : ''}',
-                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                         ),
                       ],
                     ),
@@ -738,7 +738,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                   campaign.endDate = v;
                   _calculateWorkingDays(campaign);
                   widget.onCampaignsChanged(_campaigns);
-                }, minDate: _parseDate(campaign.startDate)),
+                }, minDate: _parseDate(campaign.startDate),),
                 const SizedBox(height: 12),
                 workingDaysField,
               ],
@@ -751,13 +751,13 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                 campaign.startDate = v;
                 _calculateWorkingDays(campaign);
                 widget.onCampaignsChanged(_campaigns);
-              })),
+              }),),
               const SizedBox(width: 12),
               Expanded(child: _buildDatePickerField('End Date', campaign.endDate, (v) {
                 campaign.endDate = v;
                 _calculateWorkingDays(campaign);
                 widget.onCampaignsChanged(_campaigns);
-              }, minDate: _parseDate(campaign.startDate))),
+              }, minDate: _parseDate(campaign.startDate),),),
               const SizedBox(width: 12),
               Expanded(child: workingDaysField),
             ],
@@ -984,7 +984,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.primary),
                       ),
                       const SizedBox(height: 8),
-                      Text(
+                      const Text(
                         'AI is analyzing your Invoice document',
                         style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
                         textAlign: TextAlign.center,
@@ -1186,7 +1186,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                     const SizedBox(height: 8),
                     const Text('Upload photos', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w500)),
                     const SizedBox(height: 4),
-                    Text('Max ${CampaignItemData.maxPhotos} photos per campaign', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                    const Text('Max ${CampaignItemData.maxPhotos} photos per campaign', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                   ],
                 ),
               ),
@@ -1301,7 +1301,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               label: Text('Add ${campaign.photos.isEmpty && existingPhotoCount > 0 ? '' : 'More '}Photos (${CampaignItemData.maxPhotos - totalPhotoCount} remaining)'),
             )
           else
-            Text(
+            const Text(
               'Maximum ${CampaignItemData.maxPhotos} photos reached',
               style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
             ),
@@ -1318,7 +1318,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'Upload itemized costs with quantities, rates, and totals (Excel/PDF)',
             style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
@@ -1421,7 +1421,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'Upload activity summary document (Excel/PDF)',
             style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),

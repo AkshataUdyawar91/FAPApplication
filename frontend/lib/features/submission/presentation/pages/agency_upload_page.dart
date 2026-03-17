@@ -42,7 +42,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   String? _currentPackageId;
   String? _currentPOId; // PO entity ID for linking invoices
   PlatformFile? _purchaseOrder;
-  String? _existingPOFileName;
+  String? _existingPOFileName; // Server-side PO file name for edit mode
   List<InvoiceItemData> _invoices = []; // Invoices linked to PO (package level)
   PlatformFile? _costSummaryFile;
   String? _existingCostSummaryFileName;
@@ -415,7 +415,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
     Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: {
       'token': widget.token,
       'userName': widget.userName,
-    });
+    },);
   }
 
   Future<void> _handleSubmit() async {
@@ -432,7 +432,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                 'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!, filename: _purchaseOrder!.name),
                 'documentType': 'PO',
               }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),);
           if (poResponse.statusCode == 200) {
             packageId = poResponse.data['packageId']?.toString();
           }
@@ -447,7 +447,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                 'documentType': 'PO',
                 'packageId': packageId,
               }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),);
         }
       }
 
@@ -570,7 +570,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                 'documentType': 'AdditionalDocument',
                 'packageId': packageId,
               }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),);
         }
       }
 
@@ -582,7 +582,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
         _showSuccess('Submission resubmitted successfully!');
       } else {
         await _dio.post('/submissions/$packageId/process-async',
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),);
         _showSuccess('Submission complete! Processing in background...');
       }
 
@@ -606,10 +606,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   }
 
   void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: AppColors.rejectedText));
+      SnackBar(content: Text(msg), backgroundColor: AppColors.rejectedText),);
 
   void _showSuccess(String msg) => ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: AppColors.approvedText));
+      SnackBar(content: Text(msg), backgroundColor: AppColors.approvedText),);
 
   // ─── SHARED NAV ITEMS ────────────────────────────────────────────────
   List<NavItem> _getNavItems(BuildContext context) {
@@ -618,10 +618,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       NavItem(icon: Icons.upload_file, label: 'Upload', isActive: true, onTap: () {}),
       NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      }),
+      },),
       NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      }),
+      },),
     ];
   }
 
@@ -819,7 +819,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Step $_currentStep of 3', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+              Text('Step $_currentStep of 3', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(10)),
@@ -944,7 +944,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
           SizedBox(height: 16),
           Text('Loading submission data...', style: TextStyle(color: AppColors.textSecondary)),
         ],
-      ));
+      ),);
     }
     Widget content;
     switch (_currentStep) {
@@ -1017,7 +1017,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
             const SizedBox(height: 16),
             Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.primary)),
             const SizedBox(height: 8),
-            Text(subtitle, style: TextStyle(fontSize: 14, color: AppColors.textSecondary), textAlign: TextAlign.center),
+            Text(subtitle, style: const TextStyle(fontSize: 14, color: AppColors.textSecondary), textAlign: TextAlign.center),
             const SizedBox(height: 12),
             Text('Fields will auto-populate when extraction completes.\nYou can also enter details manually.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary.withOpacity(0.8)), textAlign: TextAlign.center),
           ],
@@ -1027,7 +1027,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
   }
 
   Widget _buildFileUploadCard(String title, String subtitle, IconData icon, PlatformFile? file,
-      VoidCallback onPick, VoidCallback onRemove, DeviceType device) {
+      VoidCallback onPick, VoidCallback onRemove, DeviceType device,) {
     final pad = device == DeviceType.mobile ? 20.0 : 24.0;
     return Container(
       width: double.infinity,
@@ -1056,7 +1056,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                   children: [
                     Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
                     const SizedBox(height: 4),
-                    Text(subtitle, style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                    Text(subtitle, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
                   ],
                 ),
               ),
@@ -1082,7 +1082,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                     const SizedBox(height: 12),
                     const Text('Click to upload', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.primary)),
                     const SizedBox(height: 4),
-                    Text('PDF format only', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                    const Text('PDF format only', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                   ],
                 ),
               ),
@@ -1124,7 +1124,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
 
   /// Card showing an existing server-side file with option to replace
   Widget _buildExistingFileCard(String title, String subtitle, IconData icon,
-      String existingFileName, VoidCallback onReplace, DeviceType device) {
+      String existingFileName, VoidCallback onReplace, DeviceType device,) {
     final pad = device == DeviceType.mobile ? 20.0 : 24.0;
     return Container(
       width: double.infinity,
@@ -1153,7 +1153,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                   children: [
                     Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
                     const SizedBox(height: 4),
-                    Text(subtitle, style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                    Text(subtitle, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
                   ],
                 ),
               ),
@@ -1265,7 +1265,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
                 ),
                 const Spacer(),
                 Text('${_additionalDocs.length} document${_additionalDocs.length > 1 ? 's' : ''}',
-                    style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
+                    style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600, fontSize: 11),),
                 if (_selectedAdditionalDocIndices.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   TextButton.icon(
@@ -1356,7 +1356,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage> {
       onPressed: _navigateToDashboard,
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.textSecondary,
-        side: BorderSide(color: AppColors.border, width: 1.5),
+        side: const BorderSide(color: AppColors.border, width: 1.5),
         padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),

@@ -49,7 +49,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       'Pragma': 'no-cache',
       'Expires': '0',
     },
-  ));
+  ),);
   final _commentsController = TextEditingController();
 
   bool _isLoading = true;
@@ -270,10 +270,10 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       NavItem(icon: Icons.rate_review, label: 'Review', isActive: true, onTap: () {}),
       NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      }),
+      },),
       NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      }),
+      },),
     ];
   }
 
@@ -707,7 +707,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
           status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
           remarks: remarks,
           documentId: photo['photoId']?.toString(),
-        ));
+        ),);
       }
 
       if (costFile != null && costFile.isNotEmpty) {
@@ -719,7 +719,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
           documentName: costFile,
           status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
           remarks: remarks,
-        ));
+        ),);
       }
 
       if (activityFile != null && activityFile.isNotEmpty) {
@@ -731,7 +731,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
           documentName: activityFile,
           status: allPassed ? ValidationStatus.ok : (remarks.isNotEmpty ? ValidationStatus.failed : ValidationStatus.ok),
           remarks: remarks,
-        ));
+        ),);
       }
     }
 
@@ -974,7 +974,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
                                   const SizedBox(height: 8),
                                   Text('Preview not available for this file type.\nClick "Download" to save.', 
                                     textAlign: TextAlign.center,
-                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
+                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),),
                                 ],
                               ),
                             ),

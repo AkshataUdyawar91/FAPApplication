@@ -25,9 +25,38 @@ public class DocumentPackage : BaseEntity
     public int VersionNumber { get; set; } = 1;
     
     /// <summary>
-    /// Gets or sets the current state of the package in the workflow (Uploaded, Extracting, Validating, etc.)
+    /// Gets or sets the current state of the package in the workflow (Draft, Uploaded, Extracting, Validating, etc.)
     /// </summary>
     public PackageState State { get; set; } = PackageState.Uploaded;
+
+    /// <summary>
+    /// Gets or sets the activity region/state where the work was performed (e.g., Maharashtra, Gujarat).
+    /// Nullable until submit time when it becomes required.
+    /// </summary>
+    public string? ActivityState { get; set; }
+
+    /// <summary>
+    /// Gets or sets the submission number in CIQ-YYYY-XXXXX format (e.g., CIQ-2026-00042).
+    /// Generated at submit time.
+    /// </summary>
+    public string? SubmissionNumber { get; set; }
+
+    /// <summary>
+    /// Gets or sets the current step in the conversational submission flow (0-9).
+    /// Used for session resume.
+    /// </summary>
+    public int CurrentStep { get; set; } = 0;
+
+    /// <summary>
+    /// Gets or sets the unique identifier of the CIRCLE HEAD user assigned to review this submission.
+    /// Auto-assigned at submit time via StateMapping.
+    /// </summary>
+    public Guid? AssignedCircleHeadUserId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the unique identifier of the PO selected during conversational submission (Step 2).
+    /// </summary>
+    public Guid? SelectedPOId { get; set; }
     
     // ============ DEPRECATED FIELDS - TO BE REMOVED IN FUTURE MIGRATION ============
     // These fields are replaced by RequestApprovalHistory table

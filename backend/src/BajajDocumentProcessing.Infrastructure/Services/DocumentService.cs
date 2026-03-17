@@ -60,15 +60,20 @@ public class DocumentService : IDocumentService
         Guid? packageId,
         Guid userId)
     {
+        _logger.LogInformation("=== UPLOAD START === File: {FileName}, Type: {DocType}, PackageId: {PkgId}, UserId: {UserId}",
+            file?.FileName, documentType, packageId, userId);
+
         // Validate file
         if (!await ValidateFileAsync(file, documentType))
         {
+            _logger.LogWarning("=== FILE VALIDATION FAILED === File: {FileName}, Type: {DocType}", file?.FileName, documentType);
             throw new Domain.Exceptions.ValidationException(
                 new Dictionary<string, string[]>
                 {
                     { "file", new[] { "File validation failed. Check file type and size." } }
                 });
         }
+        _logger.LogInformation("=== FILE VALIDATION PASSED ===");
 
         // Create or get package
         Guid actualPackageId;
@@ -83,8 +88,12 @@ public class DocumentService : IDocumentService
             
             if (existingPackage == null)
             {
+                _logger.LogError("=== PACKAGE NOT FOUND === PackageId: {PkgId}", packageId.Value);
                 throw new Domain.Exceptions.NotFoundException("Package not found");
             }
+            
+            _logger.LogInformation("=== PACKAGE FOUND === Id: {PkgId}, AgencyId: {AgencyId}, SelectedPOId: {SelPO}, State: {State}",
+                existingPackage.Id, existingPackage.AgencyId, existingPackage.SelectedPOId, existingPackage.State);
             
             // Log if user mismatch (for debugging)
             if (existingPackage.SubmittedByUserId != userId)
@@ -134,7 +143,9 @@ public class DocumentService : IDocumentService
         var uniqueFileName = $"{Guid.NewGuid()}{fileExtension}";
 
         // Upload to blob storage
+        _logger.LogInformation("=== BLOB UPLOAD START === FileName: {UniqueFile}", uniqueFileName);
         var blobUrl = await _fileStorageService.UploadFileAsync(file, "documents", uniqueFileName);
+        _logger.LogInformation("=== BLOB UPLOAD SUCCESS === BlobUrl: {BlobUrl}", blobUrl);
 
         // Load the package to get VersionNumber and AgencyId
         var package = await _context.DocumentPackages
@@ -171,9 +182,16 @@ public class DocumentService : IDocumentService
                 break;
 
             case DocumentType.Invoice:
-                var existingPo = await _context.POs
-                    .FirstOrDefaultAsync(p => p.PackageId == actualPackageId);
+                // First try: PO linked via package's SelectedPOId (assistant flow)
+                // Second try: PO uploaded directly to this package (legacy flow)
+                _logger.LogInformation("=== INVOICE: Looking for PO === SelectedPOId: {SelPO}, PackageId: {PkgId}",
+                    package.SelectedPOId, actualPackageId);
+                var existingPo = package.SelectedPOId.HasValue
+                    ? await _context.POs.FirstOrDefaultAsync(p => p.Id == package.SelectedPOId.Value)
+                    : await _context.POs.FirstOrDefaultAsync(p => p.PackageId == actualPackageId);
                 var poId = existingPo?.Id ?? Guid.Empty;
+                _logger.LogInformation("=== INVOICE: PO lookup result === Found: {Found}, POId: {POId}, PONumber: {PONum}",
+                    existingPo != null, poId, existingPo?.PONumber);
 
                 var invoice = new Invoice
                 {
@@ -315,7 +333,10 @@ public class DocumentService : IDocumentService
                 }
                 else if (documentType == DocumentType.Invoice)
                 {
+                    _logger.LogInformation("=== INVOICE EXTRACTION START === BlobUrl: {BlobUrl}, DocId: {DocId}", blobUrl, entityId);
                     var invoiceData = await _documentAgent.ExtractInvoiceAsync(blobUrl);
+                    _logger.LogInformation("=== INVOICE EXTRACTION RESULT === InvoiceNumber: {InvNum}, Date: {InvDate}, Vendor: {Vendor}, Total: {Total}, GST: {GST}",
+                        invoiceData.InvoiceNumber, invoiceData.InvoiceDate, invoiceData.VendorName, invoiceData.TotalAmount, invoiceData.GSTNumber);
                     immediateExtractedData = System.Text.Json.JsonSerializer.Serialize(invoiceData);
                     
                     // Save immediately to the dedicated Invoice entity
@@ -326,7 +347,20 @@ public class DocumentService : IDocumentService
                         invoiceEntity.ExtractionConfidence = invoiceData.FieldConfidences.Values.Any() 
                             ? invoiceData.FieldConfidences.Values.Average() 
                             : 0.5;
+                        // Also save the individual extracted fields
+                        invoiceEntity.InvoiceNumber = invoiceData.InvoiceNumber;
+                        invoiceEntity.InvoiceDate = invoiceData.InvoiceDate;
+                        invoiceEntity.VendorName = invoiceData.VendorName;
+                        invoiceEntity.GSTNumber = invoiceData.GSTNumber;
+                        invoiceEntity.SubTotal = invoiceData.SubTotal;
+                        invoiceEntity.TaxAmount = invoiceData.TaxAmount;
+                        invoiceEntity.TotalAmount = invoiceData.TotalAmount;
                         await _context.SaveChangesAsync();
+                        _logger.LogInformation("=== INVOICE FIELDS SAVED TO DB === DocId: {DocId}", entityId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("=== INVOICE ENTITY NOT FOUND after extraction === DocId: {DocId}", entityId);
                     }
                     
                     _logger.LogInformation("Immediate Invoice extraction completed: {InvoiceNumber}, Amount: {Amount}", 
@@ -335,8 +369,8 @@ public class DocumentService : IDocumentService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Immediate extraction failed for {DocumentType} {DocumentId}, will retry in background", 
-                    documentType, entityId);
+                _logger.LogError(ex, "=== EXTRACTION FAILED === Type: {DocumentType}, DocId: {DocumentId}, Error: {ErrorMsg}", 
+                    documentType, entityId, ex.Message);
                 // Continue - background extraction will retry
             }
         }
@@ -484,6 +518,23 @@ public class DocumentService : IDocumentService
                             actEntity.ExtractedDataJson = extractedJson;
                             actEntity.ExtractionConfidence = confidence;
                             actEntity.UpdatedAt = DateTime.UtcNow;
+
+                            // Parse and map extracted fields to dedicated columns
+                            try
+                            {
+                                var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                                var parsed = System.Text.Json.JsonSerializer.Deserialize<BajajDocumentProcessing.Application.DTOs.Documents.ActivityData>(extractedJson, opts);
+                                if (parsed?.Rows != null && parsed.Rows.Count > 0)
+                                {
+                                    actEntity.DealerName = parsed.Rows[0].DealerName;
+                                    actEntity.TotalDays = parsed.Rows.Sum(r => r.Day);
+                                    actEntity.TotalWorkingDays = parsed.Rows.Sum(r => r.WorkingDay);
+                                }
+                            }
+                            catch (Exception parseEx)
+                            {
+                                _logger.LogWarning(parseEx, "Could not parse ActivityData JSON to map columns for document {DocumentId}", documentId);
+                            }
                         }
                         break;
 

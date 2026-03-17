@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/pages/login_page.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
+import '../../features/conversational_submission/presentation/pages/conversational_submission_page.dart';
+import '../../features/conversational_submission/presentation/pages/my_submissions_page.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authNotifierProvider);
@@ -34,11 +36,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: 'home',
         builder: (context, state) => const HomePage(),
       ),
+      GoRoute(
+        path: '/conversational-submission',
+        name: 'conversational-submission',
+        builder: (context, state) =>
+            const ConversationalSubmissionPage(),
+      ),
+      GoRoute(
+        path: '/my-submissions',
+        name: 'my-submissions',
+        builder: (context, state) => const MySubmissionsPage(),
+      ),
     ],
   );
 });
 
-// Placeholder home page
+// Home page with navigation to conversational submission
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
@@ -46,10 +59,84 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Home'),
+        title: const Text('ClaimsIQ'),
+        backgroundColor: const Color(0xFF003087),
+        foregroundColor: Colors.white,
       ),
-      body: const Center(
-        child: Text('Welcome to Bajaj Document Processing'),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.description_outlined,
+                size: 72,
+                color: Color(0xFF003087),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Welcome to ClaimsIQ',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF003087),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Submit and manage your FAP claims',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: 280,
+                child: ElevatedButton.icon(
+                  onPressed: () => context.go('/conversational-submission'),
+                  icon: const Icon(Icons.add_comment),
+                  label: const Text('New Submission'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF003087),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    textStyle: const TextStyle(fontSize: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: 280,
+                child: OutlinedButton.icon(
+                  onPressed: () => context.go('/my-submissions'),
+                  icon: const Icon(Icons.list_alt),
+                  label: const Text('My Submissions'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF003087),
+                    side: const BorderSide(color: Color(0xFF003087)),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    textStyle: const TextStyle(fontSize: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => context.go('/conversational-submission'),
+        backgroundColor: const Color(0xFF003087),
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('New Claim'),
       ),
     );
   }
