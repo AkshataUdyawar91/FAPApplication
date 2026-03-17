@@ -1,0 +1,98 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - New Package Creation Without AgencyId
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bug exists
+  - **Scoped PBT Approach**: For deterministic bugs, scope the property to the concrete failing case(s) to ensure reproducibility
+  - Test that agency user uploading first document (no packageId) creates DocumentPackage with valid AgencyId from User table
+  - Test that non-agency user (AgencyId = NULL) attempting to create new package throws ForbiddenException
+  - Test implementation details from Bug Condition in design: `input.packageId IS NULL OR input.packageId = Guid.Empty AND newDocumentPackage.AgencyId IS NULL`
+  - The test assertions should match the Expected Behavior Properties from design:
+    - For agency users: `newPackage.AgencyId = user.AgencyId` (from User table)
+    - For non-agency users: throws `ForbiddenException` with message "Only agency users can create new document packages"
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS with DbUpdateException containing "FK_DocumentPackages_Agencies_AgencyId" (this is correct - it proves the bug exists)
+  - Document counterexamples found to understand root cause:
+    - Agency user upload fails with FK constraint violation
+    - Non-agency user upload may succeed but creates invalid package
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Existing Package Upload Behavior
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for non-buggy inputs (existing packageId provided)
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements:
+    - Existing package uploads continue to work (any user role can upload to existing package)
+    - File validation (size, type, malware scanning) remains unchanged
+    - Blob storage operations remain unchanged
+    - Document extraction (immediate and background) remains unchanged
+    - Photo limit validation (50 photos per package) remains unchanged
+    - All document type handling remains unchanged
+  - Property-based testing generates many test cases for stronger guarantees
+  - Test cases:
+    - Upload multiple documents to existing package → verify all succeed
+    - Upload invalid files (wrong type, too large) with existing packageId → verify validation errors match original behavior
+    - Upload documents with existing packageId → verify blob URLs generated correctly
+    - Upload PO/Invoice with existing packageId → verify extraction runs correctly
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4_
+
+- [ ] 3. Fix for agency foreign key upload bug
+
+  - [ ] 3.1 Create ForbiddenException if not exists
+    - Check if `ForbiddenException` exists in `Domain/Exceptions` namespace
+    - If not exists, create following pattern of existing exceptions (NotFoundException, ValidationException)
+    - Ensure global exception middleware maps ForbiddenException to HTTP 403
+    - _Requirements: 2.2_
+
+  - [ ] 3.2 Implement the fix in DocumentService.UploadDocumentAsync
+    - In the `else` block (lines 96-109) that creates new DocumentPackage, add code BEFORE creating the package:
+      - Query User table: `var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);`
+      - Add null check: if user not found, throw appropriate exception (defensive programming)
+      - Validate AgencyId: if `user.AgencyId == null`, throw ForbiddenException with message "Only agency users can create new document packages"
+      - Log warning if non-agency user attempts to create package (may indicate authorization bypass)
+    - Set AgencyId on new DocumentPackage: `AgencyId = user.AgencyId.Value` (safe after null check)
+    - Update logging to include AgencyId: `_logger.LogInformation("Created new package: {PackageId} for user {UserId} in agency {AgencyId}", actualPackageId, userId, user.AgencyId);`
+    - _Bug_Condition: isBugCondition(input) where input.packageId IS NULL OR input.packageId = Guid.Empty AND newDocumentPackage.AgencyId IS NULL_
+    - _Expected_Behavior: For agency users (AgencyId != NULL), newPackage.AgencyId = user.AgencyId; For non-agency users (AgencyId == NULL), throw ForbiddenException_
+    - _Preservation: Existing package uploads (packageId provided) remain completely unchanged - no modifications to validation, storage, or extraction operations_
+    - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 3.1, 3.2, 3.3, 3.4_
+
+  - [ ] 3.3 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - New Package Has Valid AgencyId
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied:
+      - Agency users can create new packages with valid AgencyId
+      - Non-agency users receive 403 Forbidden when attempting to create new packages
+      - Database INSERT succeeds (no FK constraint violation)
+    - Run bug condition exploration test from step 1
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [ ] 3.4 Verify preservation tests still pass
+    - **Property 2: Preservation** - Existing Package Uploads Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all tests still pass after fix:
+      - Existing package uploads work for all user roles
+      - File validation unchanged
+      - Blob storage operations unchanged
+      - Document extraction unchanged
+      - All document types handled correctly
+    - _Requirements: 3.1, 3.2, 3.3, 3.4_
+
+- [ ] 4. Checkpoint - Ensure all tests pass
+  - Run full test suite: `dotnet test`
+  - Verify all unit tests pass
+  - Verify all property-based tests pass
+  - Verify all integration tests pass
+  - If any tests fail, investigate and fix before proceeding
+  - Ask the user if questions arise

@@ -49,7 +49,7 @@ class HomePage extends StatelessWidget {
         title: const Text('Home'),
       ),
       body: const Center(
-        child: Text('Welcome to Bajaj Document Processing'),
+        child: Text('Welcome to ClaimsIQ'),
       ),
     );
   }

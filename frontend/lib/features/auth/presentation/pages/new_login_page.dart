@@ -192,7 +192,7 @@ class _NewLoginPageState extends State<NewLoginPage> {
                             ),
                             const SizedBox(height: 4),
                             const Text(
-                              'Marketing Operations Portal',
+                              'ClaimsIQ',
                               style: TextStyle(
                                 fontSize: 14,
                                 color: Color(0xFFBFDBFE),
