@@ -169,6 +169,22 @@ public class PoBalanceService : IPoBalanceService
         }
     }
 
+    /// <summary>
+    /// Normalises a JsonElement that may be either a JSON array or a JSON object
+    /// into an enumerable of JsonElement values.
+    /// - Array: delegates to EnumerateArray() (existing behaviour, unchanged).
+    /// - Object: yields the element itself as a single-item sequence (fixes the bug).
+    /// - Anything else: yields nothing (defensive fallback).
+    /// </summary>
+    private static IEnumerable<JsonElement> EnumerateArrayOrObject(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+            return element.EnumerateArray();
+        if (element.ValueKind == JsonValueKind.Object)
+            return new[] { element };
+        return Enumerable.Empty<JsonElement>();
+    }
+
     private HttpRequestMessage BuildRequest(HttpMethod method, string body)
     {
         var req = new HttpRequestMessage(method, _sapUrl)
@@ -198,7 +214,7 @@ public class PoBalanceService : IPoBalanceService
         decimal totalInvoiced = 0m;
         string  currency      = "UNKNOWN";
 
-        foreach (var item in lineItems.EnumerateArray())
+        foreach (var item in EnumerateArrayOrObject(lineItems))
         {
             if (decimal.TryParse(item.GetProperty("price_without_tax").GetString()?.Trim(), out var price))
                 totalPrice += price;
@@ -210,7 +226,7 @@ public class PoBalanceService : IPoBalanceService
             }
 
             if (item.TryGetProperty("gr_data", out var grData))
-                foreach (var gr in grData.EnumerateArray())
+                foreach (var gr in EnumerateArrayOrObject(grData))
                     if (decimal.TryParse(gr.GetProperty("invoice_value").GetString()?.Trim(), out var inv))
                         totalInvoiced += inv;
         }
