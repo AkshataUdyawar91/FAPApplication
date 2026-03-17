@@ -7,7 +7,7 @@ import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
-import '../../../conversational_submission/presentation/widgets/conversational_chat_panel.dart';
+import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';class AgencyDashboardPage extends StatefulWidget {
   final String token;
@@ -32,7 +32,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   bool _isLoading = true;
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
-  bool _isChatbotOpen = false;
+  bool _isChatbotOpen = true;
 
   @override
   void initState() {
@@ -251,8 +251,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                       deviceType: device,
                       onClose: () => setState(() => _isChatOpen = false),
                     ),
-                    if (_isChatbotOpen && !isMobile) ConversationalChatPanel(
-                      token: widget.token,
+                    if (_isChatbotOpen && !isMobile) AssistantChatPanel(
                       onClose: () => setState(() => _isChatbotOpen = false),
                     ),
                   ],
