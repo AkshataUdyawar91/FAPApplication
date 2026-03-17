@@ -1,8 +1,8 @@
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.PO;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace BajajDocumentProcessing.Infrastructure.Services;
@@ -10,19 +10,23 @@ namespace BajajDocumentProcessing.Infrastructure.Services;
 /// <summary>
 /// Fetches PO data from the SAP PO_Data API and calculates:
 /// Balance = Sum(po_line_item.price_without_tax) - Sum(gr_data.invoice_value)
+/// Credentials are read from configuration (SAP:PoData section) — never hardcoded.
 /// </summary>
 public class PoBalanceService : IPoBalanceService
 {
     private readonly ILogger<PoBalanceService> _logger;
+    private readonly string _sapUrl;
+    private readonly string _sapApiKey;
+    private readonly string _sapBasicAuth;
+    private readonly string _sapCookie;
 
-    private const string SapApiUrl = "https://agni.bajajauto.co.in:7782/RESTAdapter/QAS/Datamatics/PO_Data";
-    private const string SapApiKey = "HhqsAGywilqBONDhzOZTsGmrYNHFCwrTwLgnPTSFwfEGyjyOGaTDMeiomfVUeVEn";
-    private const string SapBasicAuth = "Basic cGljb25uOmJhamFqQDEyMw==";
-    private const string SapCookie = "saplb_*=(J2EE3965820)3965850";
-
-    public PoBalanceService(ILogger<PoBalanceService> logger)
+    public PoBalanceService(IConfiguration configuration, ILogger<PoBalanceService> logger)
     {
         _logger = logger;
+        _sapUrl      = configuration["SAP:PoData:Url"]       ?? throw new InvalidOperationException("SAP:PoData:Url is not configured.");
+        _sapApiKey   = configuration["SAP:PoData:ApiKey"]    ?? throw new InvalidOperationException("SAP:PoData:ApiKey is not configured.");
+        _sapBasicAuth = configuration["SAP:PoData:BasicAuth"] ?? throw new InvalidOperationException("SAP:PoData:BasicAuth is not configured.");
+        _sapCookie   = configuration["SAP:PoData:Cookie"]    ?? string.Empty;
     }
 
     /// <inheritdoc />
@@ -39,7 +43,7 @@ public class PoBalanceService : IPoBalanceService
 
     private async Task<JsonElement> CallSapApiAsync(string companyCode, string poNum, CancellationToken cancellationToken)
     {
-        // Use a handler that bypasses SSL validation for the SAP host (self-signed cert)
+        // SAP host uses a self-signed certificate — bypass SSL validation for this client only
         using var handler = new HttpClientHandler
         {
             ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
@@ -57,16 +61,17 @@ public class PoBalanceService : IPoBalanceService
             }
         });
 
-        // The curl uses --request GET with --data, which sends a GET with a body.
-        // .NET HttpClient requires HttpMethod with content explicitly set.
-        var request = new HttpRequestMessage(HttpMethod.Get, SapApiUrl)
+        // SAP endpoint uses GET with a body (mirrors the curl --request GET --data pattern)
+        var request = new HttpRequestMessage(HttpMethod.Get, _sapUrl)
         {
             Content = new StringContent(requestBody, Encoding.UTF8, "application/json")
         };
 
-        request.Headers.TryAddWithoutValidation("api-key", SapApiKey);
-        request.Headers.TryAddWithoutValidation("Authorization", SapBasicAuth);
-        request.Headers.TryAddWithoutValidation("Cookie", SapCookie);
+        request.Headers.TryAddWithoutValidation("api-key", _sapApiKey);
+        request.Headers.TryAddWithoutValidation("Authorization", _sapBasicAuth);
+
+        if (!string.IsNullOrEmpty(_sapCookie))
+            request.Headers.TryAddWithoutValidation("Cookie", _sapCookie);
 
         HttpResponseMessage httpResponse;
         string responseText;
@@ -140,8 +145,6 @@ public class PoBalanceService : IPoBalanceService
                 }
             }
         }
-
-        totalInvoiced = totalInvoiced / 1.18m;
 
         var balance = Math.Round(totalPrice - totalInvoiced, 2);
 
