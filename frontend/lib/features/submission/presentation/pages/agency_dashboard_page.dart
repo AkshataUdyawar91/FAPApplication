@@ -261,19 +261,17 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
             ],
           ),
           endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
-          floatingActionButton: Padding(
-            padding: const EdgeInsets.only(bottom: 16, right: 4),
-            child: FloatingActionButton(
-              onPressed: () {
-                Navigator.pushNamed(context, '/agency/conversational-submission', arguments: {
-                  'token': widget.token,
-                  'userName': widget.userName,
-                });
-              },
-              backgroundColor: AppColors.primary,
-              child: const Icon(Icons.smart_toy, color: Colors.white),
-            ),
-          ),
+          floatingActionButton: isMobile
+              ? Padding(
+                  padding: const EdgeInsets.only(bottom: 16, right: 4),
+                  child: FloatingActionButton(
+                    onPressed: _navigateToChatbot,
+                    backgroundColor: AppColors.primary,
+                    tooltip: 'New Submission',
+                    child: const Icon(Icons.smart_toy, color: Colors.white),
+                  ),
+                )
+              : null,
           floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         );
       },
@@ -376,10 +374,18 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
               ],
             ),
           ),
-          ElevatedButton.icon(
+          // Toggle chatbot panel button
+          OutlinedButton.icon(
             onPressed: _navigateToChatbot,
-            icon: const Icon(Icons.add_comment, size: 20),
-            label: const Text('New Submission'),
+            icon: Icon(
+              _isChatbotOpen ? Icons.close : Icons.smart_toy,
+              size: 18,
+            ),
+            label: Text(_isChatbotOpen ? 'Close Chat' : 'New Submission'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              side: const BorderSide(color: AppColors.primary),
+            ),
           ),
         ],
       ),
