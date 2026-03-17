@@ -700,11 +700,10 @@ public class NotificationDataService : INotificationDataService
     {
         var groups = new List<ValidationCheckGroup>();
 
-        // PO, Cost Summary, Enquiry Document use the generic 6 checks
+        // Enquiry Document uses the generic 6 checks
+        // PO removed; Cost Summary and Activity Summary have dedicated chatbot-aligned validations below
         var docEntries = new List<(string DocName, Guid? DocId, Domain.Enums.DocumentType DocType)>
         {
-            ("PO", package.PO?.Id, Domain.Enums.DocumentType.PO),
-            ("Cost Summary", package.CostSummary?.Id, Domain.Enums.DocumentType.CostSummary),
             ("Enquiry Document", package.EnquiryDocument?.Id, Domain.Enums.DocumentType.EnquiryDocument)
         };
 
@@ -752,6 +751,112 @@ public class NotificationDataService : INotificationDataService
                     Evidence = evidence
                 });
             }
+        }
+
+        // Cost Summary: use the same validation as the conversational chatbot (6 checks)
+        var costSummary = package.CostSummary;
+        if (costSummary != null && !costSummary.IsDeleted)
+        {
+            string? placeOfSupply = costSummary.PlaceOfSupply;
+            int? numberOfDays = costSummary.NumberOfDays;
+            int? numberOfActivations = costSummary.NumberOfActivations;
+            int? numberOfTeams = costSummary.NumberOfTeams;
+            string? elementWiseCosts = costSummary.ElementWiseCostsJson;
+            string? elementWiseQuantity = costSummary.ElementWiseQuantityJson;
+
+            // Fallback: parse from ExtractedDataJson if dedicated columns are empty
+            if (!string.IsNullOrEmpty(costSummary.ExtractedDataJson))
+            {
+                try
+                {
+                    var json = JsonDocument.Parse(costSummary.ExtractedDataJson).RootElement;
+
+                    if (string.IsNullOrWhiteSpace(placeOfSupply))
+                    {
+                        if (json.TryGetProperty("PlaceOfSupply", out var pos) || json.TryGetProperty("placeOfSupply", out pos))
+                            placeOfSupply = pos.GetString();
+                        if (string.IsNullOrWhiteSpace(placeOfSupply))
+                            if (json.TryGetProperty("State", out var st) || json.TryGetProperty("state", out st))
+                                placeOfSupply = st.GetString();
+                    }
+                    if (numberOfDays == null)
+                        if (json.TryGetProperty("NumberOfDays", out var nd) || json.TryGetProperty("numberOfDays", out nd))
+                            try { numberOfDays = nd.GetInt32(); } catch { }
+                    if (numberOfActivations == null)
+                        if (json.TryGetProperty("NumberOfActivations", out var na) || json.TryGetProperty("numberOfActivations", out na))
+                            try { numberOfActivations = na.GetInt32(); } catch { }
+                    if (numberOfTeams == null)
+                        if (json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                            try { numberOfTeams = nt.GetInt32(); } catch { }
+                    if (string.IsNullOrWhiteSpace(elementWiseCosts))
+                        if (json.TryGetProperty("ElementWiseCostsJson", out var ewc) || json.TryGetProperty("elementWiseCostsJson", out ewc))
+                            elementWiseCosts = ewc.GetString();
+                    if (string.IsNullOrWhiteSpace(elementWiseQuantity))
+                        if (json.TryGetProperty("ElementWiseQuantityJson", out var ewq) || json.TryGetProperty("elementWiseQuantityJson", out ewq))
+                            elementWiseQuantity = ewq.GetString();
+                }
+                catch { /* malformed JSON */ }
+            }
+
+            // 1. Place of Supply
+            bool posPresent = !string.IsNullOrWhiteSpace(placeOfSupply);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = posPresent ? "Pass" : "Fail",
+                Details = "Place of Supply",
+                Evidence = posPresent ? placeOfSupply! : "Place of supply / state not detected"
+            });
+
+            // 2. No. of Days
+            bool daysPresent = numberOfDays.HasValue && numberOfDays.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = daysPresent ? "Pass" : "Fail",
+                Details = "No. of Days",
+                Evidence = daysPresent ? numberOfDays.ToString()! : "Total number of days not detected"
+            });
+
+            // 3. No. of Activations
+            bool activationsPresent = numberOfActivations.HasValue && numberOfActivations.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = activationsPresent ? "Pass" : "Fail",
+                Details = "No. of Activations",
+                Evidence = activationsPresent ? numberOfActivations.ToString()! : "Number of activations not detected"
+            });
+
+            // 4. No. of Teams
+            bool teamsPresent = numberOfTeams.HasValue && numberOfTeams.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = teamsPresent ? "Pass" : "Fail",
+                Details = "No. of Teams",
+                Evidence = teamsPresent ? numberOfTeams.ToString()! : "Number of teams not detected"
+            });
+
+            // 5. Element-wise Cost
+            bool costsPresent = !string.IsNullOrWhiteSpace(elementWiseCosts) && elementWiseCosts != "[]";
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = costsPresent ? "Pass" : "Fail",
+                Details = "Element-wise Cost",
+                Evidence = costsPresent ? "Cost breakdown detected" : "Element-wise cost breakdown not detected"
+            });
+
+            // 6. Element-wise Quantity
+            bool qtyPresent = !string.IsNullOrWhiteSpace(elementWiseQuantity) && elementWiseQuantity != "[]";
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = qtyPresent ? "Pass" : "Fail",
+                Details = "Element-wise Quantity",
+                Evidence = qtyPresent ? "Quantity breakdown detected" : "Element-wise quantity breakdown not detected"
+            });
         }
 
         // Activity Summary: use the same validation as the conversational chatbot
