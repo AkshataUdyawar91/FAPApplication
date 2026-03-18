@@ -1168,6 +1168,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<decimal?>("RemainingBalance")
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<DateTime?>("RefreshedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<decimal?>("TotalAmount")
                         .HasColumnType("decimal(18,2)");
 
