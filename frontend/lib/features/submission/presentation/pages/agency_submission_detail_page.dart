@@ -469,10 +469,6 @@ class _AgencySubmissionDetailPageState
   Widget _buildValidationReportContent() {
     final summary = _validationReport!['summary'] as Map<String, dynamic>?;
     final categories = _validationReport!['categories'] as List<dynamic>? ?? [];
-    final recommendation =
-        _validationReport!['recommendation'] as Map<String, dynamic>?;
-    final confidenceBreakdown =
-        _validationReport!['confidenceBreakdown'] as Map<String, dynamic>?;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -484,17 +480,6 @@ class _AgencySubmissionDetailPageState
 
         // Validation Categories
         _buildValidationCategoriesSection(categories),
-
-        const SizedBox(height: 24),
-
-        // Confidence Breakdown
-        if (confidenceBreakdown != null)
-          _buildConfidenceBreakdownSection(confidenceBreakdown),
-
-        const SizedBox(height: 24),
-
-        // Recommendation Section
-        if (recommendation != null) _buildRecommendationSection(recommendation),
       ],
     );
   }
@@ -692,7 +677,7 @@ class _AgencySubmissionDetailPageState
 
         // Categories Table Header
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: const Color(0xFFF8FAFC),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
@@ -700,7 +685,16 @@ class _AgencySubmissionDetailPageState
           ),
           child: Row(
             children: [
-              const SizedBox(width: 40), // Icon space
+              SizedBox(
+                width: 30,
+                child: Text(
+                  '#',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
               Expanded(
                 flex: 3,
                 child: Text(
@@ -711,16 +705,18 @@ class _AgencySubmissionDetailPageState
                   ),
                 ),
               ),
-              Expanded(
-                flex: 1,
+              SizedBox(
+                width: 70,
                 child: Text(
                   'RESULT',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
                   ),
+                  textAlign: TextAlign.center,
                 ),
               ),
+              const SizedBox(width: 12),
               Expanded(
                 flex: 3,
                 child: Text(
@@ -752,22 +748,13 @@ class _AgencySubmissionDetailPageState
     final categoryName = category['categoryName'] ?? 'Unknown';
     final passed = category['passed'] ?? false;
     final status = category['status'] ?? 'Unknown';
-    final severity = category['severity'] ?? 'Low';
     final shortDescription = category['shortDescription'] ?? 'No description';
-    final categoryIcon = category['categoryIcon'] ?? 'help';
 
     Color statusColor =
         passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
-    Color severityColor = severity.toLowerCase() == 'critical'
-        ? const Color(0xFFDC2626)
-        : severity.toLowerCase() == 'high'
-            ? const Color(0xFFF59E0B)
-            : const Color(0xFF6B7280);
-
-    IconData iconData = _getIconFromString(categoryIcon);
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(
@@ -784,73 +771,44 @@ class _AgencySubmissionDetailPageState
       ),
       child: Row(
         children: [
-          // Index and Icon
+          // Serial Number
           SizedBox(
-            width: 40,
-            child: Row(
-              children: [
-                Text(
-                  '$index',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.textSecondary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Icon(iconData, size: 16, color: AppColors.textSecondary),
-              ],
+            width: 30,
+            child: Text(
+              '$index',
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
 
-          // Category Name
+          // Category Name (without severity indicator)
           Expanded(
             flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  categoryName,
-                  style: AppTextStyles.bodyMedium.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                if (severity != 'Low') ...[
-                  const SizedBox(height: 4),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: severityColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      severity.toUpperCase(),
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: severityColor,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
+            child: Text(
+              categoryName,
+              style: AppTextStyles.bodySmall.copyWith(
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
 
           // Status
-          Expanded(
-            flex: 1,
+          SizedBox(
+            width: 70,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
               decoration: BoxDecoration(
                 color: statusColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(3),
               ),
               child: Text(
                 status.toUpperCase(),
                 style: AppTextStyles.bodySmall.copyWith(
                   color: statusColor,
                   fontWeight: FontWeight.w600,
+                  fontSize: 10,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -858,7 +816,7 @@ class _AgencySubmissionDetailPageState
           ),
 
           const SizedBox(
-            width: 4,
+            width: 12,
           ),
 
           // Description
@@ -866,7 +824,7 @@ class _AgencySubmissionDetailPageState
             flex: 3,
             child: Text(
               shortDescription,
-              style: AppTextStyles.bodyMedium,
+              style: AppTextStyles.bodySmall,
             ),
           ),
         ],
@@ -897,391 +855,6 @@ class _AgencySubmissionDetailPageState
       default:
         return Icons.help_outline;
     }
-  }
-
-  Widget _buildConfidenceBreakdownSection(
-      Map<String, dynamic> confidenceBreakdown) {
-    final overallConfidence = confidenceBreakdown['overallConfidence'] ?? 0;
-    final poConfidence =
-        confidenceBreakdown['poConfidence'] as Map<String, dynamic>?;
-    final invoiceConfidence =
-        confidenceBreakdown['invoiceConfidence'] as Map<String, dynamic>?;
-    final costSummaryConfidence =
-        confidenceBreakdown['costSummaryConfidence'] as Map<String, dynamic>?;
-    final activityConfidence =
-        confidenceBreakdown['activityConfidence'] as Map<String, dynamic>?;
-    final photosConfidence =
-        confidenceBreakdown['photosConfidence'] as Map<String, dynamic>?;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.analytics, color: AppColors.primary, size: 24),
-            const SizedBox(width: 12),
-            Text('Confidence Breakdown', style: AppTextStyles.h3),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-          ),
-          child: Column(
-            children: [
-              // Overall Confidence
-              _buildConfidenceItem(
-                'Overall Confidence',
-                overallConfidence.toDouble(),
-                1.0,
-                Icons.trending_up,
-              ),
-              const SizedBox(height: 16),
-              const Divider(),
-              const SizedBox(height: 16),
-
-              // Individual Confidence Scores
-              if (poConfidence != null)
-                _buildConfidenceItem(
-                  'PO Confidence',
-                  (poConfidence['score'] ?? 0).toDouble(),
-                  (poConfidence['weight'] ?? 0).toDouble(),
-                  Icons.description,
-                ),
-              if (invoiceConfidence != null)
-                _buildConfidenceItem(
-                  'Invoice Confidence',
-                  (invoiceConfidence['score'] ?? 0).toDouble(),
-                  (invoiceConfidence['weight'] ?? 0).toDouble(),
-                  Icons.receipt,
-                ),
-              if (costSummaryConfidence != null)
-                _buildConfidenceItem(
-                  'Cost Summary Confidence',
-                  (costSummaryConfidence['score'] ?? 0).toDouble(),
-                  (costSummaryConfidence['weight'] ?? 0).toDouble(),
-                  Icons.summarize,
-                ),
-              if (activityConfidence != null)
-                _buildConfidenceItem(
-                  'Activity Confidence',
-                  (activityConfidence['score'] ?? 0).toDouble(),
-                  (activityConfidence['weight'] ?? 0).toDouble(),
-                  Icons.assignment,
-                ),
-              if (photosConfidence != null)
-                _buildConfidenceItem(
-                  'Photos Confidence',
-                  (photosConfidence['score'] ?? 0).toDouble(),
-                  (photosConfidence['weight'] ?? 0).toDouble(),
-                  Icons.photo_camera,
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildConfidenceItem(
-      String label, double score, double weight, IconData icon) {
-    Color confidenceColor = _getConfidenceColor(score);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Icon(icon, color: confidenceColor, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      label,
-                      style: AppTextStyles.bodyMedium.copyWith(
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    Text(
-                      '${score.toInt()}%',
-                      style: AppTextStyles.bodyMedium.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: confidenceColor,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE5E7EB),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: FractionallySizedBox(
-                          alignment: Alignment.centerLeft,
-                          widthFactor: score / 100,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: confidenceColor,
-                              borderRadius: BorderRadius.circular(3),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (weight < 1.0) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        'Weight: ${(weight * 100).toInt()}%',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecommendationSection(Map<String, dynamic> recommendation) {
-    final type = recommendation['type'] ?? 'Unknown';
-    final summary = recommendation['summary'] ?? 'No summary available';
-    final criticalIssues =
-        recommendation['criticalIssues'] as List<dynamic>? ?? [];
-    final highPriorityIssues =
-        recommendation['highPriorityIssues'] as List<dynamic>? ?? [];
-    final recommendedAction = recommendation['recommendedAction'] ?? '';
-
-    Color recommendationColor = type.toLowerCase() == 'reject'
-        ? const Color(0xFFDC2626)
-        : type.toLowerCase() == 'approve'
-            ? const Color(0xFF16A34A)
-            : const Color(0xFFF59E0B);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.recommend, color: AppColors.primary, size: 24),
-            const SizedBox(width: 12),
-            Text('Recommendation', style: AppTextStyles.h3),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: recommendationColor.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: recommendationColor.withOpacity(0.2)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Recommendation Header
-              Row(
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: recommendationColor,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      type.toUpperCase(),
-                      style: AppTextStyles.bodyMedium.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      recommendedAction,
-                      style: AppTextStyles.bodyMedium.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: recommendationColor,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // Summary
-              Text(
-                summary,
-                style: AppTextStyles.bodyMedium,
-              ),
-
-              // Critical Issues
-              if (criticalIssues.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                Text(
-                  'Critical Issues',
-                  style: AppTextStyles.h4.copyWith(
-                    color: const Color(0xFFDC2626),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                ...criticalIssues.map((issue) =>
-                    _buildIssueItem(issue as Map<String, dynamic>, true)),
-              ],
-
-              // High Priority Issues
-              if (highPriorityIssues.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                Text(
-                  'High Priority Issues',
-                  style: AppTextStyles.h4.copyWith(
-                    color: const Color(0xFFF59E0B),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                ...highPriorityIssues.map((issue) =>
-                    _buildIssueItem(issue as Map<String, dynamic>, false)),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildIssueItem(Map<String, dynamic> issue, bool isCritical) {
-    final title = issue['title'] ?? 'Unknown Issue';
-    final description = issue['description'] ?? '';
-    final expectedValue = issue['expectedValue'] ?? '';
-    final actualValue = issue['actualValue'] ?? '';
-    final suggestedResolution = issue['suggestedResolution'] ?? '';
-
-    Color issueColor =
-        isCritical ? const Color(0xFFDC2626) : const Color(0xFFF59E0B);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: issueColor.withOpacity(0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                isCritical ? Icons.error : Icons.warning,
-                color: issueColor,
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: AppTextStyles.bodyMedium.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: issueColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (description.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              description,
-              style: AppTextStyles.bodyMedium,
-            ),
-          ],
-          if (expectedValue.isNotEmpty || actualValue.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            if (expectedValue.isNotEmpty)
-              _buildValueRow('Expected', expectedValue,
-                  Icons.check_circle_outline, const Color(0xFF16A34A)),
-            if (actualValue.isNotEmpty)
-              _buildValueRow(
-                  'Actual', actualValue, Icons.cancel, const Color(0xFFDC2626)),
-          ],
-          if (suggestedResolution.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.lightbulb_outline,
-                      color: AppColors.primary, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      suggestedResolution,
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildValueRow(
-      String label, String value, IconData icon, Color color) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: color, size: 16),
-          const SizedBox(width: 8),
-          Text(
-            '$label: ',
-            style: AppTextStyles.bodySmall.copyWith(
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: AppTextStyles.bodySmall,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   void _navigateToUpload() {
