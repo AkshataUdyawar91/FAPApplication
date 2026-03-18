@@ -66,8 +66,7 @@ public class DocumentsController : ControllerBase
         [FromForm] int? campaignWorkingDays = null,
         [FromForm] string? dealershipName = null,
         [FromForm] string? dealershipAddress = null,
-        [FromForm] string? gpsLocation = null,
-        [FromForm] string? teamsJson = null)
+        [FromForm] string? gpsLocation = null)
     {
         try
         {
@@ -133,9 +132,6 @@ public class DocumentsController : ControllerBase
                     if (!string.IsNullOrEmpty(dealershipName)) team.DealershipName = dealershipName;
                     if (!string.IsNullOrEmpty(dealershipAddress)) team.DealershipAddress = dealershipAddress;
                     if (!string.IsNullOrEmpty(gpsLocation)) team.GPSLocation = gpsLocation;
-                    
-                    // Note: TeamsJson is now stored at Team level
-                    if (!string.IsNullOrEmpty(teamsJson)) team.TeamsJson = teamsJson;
                     
                     team.UpdatedAt = DateTime.UtcNow;
                     package.UpdatedAt = DateTime.UtcNow;
