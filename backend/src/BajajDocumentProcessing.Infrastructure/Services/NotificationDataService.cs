@@ -89,11 +89,12 @@ public class NotificationDataService : INotificationDataService
         foreach (var inv in allTeamInvoices)
             allDocumentIds.Add(inv.Id);
 
-        // Also need CostSummary, ActivitySummary, EnquiryDocument — load them
+        // Also need CostSummary, ActivitySummary, EnquiryDocument, Invoices — load them
         var packageWithDocs = await _context.DocumentPackages
             .Include(p => p.CostSummary)
             .Include(p => p.ActivitySummary)
             .Include(p => p.EnquiryDocument)
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
             .AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
@@ -107,6 +108,12 @@ public class NotificationDataService : INotificationDataService
             package.CostSummary ??= packageWithDocs.CostSummary;
             package.ActivitySummary ??= packageWithDocs.ActivitySummary;
             package.EnquiryDocument ??= packageWithDocs.EnquiryDocument;
+            // Merge Invoices collection (needed by BuildCheckGroupsFromAllDocuments)
+            if (package.Invoices.Count == 0 && packageWithDocs.Invoices.Count > 0)
+            {
+                foreach (var inv in packageWithDocs.Invoices)
+                    package.Invoices.Add(inv);
+            }
         }
 
         var allValidationResults = allDocumentIds.Count > 0
@@ -922,6 +929,24 @@ public class NotificationDataService : INotificationDataService
                 Status = dealerLocationPassed ? "Pass" : "Fail",
                 Details = "Dealer & Location Details",
                 Evidence = evidence
+            });
+
+            // 2. Total No. of Days (Info — always pass, show extracted value)
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Activity Summary",
+                Status = "Pass",
+                Details = "Total No. of Days",
+                Evidence = actSummary.TotalDays.HasValue ? actSummary.TotalDays.ToString()! : "Not extracted"
+            });
+
+            // 3. Total No. of Working Days (Info — always pass, show extracted value)
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Activity Summary",
+                Status = "Pass",
+                Details = "Total No. of Working Days",
+                Evidence = actSummary.TotalWorkingDays.HasValue ? actSummary.TotalWorkingDays.ToString()! : "Not extracted"
             });
         }
 
