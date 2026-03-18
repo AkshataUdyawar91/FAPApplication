@@ -69,6 +69,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<TeamsConversation> TeamsConversations => Set<TeamsConversation>();
     // Audit logs
     public DbSet<PoBalanceLog> POBalanceLogs => Set<PoBalanceLog>();
+    public DbSet<POSyncLog> POSyncLogs => Set<POSyncLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -100,6 +101,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<Conversation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ConversationMessage>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<StateMapping>().HasQueryFilter(e => !e.IsDeleted);
+
+        modelBuilder.Entity<POSyncLog>().HasQueryFilter(e => !e.IsDeleted);
 
         // Reference data soft-delete filters
         modelBuilder.Entity<StateGstMaster>().HasQueryFilter(e => !e.IsDeleted);
