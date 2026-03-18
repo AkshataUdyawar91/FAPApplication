@@ -23,19 +23,23 @@ class AgencySubmissionDetailPage extends StatefulWidget {
   final String submissionId;
   final String token;
   final String userName;
+  final String poNumber;
 
   const AgencySubmissionDetailPage({
     super.key,
     required this.submissionId,
     required this.token,
     required this.userName,
+    required this.poNumber,
   });
 
   @override
-  State<AgencySubmissionDetailPage> createState() => _AgencySubmissionDetailPageState();
+  State<AgencySubmissionDetailPage> createState() =>
+      _AgencySubmissionDetailPageState();
 }
 
-class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage> {
+class _AgencySubmissionDetailPageState
+    extends State<AgencySubmissionDetailPage> {
   final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
 
   bool _isLoading = true;
@@ -50,6 +54,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
 
   @override
   void initState() {
+    print('poNumber: ${widget.poNumber}');
     super.initState();
     _loadSubmissionDetails();
   }
@@ -63,11 +68,14 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       );
       if (response.statusCode == 200 && mounted) {
         final submissionData = response.data as Map<String, dynamic>;
-        
+
         // Transform data for ASM-style layout
-        final invoiceSummary = SubmissionDataTransformer.extractInvoiceSummary(submissionData);
-        final campaignDetails = SubmissionDataTransformer.transformToCampaignDetails(submissionData);
-        
+        final invoiceSummary =
+            SubmissionDataTransformer.extractInvoiceSummary(submissionData);
+        final campaignDetails =
+            SubmissionDataTransformer.transformToCampaignDetails(
+                submissionData);
+
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
@@ -86,23 +94,45 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
   }
 
   void _navigateToUpload() {
-    Navigator.pushNamed(context, '/agency/upload', arguments: {
-      'token': widget.token,
-      'userName': widget.userName,
-    },);
+    Navigator.pushNamed(
+      context,
+      '/agency/upload',
+      arguments: {
+        'token': widget.token,
+        'userName': widget.userName,
+      },
+    );
   }
 
   List<NavItem> _getNavItems(BuildContext context) {
     return [
-      NavItem(icon: Icons.dashboard, label: 'Dashboard', onTap: () => Navigator.pop(context)),
-      NavItem(icon: Icons.upload_file, label: 'Upload', onTap: _navigateToUpload),
-      NavItem(icon: Icons.visibility, label: 'View Request', isActive: true, onTap: () {}),
-      NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      },),
-      NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      },),
+      NavItem(
+          icon: Icons.dashboard,
+          label: 'Dashboard',
+          onTap: () => Navigator.pop(context)),
+      NavItem(
+          icon: Icons.upload_file, label: 'Upload', onTap: _navigateToUpload),
+      NavItem(
+          icon: Icons.visibility,
+          label: 'View Request',
+          isActive: true,
+          onTap: () {}),
+      NavItem(
+        icon: Icons.notifications,
+        label: 'Notifications',
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Notifications coming soon')));
+        },
+      ),
+      NavItem(
+        icon: Icons.settings,
+        label: 'Settings',
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Settings coming soon')));
+        },
+      ),
     ];
   }
 
@@ -129,8 +159,13 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             backgroundColor: Colors.white,
             radius: 18,
             child: Text(
-              widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
-              style: const TextStyle(color: Color(0xFF003087), fontWeight: FontWeight.bold, fontSize: 14),
+              widget.userName.isNotEmpty
+                  ? widget.userName[0].toUpperCase()
+                  : '?',
+              style: const TextStyle(
+                  color: Color(0xFF003087),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14),
             ),
           ),
           const SizedBox(width: 12),
@@ -138,9 +173,16 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
+              Text(widget.userName,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white)),
               const SizedBox(height: 2),
-              Text('Agency', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
+              Text('Agency',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.7))),
             ],
           ),
           const SizedBox(width: 12),
@@ -161,7 +203,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
           appBar: isMobile
               ? AppBar(
                   backgroundColor: const Color(0xFF1E3A8A),
-                  title: const Text('Bajaj', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  title: const Text('Bajaj',
+                      style: TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
                   actions: [
                     IconButton(
@@ -191,9 +235,11 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                         userName: widget.userName,
                         userRole: 'Agency',
                         navItems: _getNavItems(context),
-                        onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                        onLogout: () =>
+                            Navigator.pushReplacementNamed(context, '/'),
                         isCollapsed: _isSidebarCollapsed,
-                        onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                        onToggleCollapse: () => setState(
+                            () => _isSidebarCollapsed = !_isSidebarCollapsed),
                       ),
                     Expanded(
                       child: Column(
@@ -201,7 +247,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                           if (!isMobile) _buildDesktopHeader(device),
                           Expanded(
                             child: _isLoading
-                                ? const Center(child: CircularProgressIndicator())
+                                ? const Center(
+                                    child: CircularProgressIndicator())
                                 : _errorMessage != null
                                     ? _buildError()
                                     : _buildContent(device),
@@ -221,7 +268,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
+          endDrawer: isMobile
+              ? ChatEndDrawer(token: widget.token, userName: widget.userName)
+              : null,
           floatingActionButton: (_isChatOpen && !isMobile)
               ? null
               : Builder(
@@ -247,7 +296,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
   }
 
   Widget _buildDesktopHeader(DeviceType device) {
-    final fapNumber = 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    final fapNumber =
+        'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: device == DeviceType.desktop ? 24 : 16,
@@ -312,8 +362,10 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     if (_submission == null) return const SizedBox();
 
     final state = _submission!['state']?.toString() ?? 'Unknown';
-    final fapNumber = 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
-    final hPad = responsiveValue<double>(MediaQuery.of(context).size.width, mobile: 12, tablet: 16, desktop: 24);
+    final fapNumber =
+        'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
+        mobile: 12, tablet: 16, desktop: 24);
 
     return SingleChildScrollView(
       padding: EdgeInsets.all(hPad),
@@ -349,7 +401,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
               reviewNotes: _submission!['asmReviewNotes']?.toString(),
             ),
           ],
-          if (state.toLowerCase() == 'rejectedbyhq' || state.toLowerCase() == 'rejectedbyra') ...[
+          if (state.toLowerCase() == 'rejectedbyhq' ||
+              state.toLowerCase() == 'rejectedbyra') ...[
             const SizedBox(height: 16),
             _buildRejectionCard(
               rejectedBy: 'RA',
@@ -372,7 +425,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
           // Campaign Details Table (ASM-style)
           CampaignDetailsTable(
             campaignDetails: _campaignDetails,
-            onPhotoTap: (detail) => _downloadDocument(detail.documentId, detail.documentName),
+            onPhotoTap: (detail) =>
+                _downloadDocument(detail.documentId, detail.documentName),
           ),
           const SizedBox(height: 24),
 
@@ -386,7 +440,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     final statusInfo = _getStatusInfo(state);
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppColors.border)),
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -403,7 +459,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                       Text(fapNumber, style: AppTextStyles.h2),
                       const SizedBox(height: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
                           color: statusInfo['bgColor'],
                           border: Border.all(color: statusInfo['borderColor']),
@@ -427,8 +484,12 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             const SizedBox(height: 16),
             Row(
               children: [
-                Expanded(child: _buildInfoItem('Submitted', _formatDate(_submission!['createdAt']))),
-                Expanded(child: _buildInfoItem('Last Updated', _formatDate(_submission!['updatedAt']))),
+                Expanded(
+                    child: _buildInfoItem(
+                        'Submitted', _formatDate(_submission!['createdAt']))),
+                Expanded(
+                    child: _buildInfoItem('Last Updated',
+                        _formatDate(_submission!['updatedAt']))),
               ],
             ),
           ],
@@ -441,9 +502,13 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
+        Text(label,
+            style: AppTextStyles.bodySmall
+                .copyWith(color: AppColors.textSecondary)),
         const SizedBox(height: 4),
-        Text(value, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+        Text(value,
+            style:
+                AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
       ],
     );
   }
@@ -456,9 +521,12 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
 
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppColors.border)),
       child: ExpansionTile(
-        leading: const Icon(Icons.description, color: Color(0xFF3B82F6), size: 32),
+        leading:
+            const Icon(Icons.description, color: Color(0xFF3B82F6), size: 32),
         title: const Text('Purchase Order', style: AppTextStyles.h3),
         subtitle: Text('${poDocs.length} document(s)'),
         children: poDocs.map((doc) {
@@ -488,12 +556,14 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                     Expanded(
                       child: Text(
                         doc['filename'] ?? 'Unknown',
-                        style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+                        style: AppTextStyles.bodyMedium
+                            .copyWith(fontWeight: FontWeight.w600),
                       ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.download, size: 20),
-                      onPressed: () => _downloadDocument(doc['id']?.toString(), doc['filename']),
+                      onPressed: () => _downloadDocument(
+                          doc['id']?.toString(), doc['filename']),
                       tooltip: 'Download',
                       color: AppColors.primary,
                       padding: EdgeInsets.zero,
@@ -509,8 +579,12 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                     spacing: 24,
                     runSpacing: 12,
                     children: data.entries
-                      .where((entry) => !const {'LineItems', 'FieldConfidences', 'IsFlaggedForReview'}.contains(entry.key))
-                      .map((entry) {
+                        .where((entry) => !const {
+                              'LineItems',
+                              'FieldConfidences',
+                              'IsFlaggedForReview'
+                            }.contains(entry.key))
+                        .map((entry) {
                       return SizedBox(
                         width: 200,
                         child: Column(
@@ -518,12 +592,14 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                           children: [
                             Text(
                               _formatFieldName(entry.key),
-                              style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
+                              style: AppTextStyles.bodySmall
+                                  .copyWith(color: AppColors.textSecondary),
                             ),
                             const SizedBox(height: 4),
                             Text(
                               entry.value?.toString() ?? '-',
-                              style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+                              style: AppTextStyles.bodyMedium
+                                  .copyWith(fontWeight: FontWeight.w600),
                             ),
                           ],
                         ),
@@ -540,35 +616,49 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
   }
 
   String _formatFieldName(String key) {
-    return key.replaceAllMapped(
-      RegExp(r'([A-Z])'),
-      (match) => ' ${match.group(0)}',
-    ).trim().split(' ').map((word) =>
-      word[0].toUpperCase() + word.substring(1),
-    ).join(' ');
+    return key
+        .replaceAllMapped(
+          RegExp(r'([A-Z])'),
+          (match) => ' ${match.group(0)}',
+        )
+        .trim()
+        .split(' ')
+        .map(
+          (word) => word[0].toUpperCase() + word.substring(1),
+        )
+        .join(' ');
   }
 
   final bool _isResubmitting = false;
 
   void _enterEditMode() {
-    Navigator.pushNamed(context, '/agency/upload', arguments: {
-      'token': widget.token,
-      'userName': widget.userName,
-      'submissionId': widget.submissionId,
-    },);
+    Navigator.pushNamed(
+      context,
+      '/agency/upload',
+      arguments: {
+        'token': widget.token,
+        'userName': widget.userName,
+        'submissionId': widget.submissionId,
+      },
+    );
   }
 
   Future<bool> _showDeleteConfirmation(String title, String message) async {
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        title: Text(title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         content: Text(message, style: const TextStyle(fontSize: 14)),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.rejectedText, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.rejectedText,
+                foregroundColor: Colors.white),
             child: const Text('Delete'),
           ),
         ],
@@ -577,10 +667,13 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     return result ?? false;
   }
 
-  Widget _buildRejectionCard({required String rejectedBy, String? reviewNotes}) {
+  Widget _buildRejectionCard(
+      {required String rejectedBy, String? reviewNotes}) {
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFFEF4444))),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: Color(0xFFEF4444))),
       color: const Color(0xFFFEE2E2),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -621,7 +714,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                 ),
                 child: Text(
                   reviewNotes,
-                  style: AppTextStyles.bodyMedium.copyWith(color: const Color(0xFF7F1D1D)),
+                  style: AppTextStyles.bodyMedium
+                      .copyWith(color: const Color(0xFF7F1D1D)),
                 ),
               ),
             ],
@@ -648,7 +742,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
   Widget _buildProcessingFailedCard() {
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFFF59E0B))),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: Color(0xFFF59E0B))),
       color: const Color(0xFFFEF3C7),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -657,7 +753,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
           children: [
             Row(
               children: [
-                const Icon(Icons.warning_amber, color: Color(0xFFF59E0B), size: 24),
+                const Icon(Icons.warning_amber,
+                    color: Color(0xFFF59E0B), size: 24),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
@@ -673,7 +770,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             const SizedBox(height: 12),
             Text(
               'Document processing encountered an error. You can edit and resubmit.',
-              style: AppTextStyles.bodySmall.copyWith(color: const Color(0xFF92400E)),
+              style: AppTextStyles.bodySmall
+                  .copyWith(color: const Color(0xFF92400E)),
             ),
             const SizedBox(height: 16),
             SizedBox(
@@ -715,7 +813,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
               children: [
                 const Icon(Icons.campaign, color: Color(0xFF3B82F6), size: 28),
                 const SizedBox(width: 12),
-                Text('Campaigns (${campaigns.length})', style: AppTextStyles.h3),
+                Text('Campaigns (${campaigns.length})',
+                    style: AppTextStyles.h3),
               ],
             ),
           ),
@@ -729,7 +828,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
   }
 
   Widget _buildCampaignTile(Map<String, dynamic> campaign, int index) {
-    final name = campaign['campaignName']?.toString() ?? 'Campaign ${index + 1}';
+    final name =
+        campaign['campaignName']?.toString() ?? 'Campaign ${index + 1}';
     final teamCode = campaign['teamCode']?.toString() ?? '';
     final dealership = campaign['dealershipName']?.toString() ?? '';
     final startDate = _formatDate(campaign['startDate']);
@@ -742,16 +842,24 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     final costSummaryFile = campaign['costSummaryFileName']?.toString();
     final activitySummaryUrl = campaign['activitySummaryBlobUrl']?.toString();
     final activitySummaryFile = campaign['activitySummaryFileName']?.toString();
-    final campaignId = campaign['id']?.toString() ?? campaign['campaignId']?.toString() ?? '';
+    final campaignId =
+        campaign['id']?.toString() ?? campaign['campaignId']?.toString() ?? '';
 
     return ExpansionTile(
       leading: CircleAvatar(
         backgroundColor: const Color(0xFF3B82F6).withOpacity(0.1),
-        child: Text('${index + 1}', style: const TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold)),
+        child: Text('${index + 1}',
+            style: const TextStyle(
+                color: Color(0xFF3B82F6), fontWeight: FontWeight.bold)),
       ),
-      title: Text(name, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+      title: Text(name,
+          style:
+              AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
       subtitle: Text(
-        [if (teamCode.isNotEmpty) 'Team: $teamCode', if (dealership.isNotEmpty) dealership].join(' • '),
+        [
+          if (teamCode.isNotEmpty) 'Team: $teamCode',
+          if (dealership.isNotEmpty) dealership
+        ].join(' • '),
         style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
       ),
       children: [
@@ -767,8 +875,10 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                 children: [
                   if (startDate != 'N/A') _buildDetailChip('Start', startDate),
                   if (endDate != 'N/A') _buildDetailChip('End', endDate),
-                  if (workingDays.isNotEmpty) _buildDetailChip('Working Days', workingDays),
-                  if (totalCost != null) _buildDetailChip('Total Cost', '₹$totalCost'),
+                  if (workingDays.isNotEmpty)
+                    _buildDetailChip('Working Days', workingDays),
+                  if (totalCost != null)
+                    _buildDetailChip('Total Cost', '₹$totalCost'),
                 ],
               ),
               const SizedBox(height: 16),
@@ -792,7 +902,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
               // Invoices
               if (invoices.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                Text('Invoices (${invoices.length})', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                Text('Invoices (${invoices.length})',
+                    style: AppTextStyles.bodyMedium
+                        .copyWith(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 ...invoices.map((inv) {
                   final invMap = inv as Map<String, dynamic>;
@@ -814,14 +926,17 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
               // Photos
               if (photos.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                Text('Photos (${photos.length})', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                Text('Photos (${photos.length})',
+                    style: AppTextStyles.bodyMedium
+                        .copyWith(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 ...photos.map((photo) {
                   final photoMap = photo as Map<String, dynamic>;
                   final fileName = photoMap['fileName']?.toString() ?? 'Photo';
                   final blobUrl = photoMap['blobUrl']?.toString() ?? '';
                   final caption = photoMap['caption']?.toString() ?? '';
-                  final label = caption.isNotEmpty ? '$fileName - $caption' : fileName;
+                  final label =
+                      caption.isNotEmpty ? '$fileName - $caption' : fileName;
                   return _buildDocumentRow(Icons.image, label, blobUrl);
                 }),
               ],
@@ -832,16 +947,21 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     );
   }
 
-  Widget _buildEditableDocumentRow(IconData icon, String label, String? blobUrl, {VoidCallback? onDelete}) {
+  Widget _buildEditableDocumentRow(IconData icon, String label, String? blobUrl,
+      {VoidCallback? onDelete}) {
     final hasUrl = blobUrl != null && blobUrl.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: hasUrl ? AppColors.primary : AppColors.textSecondary),
+          Icon(icon,
+              size: 18,
+              color: hasUrl ? AppColors.primary : AppColors.textSecondary),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(label, style: AppTextStyles.bodyMedium, overflow: TextOverflow.ellipsis),
+            child: Text(label,
+                style: AppTextStyles.bodyMedium,
+                overflow: TextOverflow.ellipsis),
           ),
           if (hasUrl)
             IconButton(
@@ -886,9 +1006,13 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary, fontSize: 11)),
+        Text(label,
+            style: AppTextStyles.bodySmall
+                .copyWith(color: AppColors.textSecondary, fontSize: 11)),
         const SizedBox(height: 2),
-        Text(value, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+        Text(value,
+            style:
+                AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
       ],
     );
   }
@@ -899,7 +1023,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: hasUrl ? AppColors.primary : AppColors.textSecondary),
+          Icon(icon,
+              size: 18,
+              color: hasUrl ? AppColors.primary : AppColors.textSecondary),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -934,10 +1060,14 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     String asmStatus = 'pending';
     if (state.contains('rejectedbyasm')) {
       asmStatus = 'rejected';
-    } else if (state.contains('approved') || state.contains('pendinghq') || state.contains('rejectedbyhq')) {
+    } else if (state.contains('approved') ||
+        state.contains('pendinghq') ||
+        state.contains('rejectedbyhq')) {
       asmStatus = 'approved';
     } else if (asmReviewedAt != null) {
-      asmStatus = asmReviewNotes != null && asmReviewNotes.isNotEmpty ? 'rejected' : 'approved';
+      asmStatus = asmReviewNotes != null && asmReviewNotes.isNotEmpty
+          ? 'rejected'
+          : 'approved';
     }
 
     // Determine HQ/RA status
@@ -947,12 +1077,16 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     } else if (state.contains('rejectedbyhq')) {
       hqStatus = 'rejected';
     } else if (hqReviewedAt != null) {
-      hqStatus = hqReviewNotes != null && hqReviewNotes.isNotEmpty ? 'rejected' : 'approved';
+      hqStatus = hqReviewNotes != null && hqReviewNotes.isNotEmpty
+          ? 'rejected'
+          : 'approved';
     }
 
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppColors.border)),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -1042,17 +1176,25 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                   width: 28,
                   height: 28,
                   decoration: BoxDecoration(
-                    color: isCompleted ? color.withOpacity(0.15) : const Color(0xFFF3F4F6),
+                    color: isCompleted
+                        ? color.withOpacity(0.15)
+                        : const Color(0xFFF3F4F6),
                     shape: BoxShape.circle,
-                    border: Border.all(color: isCompleted ? color : const Color(0xFFD1D5DB), width: 2),
+                    border: Border.all(
+                        color: isCompleted ? color : const Color(0xFFD1D5DB),
+                        width: 2),
                   ),
-                  child: Icon(icon, size: 14, color: isCompleted ? color : const Color(0xFF9CA3AF)),
+                  child: Icon(icon,
+                      size: 14,
+                      color: isCompleted ? color : const Color(0xFF9CA3AF)),
                 ),
                 if (!isLast)
                   Expanded(
                     child: Container(
                       width: 2,
-                      color: isCompleted ? color.withOpacity(0.3) : const Color(0xFFE5E7EB),
+                      color: isCompleted
+                          ? color.withOpacity(0.3)
+                          : const Color(0xFFE5E7EB),
                     ),
                   ),
               ],
@@ -1070,12 +1212,16 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                     title,
                     style: AppTextStyles.bodyMedium.copyWith(
                       fontWeight: FontWeight.w600,
-                      color: isCompleted ? const Color(0xFF111827) : const Color(0xFF9CA3AF),
+                      color: isCompleted
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF9CA3AF),
                     ),
                   ),
                   if (date != null) ...[
                     const SizedBox(height: 2),
-                    Text(date, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary, fontSize: 11)),
+                    Text(date,
+                        style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary, fontSize: 11)),
                   ],
                   if (comment != null && comment.isNotEmpty) ...[
                     const SizedBox(height: 6),
@@ -1088,7 +1234,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                       ),
                       child: Text(
                         comment,
-                        style: AppTextStyles.bodySmall.copyWith(color: const Color(0xFF4B5563), height: 1.4),
+                        style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFF4B5563), height: 1.4),
                       ),
                     ),
                   ],
@@ -1135,7 +1282,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         'borderColor': const Color(0xFFFCA5A5),
         'icon': Icons.cancel,
       };
-    } else if (stateLower.contains('pendinghq') || stateLower == 'asmapproved') {
+    } else if (stateLower.contains('pendinghq') ||
+        stateLower == 'asmapproved') {
       return {
         'label': 'Pending with RA',
         'color': const Color(0xFF3B82F6),
@@ -1151,7 +1299,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         'borderColor': const Color(0xFFFCD34D),
         'icon': Icons.warning_amber,
       };
-    } else if (stateLower.contains('pendingasm') || stateLower.contains('pendingapproval')) {
+    } else if (stateLower.contains('pendingasm') ||
+        stateLower.contains('pendingapproval')) {
       return {
         'label': 'Pending with ASM',
         'color': const Color(0xFFF59E0B),
@@ -1183,7 +1332,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
   Future<void> _downloadDocument(String? documentId, String? filename) async {
     if (documentId == null || documentId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Document not available for download'), backgroundColor: Colors.orange),
+        const SnackBar(
+            content: Text('Document not available for download'),
+            backgroundColor: Colors.orange),
       );
       return;
     }
@@ -1197,13 +1348,17 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
 
       if (response.statusCode == 200) {
         final base64Content = response.data['base64Content']?.toString() ?? '';
-        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
-        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+        final contentType = response.data['contentType']?.toString() ??
+            'application/octet-stream';
+        final name =
+            filename ?? response.data['filename']?.toString() ?? 'document';
 
         if (base64Content.isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+              const SnackBar(
+                  content: Text('File content not available'),
+                  backgroundColor: Colors.orange),
             );
           }
           return;
@@ -1218,7 +1373,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to download: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Failed to download: $e'),
+              backgroundColor: Colors.red),
         );
       }
     }
@@ -1241,7 +1398,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: const BoxDecoration(
                   color: AppColors.primary,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
@@ -1253,12 +1411,16 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                     Expanded(
                       child: Text(
                         name,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                      icon: const Icon(Icons.close,
+                          color: Colors.white, size: 20),
                       onPressed: () => Navigator.of(ctx).pop(),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
@@ -1284,13 +1446,19 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.insert_drive_file, size: 64, color: AppColors.textSecondary),
+                                  const Icon(Icons.insert_drive_file,
+                                      size: 64, color: AppColors.textSecondary),
                                   const SizedBox(height: 16),
-                                  Text(name, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+                                  Text(name,
+                                      style: AppTextStyles.bodyMedium.copyWith(
+                                          fontWeight: FontWeight.w600)),
                                   const SizedBox(height: 8),
-                                  Text('Preview not available for this file type.\nClick "Download" to save.',
+                                  Text(
+                                    'Preview not available for this file type.\nClick "Download" to save.',
                                     textAlign: TextAlign.center,
-                                    style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),),
+                                    style: AppTextStyles.bodySmall.copyWith(
+                                        color: AppColors.textSecondary),
+                                  ),
                                 ],
                               ),
                             ),
@@ -1312,7 +1480,8 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                           web.BlobPropertyBag(type: contentType),
                         );
                         final url = web.URL.createObjectURL(blob);
-                        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+                        final anchor = web.document.createElement('a')
+                            as web.HTMLAnchorElement;
                         anchor.href = url;
                         anchor.download = name;
                         anchor.click();

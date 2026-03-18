@@ -65,6 +65,7 @@ class MyApp extends StatelessWidget {
                   submissionId: args?['submissionId']?.toString() ?? '',
                   token: args?['token'] ?? '',
                   userName: args?['userName'] ?? '',
+                  poNumber: args?['poNumber'] ?? '',
                 ),
               ),
             );
