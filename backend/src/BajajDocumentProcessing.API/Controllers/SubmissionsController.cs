@@ -78,11 +78,24 @@ public class SubmissionsController : ControllerBase
 
             var userId = Guid.Parse(userIdClaim);
 
+            // Look up the user's AgencyId so the FK constraint is satisfied
+            var user = await _context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+            if (user?.AgencyId == null)
+            {
+                _logger.LogWarning("User {UserId} has no AgencyId — cannot create submission", userId);
+                return BadRequest(new { error = "User is not linked to an agency" });
+            }
+
             // Create document package
             var package = new Domain.Entities.DocumentPackage
             {
                 Id = Guid.NewGuid(),
                 SubmittedByUserId = userId,
+                AgencyId = user.AgencyId.Value,
+                SelectedPOId = request.SelectedPoId,
                 State = PackageState.Uploaded,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -276,13 +289,13 @@ public class SubmissionsController : ControllerBase
             var query = _context.DocumentPackages
                 .Include(p => p.PO)
                 .Include(p => p.Invoices)
-                .Include(p => p.ValidationResult)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
                 .Include(p => p.SubmittedBy)
                 .Include(p => p.Teams)
                     .ThenInclude(c => c.Photos)
                 .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
                 .Include(p => p.EnquiryDocument)
                 .Include(p => p.RequestApprovalHistory)
                 .AsSplitQuery()
@@ -323,8 +336,11 @@ public class SubmissionsController : ControllerBase
 
             if (package == null)
             {
+                _logger.LogWarning("Submission not found: {Id}", id);
                 return NotFound(new { error = "Submission not found" });
             }
+
+            _logger.LogInformation("Retrieved submission {Id} successfully", id);
 
             // Get approval history for review fields
             var asmApproval = package.RequestApprovalHistory
@@ -402,8 +418,13 @@ public class SubmissionsController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting submission {Id}", id);
-            return StatusCode(500, new { error = "An error occurred while retrieving the submission" });
+            _logger.LogError(ex, "Error getting submission {Id}. Exception: {Message}, StackTrace: {StackTrace}", 
+                id, ex.Message, ex.StackTrace);
+            return StatusCode(500, new { 
+                error = "An error occurred while retrieving the submission",
+                details = ex.Message,
+                innerException = ex.InnerException?.Message
+            });
         }
     }
 
@@ -608,7 +629,8 @@ public class SubmissionsController : ControllerBase
                     InvoiceAmount = invoiceAmount,
                     PoNumber = poNumber,
                     PoAmount = poAmount,
-                    OverallConfidence = p.ConfidenceScore != null ? (decimal?)p.ConfidenceScore.OverallConfidence : null
+                    OverallConfidence = p.ConfidenceScore != null ? (decimal?)p.ConfidenceScore.OverallConfidence : null,
+                    SubmissionNumber = p.SubmissionNumber
                 };
             }).ToList();
 
@@ -2090,7 +2112,8 @@ public class SubmissionsController : ControllerBase
 public record CreateSubmissionRequest(
     DateTime? CampaignStartDate = null,
     DateTime? CampaignEndDate = null,
-    int? CampaignWorkingDays = null
+    int? CampaignWorkingDays = null,
+    Guid? SelectedPoId = null
 );
 
 /// <summary>

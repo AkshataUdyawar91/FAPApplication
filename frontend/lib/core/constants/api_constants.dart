@@ -1,7 +1,7 @@
 /// API endpoint constants
 class ApiConstants {
   // Base URL - update this to match your backend
-  static const String baseUrl = 'http://localhost:5001/api';
+  static const String baseUrl = 'http://localhost:5000/api';
 
   // Auth endpoints
   static const String login = '/auth/login';

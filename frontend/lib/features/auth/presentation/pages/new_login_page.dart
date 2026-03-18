@@ -10,7 +10,7 @@ class NewLoginPage extends StatefulWidget {
 class _NewLoginPageState extends State<NewLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5001/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
   bool _isLoading = false;
   String? _errorMessage;
   bool _obscurePassword = true;
@@ -47,8 +47,15 @@ class _NewLoginPageState extends State<NewLoginPage> {
         });
       }
     } on DioException catch (e) {
+      debugPrint('Login DioException: type=${e.type}, message=${e.message}, statusCode=${e.response?.statusCode}, responseData=${e.response?.data}');
       setState(() {
-        _errorMessage = e.response?.statusCode == 401 ? 'Invalid email or password' : 'Login failed. Please try again.';
+        if (e.response?.statusCode == 401) {
+          _errorMessage = 'Invalid email or password';
+        } else if (e.type == DioExceptionType.connectionError || e.type == DioExceptionType.connectionTimeout) {
+          _errorMessage = 'Cannot connect to server at http://localhost:5000. Is the backend running?';
+        } else {
+          _errorMessage = 'Login failed: ${e.message}';
+        }
       });
     } finally {
       if (mounted) setState(() => _isLoading = false);

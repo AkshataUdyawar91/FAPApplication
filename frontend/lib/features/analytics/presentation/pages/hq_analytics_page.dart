@@ -19,7 +19,7 @@ class HQAnalyticsPage extends StatefulWidget {
 }
 
 class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5001/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
   
   bool _isLoading = true;
   Map<String, dynamic> _analytics = {};

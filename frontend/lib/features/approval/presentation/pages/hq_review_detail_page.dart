@@ -39,7 +39,7 @@ class HQReviewDetailPage extends StatefulWidget {
 
 class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
   final _dio = Dio(BaseOptions(
-    baseUrl: 'http://localhost:5001/api',
+    baseUrl: 'http://localhost:5000/api',
     headers: {
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
