@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.EntityFrameworkCore;
 using BajajDocumentProcessing.Infrastructure;
 using BajajDocumentProcessing.Infrastructure.Persistence;
 using BajajDocumentProcessing.API.Middleware;
@@ -133,7 +134,8 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var context = services.GetRequiredService<ApplicationDbContext>();
-        await context.Database.EnsureCreatedAsync();
+        // Apply any pending migrations (preserves existing data)
+        await context.Database.MigrateAsync();
         await ApplicationDbContextSeed.SeedAsync(context);
     }
     catch (Exception ex)
