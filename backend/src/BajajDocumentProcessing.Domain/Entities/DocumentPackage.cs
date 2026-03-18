@@ -54,6 +54,12 @@ public class DocumentPackage : BaseEntity
     public Guid? AssignedCircleHeadUserId { get; set; }
 
     /// <summary>
+    /// Gets or sets the unique identifier of the RA user assigned to review this submission.
+    /// Auto-assigned at ASM approval time via StateMapping.
+    /// </summary>
+    public Guid? AssignedRAUserId { get; set; }
+
+    /// <summary>
     /// Gets or sets the unique identifier of the PO selected during conversational submission (Step 2).
     /// </summary>
     public Guid? SelectedPOId { get; set; }

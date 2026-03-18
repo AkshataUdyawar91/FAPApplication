@@ -778,7 +778,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Widget _buildMobileCard(Map<String, dynamic> request) {
     final rawState = request['state']?.toString() ?? 'pending';
     final id = request['id']?.toString() ?? '';
-    final fapNumber =
+    final fapNumber = request['submissionNumber']?.toString() ??
         'FAP-${id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase()}';
     final poNumber =
         request['poNumber']?.toString() ?? request['poNo']?.toString() ?? '—';
@@ -938,7 +938,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   final rawState = r['state']?.toString() ?? 'pending';
                   final status = _normalizeStatus(rawState);
                   final id = r['id']?.toString() ?? '';
-                  final fapNumber =
+                  final fapNumber = r['submissionNumber']?.toString() ??
                       'FAP-${id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase()}';
                   final poNumber =
                       r['poNumber']?.toString() ?? r['poNo']?.toString() ?? '—';
