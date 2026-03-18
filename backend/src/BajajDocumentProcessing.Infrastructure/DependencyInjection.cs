@@ -148,6 +148,16 @@ public static class DependencyInjection
         // PO Balance Service
         services.AddScoped<IPoBalanceService, PoBalanceService>();
 
+        // SAP PO_CREATE sync
+        services.AddHttpClient("SapPoCreate", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(60);
+        });
+        services.AddScoped<IPoSyncService, PoSyncService>();
+
+        // Scheduled daily 11 PM PO sync job
+        services.AddHostedService<PoSyncScheduler>();
+
         // Azure services configuration will be added in subsequent tasks
         
         // Background workflow processor

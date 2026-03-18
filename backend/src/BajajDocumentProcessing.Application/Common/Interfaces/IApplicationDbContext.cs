@@ -56,6 +56,7 @@ public interface IApplicationDbContext
 
     // Audit logs
     DbSet<PoBalanceLog> POBalanceLogs { get; }
+    DbSet<POSyncLog> POSyncLogs { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
