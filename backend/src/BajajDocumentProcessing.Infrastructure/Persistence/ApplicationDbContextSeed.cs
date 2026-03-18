@@ -73,6 +73,43 @@ public static class ApplicationDbContextSeed
         // Always fix roles on startup — self-healing guard
         await CorrectUserRolesAsync(context);
 
+        // Seed state GST master data if empty
+        if (!await context.StateGstMasters.AnyAsync())
+        {
+            var states = new[]
+            {
+                ("JK","Jammu and Kashmir"),("HP","Himachal Pradesh"),("PB","Punjab"),
+                ("CH","Chandigarh"),("UT","Uttarakhand"),("HR","Haryana"),
+                ("DL","Delhi"),("RJ","Rajasthan"),("UP","Uttar Pradesh"),
+                ("BR","Bihar"),("SK","Sikkim"),("AR","Arunachal Pradesh"),
+                ("NL","Nagaland"),("MN","Manipur"),("MZ","Mizoram"),
+                ("TR","Tripura"),("ML","Meghalaya"),("AS","Assam"),
+                ("WB","West Bengal"),("JH","Jharkhand"),("OD","Odisha"),
+                ("CT","Chhattisgarh"),("MP","Madhya Pradesh"),("GJ","Gujarat"),
+                ("DD","Dadra and Nagar Haveli and Daman and Diu"),("MH","Maharashtra"),
+                ("AP","Andhra Pradesh"),("KA","Karnataka"),("GA","Goa"),
+                ("KL","Kerala"),("TN","Tamil Nadu"),("TS","Telangana"),
+                ("AN","Andaman and Nicobar Islands"),("PY","Puducherry"),
+                ("LA","Ladakh"),("LD","Lakshadweep"),
+            };
+
+            foreach (var (code, name) in states)
+            {
+                context.StateGstMasters.Add(new Domain.Entities.StateGstMaster
+                {
+                    Id = Guid.NewGuid(),
+                    StateCode = code,
+                    StateName = name,
+                    GstPercentage = 18.00m,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+            await context.SaveChangesAsync();
+            Console.WriteLine("[Seed] Added state GST master data");
+        }
+
         // Seed sample POs for the agency (simulates SAP sync)
         if (!await context.POs.AnyAsync())
         {

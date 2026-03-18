@@ -54,5 +54,8 @@ public interface IApplicationDbContext
     DbSet<CostMaster> CostMasters { get; }
     DbSet<CostMasterStateRate> CostMasterStateRates { get; }
 
+    // Audit logs
+    DbSet<PoBalanceLog> POBalanceLogs { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

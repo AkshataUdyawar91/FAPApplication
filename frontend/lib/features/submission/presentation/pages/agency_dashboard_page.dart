@@ -7,7 +7,7 @@ import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
-import '../../../conversational_submission/presentation/widgets/conversational_chat_panel.dart';
+import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';class AgencyDashboardPage extends StatefulWidget {
   final String token;
@@ -32,7 +32,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   bool _isLoading = true;
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
-  bool _isChatbotOpen = false;
+  bool _isChatbotOpen = true;
 
   @override
   void initState() {
@@ -83,7 +83,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       final state = req['state']?.toString().toLowerCase() ?? '';
       
       // Map backend states to dropdown values
-      if (['extracting', 'validating', 'validated', 'scoring', 'recommending'].contains(state)) {
+      if (['uploaded', 'draft'].contains(state)) {
+        statuses.add('uploaded');
+      } else if (['extracting', 'validating', 'validated', 'scoring', 'recommending'].contains(state)) {
         statuses.add('extracting');
       } else if (['pendingapproval', 'pendingasmapproval'].contains(state)) {
         statuses.add('pending_with_asm');
@@ -105,6 +107,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     final availableStatuses = _availableStatuses;
     final statusLabels = {
       'all': 'All Status',
+      'uploaded': 'Submitted',
       'extracting': 'Extracting',
       'pending_with_asm': 'Pending with ASM',
       'pending_with_ra': 'Pending with RA',
@@ -116,6 +119,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     // Define the order we want statuses to appear
     final orderedKeys = [
       'all',
+      'uploaded',
       'extracting',
       'pending_with_asm',
       'pending_with_ra',
@@ -141,6 +145,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       final state = req['state']?.toString().toLowerCase() ?? '';
       bool matchesStatus = false;
       switch (_statusFilter) {
+        case 'uploaded':
+          matchesStatus = ['uploaded', 'draft'].contains(state);
+          break;
         case 'extracting':
           matchesStatus = ['extracting', 'validating', 'validated', 'scoring', 'recommending'].contains(state);
           break;
@@ -167,6 +174,10 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Map<String, int> get _stats {
     return {
       'total': _requests.length,
+      'uploaded': _requests.where((r) {
+        final s = r['state']?.toString().toLowerCase() ?? '';
+        return ['uploaded', 'draft'].contains(s);
+      }).length,
       'extracting': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
         return ['extracting', 'validating', 'validated', 'scoring', 'recommending'].contains(s);
@@ -251,8 +262,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                       deviceType: device,
                       onClose: () => setState(() => _isChatOpen = false),
                     ),
-                    if (_isChatbotOpen && !isMobile) ConversationalChatPanel(
-                      token: widget.token,
+                    if (_isChatbotOpen && !isMobile) AssistantChatPanel(
                       onClose: () => setState(() => _isChatbotOpen = false),
                     ),
                   ],
@@ -375,6 +385,12 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
             ),
           ),
           // Toggle chatbot panel button
+           ElevatedButton.icon(
+            onPressed: _navigateToUpload,
+            icon: const Icon(Icons.add, size: 20),
+            label: const Text('New Request'),
+           ),
+           SizedBox(width: 8,),
           OutlinedButton.icon(
             onPressed: _navigateToChatbot,
             icon: Icon(

@@ -85,8 +85,15 @@ public class PO : BaseEntity
 
     /// <summary>
     /// Remaining PO balance available for claims.
+    /// Updated from the SAP PO balance API response.
     /// </summary>
     public decimal? RemainingBalance { get; set; }
+
+    /// <summary>
+    /// UTC timestamp when RemainingBalance was last refreshed from SAP.
+    /// Maps to the CalculatedAt field in the SAP API response.
+    /// </summary>
+    public DateTime? RefreshedAt { get; set; }
 
     /// <summary>
     /// Version number matching the parent package version.
