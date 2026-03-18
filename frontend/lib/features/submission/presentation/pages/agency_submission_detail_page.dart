@@ -52,6 +52,11 @@ class _AgencySubmissionDetailPageState
   InvoiceSummaryData? _invoiceSummary;
   List<CampaignDetailRow> _campaignDetails = [];
 
+  // PO Balance data
+  bool _isLoadingBalance = false;
+  Map<String, dynamic>? _poBalance;
+  String? _balanceError;
+
   @override
   void initState() {
     print('poNumber: ${widget.poNumber}');
@@ -90,6 +95,57 @@ class _AgencySubmissionDetailPageState
           _isLoading = false;
         });
       }
+    }
+  }
+
+  Future<void> _fetchPOBalance() async {
+    if (widget.poNumber.isEmpty) {
+      setState(() {
+        _balanceError = 'PO Number not available';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingBalance = true;
+      _balanceError = null;
+      _poBalance = null;
+    });
+
+    try {
+      final response = await _dio.get(
+        '/po-balance/${widget.poNumber}',
+        queryParameters: {'companyCode': 'BAL'},
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        final balanceData = response.data as Map<String, dynamic>;
+        print('PO Balance API Response: $balanceData'); // Debug log
+        setState(() {
+          _poBalance = balanceData;
+          _isLoadingBalance = false;
+        });
+      }
+    } catch (e) {
+      print('PO Balance API Error: $e'); // Debug log
+      if (mounted) {
+        setState(() {
+          _balanceError = 'Failed to fetch PO balance';
+          _isLoadingBalance = false;
+        });
+      }
+    }
+  }
+
+  String _formatBalanceDate(String? dateStr) {
+    if (dateStr == null) return 'N/A';
+    try {
+      final utcDate = DateTime.parse(dateStr);
+      final localDate = utcDate.toLocal();
+      return '${localDate.day}/${localDate.month}/${localDate.year} ${localDate.hour}:${localDate.minute.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return 'N/A';
     }
   }
 
@@ -477,6 +533,69 @@ class _AgencySubmissionDetailPageState
                     ],
                   ),
                 ),
+                // PO Balance button
+                if (widget.poNumber.isNotEmpty)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _isLoadingBalance ? null : _fetchPOBalance,
+                        icon: _isLoadingBalance
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.account_balance_wallet,
+                                size: 16),
+                        label: Text(
+                            _poBalance != null ? 'Balance' : 'Check Balance'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          textStyle: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      // Balance info below button
+                      if (_poBalance != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          '${_poBalance!['currency'] ?? 'INR'} ${(_poBalance!['balance'] as num?)?.toStringAsFixed(2) ?? '0.00'}',
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF10B981),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _formatBalanceDate(
+                              _poBalance!['calculatedAt']?.toString()),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                      // Balance error below button
+                      if (_balanceError != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          constraints: const BoxConstraints(maxWidth: 120),
+                          child: Text(
+                            _balanceError!,
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: const Color(0xFFDC2626),
+                              fontSize: 10,
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
               ],
             ),
             const SizedBox(height: 16),
