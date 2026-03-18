@@ -58,5 +58,8 @@ public interface IApplicationDbContext
     DbSet<PoBalanceLog> POBalanceLogs { get; }
     DbSet<POSyncLog> POSyncLogs { get; }
 
+    // Email delivery audit
+    DbSet<EmailDeliveryLog> EmailDeliveryLogs { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

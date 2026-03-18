@@ -16,6 +16,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
     private readonly IConfidenceScoreService _confidenceScoreService;
     private readonly IRecommendationAgent _recommendationAgent;
     private readonly INotificationAgent _notificationAgent;
+    private readonly IEmailAgent _emailAgent;
     private readonly ISubmissionNotificationService _submissionNotificationService;
     private readonly ILogger<WorkflowOrchestrator> _logger;
     private readonly ICorrelationIdService _correlationIdService;
@@ -27,6 +28,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         IConfidenceScoreService confidenceScoreService,
         IRecommendationAgent recommendationAgent,
         INotificationAgent notificationAgent,
+        IEmailAgent emailAgent,
         ISubmissionNotificationService submissionNotificationService,
         ILogger<WorkflowOrchestrator> logger,
         ICorrelationIdService correlationIdService)
@@ -37,6 +39,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         _confidenceScoreService = confidenceScoreService;
         _recommendationAgent = recommendationAgent;
         _notificationAgent = notificationAgent;
+        _emailAgent = emailAgent;
         _submissionNotificationService = submissionNotificationService;
         _logger = logger;
         _correlationIdService = correlationIdService;
@@ -146,6 +149,27 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
             // Send notification
             await _notificationAgent.NotifySubmissionReceivedAsync(package.SubmittedByUserId, package.Id, cancellationToken);
+
+            // Send submission_received email to agency
+            var emailResult = await _emailAgent.SendSubmissionReceivedEmailAsync(package.Id, cancellationToken);
+            if (!emailResult.Success)
+                _logger.LogWarning("submission_received email failed for package {PackageId}: {Error}", package.Id, emailResult.ErrorMessage);
+
+            // Send pending_circle_head email to assigned circle head
+            if (package.AssignedCircleHeadUserId.HasValue)
+            {
+                var circleHeadEmail = await _context.Users
+                    .Where(u => u.Id == package.AssignedCircleHeadUserId.Value)
+                    .Select(u => u.Email)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (!string.IsNullOrEmpty(circleHeadEmail))
+                {
+                    var chEmailResult = await _emailAgent.SendPendingCircleHeadEmailAsync(package.Id, circleHeadEmail, cancellationToken);
+                    if (!chEmailResult.Success)
+                        _logger.LogWarning("pending_circle_head email failed for package {PackageId}: {Error}", package.Id, chEmailResult.ErrorMessage);
+                }
+            }
 
             _logger.LogInformation("Workflow orchestration completed successfully for package {PackageId}", packageId);
             return true;
@@ -531,6 +555,14 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 package.Id,
                 reason,
                 cancellationToken);
+
+            // Send validation_failed email to agency
+            var emailResult = await _emailAgent.SendValidationFailedEmailAsync(
+                package.Id,
+                new List<ValidationIssue> { new() { Field = "Processing", Issue = reason } },
+                cancellationToken);
+            if (!emailResult.Success)
+                _logger.LogWarning("validation_failed email failed for package {PackageId}: {Error}", package.Id, emailResult.ErrorMessage);
 
             _logger.LogInformation("Compensation completed for package {PackageId}", package.Id);
         }

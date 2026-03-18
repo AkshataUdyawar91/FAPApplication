@@ -27,6 +27,7 @@ public class SubmissionsController : ControllerBase
     private readonly ISubmissionNumberService _submissionNumberService;
     private readonly ICircleHeadAssignmentService _circleHeadAssignmentService;
     private readonly ISubmissionNotificationService _submissionNotificationService;
+    private readonly IEmailAgent _emailAgent;
 
     public SubmissionsController(
         IApplicationDbContext context,
@@ -35,7 +36,8 @@ public class SubmissionsController : ControllerBase
         ILogger<SubmissionsController> logger,
         ISubmissionNumberService submissionNumberService,
         ICircleHeadAssignmentService circleHeadAssignmentService,
-        ISubmissionNotificationService submissionNotificationService)
+        ISubmissionNotificationService submissionNotificationService,
+        IEmailAgent emailAgent)
     {
         _context = context;
         _orchestrator = orchestrator;
@@ -44,6 +46,7 @@ public class SubmissionsController : ControllerBase
         _submissionNumberService = submissionNumberService;
         _circleHeadAssignmentService = circleHeadAssignmentService;
         _submissionNotificationService = submissionNotificationService;
+        _emailAgent = emailAgent;
     }
 
     /// <summary>
@@ -656,6 +659,14 @@ public class SubmissionsController : ControllerBase
                 new { submissionId = id, newStatus = PackageState.PendingRA.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
 
+            // Send circleHead_approved email to agency
+            _ = Task.Run(async () =>
+            {
+                var result = await _emailAgent.SendCircleHeadApprovedEmailAsync(id, CancellationToken.None);
+                if (!result.Success)
+                    _logger.LogWarning("circleHead_approved email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
+            });
+
             _logger.LogInformation("Submission {Id} approved by ASM {UserId}, moved to RA approval", id, userId);
 
             var response = new SubmissionStatusResponse
@@ -738,6 +749,14 @@ public class SubmissionsController : ControllerBase
                 new { submissionId = id, newStatus = PackageState.ASMRejected.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
 
+            // Send circleHead_rejected email to agency
+            _ = Task.Run(async () =>
+            {
+                var result = await _emailAgent.SendCircleHeadRejectedEmailAsync(id, request.Reason, CancellationToken.None);
+                if (!result.Success)
+                    _logger.LogWarning("circleHead_rejected email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
+            });
+
             _logger.LogInformation("Submission {Id} rejected by ASM {UserId} with reason: {Reason}", id, userId, request.Reason);
 
             var response = new SubmissionStatusResponse
@@ -818,6 +837,14 @@ public class SubmissionsController : ControllerBase
                 new { submissionId = id, newStatus = PackageState.Approved.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
 
+            // Send ra_approved email to agency
+            _ = Task.Run(async () =>
+            {
+                var result = await _emailAgent.SendRaApprovedEmailAsync(id, CancellationToken.None);
+                if (!result.Success)
+                    _logger.LogWarning("ra_approved email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
+            });
+
             _logger.LogInformation("Submission {Id} approved by RA {UserId} - final approval", id, userId);
 
             var response = new SubmissionStatusResponse
@@ -897,6 +924,14 @@ public class SubmissionsController : ControllerBase
                 id,
                 new { submissionId = id, newStatus = PackageState.RARejected.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
+
+            // Send ra_rejected email to agency
+            _ = Task.Run(async () =>
+            {
+                var result = await _emailAgent.SendRaRejectedEmailAsync(id, request.Reason, CancellationToken.None);
+                if (!result.Success)
+                    _logger.LogWarning("ra_rejected email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
+            });
 
             _logger.LogInformation("Submission {Id} rejected by HQ {UserId} with reason: {Reason}", id, userId, request.Reason);
 

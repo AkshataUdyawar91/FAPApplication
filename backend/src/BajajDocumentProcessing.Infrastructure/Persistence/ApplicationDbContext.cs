@@ -69,6 +69,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<PoBalanceLog> POBalanceLogs => Set<PoBalanceLog>();
     public DbSet<POSyncLog> POSyncLogs => Set<POSyncLog>();
 
+    // Email delivery audit
+    public DbSet<EmailDeliveryLog> EmailDeliveryLogs => Set<EmailDeliveryLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
