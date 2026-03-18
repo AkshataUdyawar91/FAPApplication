@@ -21,8 +21,9 @@
 | Phase 3 | State & Activity Region Selection | ✅ DONE |
 | Phase 4 | Invoice Upload | ✅ DONE |
 | Phase 5 | Invoice Validation (9 rules, inline card, save to DB) | ✅ DONE |
-| Phase 6 | Activity Summary Upload & Validation (AS_DEALER_LOCATION_PRESENT, save to DB) | ✅ DONE |
-| Phase 7–10 | Full Submission Flow | 🔲 Pending |
+| Phase 6 | Activity Summary Upload & Validation | ✅ DONE |
+| Phase 7 | Cost Summary Upload & Validation (7 rules, inline card, save to DB) | ✅ DONE |
+| Phase 8–10 | Team Details, Enquiry Dump, Final Submit | 🔲 Pending |
 
 ---
 
@@ -204,10 +205,21 @@ After state confirmation, assistant prompts for invoice upload with two action b
 
 - **Phase 5**: ✅ DONE — Proactive Invoice Validation at Upload Time (see below)
 - **Phase 6**: ✅ DONE — Activity Summary Upload & Validation (see below)
-- **Phase 7**: Team Details Entry Loop (team name, dealer, dates, working days, photo proofs with AI vision)
-- **Phase 8**: Enquiry Dump Upload (mandatory, Excel/CSV/PDF)
-- **Phase 9**: Additional Documents Upload (optional with skip)
-- **Phase 10**: Final Review & Submit (summary card, Draft → Submitted, CIRCLE HEAD auto-assigned)
+- **Phase 7**: ✅ DONE — Cost Summary Upload & Validation (see below)
+- **Phase 8**: Team Details Entry Loop (team name, dealer, dates, working days, photo proofs with AI vision)
+- **Phase 9**: Enquiry Dump Upload (mandatory, Excel/CSV/PDF)
+- **Phase 10**: Additional Documents Upload (optional with skip)
+- **Phase 11**: Final Review & Submit (summary card, Draft → Submitted, CIRCLE HEAD auto-assigned)
+
+---
+
+## WORKFLOW ORDER
+
+Invoice → Cost Summary → Activity Summary → Phase 8 onwards
+
+- After invoice confirmed → `cost_summary_upload`
+- After cost summary confirmed → `activity_summary_upload`
+- After activity summary confirmed → Phase 8 placeholder
 
 ---
 
@@ -261,6 +273,9 @@ After extraction completes, backend runs 1 validation rule and shows a structure
 | Rule Code | Type | Logic |
 |-----------|------|-------|
 | AS_DEALER_LOCATION_PRESENT | Required | Both `DealerName` and `Location` (from `Rows[0]`) must be non-empty |
+| AS_TOTAL_DAYS | Info | Always passes — shows extracted `TotalDays` value |
+| AS_TOTAL_WORKING_DAYS | Info | Always passes — shows extracted `TotalWorkingDays` value |
+| AS_DAYS_MATCH_COST_SUMMARY | Required | `ActivitySummary.TotalDays` must equal `CostSummaries.NumberOfDays` for same `PackageId` |
 
 - If dealer present but location missing → "Location not detected"
 - If location present but dealer missing → "Dealer name not detected"
@@ -430,3 +445,73 @@ After invoice upload, the assistant waits for AI extraction to complete, then ru
 | `po_search_list.dart` | PO results as OutlinedButton list (number only) |
 | `workflow_action_card.dart` | Tappable workflow card with icon |
 | `file_upload_card.dart` | File upload widget with drag-drop |
+
+---
+
+## PHASE 7 — Cost Summary Upload & Validation ✅
+
+### Requirement P7.1: Cost Summary Upload After Invoice Accepted
+
+After the user clicks "Continue" on the invoice validation card, the assistant prompts for Cost Summary upload (before Activity Summary).
+
+#### What's Implemented
+- `continue_invoice` action → backend returns `cost_summary_upload` type
+- Upload card: "Upload Cost Summary", accepted formats PDF, JPG, PNG, XLS, XLSX (max 10 MB)
+- `reupload_cost_summary` action → returns same `cost_summary_upload` prompt
+- Frontend `_pickCostSummaryFile` uses `file_picker`, uploads to `POST /api/documents/upload` with `documentType=CostSummary`
+- Frontend polls `GET /api/documents/{id}/extraction-status` every 3s (max 60s) until `"extracted"`
+- On extraction complete, frontend sends `cost_summary_uploaded` action with `documentId`
+
+### Requirement P7.2: Cost Summary Extraction — Dedicated DB Columns
+
+| Column | Type | Source |
+|--------|------|--------|
+| `PlaceOfSupply` | nvarchar(500) | `parsed.PlaceOfSupply ?? parsed.State` |
+| `NumberOfDays` | int | `parsed.NumberOfDays` |
+| `NumberOfActivations` | int | `parsed.NumberOfActivations` |
+| `NumberOfTeams` | int | `parsed.NumberOfTeams` |
+| `TotalCost` | decimal | `parsed.TotalCost` |
+| `ElementWiseCostsJson` | nvarchar(max) | Serialized from `CostBreakdowns` (Category, ElementName, Amount) |
+| `ElementWiseQuantityJson` | nvarchar(max) | Serialized from `CostBreakdowns` (Category, Quantity, Unit) |
+
+- Migration `20260317000002_AddCostSummaryExtractedColumns` adds all 6 columns
+- `DocumentService.cs` save-back block parses `CostSummaryData`, maps all fields, logs raw JSON + mapped values
+
+### Requirement P7.3: Cost Summary Validation — 7 Rules
+
+Backend waits up to 60s for extraction to complete (polls every 2s) before running validation.
+
+| Rule Code | Type | Logic |
+|-----------|------|-------|
+| CS_PLACE_OF_SUPPLY_PRESENT | Required | `PlaceOfSupply` not empty |
+| CS_TOTAL_DAYS_PRESENT | Required | `NumberOfDays` > 0 |
+| CS_ACTIVATIONS_PRESENT | Required | `NumberOfActivations` > 0 |
+| CS_TEAMS_PRESENT | Required | `NumberOfTeams` > 0 |
+| CS_ELEMENT_WISE_COSTS_PRESENT | Required | `ElementWiseCostsJson` not empty/`[]` |
+| CS_ELEMENT_WISE_QUANTITY_PRESENT | Required | `ElementWiseQuantityJson` not empty/`[]` |
+| CS_TOTAL_VS_INVOICE | Required | `TotalCost` ≤ latest `Invoice.TotalAmount` for same `PackageId`. Warning if either amount missing. Fail shows difference: "Cost Summary (₹X) exceeds Invoice (₹Y) by ₹Z" |
+
+- Fallback: if dedicated columns are null, all fields parsed from `ExtractedDataJson` (`costBreakdowns` array → element-wise JSON built on the fly)
+- Latest invoice fetched by `PackageId` ordered by `CreatedAt DESC`
+- Results saved to `ValidationResults` table, read back from DB for response
+
+#### Backend (AssistantController.cs)
+- `HandleCostSummaryUploaded` — wait loop for extraction, fetch latest invoice, call `RunCostSummaryValidationRules`, persist + read back from DB
+- `RunCostSummaryValidationRules(costSummary, invoiceAmount?)` — all 7 rules with fallback parsing
+- `HandleContinueAfterCostSummary` — returns `activity_summary_upload` type
+- `HandleReuploadCostSummary` — returns `cost_summary_upload` type
+
+#### Frontend
+- `uploadCostSummary(bytes, fileName)` in notifier — uploads, polls extraction, sends `cost_summary_uploaded`
+- `chat_screen.dart` — `cost_summary_upload` card, `cost_summary_validation` → `_costSummaryValidationCard`
+- Same card structure as invoice: pass/fail/warn chips, rule rows, Re-upload + Continue buttons
+
+#### Acceptance Criteria — ALL MET ✅
+- AC1: After invoice "Continue", cost summary upload prompt appears
+- AC2: Upload accepts PDF, JPG, PNG, XLS, XLSX (max 10 MB)
+- AC3: Frontend polls extraction status before firing validation
+- AC4: All 7 rules run against real extracted data
+- AC5: Results saved to `ValidationResults` table
+- AC6: Response built from DB read-back
+- AC7: `CS_TOTAL_VS_INVOICE` cross-checks against latest invoice for same package
+- AC8: After cost summary "Continue" → activity summary upload prompt appears
