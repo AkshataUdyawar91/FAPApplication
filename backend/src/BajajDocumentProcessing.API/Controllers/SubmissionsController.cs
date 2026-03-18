@@ -26,6 +26,7 @@ public class SubmissionsController : ControllerBase
     private readonly ILogger<SubmissionsController> _logger;
     private readonly ISubmissionNumberService _submissionNumberService;
     private readonly ICircleHeadAssignmentService _circleHeadAssignmentService;
+    private readonly IRAAssignmentService _raAssignmentService;
     private readonly ISubmissionNotificationService _submissionNotificationService;
 
     public SubmissionsController(
@@ -35,6 +36,7 @@ public class SubmissionsController : ControllerBase
         ILogger<SubmissionsController> logger,
         ISubmissionNumberService submissionNumberService,
         ICircleHeadAssignmentService circleHeadAssignmentService,
+        IRAAssignmentService raAssignmentService,
         ISubmissionNotificationService submissionNotificationService)
     {
         _context = context;
@@ -43,6 +45,7 @@ public class SubmissionsController : ControllerBase
         _logger = logger;
         _submissionNumberService = submissionNumberService;
         _circleHeadAssignmentService = circleHeadAssignmentService;
+        _raAssignmentService = raAssignmentService;
         _submissionNotificationService = submissionNotificationService;
     }
 
@@ -75,11 +78,24 @@ public class SubmissionsController : ControllerBase
 
             var userId = Guid.Parse(userIdClaim);
 
+            // Look up the user's AgencyId so the FK constraint is satisfied
+            var user = await _context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+            if (user?.AgencyId == null)
+            {
+                _logger.LogWarning("User {UserId} has no AgencyId — cannot create submission", userId);
+                return BadRequest(new { error = "User is not linked to an agency" });
+            }
+
             // Create document package
             var package = new Domain.Entities.DocumentPackage
             {
                 Id = Guid.NewGuid(),
                 SubmittedByUserId = userId,
+                AgencyId = user.AgencyId.Value,
+                SelectedPOId = request.SelectedPoId,
                 State = PackageState.Uploaded,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -273,30 +289,58 @@ public class SubmissionsController : ControllerBase
             var query = _context.DocumentPackages
                 .Include(p => p.PO)
                 .Include(p => p.Invoices)
-                .Include(p => p.ValidationResult)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
                 .Include(p => p.SubmittedBy)
                 .Include(p => p.Teams)
                     .ThenInclude(c => c.Photos)
                 .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
                 .Include(p => p.EnquiryDocument)
                 .Include(p => p.RequestApprovalHistory)
                 .AsSplitQuery()
                 .AsQueryable();
 
-            // Agency users can only see their own submissions
+            // Agency users can only see submissions belonging to their agency
             if (userRole == "Agency")
             {
-                query = query.Where(p => p.SubmittedByUserId == userId);
+                var agencyId = await ResolveUserAgencyIdAsync(userId, cancellationToken);
+                if (agencyId == null)
+                {
+                    return NotFound(new { error = "Submission not found" });
+                }
+                query = query.Where(p => p.AgencyId == agencyId.Value);
+            }
+            else if (userRole == "ASM")
+            {
+                // ASM/Circle Head users can only see FAPs whose ActivityState matches their assigned states
+                var assignedStates = await ResolveAssignedStatesAsync(userId, cancellationToken);
+                if (assignedStates == null)
+                {
+                    return NotFound(new { error = "Submission not found" });
+                }
+                query = query.Where(p => p.ActivityState != null && assignedStates.Contains(p.ActivityState));
+            }
+            else if (userRole == "RA")
+            {
+                // RA users can only see FAPs whose ActivityState matches their assigned states
+                var assignedStates = await ResolveRAAssignedStatesAsync(userId, cancellationToken);
+                if (assignedStates == null)
+                {
+                    return NotFound(new { error = "Submission not found" });
+                }
+                query = query.Where(p => p.ActivityState != null && assignedStates.Contains(p.ActivityState));
             }
 
             var package = await query.FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
             if (package == null)
             {
+                _logger.LogWarning("Submission not found: {Id}", id);
                 return NotFound(new { error = "Submission not found" });
             }
+
+            _logger.LogInformation("Retrieved submission {Id} successfully", id);
 
             // Get approval history for review fields
             var asmApproval = package.RequestApprovalHistory
@@ -374,8 +418,13 @@ public class SubmissionsController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting submission {Id}", id);
-            return StatusCode(500, new { error = "An error occurred while retrieving the submission" });
+            _logger.LogError(ex, "Error getting submission {Id}. Exception: {Message}, StackTrace: {StackTrace}", 
+                id, ex.Message, ex.StackTrace);
+            return StatusCode(500, new { 
+                error = "An error occurred while retrieving the submission",
+                details = ex.Message,
+                innerException = ex.InnerException?.Message
+            });
         }
     }
 
@@ -460,11 +509,41 @@ public class SubmissionsController : ControllerBase
                 .AsSplitQuery()
                 .AsQueryable();
 
-            // Agency users can only see their own submissions
+            // Agency users can only see submissions belonging to their agency
             if (userRole == "Agency" || userRole == "0")
             {
-                _logger.LogInformation("Filtering submissions for Agency user: {UserId}", userId);
-                query = query.Where(p => p.SubmittedByUserId == userId);
+                var agencyId = await ResolveUserAgencyIdAsync(userId, cancellationToken);
+                if (agencyId == null)
+                {
+                    _logger.LogWarning("Agency user {UserId} has no associated agency", userId);
+                    return Ok(new SubmissionListResponse { Total = 0, Page = page, PageSize = pageSize, Items = new List<SubmissionListItemDto>() });
+                }
+                _logger.LogInformation("Filtering submissions for Agency {AgencyId} (user: {UserId})", agencyId, userId);
+                query = query.Where(p => p.AgencyId == agencyId.Value);
+            }
+            else if (userRole == "ASM")
+            {
+                // ASM/Circle Head users see only FAPs whose ActivityState matches their assigned states via StateMapping
+                var assignedStates = await ResolveAssignedStatesAsync(userId, cancellationToken);
+                if (assignedStates == null)
+                {
+                    _logger.LogWarning("ASM user {UserId} has no assigned states in StateMapping", userId);
+                    return Ok(new SubmissionListResponse { Total = 0, Page = page, PageSize = pageSize, Items = new List<SubmissionListItemDto>() });
+                }
+                _logger.LogInformation("Filtering submissions for ASM {UserId} with assigned states: {States}", userId, string.Join(", ", assignedStates));
+                query = query.Where(p => p.ActivityState != null && assignedStates.Contains(p.ActivityState));
+            }
+            else if (userRole == "RA")
+            {
+                // RA users see only FAPs whose ActivityState matches their assigned states via StateMapping.RAUserId
+                var assignedStates = await ResolveRAAssignedStatesAsync(userId, cancellationToken);
+                if (assignedStates == null)
+                {
+                    _logger.LogWarning("RA user {UserId} has no assigned states in StateMapping", userId);
+                    return Ok(new SubmissionListResponse { Total = 0, Page = page, PageSize = pageSize, Items = new List<SubmissionListItemDto>() });
+                }
+                _logger.LogInformation("Filtering submissions for RA {UserId} with assigned states: {States}", userId, string.Join(", ", assignedStates));
+                query = query.Where(p => p.ActivityState != null && assignedStates.Contains(p.ActivityState));
             }
             else
             {
@@ -550,7 +629,8 @@ public class SubmissionsController : ControllerBase
                     InvoiceAmount = invoiceAmount,
                     PoNumber = poNumber,
                     PoAmount = poAmount,
-                    OverallConfidence = p.ConfidenceScore != null ? (decimal?)p.ConfidenceScore.OverallConfidence : null
+                    OverallConfidence = p.ConfidenceScore != null ? (decimal?)p.ConfidenceScore.OverallConfidence : null,
+                    SubmissionNumber = p.SubmissionNumber
                 };
             }).ToList();
 
@@ -612,6 +692,15 @@ public class SubmissionsController : ControllerBase
             }
 
             package.State = PackageState.PendingRA;
+
+            // Auto-assign RA user based on submission's activity state
+            var raUserId = await _raAssignmentService.AssignAsync(package.ActivityState ?? string.Empty, cancellationToken);
+            package.AssignedRAUserId = raUserId;
+            if (raUserId == null)
+            {
+                _logger.LogWarning("No RA user found for state '{ActivityState}' on submission {Id}. Manual RA assignment required.", package.ActivityState, id);
+            }
+
             // Record approval in RequestApprovalHistory
             var approvalHistory = new Domain.Entities.RequestApprovalHistory
             {
@@ -1708,6 +1797,53 @@ public class SubmissionsController : ControllerBase
     /// <summary>
     /// Builds a list of SubmissionDocumentDto from dedicated entity navigation properties
     /// </summary>
+    /// <summary>
+    /// Resolves the list of activity states assigned to the current ASM/Circle Head user via StateMapping.
+    /// Returns null if the user has no state assignments.
+    /// </summary>
+    private async Task<List<string>?> ResolveAssignedStatesAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var states = await _context.StateMappings
+            .AsNoTracking()
+            .Where(sm => sm.CircleHeadUserId == userId && sm.IsActive)
+            .Select(sm => sm.State)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        return states.Count > 0 ? states : null;
+    }
+
+    /// <summary>
+    /// Resolves the list of activity states assigned to the current RA user via StateMapping.
+    /// Returns null if the user has no state assignments.
+    /// </summary>
+    private async Task<List<string>?> ResolveRAAssignedStatesAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var states = await _context.StateMappings
+            .AsNoTracking()
+            .Where(sm => sm.RAUserId == userId && sm.IsActive)
+            .Select(sm => sm.State)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        return states.Count > 0 ? states : null;
+    }
+
+    /// <summary>
+    /// Resolves the AgencyId for the current authenticated Agency user from the database.
+    /// Returns null for non-Agency roles or if the user has no associated agency.
+    /// </summary>
+    private async Task<Guid?> ResolveUserAgencyIdAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await _context.Users
+            .AsNoTracking()
+            .Where(u => u.Id == userId && !u.IsDeleted)
+            .Select(u => new { u.AgencyId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return user?.AgencyId;
+    }
+
     private static List<SubmissionDocumentDto> BuildDocumentDtos(Domain.Entities.DocumentPackage package)
     {
         var docs = new List<SubmissionDocumentDto>();
@@ -1751,7 +1887,8 @@ public class SubmissionsController : ControllerBase
 public record CreateSubmissionRequest(
     DateTime? CampaignStartDate = null,
     DateTime? CampaignEndDate = null,
-    int? CampaignWorkingDays = null
+    int? CampaignWorkingDays = null,
+    Guid? SelectedPoId = null
 );
 
 /// <summary>

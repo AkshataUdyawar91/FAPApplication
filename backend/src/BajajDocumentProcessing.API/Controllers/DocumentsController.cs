@@ -245,7 +245,7 @@ public class DocumentsController : ControllerBase
                 return NotFound(new { message = "Document not found" });
             }
 
-            // Verify resource ownership for Agency users
+            // Verify resource ownership for Agency users — scoped to agency, not individual user
             if (userRole == "Agency")
             {
                 var package = await _context.DocumentPackages
@@ -257,11 +257,18 @@ public class DocumentsController : ControllerBase
                     return NotFound(new { message = "Document not found" });
                 }
 
-                if (package.SubmittedByUserId != userId)
+                // Look up the user's agency from the Users table
+                var userAgencyId = await _context.Users
+                    .AsNoTracking()
+                    .Where(u => u.Id == userId && !u.IsDeleted)
+                    .Select(u => u.AgencyId)
+                    .FirstOrDefaultAsync();
+
+                if (userAgencyId == null || package.AgencyId != userAgencyId.Value)
                 {
                     _logger.LogWarning(
-                        "User {UserId} attempted to access document {DocumentId} owned by {OwnerId}",
-                        userId, id, package.SubmittedByUserId);
+                        "User {UserId} (Agency {UserAgencyId}) attempted to access document {DocumentId} owned by Agency {PackageAgencyId}",
+                        userId, userAgencyId, id, package.AgencyId);
                     return StatusCode(403, new { message = "You do not have permission to access this document" });
                 }
             }

@@ -4,6 +4,7 @@ using System.Text.Json;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.PO;
 using BajajDocumentProcessing.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -30,10 +31,10 @@ public class PoBalanceService : IPoBalanceService
     {
         _db = db;
         _logger = logger;
-        _sapUrl       = configuration["SAP:PoData:Url"]       ?? throw new InvalidOperationException("SAP:PoData:Url is not configured.");
-        _sapApiKey    = configuration["SAP:PoData:ApiKey"]    ?? throw new InvalidOperationException("SAP:PoData:ApiKey is not configured.");
-        _sapBasicAuth = configuration["SAP:PoData:BasicAuth"] ?? throw new InvalidOperationException("SAP:PoData:BasicAuth is not configured.");
-        _sapCookie    = configuration["SAP:PoData:Cookie"]    ?? string.Empty;
+        _sapUrl       = configuration["SAP:PoBalanceApi:Url"]       ?? throw new InvalidOperationException("SAP:PoBalanceApi:Url is not configured.");
+        _sapApiKey    = configuration["SAP:PoBalanceApi:ApiKey"]    ?? throw new InvalidOperationException("SAP:PoBalanceApi:ApiKey is not configured.");
+        _sapBasicAuth = configuration["SAP:PoBalanceApi:BasicAuth"] ?? throw new InvalidOperationException("SAP:PoBalanceApi:BasicAuth is not configured.");
+        _sapCookie    = configuration["SAP:PoBalanceApi:Cookie"]    ?? string.Empty;
     }
 
     /// <inheritdoc />
@@ -75,6 +76,9 @@ public class PoBalanceService : IPoBalanceService
             log.Currency  = result.Currency;
             log.IsSuccess = true;
 
+            // Write RemainingBalance and RefreshedAt back to the POs table
+            await UpdatePoRemainingBalanceAsync(poNum, result.Balance, result.CalculatedAt, cancellationToken);
+
             return result;
         }
         catch (Exception ex)
@@ -98,6 +102,42 @@ public class PoBalanceService : IPoBalanceService
             {
                 _logger.LogError(dbEx, "Failed to persist POBalanceLog for PO {PoNum}", poNum);
             }
+        }
+    }
+
+    /// <summary>
+    /// Updates RemainingBalance and RefreshedAt on the matching PO row.
+    /// Failures are swallowed so they never break the primary balance response.
+    /// </summary>
+    private async Task UpdatePoRemainingBalanceAsync(
+        string poNum,
+        decimal balance,
+        DateTime refreshedAt,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var po = await _db.POs
+                .FirstOrDefaultAsync(p => p.PONumber == poNum && !p.IsDeleted, cancellationToken);
+
+            if (po == null)
+            {
+                _logger.LogWarning("PO {PoNum} not found in POs table — skipping balance write-back", poNum);
+                return;
+            }
+
+            po.RemainingBalance = balance;
+            po.RefreshedAt      = refreshedAt;
+
+            await _db.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "Updated POs table for PO {PoNum}: RemainingBalance={Balance}, RefreshedAt={RefreshedAt}",
+                poNum, balance, refreshedAt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to write balance back to POs table for PO {PoNum}", poNum);
         }
     }
 
@@ -169,6 +209,19 @@ public class PoBalanceService : IPoBalanceService
         }
     }
 
+    /// <summary>
+    /// Normalises a JsonElement that may be either a JSON array or a JSON object
+    /// into an enumerable of JsonElement values.
+    /// </summary>
+    private static IEnumerable<JsonElement> EnumerateArrayOrObject(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+            return element.EnumerateArray();
+        if (element.ValueKind == JsonValueKind.Object)
+            return new[] { element };
+        return Enumerable.Empty<JsonElement>();
+    }
+
     private HttpRequestMessage BuildRequest(HttpMethod method, string body)
     {
         var req = new HttpRequestMessage(method, _sapUrl)
@@ -198,7 +251,7 @@ public class PoBalanceService : IPoBalanceService
         decimal totalInvoiced = 0m;
         string  currency      = "UNKNOWN";
 
-        foreach (var item in lineItems.EnumerateArray())
+        foreach (var item in EnumerateArrayOrObject(lineItems))
         {
             if (decimal.TryParse(item.GetProperty("price_without_tax").GetString()?.Trim(), out var price))
                 totalPrice += price;
@@ -210,7 +263,7 @@ public class PoBalanceService : IPoBalanceService
             }
 
             if (item.TryGetProperty("gr_data", out var grData))
-                foreach (var gr in grData.EnumerateArray())
+                foreach (var gr in EnumerateArrayOrObject(grData))
                     if (decimal.TryParse(gr.GetProperty("invoice_value").GetString()?.Trim(), out var inv))
                         totalInvoiced += inv;
         }

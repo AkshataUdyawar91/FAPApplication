@@ -678,6 +678,12 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("ElementWiseCostsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ElementWiseQuantityJson")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("ExtractedDataJson")
                         .HasColumnType("nvarchar(max)");
 
@@ -700,8 +706,21 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
+                    b.Property<int?>("NumberOfActivations")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("NumberOfDays")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("NumberOfTeams")
+                        .HasColumnType("int");
+
                     b.Property<Guid>("PackageId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("PlaceOfSupply")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.Property<decimal?>("TotalCost")
                         .HasColumnType("decimal(18,2)");
@@ -746,6 +765,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<Guid?>("AssignedCircleHeadUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("AssignedRAUserId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("CreatedAt")
@@ -1456,7 +1478,7 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<decimal>("GstRate")
+                    b.Property<decimal>("GstPercentage")
                         .HasColumnType("decimal(5,2)");
 
                     b.Property<bool>("IsActive")
@@ -1525,6 +1547,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
+                    b.Property<Guid?>("RAUserId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("State")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1540,6 +1565,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.HasIndex("DealerCode")
                         .HasDatabaseName("IX_StateMappings_DealerCode");
+
+                    b.HasIndex("RAUserId")
+                        .HasDatabaseName("IX_StateMappings_RAUserId");
 
                     b.HasIndex("State")
                         .HasDatabaseName("IX_StateMappings_State");

@@ -19,6 +19,36 @@ public class CostSummary : BaseEntity
     public decimal? TotalCost { get; set; }
 
     /// <summary>
+    /// Place of supply (state) for GST purposes.
+    /// </summary>
+    public string? PlaceOfSupply { get; set; }
+
+    /// <summary>
+    /// Total number of days extracted from the document.
+    /// </summary>
+    public int? NumberOfDays { get; set; }
+
+    /// <summary>
+    /// Number of activations extracted from the document.
+    /// </summary>
+    public int? NumberOfActivations { get; set; }
+
+    /// <summary>
+    /// Number of teams extracted from the document.
+    /// </summary>
+    public int? NumberOfTeams { get; set; }
+
+    /// <summary>
+    /// Element-wise cost breakdown stored as JSON array (Category, ElementName, Amount per row).
+    /// </summary>
+    public string? ElementWiseCostsJson { get; set; }
+
+    /// <summary>
+    /// Element-wise quantity breakdown stored as JSON array (Category, Quantity, Unit per row).
+    /// </summary>
+    public string? ElementWiseQuantityJson { get; set; }
+
+    /// <summary>
     /// Detailed cost breakdown in JSON format.
     /// Contains line items, categories, and subcategories.
     /// </summary>

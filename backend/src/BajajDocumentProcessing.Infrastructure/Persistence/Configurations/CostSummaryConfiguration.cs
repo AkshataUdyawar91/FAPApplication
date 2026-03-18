@@ -23,6 +23,21 @@ public class CostSummaryConfiguration : IEntityTypeConfiguration<CostSummary>
         builder.Property(c => c.TotalCost)
             .HasColumnType("decimal(18,2)");
 
+        builder.Property(c => c.PlaceOfSupply)
+            .HasMaxLength(500);
+
+        builder.Property(c => c.NumberOfDays);
+
+        builder.Property(c => c.NumberOfActivations);
+
+        builder.Property(c => c.NumberOfTeams);
+
+        builder.Property(c => c.ElementWiseCostsJson)
+            .HasColumnType("nvarchar(max)");
+
+        builder.Property(c => c.ElementWiseQuantityJson)
+            .HasColumnType("nvarchar(max)");
+
         builder.Property(c => c.CostBreakdownJson)
             .HasColumnType("nvarchar(max)");
 

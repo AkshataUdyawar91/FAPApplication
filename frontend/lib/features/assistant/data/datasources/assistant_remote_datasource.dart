@@ -79,8 +79,26 @@ class AssistantRemoteDataSource {
     return response.data as Map<String, dynamic>;
   }
 
-  /// Poll extraction status for a document.
-  /// Returns 'extracted' or 'processing'.
+  /// Upload a cost summary document.
+  Future<Map<String, dynamic>> uploadCostSummary({
+    required Uint8List fileBytes,
+    required String fileName,
+    required String submissionId,
+  }) async {
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(fileBytes, filename: fileName),
+      'documentType': 'CostSummary',
+      'submissionId': submissionId,
+    });
+    final response = await dio.post(
+      '/documents/upload',
+      data: formData,
+      options: Options(contentType: 'multipart/form-data'),
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// Poll extraction status for a document.  /// Returns 'extracted' or 'processing'.
   Future<String> getDocumentExtractionStatus(String documentId) async {
     try {
       final response = await dio.get('/documents/$documentId/extraction-status');

@@ -21,7 +21,8 @@
 | Phase 3 | State & Activity Region Selection | ✅ DONE |
 | Phase 4 | Invoice Upload | ✅ DONE |
 | Phase 5 | Invoice Validation (9 rules, inline card, save to DB) | ✅ DONE |
-| Phase 6–10 | Full Submission Flow | ✅ Previously implemented |
+| Phase 6 | Activity Summary Upload & Validation (AS_DEALER_LOCATION_PRESENT, save to DB) | ✅ DONE |
+| Phase 7–10 | Full Submission Flow | 🔲 Pending |
 
 ---
 
@@ -202,11 +203,113 @@ After state confirmation, assistant prompts for invoice upload with two action b
 ## PHASES 5–10 — Full Submission Flow
 
 - **Phase 5**: ✅ DONE — Proactive Invoice Validation at Upload Time (see below)
-- **Phase 6**: Team Details Entry Loop (team name, dealer, dates, working days, photo proofs with AI vision)
-- **Phase 7**: Enquiry Dump Upload (mandatory, Excel/CSV/PDF)
-- **Phase 8**: Additional Documents Upload (optional with skip)
-- **Phase 9**: Final Review & Submit (summary card, Draft → Submitted, CIRCLE HEAD auto-assigned)
-- **Phase 10**: Draft Persistence & Session Resume
+- **Phase 6**: ✅ DONE — Activity Summary Upload & Validation (see below)
+- **Phase 7**: Team Details Entry Loop (team name, dealer, dates, working days, photo proofs with AI vision)
+- **Phase 8**: Enquiry Dump Upload (mandatory, Excel/CSV/PDF)
+- **Phase 9**: Additional Documents Upload (optional with skip)
+- **Phase 10**: Final Review & Submit (summary card, Draft → Submitted, CIRCLE HEAD auto-assigned)
+
+---
+
+## PHASE 6 — Activity Summary Upload & Validation ✅
+
+### Requirement P6.1: Activity Summary Upload After Invoice Accepted
+
+After the user clicks "Continue" on the invoice validation card, the assistant prompts for Activity Summary upload.
+
+#### What's Implemented
+- `continue_invoice` action → backend returns `activity_summary_upload` type
+- Upload card shows: "Upload Activity Summary" label, "Upload from device" button, accepted formats hint (PDF, JPG, PNG, XLS, XLSX, max 10 MB)
+- `reupload_activity_summary` action → returns same `activity_summary_upload` prompt
+- Frontend `_pickActivitySummaryFile` uses `file_picker` (PDF, JPG, JPEG, PNG, XLS, XLSX, max 10 MB enforced client-side)
+- Upload posts to `POST /api/documents/upload` with `documentType=ActivitySummary`, `submissionId`
+- Frontend polls `GET /api/documents/{id}/extraction-status` every 3s (max 60s) until `"extracted"`
+- On extraction complete, frontend sends `activity_summary_uploaded` action with `documentId`
+
+### Requirement P6.2: Activity Summary Extraction — Dedicated DB Columns
+
+Extracted data from the Activity Summary is stored in both `ExtractedDataJson` and dedicated columns.
+
+#### What's Implemented
+- `ActivitySummary` entity has 3 new columns: `DealerName` (nvarchar 500), `TotalDays` (int), `TotalWorkingDays` (int)
+- `ActivitySummaryConfiguration.cs` maps these columns with correct types/lengths
+- `DocumentService.cs` — after extraction, parses `ActivityData.Rows`:
+  - `DealerName` ← `Rows[0].DealerName`
+  - `TotalDays` ← `Sum(r.Day)` across all rows
+  - `TotalWorkingDays` ← `Sum(r.WorkingDay)` across all rows
+- Migration `20260317000001_AddActivitySummaryExtractedColumns` adds the 3 columns to `ActivitySummaries` table
+- `ApplicationDbContextModelSnapshot` updated to reflect new columns
+
+#### Database Tables Affected
+- `ActivitySummaries` — `DealerName`, `TotalDays`, `TotalWorkingDays` columns added alongside `ExtractedDataJson`
+
+### Requirement P6.3: Activity Summary Validation — AS_DEALER_LOCATION_PRESENT
+
+After extraction completes, backend runs 1 validation rule and shows a structured validation card (same pattern as invoice validation).
+
+#### End-to-End Flow
+
+1. User uploads Activity Summary → `POST /api/documents/upload` → new row in `ActivitySummaries` table
+2. Background job runs AI extraction → writes `DealerName`, `TotalDays`, `TotalWorkingDays`, `ExtractedDataJson` to `ActivitySummaries` row
+3. Frontend polls `GET /api/documents/{id}/extraction-status` every 3s (max 60s) until `"extracted"`
+4. Frontend sends `activity_summary_uploaded` action with `documentId`
+5. Backend loads `ActivitySummaries` row, runs 1 validation rule, saves to `ValidationResults`, returns `activity_summary_validation` response
+6. Bot shows validation card with rule row + Re-upload and Continue buttons
+
+#### Validation Rule
+
+| Rule Code | Type | Logic |
+|-----------|------|-------|
+| AS_DEALER_LOCATION_PRESENT | Required | Both `DealerName` and `Location` (from `Rows[0]`) must be non-empty |
+
+- If dealer present but location missing → "Location not detected"
+- If location present but dealer missing → "Dealer name not detected"
+- If both missing → "Dealer name and location not detected"
+- Extracted value shown in card: "DealerName, Location" (comma-separated, whichever are present)
+
+#### Database — What Gets Saved
+
+- `ValidationResults` table — upsert by `DocumentId` (ActivitySummary Id): `AllValidationsPassed`, `RuleResultsJson` (rule as JSON array), `FailureReason`, `DocumentType = ActivitySummary`
+- Response is built by reading back from `ValidationResults.RuleResultsJson` (same DB-first pattern as invoice)
+
+#### Backend (AssistantController.cs)
+
+- `HandleActivitySummaryUploaded` — loads `ActivitySummaries` row, calls `RunActivitySummaryValidationRules`, persists to `ValidationResults`, reads back from DB, returns `activity_summary_validation` type
+- `RunActivitySummaryValidationRules` — runs `AS_DEALER_LOCATION_PRESENT`: reads `DealerName` from entity column (falls back to `ExtractedDataJson` → `Rows[0].DealerName`), reads `Location` from `ExtractedDataJson` → `Rows[0].Location`
+- `HandleContinueAfterActivity` — placeholder returning `text` type (Phase 7 pending)
+- `HandleReuploadActivitySummary` — returns `activity_summary_upload` type
+
+#### Frontend
+
+- `assistant_notifier.dart`
+  - `uploadActivitySummary(bytes, fileName)` — uploads file, stores `lastDocumentId`, polls extraction status, sends `activity_summary_uploaded`
+  - `continueAfterActivity()` — sends `continue_after_activity`
+  - `reUploadActivitySummary()` — sends `reupload_activity_summary`
+- `chat_screen.dart`
+  - `activity_summary_upload` case — upload card with "Upload from device" button, `LinearProgressIndicator` (only on last bot message), format hint
+  - `activity_summary_validation` case → calls `_activitySummaryValidationCard(r)`
+  - `_activitySummaryValidationCard` — same structure as `_invoiceValidationCard`: pass/fail/warn chips, rule rows, two action buttons
+  - Buttons: "Re-upload" (red outlined, calls `reUploadActivitySummary()`) + "Continue with warnings" / "Continue →" (navy filled, calls `continueAfterActivity()`)
+  - Loading bar fix: `LinearProgressIndicator` only shows on the last bot message (`isLastBot` check) — prevents old upload cards from showing loading bar when a new upload is in progress
+
+#### Loading Bar Fix
+
+- `_msgList` passes `isLastBot` flag to `_botMsg` — true only if no later bot message exists after this index
+- `_botMsg(msg, {bool isLast = false})` — `LinearProgressIndicator` renders only when `isLoading && isLast`
+- Prevents invoice upload card from showing loading bar while activity summary is uploading
+
+#### Acceptance Criteria — ALL MET ✅
+- AC1: After invoice "Continue", activity summary upload prompt appears
+- AC2: Upload card accepts PDF, JPG, PNG, XLS, XLSX (max 10 MB)
+- AC3: Frontend polls extraction status before firing validation
+- AC4: `AS_DEALER_LOCATION_PRESENT` rule runs against real extracted data
+- AC5: Result saved to `ValidationResults` table with `DocumentType = ActivitySummary`
+- AC6: Response built from DB read-back (not in-memory) — UI always reflects DB state
+- AC7: Validation card shows rule row with color-coded icon, extracted value, error message
+- AC8: "Re-upload" button shows upload prompt again
+- AC9: "Continue" / "Continue with warnings" button moves to next phase
+- AC10: `DealerName`, `TotalDays`, `TotalWorkingDays` saved as dedicated columns in `ActivitySummaries`
+- AC11: Loading bar only shows on the currently active upload card, not on previously completed cards
 
 ---
 
@@ -306,7 +409,7 @@ After invoice upload, the assistant waits for AI extraction to complete, then ru
 
 | File | Purpose |
 |------|---------|
-| `AssistantController.cs` | All assistant chat actions (greet, create_request, search_po, select_po, select_state, search_state, list_states, invoice_uploaded) |
+| `AssistantController.cs` | All assistant chat actions (greet, create_request, search_po, select_po, select_state, search_state, list_states, invoice_uploaded, continue_invoice, reupload_invoice, activity_summary_uploaded, reupload_activity_summary, continue_after_activity) |
 | `DocumentsController.cs` | Document upload (with logging), extraction status, validation, download |
 | `DocumentService.cs` | Upload pipeline: file validation → blob storage → Invoice/PO entity creation → AI extraction → save extracted fields to DB columns |
 | `PurchaseOrdersController.cs` | PO search/typeahead and paginated list |
@@ -320,8 +423,8 @@ After invoice upload, the assistant waits for AI extraction to complete, then ru
 | File | Purpose |
 |------|---------|
 | `chat_screen.dart` | Main chat page, message list, input mode switching (none/po/state) |
-| `assistant_notifier.dart` | StateNotifier: greet, sendAction, searchPO, selectPO, searchState, selectState, listAllStates, uploadInvoice, continueAfterValidation, reUploadInvoice, uploadPOFile. State includes `lastDocumentId` |
-| `assistant_remote_datasource.dart` | Dio API calls to /assistant/message, /upload/po, /documents/upload (invoice), /documents/{id}/extraction-status |
+| `assistant_notifier.dart` | StateNotifier: greet, sendAction, searchPO, selectPO, searchState, selectState, listAllStates, uploadInvoice, continueAfterValidation, reUploadInvoice, uploadActivitySummary, continueAfterActivity, reUploadActivitySummary. State includes `lastDocumentId` |
+| `assistant_remote_datasource.dart` | Dio API calls to /assistant/message, /upload/po, /documents/upload (invoice + activity summary), /documents/{id}/extraction-status |
 | `assistant_response_model.dart` | Response DTO: type, message, cards, poItems, states, selectedPO, allowedFormats, submissionId, validationRules, passedCount, failedCount, warningCount. Includes `ValidationRuleResultModel` |
 | `assistant_providers.dart` | Riverpod provider definitions |
 | `po_search_list.dart` | PO results as OutlinedButton list (number only) |
