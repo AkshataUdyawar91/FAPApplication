@@ -47,20 +47,18 @@ class _NewLoginPageState extends State<NewLoginPage> {
       if (response.statusCode == 200 && mounted) {
         Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: {
           'token': response.data['token'],
-          'userName': response.data['fullName'],
+          'userName': response.data['email'] ?? '',
         });
       }
     } on DioException catch (e) {
-      debugPrint('Login DioException: type=${e.type}, message=${e.message}');
-      debugPrint('Login DioException response: ${e.response?.statusCode} ${e.response?.data}');
+      debugPrint('Login DioException: type=${e.type}, message=${e.message}, statusCode=${e.response?.statusCode}, responseData=${e.response?.data}');
       setState(() {
         if (e.response?.statusCode == 401) {
           _errorMessage = 'Invalid email or password';
-        } else if (e.type == DioExceptionType.connectionError || 
-                   e.type == DioExceptionType.connectionTimeout) {
-          _errorMessage = 'Cannot connect to server. Check if backend is running.';
+        } else if (e.type == DioExceptionType.connectionError || e.type == DioExceptionType.connectionTimeout) {
+          _errorMessage = 'Cannot connect to server at http://localhost:5000. Is the backend running?';
         } else {
-          _errorMessage = 'Login failed: ${e.message ?? e.type.name}';
+          _errorMessage = 'Login failed: ${e.message}';
         }
       });
     } catch (e) {

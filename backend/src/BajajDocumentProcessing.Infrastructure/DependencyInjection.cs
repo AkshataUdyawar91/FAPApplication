@@ -137,6 +137,9 @@ public static class DependencyInjection
         // CIRCLE HEAD Auto-Assignment Service
         services.AddScoped<ICircleHeadAssignmentService, CircleHeadAssignmentService>();
 
+        // RA Auto-Assignment Service
+        services.AddScoped<IRAAssignmentService, RAAssignmentService>();
+
         // Conversational Submission Service (State Machine)
         services.AddScoped<IConversationalSubmissionService, ConversationalSubmissionService>();
 
