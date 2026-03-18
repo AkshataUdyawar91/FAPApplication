@@ -29,7 +29,7 @@ class ChatSidePanel extends StatefulWidget {
 }
 
 class _ChatSidePanelState extends State<ChatSidePanel> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5001/api'));
   final _chatController = TextEditingController();
   final List<Map<String, dynamic>> _chatMessages = [];
   bool _isSendingMessage = false;

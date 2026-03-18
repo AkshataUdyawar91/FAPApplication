@@ -10,7 +10,7 @@ class NewLoginPage extends StatefulWidget {
 class _NewLoginPageState extends State<NewLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5001/api'));
   bool _isLoading = false;
   String? _errorMessage;
   bool _obscurePassword = true;
@@ -43,7 +43,7 @@ class _NewLoginPageState extends State<NewLoginPage> {
       if (response.statusCode == 200 && mounted) {
         Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: {
           'token': response.data['token'],
-          'userName': response.data['fullName'],
+          'userName': response.data['email'] ?? '',
         });
       }
     } on DioException catch (e) {

@@ -35,6 +35,11 @@ public class StateMapping : BaseEntity
     public Guid? CircleHeadUserId { get; set; }
 
     /// <summary>
+    /// RA user assigned to this state for second-level submission review.
+    /// </summary>
+    public Guid? RAUserId { get; set; }
+
+    /// <summary>
     /// Whether this mapping is active. Inactive mappings are excluded from queries.
     /// </summary>
     public bool IsActive { get; set; } = true;

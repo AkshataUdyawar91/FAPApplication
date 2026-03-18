@@ -208,7 +208,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     print('Invoice upload starting: file=${file.name}, packageId=${widget.packageId}');
     
     try {
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5001/api'));
       
       // Upload invoice document
       final uploadResponse = await dio.post(
@@ -250,7 +250,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   }
 
   Future<void> _pollForInvoiceExtraction(String packageId, String documentId, int campaignIndex, int invoiceIndex) async {
-    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5001/api'));
     const maxAttempts = 25;
     
     print('Invoice polling started: packageId=$packageId, documentId=$documentId');
