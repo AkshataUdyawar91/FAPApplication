@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
-import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:web/web.dart' as web;
@@ -57,11 +56,50 @@ class _AgencySubmissionDetailPageState
   Map<String, dynamic>? _poBalance;
   String? _balanceError;
 
+  // Submit functionality
+  bool _isSubmitting = false;
+
+  // Validation Report API result on page load
+  bool _isLoadingValidationReport = false;
+  Map<String, dynamic>? _validationReport;
+  String? _validationReportError;
+
   @override
   void initState() {
     print('poNumber: ${widget.poNumber}');
     super.initState();
+    _debugToken(); // Debug token contents
     _loadSubmissionDetails();
+    _loadValidationReport(); // Call validation report API on page load
+  }
+
+  void _debugToken() {
+    try {
+      // Decode JWT token to see its contents
+      final parts = widget.token.split('.');
+      if (parts.length == 3) {
+        // Decode the payload (second part)
+        String payload = parts[1];
+
+        // Add padding if needed
+        while (payload.length % 4 != 0) {
+          payload += '=';
+        }
+
+        final decoded = utf8.decode(base64.decode(payload));
+        final tokenData = jsonDecode(decoded);
+
+        print('=== JWT Token Debug ===');
+        print('Token payload: $tokenData');
+        print('Role claim: ${tokenData['role'] ?? 'NOT FOUND'}');
+        print('Sub claim: ${tokenData['sub'] ?? 'NOT FOUND'}');
+        print('Name claim: ${tokenData['name'] ?? 'NOT FOUND'}');
+        print('All claims: ${tokenData.keys.toList()}');
+        print('=====================');
+      }
+    } catch (e) {
+      print('Error decoding token: $e');
+    }
   }
 
   Future<void> _loadSubmissionDetails() async {
@@ -93,6 +131,75 @@ class _AgencySubmissionDetailPageState
         setState(() {
           _errorMessage = 'Failed to load submission details';
           _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadValidationReport() async {
+    setState(() {
+      _isLoadingValidationReport = true;
+      _validationReportError = null;
+      _validationReport = null;
+    });
+
+    try {
+      // Debug: Log the request details
+      print('=== Validation Report API Debug Info ===');
+      print('URL: /submissions/${widget.submissionId}/validation-report');
+      print('Token: ${widget.token.substring(0, 20)}...');
+      print('User: ${widget.userName}');
+      print('============================');
+
+      final response = await _dio.get(
+        '/submissions/${widget.submissionId}/validation-report',
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer ${widget.token}',
+            'Content-Type': 'application/json',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        final resultData = response.data as Map<String, dynamic>;
+        print('Validation Report API Response: $resultData'); // Debug log
+        setState(() {
+          _validationReport = resultData;
+          _isLoadingValidationReport = false;
+        });
+      }
+    } catch (e) {
+      print('Validation Report API Error: $e'); // Debug log
+
+      if (mounted) {
+        String errorMessage = 'Failed to call validation report API';
+
+        // Handle specific error cases
+        if (e is DioException) {
+          print('DioException details:');
+          print('Status Code: ${e.response?.statusCode}');
+          print('Response Data: ${e.response?.data}');
+          print('Headers: ${e.response?.headers}');
+
+          if (e.response?.statusCode == 400) {
+            errorMessage = e.response?.data?['message'] ?? 'Invalid request';
+          } else if (e.response?.statusCode == 401) {
+            errorMessage = 'Authentication failed - Invalid or expired token';
+          } else if (e.response?.statusCode == 403) {
+            errorMessage =
+                'Access forbidden - ASM or HQ role required for validation reports';
+          } else if (e.response?.statusCode == 404) {
+            errorMessage = 'Submission not found';
+          } else {
+            errorMessage =
+                'HTTP ${e.response?.statusCode}: ${e.response?.data?['message'] ?? e.message}';
+          }
+        }
+
+        setState(() {
+          _validationReportError = errorMessage;
+          _isLoadingValidationReport = false;
         });
       }
     }
@@ -138,6 +245,94 @@ class _AgencySubmissionDetailPageState
     }
   }
 
+  Future<void> _submitSubmission() async {
+    // Show confirmation dialog
+    final confirmed = await _showSubmitConfirmation();
+    if (!confirmed) return;
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final response = await _dio.post(
+        '/submissions/${widget.submissionId}/submit',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Submission submitted successfully!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+
+        // Reload submission details to get updated state
+        await _loadSubmissionDetails();
+      }
+    } catch (e) {
+      print('Submit API Error: $e'); // Debug log
+      if (mounted) {
+        String errorMessage = 'Failed to submit submission';
+
+        // Handle specific error cases
+        if (e is DioException) {
+          if (e.response?.statusCode == 400) {
+            errorMessage =
+                e.response?.data?['message'] ?? 'Invalid submission state';
+          } else if (e.response?.statusCode == 404) {
+            errorMessage = 'Submission not found';
+          } else if (e.response?.statusCode == 409) {
+            errorMessage = 'Submission already submitted or in wrong state';
+          }
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  Future<bool> _showSubmitConfirmation() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          'Submit for Review',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+        ),
+        content: const Text(
+          'Are you sure you want to submit this submission for review? Once submitted, you won\'t be able to edit it unless it\'s rejected.',
+          style: TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   String _formatBalanceDate(String? dateStr) {
     if (dateStr == null) return 'N/A';
     try {
@@ -147,6 +342,946 @@ class _AgencySubmissionDetailPageState
     } catch (e) {
       return 'N/A';
     }
+  }
+
+  bool _canSubmit(String state) {
+    final stateLower = state.toLowerCase();
+    // Allow submit for draft/uploaded states that haven't been submitted for review yet
+    return stateLower == 'uploaded' ||
+        stateLower == 'draft' ||
+        stateLower == 'extracting' ||
+        stateLower == 'validating' ||
+        stateLower == 'validated' ||
+        stateLower == 'scoring' ||
+        stateLower == 'recommending';
+  }
+
+  Widget _buildValidationReportSection() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.api, color: AppColors.primary, size: 24),
+                const SizedBox(width: 12),
+                const Text('Validation Report', style: AppTextStyles.h3),
+                const Spacer(),
+                if (!_isLoadingValidationReport)
+                  IconButton(
+                    onPressed: _loadValidationReport,
+                    icon: const Icon(Icons.refresh, size: 20),
+                    tooltip: 'Refresh Validation Report',
+                    color: AppColors.primary,
+                  ),
+                if (_isLoadingValidationReport)
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 16),
+            if (_isLoadingValidationReport)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 12),
+                      Text('Loading validation report...',
+                          style: TextStyle(color: AppColors.textSecondary)),
+                    ],
+                  ),
+                ),
+              )
+            else if (_validationReportError != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEE2E2),
+                  border: Border.all(color: const Color(0xFFFCA5A5)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.error_outline,
+                            color: Color(0xFFDC2626), size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'API Error',
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFFDC2626),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _validationReportError!,
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        color: const Color(0xFF7F1D1D),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (_validationReport != null)
+              _buildValidationReportContent()
+            else
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF9FAFB),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'No validation report available',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildValidationReportContent() {
+    final summary = _validationReport!['summary'] as Map<String, dynamic>?;
+    final categories = _validationReport!['categories'] as List<dynamic>? ?? [];
+    final recommendation =
+        _validationReport!['recommendation'] as Map<String, dynamic>?;
+    final confidenceBreakdown =
+        _validationReport!['confidenceBreakdown'] as Map<String, dynamic>?;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Summary Section
+        if (summary != null) _buildSummarySection(summary),
+
+        const SizedBox(height: 24),
+
+        // Validation Categories
+        _buildValidationCategoriesSection(categories),
+
+        const SizedBox(height: 24),
+
+        // Confidence Breakdown
+        if (confidenceBreakdown != null)
+          _buildConfidenceBreakdownSection(confidenceBreakdown),
+
+        const SizedBox(height: 24),
+
+        // Recommendation Section
+        if (recommendation != null) _buildRecommendationSection(recommendation),
+      ],
+    );
+  }
+
+  Widget _buildSummarySection(Map<String, dynamic> summary) {
+    final overallConfidence = summary['overallConfidence'] ?? 0;
+    final recommendationType = summary['recommendationType'] ?? 'Unknown';
+    final riskLevel = summary['riskLevel'] ?? 'Unknown';
+    final passedValidations = summary['passedValidations'] ?? 0;
+    final failedValidations = summary['failedValidations'] ?? 0;
+    final totalValidations = summary['totalValidations'] ?? 0;
+
+    Color recommendationColor = recommendationType.toLowerCase() == 'reject'
+        ? const Color(0xFFDC2626)
+        : recommendationType.toLowerCase() == 'approve'
+            ? const Color(0xFF16A34A)
+            : const Color(0xFFF59E0B);
+
+    Color riskColor = riskLevel.toLowerCase() == 'high'
+        ? const Color(0xFFDC2626)
+        : riskLevel.toLowerCase() == 'medium'
+            ? const Color(0xFFF59E0B)
+            : const Color(0xFF16A34A);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.primary.withOpacity(0.05),
+            AppColors.primary.withOpacity(0.02),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.analytics, color: AppColors.primary, size: 24),
+              const SizedBox(width: 12),
+              Text('Validation Summary', style: AppTextStyles.h3),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Key Metrics Row
+          Row(
+            children: [
+              Expanded(
+                child: _buildMetricCard(
+                  'Overall Confidence',
+                  '$overallConfidence%',
+                  Icons.trending_up,
+                  _getConfidenceColor(overallConfidence.toDouble()),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildMetricCard(
+                  'Recommendation',
+                  recommendationType,
+                  recommendationType.toLowerCase() == 'reject'
+                      ? Icons.cancel
+                      : Icons.check_circle,
+                  recommendationColor,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildMetricCard(
+                  'Risk Level',
+                  riskLevel,
+                  Icons.warning,
+                  riskColor,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // Validation Stats
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildStatItem(
+                    'Total', totalValidations.toString(), Icons.list_alt),
+                _buildStatItem('Passed', passedValidations.toString(),
+                    Icons.check_circle, const Color(0xFF16A34A)),
+                _buildStatItem('Failed', failedValidations.toString(),
+                    Icons.cancel, const Color(0xFFDC2626)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricCard(
+      String title, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: AppTextStyles.h3.copyWith(
+              color: color,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatItem(String label, String value, IconData icon,
+      [Color? color]) {
+    final itemColor = color ?? AppColors.textSecondary;
+    return Column(
+      children: [
+        Icon(icon, color: itemColor, size: 24),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: AppTextStyles.h3.copyWith(
+            color: itemColor,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          label,
+          style: AppTextStyles.bodySmall.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Color _getConfidenceColor(double confidence) {
+    if (confidence >= 80) return const Color(0xFF16A34A);
+    if (confidence >= 60) return const Color(0xFFF59E0B);
+    return const Color(0xFFDC2626);
+  }
+
+  Widget _buildValidationCategoriesSection(List<dynamic> categories) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.checklist, color: AppColors.primary, size: 24),
+            const SizedBox(width: 12),
+            Text('Validation Categories', style: AppTextStyles.h3),
+          ],
+        ),
+        const SizedBox(height: 16),
+
+        // Categories Table Header
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              const SizedBox(width: 40), // Icon space
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 1,
+                child: Text(
+                  'RESULT',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Categories List
+        ...categories.asMap().entries.map((entry) {
+          final index = entry.key;
+          final category = entry.value as Map<String, dynamic>;
+          final isLast = index == categories.length - 1;
+
+          return _buildValidationCategoryRow(category, index + 1, isLast);
+        }),
+      ],
+    );
+  }
+
+  Widget _buildValidationCategoryRow(
+      Map<String, dynamic> category, int index, bool isLast) {
+    final categoryName = category['categoryName'] ?? 'Unknown';
+    final passed = category['passed'] ?? false;
+    final status = category['status'] ?? 'Unknown';
+    final severity = category['severity'] ?? 'Low';
+    final shortDescription = category['shortDescription'] ?? 'No description';
+    final categoryIcon = category['categoryIcon'] ?? 'help';
+
+    Color statusColor =
+        passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+    Color severityColor = severity.toLowerCase() == 'critical'
+        ? const Color(0xFFDC2626)
+        : severity.toLowerCase() == 'high'
+            ? const Color(0xFFF59E0B)
+            : const Color(0xFF6B7280);
+
+    IconData iconData = _getIconFromString(categoryIcon);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          left: BorderSide(color: const Color(0xFFE5E7EB)),
+          right: BorderSide(color: const Color(0xFFE5E7EB)),
+          bottom: BorderSide(
+            color: const Color(0xFFE5E7EB),
+            width: isLast ? 1 : 0.5,
+          ),
+        ),
+        borderRadius: isLast
+            ? const BorderRadius.vertical(bottom: Radius.circular(8))
+            : BorderRadius.zero,
+      ),
+      child: Row(
+        children: [
+          // Index and Icon
+          SizedBox(
+            width: 40,
+            child: Row(
+              children: [
+                Text(
+                  '$index',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(iconData, size: 16, color: AppColors.textSecondary),
+              ],
+            ),
+          ),
+
+          // Category Name
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  categoryName,
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (severity != 'Low') ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: severityColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      severity.toUpperCase(),
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: severityColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          // Status
+          Expanded(
+            flex: 1,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                status.toUpperCase(),
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: statusColor,
+                  fontWeight: FontWeight.w600,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+
+          const SizedBox(
+            width: 4,
+          ),
+
+          // Description
+          Expanded(
+            flex: 3,
+            child: Text(
+              shortDescription,
+              style: AppTextStyles.bodyMedium,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _getIconFromString(String iconName) {
+    switch (iconName.toLowerCase()) {
+      case 'description':
+        return Icons.description;
+      case 'attach_money':
+        return Icons.attach_money;
+      case 'calendar_today':
+        return Icons.calendar_today;
+      case 'business':
+        return Icons.business;
+      case 'folder_open':
+        return Icons.folder_open;
+      case 'photo_camera':
+        return Icons.photo_camera;
+      case 'branding_watermark':
+        return Icons.branding_watermark;
+      case 'event':
+        return Icons.event;
+      case 'receipt':
+        return Icons.receipt;
+      default:
+        return Icons.help_outline;
+    }
+  }
+
+  Widget _buildConfidenceBreakdownSection(
+      Map<String, dynamic> confidenceBreakdown) {
+    final overallConfidence = confidenceBreakdown['overallConfidence'] ?? 0;
+    final poConfidence =
+        confidenceBreakdown['poConfidence'] as Map<String, dynamic>?;
+    final invoiceConfidence =
+        confidenceBreakdown['invoiceConfidence'] as Map<String, dynamic>?;
+    final costSummaryConfidence =
+        confidenceBreakdown['costSummaryConfidence'] as Map<String, dynamic>?;
+    final activityConfidence =
+        confidenceBreakdown['activityConfidence'] as Map<String, dynamic>?;
+    final photosConfidence =
+        confidenceBreakdown['photosConfidence'] as Map<String, dynamic>?;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.analytics, color: AppColors.primary, size: 24),
+            const SizedBox(width: 12),
+            Text('Confidence Breakdown', style: AppTextStyles.h3),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Column(
+            children: [
+              // Overall Confidence
+              _buildConfidenceItem(
+                'Overall Confidence',
+                overallConfidence.toDouble(),
+                1.0,
+                Icons.trending_up,
+              ),
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 16),
+
+              // Individual Confidence Scores
+              if (poConfidence != null)
+                _buildConfidenceItem(
+                  'PO Confidence',
+                  (poConfidence['score'] ?? 0).toDouble(),
+                  (poConfidence['weight'] ?? 0).toDouble(),
+                  Icons.description,
+                ),
+              if (invoiceConfidence != null)
+                _buildConfidenceItem(
+                  'Invoice Confidence',
+                  (invoiceConfidence['score'] ?? 0).toDouble(),
+                  (invoiceConfidence['weight'] ?? 0).toDouble(),
+                  Icons.receipt,
+                ),
+              if (costSummaryConfidence != null)
+                _buildConfidenceItem(
+                  'Cost Summary Confidence',
+                  (costSummaryConfidence['score'] ?? 0).toDouble(),
+                  (costSummaryConfidence['weight'] ?? 0).toDouble(),
+                  Icons.summarize,
+                ),
+              if (activityConfidence != null)
+                _buildConfidenceItem(
+                  'Activity Confidence',
+                  (activityConfidence['score'] ?? 0).toDouble(),
+                  (activityConfidence['weight'] ?? 0).toDouble(),
+                  Icons.assignment,
+                ),
+              if (photosConfidence != null)
+                _buildConfidenceItem(
+                  'Photos Confidence',
+                  (photosConfidence['score'] ?? 0).toDouble(),
+                  (photosConfidence['weight'] ?? 0).toDouble(),
+                  Icons.photo_camera,
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildConfidenceItem(
+      String label, double score, double weight, IconData icon) {
+    Color confidenceColor = _getConfidenceColor(score);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(icon, color: confidenceColor, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      label,
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      '${score.toInt()}%',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: confidenceColor,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE5E7EB),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: FractionallySizedBox(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: score / 100,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: confidenceColor,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (weight < 1.0) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        'Weight: ${(weight * 100).toInt()}%',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecommendationSection(Map<String, dynamic> recommendation) {
+    final type = recommendation['type'] ?? 'Unknown';
+    final summary = recommendation['summary'] ?? 'No summary available';
+    final criticalIssues =
+        recommendation['criticalIssues'] as List<dynamic>? ?? [];
+    final highPriorityIssues =
+        recommendation['highPriorityIssues'] as List<dynamic>? ?? [];
+    final recommendedAction = recommendation['recommendedAction'] ?? '';
+
+    Color recommendationColor = type.toLowerCase() == 'reject'
+        ? const Color(0xFFDC2626)
+        : type.toLowerCase() == 'approve'
+            ? const Color(0xFF16A34A)
+            : const Color(0xFFF59E0B);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.recommend, color: AppColors.primary, size: 24),
+            const SizedBox(width: 12),
+            Text('Recommendation', style: AppTextStyles.h3),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: recommendationColor.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: recommendationColor.withOpacity(0.2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Recommendation Header
+              Row(
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: recommendationColor,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      type.toUpperCase(),
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      recommendedAction,
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: recommendationColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 16),
+
+              // Summary
+              Text(
+                summary,
+                style: AppTextStyles.bodyMedium,
+              ),
+
+              // Critical Issues
+              if (criticalIssues.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'Critical Issues',
+                  style: AppTextStyles.h4.copyWith(
+                    color: const Color(0xFFDC2626),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ...criticalIssues.map((issue) =>
+                    _buildIssueItem(issue as Map<String, dynamic>, true)),
+              ],
+
+              // High Priority Issues
+              if (highPriorityIssues.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'High Priority Issues',
+                  style: AppTextStyles.h4.copyWith(
+                    color: const Color(0xFFF59E0B),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ...highPriorityIssues.map((issue) =>
+                    _buildIssueItem(issue as Map<String, dynamic>, false)),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildIssueItem(Map<String, dynamic> issue, bool isCritical) {
+    final title = issue['title'] ?? 'Unknown Issue';
+    final description = issue['description'] ?? '';
+    final expectedValue = issue['expectedValue'] ?? '';
+    final actualValue = issue['actualValue'] ?? '';
+    final suggestedResolution = issue['suggestedResolution'] ?? '';
+
+    Color issueColor =
+        isCritical ? const Color(0xFFDC2626) : const Color(0xFFF59E0B);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: issueColor.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isCritical ? Icons.error : Icons.warning,
+                color: issueColor,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: issueColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (description.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              description,
+              style: AppTextStyles.bodyMedium,
+            ),
+          ],
+          if (expectedValue.isNotEmpty || actualValue.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            if (expectedValue.isNotEmpty)
+              _buildValueRow('Expected', expectedValue,
+                  Icons.check_circle_outline, const Color(0xFF16A34A)),
+            if (actualValue.isNotEmpty)
+              _buildValueRow(
+                  'Actual', actualValue, Icons.cancel, const Color(0xFFDC2626)),
+          ],
+          if (suggestedResolution.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.lightbulb_outline,
+                      color: AppColors.primary, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      suggestedResolution,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildValueRow(
+      String label, String value, IconData icon, Color color) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            '$label: ',
+            style: AppTextStyles.bodySmall.copyWith(
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: AppTextStyles.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _navigateToUpload() {
@@ -486,6 +1621,9 @@ class _AgencySubmissionDetailPageState
           ),
           const SizedBox(height: 24),
 
+          // Validation Report API Result Section
+          _buildValidationReportSection(),
+
           const SizedBox(height: 80),
         ],
       ),
@@ -611,6 +1749,40 @@ class _AgencySubmissionDetailPageState
                         _formatDate(_submission!['updatedAt']))),
               ],
             ),
+            // Submit button - show only for draft/uploaded states
+            if (_canSubmit(state)) ...[
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isSubmitting ? null : _submitSubmission,
+                  icon: _isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Icon(Icons.send),
+                  label: Text(
+                      _isSubmitting ? 'Submitting...' : 'Submit for Review'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    textStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -748,8 +1920,6 @@ class _AgencySubmissionDetailPageState
         .join(' ');
   }
 
-  final bool _isResubmitting = false;
-
   void _enterEditMode() {
     Navigator.pushNamed(
       context,
@@ -760,30 +1930,6 @@ class _AgencySubmissionDetailPageState
         'submissionId': widget.submissionId,
       },
     );
-  }
-
-  Future<bool> _showDeleteConfirmation(String title, String message) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-        content: Text(message, style: const TextStyle(fontSize: 14)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.rejectedText,
-                foregroundColor: Colors.white),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    return result ?? false;
   }
 
   Widget _buildRejectionCard(
@@ -908,461 +2054,6 @@ class _AgencySubmissionDetailPageState
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildCampaignsSection() {
-    if (_submission == null) return const SizedBox();
-    final campaigns = _submission!['campaigns'] as List? ?? [];
-    if (campaigns.isEmpty) return const SizedBox();
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                const Icon(Icons.campaign, color: Color(0xFF3B82F6), size: 28),
-                const SizedBox(width: 12),
-                Text('Campaigns (${campaigns.length})',
-                    style: AppTextStyles.h3),
-              ],
-            ),
-          ),
-          ...campaigns.asMap().entries.map((entry) {
-            final campaign = entry.value as Map<String, dynamic>;
-            return _buildCampaignTile(campaign, entry.key);
-          }),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCampaignTile(Map<String, dynamic> campaign, int index) {
-    final name =
-        campaign['campaignName']?.toString() ?? 'Campaign ${index + 1}';
-    final teamCode = campaign['teamCode']?.toString() ?? '';
-    final dealership = campaign['dealershipName']?.toString() ?? '';
-    final startDate = _formatDate(campaign['startDate']);
-    final endDate = _formatDate(campaign['endDate']);
-    final workingDays = campaign['workingDays']?.toString() ?? '';
-    final totalCost = campaign['totalCost'];
-    final invoices = campaign['invoices'] as List? ?? [];
-    final photos = campaign['photos'] as List? ?? [];
-    final costSummaryUrl = campaign['costSummaryBlobUrl']?.toString();
-    final costSummaryFile = campaign['costSummaryFileName']?.toString();
-    final activitySummaryUrl = campaign['activitySummaryBlobUrl']?.toString();
-    final activitySummaryFile = campaign['activitySummaryFileName']?.toString();
-    final campaignId =
-        campaign['id']?.toString() ?? campaign['campaignId']?.toString() ?? '';
-
-    return ExpansionTile(
-      leading: CircleAvatar(
-        backgroundColor: const Color(0xFF3B82F6).withOpacity(0.1),
-        child: Text('${index + 1}',
-            style: const TextStyle(
-                color: Color(0xFF3B82F6), fontWeight: FontWeight.bold)),
-      ),
-      title: Text(name,
-          style:
-              AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
-      subtitle: Text(
-        [
-          if (teamCode.isNotEmpty) 'Team: $teamCode',
-          if (dealership.isNotEmpty) dealership
-        ].join(' • '),
-        style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
-      ),
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Campaign details row
-              Wrap(
-                spacing: 24,
-                runSpacing: 12,
-                children: [
-                  if (startDate != 'N/A') _buildDetailChip('Start', startDate),
-                  if (endDate != 'N/A') _buildDetailChip('End', endDate),
-                  if (workingDays.isNotEmpty)
-                    _buildDetailChip('Working Days', workingDays),
-                  if (totalCost != null)
-                    _buildDetailChip('Total Cost', '₹$totalCost'),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // Cost Summary
-              if (costSummaryUrl != null && costSummaryUrl.isNotEmpty)
-                _buildDocumentRow(
-                  Icons.summarize,
-                  costSummaryFile ?? 'Cost Summary',
-                  costSummaryUrl,
-                ),
-
-              // Activity Summary
-              if (activitySummaryUrl != null && activitySummaryUrl.isNotEmpty)
-                _buildDocumentRow(
-                  Icons.assignment,
-                  activitySummaryFile ?? 'Activity Summary',
-                  activitySummaryUrl,
-                ),
-
-              // Invoices
-              if (invoices.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text('Invoices (${invoices.length})',
-                    style: AppTextStyles.bodyMedium
-                        .copyWith(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                ...invoices.map((inv) {
-                  final invMap = inv as Map<String, dynamic>;
-                  final invNum = invMap['invoiceNumber']?.toString() ?? '';
-                  final vendor = invMap['vendorName']?.toString() ?? '';
-                  final amount = invMap['totalAmount'];
-                  final fileName = invMap['fileName']?.toString() ?? 'Invoice';
-                  final blobUrl = invMap['blobUrl']?.toString() ?? '';
-                  final label = [
-                    fileName,
-                    if (invNum.isNotEmpty) '(#$invNum)',
-                    if (vendor.isNotEmpty) '- $vendor',
-                    if (amount != null) '- ₹$amount',
-                  ].join(' ');
-                  return _buildDocumentRow(Icons.receipt, label, blobUrl);
-                }),
-              ],
-
-              // Photos
-              if (photos.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text('Photos (${photos.length})',
-                    style: AppTextStyles.bodyMedium
-                        .copyWith(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                ...photos.map((photo) {
-                  final photoMap = photo as Map<String, dynamic>;
-                  final fileName = photoMap['fileName']?.toString() ?? 'Photo';
-                  final blobUrl = photoMap['blobUrl']?.toString() ?? '';
-                  final caption = photoMap['caption']?.toString() ?? '';
-                  final label =
-                      caption.isNotEmpty ? '$fileName - $caption' : fileName;
-                  return _buildDocumentRow(Icons.image, label, blobUrl);
-                }),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEditableDocumentRow(IconData icon, String label, String? blobUrl,
-      {VoidCallback? onDelete}) {
-    final hasUrl = blobUrl != null && blobUrl.isNotEmpty;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(icon,
-              size: 18,
-              color: hasUrl ? AppColors.primary : AppColors.textSecondary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(label,
-                style: AppTextStyles.bodyMedium,
-                overflow: TextOverflow.ellipsis),
-          ),
-          if (hasUrl)
-            IconButton(
-              icon: const Icon(Icons.download, size: 18),
-              onPressed: () => _downloadDocument(blobUrl, label),
-              tooltip: 'Download',
-              color: AppColors.primary,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-          if (onDelete != null)
-            IconButton(
-              icon: const Icon(Icons.delete_outline, size: 18),
-              onPressed: onDelete,
-              tooltip: 'Delete',
-              color: AppColors.rejectedText,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUploadButton(String label, VoidCallback onTap) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: OutlinedButton.icon(
-        onPressed: onTap,
-        icon: const Icon(Icons.upload_file, size: 16),
-        label: Text(label, style: const TextStyle(fontSize: 12)),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.primary,
-          side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDetailChip(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style: AppTextStyles.bodySmall
-                .copyWith(color: AppColors.textSecondary, fontSize: 11)),
-        const SizedBox(height: 2),
-        Text(value,
-            style:
-                AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
-      ],
-    );
-  }
-
-  Widget _buildDocumentRow(IconData icon, String label, String? blobUrl) {
-    final hasUrl = blobUrl != null && blobUrl.isNotEmpty;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(icon,
-              size: 18,
-              color: hasUrl ? AppColors.primary : AppColors.textSecondary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              label,
-              style: AppTextStyles.bodyMedium,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (hasUrl)
-            IconButton(
-              icon: const Icon(Icons.download, size: 18),
-              onPressed: () => _downloadDocument(blobUrl, label),
-              tooltip: 'Download',
-              color: AppColors.primary,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildApprovalTimeline() {
-    final state = _submission!['state']?.toString().toLowerCase() ?? '';
-    final createdAt = _submission!['createdAt'];
-    final asmReviewedAt = _submission!['asmReviewedAt'];
-    final asmReviewNotes = _submission!['asmReviewNotes']?.toString();
-    final hqReviewedAt = _submission!['hqReviewedAt'];
-    final hqReviewNotes = _submission!['hqReviewNotes']?.toString();
-
-    // Determine ASM status
-    String asmStatus = 'pending';
-    if (state.contains('rejectedbyasm')) {
-      asmStatus = 'rejected';
-    } else if (state.contains('approved') ||
-        state.contains('pendinghq') ||
-        state.contains('rejectedbyhq')) {
-      asmStatus = 'approved';
-    } else if (asmReviewedAt != null) {
-      asmStatus = asmReviewNotes != null && asmReviewNotes.isNotEmpty
-          ? 'rejected'
-          : 'approved';
-    }
-
-    // Determine HQ/RA status
-    String hqStatus = 'pending';
-    if (state == 'approved') {
-      hqStatus = 'approved';
-    } else if (state.contains('rejectedbyhq')) {
-      hqStatus = 'rejected';
-    } else if (hqReviewedAt != null) {
-      hqStatus = hqReviewNotes != null && hqReviewNotes.isNotEmpty
-          ? 'rejected'
-          : 'approved';
-    }
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: AppColors.border)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Approval Flow', style: AppTextStyles.h3),
-            const SizedBox(height: 20),
-            // Step 1: Submitted
-            _buildTimelineStep(
-              icon: Icons.upload_file,
-              color: const Color(0xFF3B82F6),
-              title: 'Submitted',
-              date: _formatDate(createdAt),
-              comment: null,
-              isCompleted: true,
-              isLast: false,
-            ),
-            // Step 2: ASM Review
-            _buildTimelineStep(
-              icon: asmStatus == 'approved'
-                  ? Icons.check_circle
-                  : asmStatus == 'rejected'
-                      ? Icons.cancel
-                      : Icons.schedule,
-              color: asmStatus == 'approved'
-                  ? const Color(0xFF10B981)
-                  : asmStatus == 'rejected'
-                      ? const Color(0xFFDC2626)
-                      : const Color(0xFF9CA3AF),
-              title: asmStatus == 'approved'
-                  ? 'Approved by ASM'
-                  : asmStatus == 'rejected'
-                      ? 'Rejected by ASM'
-                      : 'Pending ASM Review',
-              date: asmReviewedAt != null ? _formatDate(asmReviewedAt) : null,
-              comment: asmReviewNotes,
-              isCompleted: asmStatus != 'pending',
-              isLast: false,
-            ),
-            // Step 3: HQ/RA Review
-            _buildTimelineStep(
-              icon: hqStatus == 'approved'
-                  ? Icons.check_circle
-                  : hqStatus == 'rejected'
-                      ? Icons.cancel
-                      : Icons.schedule,
-              color: hqStatus == 'approved'
-                  ? const Color(0xFF10B981)
-                  : hqStatus == 'rejected'
-                      ? const Color(0xFFDC2626)
-                      : const Color(0xFF9CA3AF),
-              title: hqStatus == 'approved'
-                  ? 'Approved by HQ/RA'
-                  : hqStatus == 'rejected'
-                      ? 'Rejected by HQ/RA'
-                      : 'Pending HQ/RA Review',
-              date: hqReviewedAt != null ? _formatDate(hqReviewedAt) : null,
-              comment: hqReviewNotes,
-              isCompleted: hqStatus != 'pending',
-              isLast: true,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTimelineStep({
-    required IconData icon,
-    required Color color,
-    required String title,
-    String? date,
-    String? comment,
-    required bool isCompleted,
-    required bool isLast,
-  }) {
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Timeline line + dot
-          SizedBox(
-            width: 32,
-            child: Column(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: isCompleted
-                        ? color.withOpacity(0.15)
-                        : const Color(0xFFF3F4F6),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: isCompleted ? color : const Color(0xFFD1D5DB),
-                        width: 2),
-                  ),
-                  child: Icon(icon,
-                      size: 14,
-                      color: isCompleted ? color : const Color(0xFF9CA3AF)),
-                ),
-                if (!isLast)
-                  Expanded(
-                    child: Container(
-                      width: 2,
-                      color: isCompleted
-                          ? color.withOpacity(0.3)
-                          : const Color(0xFFE5E7EB),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          // Content
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(bottom: isLast ? 0 : 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: AppTextStyles.bodyMedium.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: isCompleted
-                          ? const Color(0xFF111827)
-                          : const Color(0xFF9CA3AF),
-                    ),
-                  ),
-                  if (date != null) ...[
-                    const SizedBox(height: 2),
-                    Text(date,
-                        style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textSecondary, fontSize: 11)),
-                  ],
-                  if (comment != null && comment.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9FAFB),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                      ),
-                      child: Text(
-                        comment,
-                        style: AppTextStyles.bodySmall.copyWith(
-                            color: const Color(0xFF4B5563), height: 1.4),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
