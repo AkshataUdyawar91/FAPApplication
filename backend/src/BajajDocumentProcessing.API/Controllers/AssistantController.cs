@@ -812,8 +812,14 @@ public class AssistantController : ControllerBase
         if (actSummary == null)
             return new AssistantResponse { Type = "error", Message = "Activity Summary document not found. Please try uploading again." };
 
+        // Fetch latest cost summary for the same package (for AS_DAYS_MATCH_COST_SUMMARY check)
+        var costSummary = await _context.CostSummaries
+            .Where(c => c.PackageId == actSummary.PackageId && !c.IsDeleted)
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
         // Run validation rules
-        var rules = RunActivitySummaryValidationRules(actSummary);
+        var rules = RunActivitySummaryValidationRules(actSummary, costSummary?.NumberOfDays);
 
         int passCount = rules.Count(r => r.Passed && !r.IsWarning);
         int failCount = rules.Count(r => !r.Passed && !r.IsWarning);
@@ -912,7 +918,7 @@ public class AssistantController : ControllerBase
         };
     }
 
-    private List<ValidationRuleResult> RunActivitySummaryValidationRules(Domain.Entities.ActivitySummary actSummary)
+    private List<ValidationRuleResult> RunActivitySummaryValidationRules(Domain.Entities.ActivitySummary actSummary, int? costSummaryDays = null)
     {
         var rules = new List<ValidationRuleResult>();
 
@@ -993,6 +999,38 @@ public class AssistantController : ControllerBase
             ExtractedValue = actSummary.TotalWorkingDays.HasValue ? actSummary.TotalWorkingDays.ToString() : "Not extracted",
             Message = null,
         });
+
+        // AS_DAYS_MATCH_COST_SUMMARY: TotalDays must match CostSummary.NumberOfDays
+        int? actDays = actSummary.TotalDays;
+        if (actDays == null || costSummaryDays == null)
+        {
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = "AS_DAYS_MATCH_COST_SUMMARY",
+                Type = "Required",
+                Passed = false,
+                IsWarning = true,
+                Label = "Days Match with Cost Summary",
+                ExtractedValue = actDays.HasValue ? actDays.ToString() : null,
+                Message = actDays == null
+                    ? "Activity Summary days not extracted — cannot compare with Cost Summary"
+                    : "Cost Summary days not available — cannot compare",
+            });
+        }
+        else
+        {
+            bool match = actDays.Value == costSummaryDays.Value;
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = "AS_DAYS_MATCH_COST_SUMMARY",
+                Type = "Required",
+                Passed = match,
+                IsWarning = false,
+                Label = "Days Match with Cost Summary",
+                ExtractedValue = $"Activity: {actDays.Value} days | Cost Summary: {costSummaryDays.Value} days",
+                Message = match ? null : $"Activity Summary days ({actDays.Value}) does not match Cost Summary days ({costSummaryDays.Value})",
+            });
+        }
 
         return rules;
     }
