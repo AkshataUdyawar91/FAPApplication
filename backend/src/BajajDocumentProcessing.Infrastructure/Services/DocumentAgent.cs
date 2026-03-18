@@ -2446,8 +2446,8 @@ Respond ONLY with a JSON object in this exact format:
     // CHANGE: Simple single-call approach for EnquiryDump extraction via OpenAI, prompt updated to match actual Excel columns
     private async Task<EnquiryDumpData> AnalyzeEnquiryDumpTextAsync(string extractedText, CancellationToken cancellationToken)
     {
-        // CHANGE: Truncate text if too large to avoid token limits — send first 30000 chars
-        var textToSend = extractedText.Length > 30000 ? extractedText.Substring(0, 30000) : extractedText;
+        // CHANGE: Truncate text if too large to avoid token limits — send first 60000 chars
+        var textToSend = extractedText.Length > 60000 ? extractedText.Substring(0, 60000) : extractedText;
         DebugLog($"[ENQUIRY] Sending text length: {textToSend.Length} (original: {extractedText.Length})");
 
         var chatCompletionsOptions = new ChatCompletionsOptions
@@ -2455,33 +2455,36 @@ Respond ONLY with a JSON object in this exact format:
             DeploymentName = _deploymentName,
             Messages =
             {
-                new ChatRequestSystemMessage(@"You are a data extraction expert. Extract structured records from the tabular text below.
+                new ChatRequestSystemMessage(@"You are a data extraction expert. Extract structured records from tabular Excel data.
 
-The text is from an Excel file with enquiry records. The columns may include:
-Sr No, Date, Dealership Name, District, Segment, Company Name, Brand, Address, Principal Name, Contact, Secondary Name, Contact, 3W, EV, 4W, Total Van, Category, Remark, Age, Test Drive, Visit, and possibly others.
+The Excel columns are (in order):
+Sr No | Date | Dealership Name | District | Segment | Company Name | Brand | Address | Principal Name | Contact | Secondary Name | Secondary Contact | (possibly more columns like 3W, EV, 4W, Category, Remark, Age, Test Drive, Visit)
 
-For EACH row, extract these fields (map from whatever columns exist):
-- state: State name from document context (e.g. Bihar)
-- date: Date value, convert to YYYY-MM-DD format
-- dealerCode: Dealer code if present, otherwise empty string
-- dealerName: Dealership Name or Dealer Name
-- district: District
-- pincode: Pincode if present, otherwise empty string
-- customerName: Principal Name or Company Name or Customer Name
-- customerNumber: Contact number (first contact column)
-- testRideTaken: Test Drive value, normalize to Yes or No
+Map each row to these fields:
+- state: Infer the state from district names in the data (e.g. Muzaffarpur → Bihar). Use one state for all records.
+- date: From ""Date"" column, convert to YYYY-MM-DD format
+- dealerCode: Empty string (not present in this format)
+- dealerName: From ""Dealership Name"" column
+- district: From ""District"" column
+- pincode: Empty string (not present)
+- customerName: From ""Principal Name"" column (or ""Company Name"" if Principal Name is empty)
+- customerNumber: From ""Contact"" column (first contact column, column J)
+- testRideTaken: From ""Test Drive"" or ""Visit"" column if present, normalize to Yes/No. If not present use empty string.
 
-CRITICAL: Extract EVERY row. Do NOT skip any rows. Do NOT summarize.
-If a field is missing, use empty string.
+CRITICAL RULES:
+- Extract EVERY data row. Do NOT skip rows. Do NOT summarize.
+- Skip only the header row and any completely blank rows.
+- If a field is missing or N/A, use empty string.
+- Phone numbers may appear as scientific notation (e.g. 9.63E+09) — convert to full number string (e.g. ""9630000000"").
 
-Return ONLY valid JSON:
+Return ONLY valid JSON (no markdown, no explanation):
 {
-  ""state"": ""overall state"",
-  ""totalRecords"": number,
-  ""records"": [{""state"":"""",""date"":"""",""dealerCode"":"""",""dealerName"":"""",""district"":"""",""pincode"":"""",""customerName"":"""",""customerNumber"":"""",""testRideTaken"":""""}],
-  ""confidence"": 0.8
+  ""state"": ""Bihar"",
+  ""totalRecords"": 479,
+  ""records"": [{""state"":""Bihar"",""date"":""2025-02-15"",""dealerCode"":"""",""dealerName"":""HY Motors"",""district"":""Muzaffarpur"",""pincode"":"""",""customerName"":""Nitish"",""customerNumber"":""9630000000"",""testRideTaken"":""""}],
+  ""confidence"": 0.9
 }"),
-                new ChatRequestUserMessage($"Extract ALL records from this data:\n\n{textToSend}")
+                new ChatRequestUserMessage($"Extract ALL records from this Excel data:\n\n{textToSend}")
             }
         };
 

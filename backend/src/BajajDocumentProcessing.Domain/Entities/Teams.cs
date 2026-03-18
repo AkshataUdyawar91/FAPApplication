@@ -70,6 +70,11 @@ public class Teams : BaseEntity
     /// </summary>
     public int VersionNumber { get; set; } = 1;
 
+    /// <summary>
+    /// Gets or sets the sequential team number within the package (1, 2, 3...)
+    /// </summary>
+    public int? TeamNumber { get; set; }
+
     // ============ REMOVED FIELDS (now separate entities) ============
     // Cost Summary fields moved to CostSummary entity
     // Activity Summary fields moved to ActivitySummary entity
