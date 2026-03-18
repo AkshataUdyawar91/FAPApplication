@@ -22,9 +22,8 @@ public interface IApplicationDbContext
     DbSet<Conversation> Conversations { get; }
     DbSet<ConversationMessage> ConversationMessages { get; }
     
-    // Agency and ASM management
+    // Agency management
     DbSet<Agency> Agencies { get; }
-    DbSet<Domain.Entities.ASM> ASMs { get; }
 
     // Document entities
     DbSet<PO> POs { get; }

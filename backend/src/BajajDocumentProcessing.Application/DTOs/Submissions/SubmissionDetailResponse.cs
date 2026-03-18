@@ -327,36 +327,6 @@ public class CampaignDto
 }
 
 /// <summary>
-/// Invoice within a submission (linked to PO)
-/// </summary>
-public class CampaignInvoiceDto
-{
-    [JsonPropertyName("id")]
-    public Guid Id { get; init; }
-    
-    [JsonPropertyName("invoiceNumber")]
-    public string? InvoiceNumber { get; init; }
-    
-    [JsonPropertyName("invoiceDate")]
-    public DateTime? InvoiceDate { get; init; }
-    
-    [JsonPropertyName("vendorName")]
-    public string? VendorName { get; init; }
-    
-    [JsonPropertyName("gstNumber")]
-    public string? GSTNumber { get; init; }
-    
-    [JsonPropertyName("totalAmount")]
-    public decimal? TotalAmount { get; init; }
-    
-    [JsonPropertyName("fileName")]
-    public string FileName { get; init; } = "";
-    
-    [JsonPropertyName("blobUrl")]
-    public string BlobUrl { get; init; } = "";
-}
-
-/// <summary>
 /// Photo within a campaign
 /// </summary>
 public class CampaignPhotoDto

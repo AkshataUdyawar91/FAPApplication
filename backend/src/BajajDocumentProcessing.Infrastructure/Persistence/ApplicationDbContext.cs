@@ -21,7 +21,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     // Core entities
     public DbSet<User> Users => Set<User>();
     public DbSet<Agency> Agencies => Set<Agency>();
-    public DbSet<ASM> ASMs => Set<ASM>();
     public DbSet<DocumentPackage> DocumentPackages => Set<DocumentPackage>();
     
     // Document entities
@@ -78,7 +77,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         // Global query filter for soft delete
         modelBuilder.Entity<User>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Agency>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<ASM>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<DocumentPackage>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<PO>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Invoice>().HasQueryFilter(e => !e.IsDeleted);
