@@ -286,13 +286,13 @@ public class SubmissionsController : ControllerBase
             var query = _context.DocumentPackages
                 .Include(p => p.PO)
                 .Include(p => p.Invoices)
-                .Include(p => p.ValidationResult)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
                 .Include(p => p.SubmittedBy)
                 .Include(p => p.Teams)
                     .ThenInclude(c => c.Photos)
                 .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
                 .Include(p => p.EnquiryDocument)
                 .Include(p => p.RequestApprovalHistory)
                 .AsSplitQuery()
@@ -308,8 +308,11 @@ public class SubmissionsController : ControllerBase
 
             if (package == null)
             {
+                _logger.LogWarning("Submission not found: {Id}", id);
                 return NotFound(new { error = "Submission not found" });
             }
+
+            _logger.LogInformation("Retrieved submission {Id} successfully", id);
 
             // Get approval history for review fields
             var asmApproval = package.RequestApprovalHistory
@@ -387,8 +390,13 @@ public class SubmissionsController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting submission {Id}", id);
-            return StatusCode(500, new { error = "An error occurred while retrieving the submission" });
+            _logger.LogError(ex, "Error getting submission {Id}. Exception: {Message}, StackTrace: {StackTrace}", 
+                id, ex.Message, ex.StackTrace);
+            return StatusCode(500, new { 
+                error = "An error occurred while retrieving the submission",
+                details = ex.Message,
+                innerException = ex.InnerException?.Message
+            });
         }
     }
 
