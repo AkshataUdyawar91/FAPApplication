@@ -1208,12 +1208,12 @@ public class AssistantController : ControllerBase
 
         var q = query.ToLower();
         var dealers = await _context.StateMappings
-            .Where(s => s.IsActive && !s.IsDeleted && s.DealerName.ToLower().Contains(q))
+            .Where(s => s.IsActive && !s.IsDeleted && s.DealerName != null && s.DealerName.ToLower().Contains(q))
             .Take(10)
             .Select(s => new DealerItem
             {
-                DealerCode = s.DealerCode,
-                DealerName = s.DealerName,
+                DealerCode = s.DealerCode ?? "",
+                DealerName = s.DealerName ?? "",
                 City = s.City ?? "",
                 State = s.State,
             })
