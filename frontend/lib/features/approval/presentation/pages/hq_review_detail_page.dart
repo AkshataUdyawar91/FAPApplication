@@ -67,6 +67,9 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
   // Validation data from submission response
   List<dynamic> _invoiceValidations = [];
   List<dynamic> _photoValidations = [];
+  Map<String, dynamic>? _costSummaryValidation;
+  Map<String, dynamic>? _activityValidation;
+  Map<String, dynamic>? _enquiryValidation;
 
   @override
   void initState() {
@@ -131,10 +134,19 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
             submissionData['invoiceValidations'] as List<dynamic>? ?? [];
         final photoValidations =
             submissionData['photoValidations'] as List<dynamic>? ?? [];
+        final costSummaryValidation =
+            submissionData['costSummaryValidation'] as Map<String, dynamic>?;
+        final activityValidation =
+            submissionData['activityValidation'] as Map<String, dynamic>?;
+        final enquiryValidation =
+            submissionData['enquiryValidation'] as Map<String, dynamic>?;
 
         print('=== HQ - Validation Data from Submission ===');
         print('Invoice Validations Count: ${invoiceValidations.length}');
         print('Photo Validations Count: ${photoValidations.length}');
+        print('Cost Summary Validation: ${costSummaryValidation != null}');
+        print('Activity Validation: ${activityValidation != null}');
+        print('Enquiry Validation: ${enquiryValidation != null}');
         if (invoiceValidations.isNotEmpty) {
           print('First Invoice Validation: ${invoiceValidations[0]}');
         }
@@ -150,6 +162,9 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           _campaignDetails = allCampaignDetails;
           _invoiceValidations = invoiceValidations;
           _photoValidations = photoValidations;
+          _costSummaryValidation = costSummaryValidation;
+          _activityValidation = activityValidation;
+          _enquiryValidation = enquiryValidation;
           _isLoading = false;
         });
       }
@@ -739,7 +754,9 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected';
-    } else if (normalizedState == 'pendingapproval' || normalizedState == 'pendingchapproval' || normalizedState == 'pendingwithch') {
+    } else if (normalizedState == 'pendingapproval' ||
+        normalizedState == 'pendingchapproval' ||
+        normalizedState == 'pendingwithch') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending CH Review';
@@ -1259,7 +1276,37 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
             // Invoice Validations
             if (_invoiceValidations.isNotEmpty) ...[
               _buildInvoiceValidationsSection(_invoiceValidations),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+            ],
+
+            // Cost Summary Validation
+            if (_costSummaryValidation != null) ...[
+              _buildSingleValidationCard(
+                'Cost Summary',
+                _getCostSummaryFileName(),
+                _costSummaryValidation!,
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // Activity Validation
+            if (_activityValidation != null) ...[
+              _buildSingleValidationCard(
+                'Activity Summary',
+                _getActivitySummaryFileName(),
+                _activityValidation!,
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // Enquiry Validation
+            if (_enquiryValidation != null) ...[
+              _buildSingleValidationCard(
+                'Enquiry Dump',
+                _getEnquiryFileName(),
+                _enquiryValidation!,
+              ),
+              const SizedBox(height: 16),
             ],
 
             // Photo Validations
@@ -1267,7 +1314,11 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
               _buildPhotoValidationsSection(_photoValidations),
 
             // No validations message
-            if (_invoiceValidations.isEmpty && _photoValidations.isEmpty)
+            if (_invoiceValidations.isEmpty &&
+                _photoValidations.isEmpty &&
+                _costSummaryValidation == null &&
+                _activityValidation == null &&
+                _enquiryValidation == null)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -1419,28 +1470,6 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
             ),
           ),
 
-          // Failure Reason
-          if (failureReason != null && failureReason.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(12),
-              color: const Color(0xFFFEF2F2),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning, color: Color(0xFFDC2626), size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      failureReason,
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: const Color(0xFFDC2626),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
           // Validation Details - Single unified table
           if (validationDetails != null)
             _buildUnifiedValidationTable(validationDetails),
@@ -1577,6 +1606,22 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     // Collect all validations into a single list
     List<Map<String, dynamic>> allValidations = [];
 
+    // Add missing fields from fieldPresence as individual rows
+    if (validationDetails['fieldPresence'] != null) {
+      final fieldPresence =
+          validationDetails['fieldPresence'] as Map<String, dynamic>;
+      final missingFields =
+          fieldPresence['missingFields'] as List<dynamic>? ?? [];
+
+      for (var field in missingFields) {
+        allValidations.add({
+          'field': field.toString(),
+          'passed': false,
+          'message': 'Missing',
+        });
+      }
+    }
+
     // Add proactive validations
     if (validationDetails['proactive'] != null) {
       final proactive = validationDetails['proactive'] as List<dynamic>;
@@ -1631,7 +1676,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
               SizedBox(
                 width: 80,
                 child: Text(
-                  'STATUS',
+                  'RESULT',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
@@ -1703,7 +1748,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                   ),
                 ),
 
-                // Column 2: Status
+                // Column 2: Result
                 SizedBox(
                   width: 80,
                   child: Text(
@@ -1806,6 +1851,445 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
               color: AppColors.textSecondary,
             ),
           ),
+      ],
+    );
+  }
+
+  // Helper methods to get file names
+  String _getCostSummaryFileName() {
+    final campaigns = _submission?['campaigns'] as List? ?? [];
+    if (campaigns.isNotEmpty) {
+      return campaigns[0]['costSummaryFileName'] ?? 'Cost Summary.pdf';
+    }
+    return 'Cost Summary.pdf';
+  }
+
+  String _getActivitySummaryFileName() {
+    final campaigns = _submission?['campaigns'] as List? ?? [];
+    if (campaigns.isNotEmpty) {
+      return campaigns[0]['activitySummaryFileName'] ?? 'Activity Summary.pdf';
+    }
+    return 'Activity Summary.pdf';
+  }
+
+  String _getEnquiryFileName() {
+    return 'Enquiry Dump.xlsx';
+  }
+
+  // Build single validation card for PO, Cost Summary, Activity, Enquiry
+  Widget _buildSingleValidationCard(
+    String title,
+    String fileName,
+    Map<String, dynamic> validation,
+  ) {
+    final allPassed = validation['allValidationsPassed'] ?? false;
+    final failureReason = validation['failureReason'];
+    final validationDetailsJson =
+        validation['validationDetailsJson'] as String?;
+
+    Map<String, dynamic>? validationDetails;
+    int passedCount = 0;
+    int totalCount = 0;
+
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+      try {
+        validationDetails =
+            jsonDecode(validationDetailsJson) as Map<String, dynamic>;
+
+        if (validationDetails != null) {
+          // Count fieldPresence validations
+          if (validationDetails['fieldPresence'] != null) {
+            final fieldPresence =
+                validationDetails['fieldPresence'] as Map<String, dynamic>;
+            final missingFields =
+                fieldPresence['missingFields'] as List<dynamic>? ?? [];
+
+            // For enquiry, count based on record presence
+            if (title == 'Enquiry Dump') {
+              final totalRecords = fieldPresence['totalRecords'] ?? 0;
+              if (totalRecords > 0) {
+                // Count each field type
+                final fields = [
+                  'recordsWithState',
+                  'recordsWithDate',
+                  'recordsWithDealerCode',
+                  'recordsWithDealerName',
+                  'recordsWithDistrict',
+                  'recordsWithPincode',
+                  'recordsWithCustomerName',
+                  'recordsWithCustomerNumber',
+                  'recordsWithTestRide',
+                ];
+                totalCount = fields.length;
+                for (var field in fields) {
+                  final count = fieldPresence[field] ?? 0;
+                  if (count == totalRecords) {
+                    passedCount++;
+                  }
+                }
+              }
+            } else {
+              // For other documents, each missing field is a failed check
+              totalCount = missingFields.length;
+              // If no missing fields, all passed
+              if (missingFields.isEmpty) {
+                passedCount = 1;
+                totalCount = 1;
+              }
+            }
+          }
+
+          // Count crossDocument validations
+          if (validationDetails['crossDocument'] != null) {
+            final crossDoc =
+                validationDetails['crossDocument'] as Map<String, dynamic>;
+            final issues = crossDoc['issues'] as List<dynamic>? ?? [];
+
+            // Count individual checks
+            final checks = [
+              'allChecksPass',
+              'totalCostValid',
+              'elementCostsValid',
+              'fixedCostsValid',
+              'variableCostsValid',
+              'numberOfDaysMatches',
+            ];
+
+            for (var check in checks) {
+              if (crossDoc.containsKey(check)) {
+                totalCount++;
+                if (crossDoc[check] == true) {
+                  passedCount++;
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        print('Error parsing validation details: $e');
+      }
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(
+          color: Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color.fromARGB(255, 240, 237, 237),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$title Validations',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        fileName,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (totalCount > 0)
+                  RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '$passedCount/$totalCount ',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                        TextSpan(
+                          text: 'Passed',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFF16A34A),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // Validation Details
+          if (validationDetails != null)
+            _buildSimpleValidationDetailsTable(validationDetails, title),
+        ],
+      ),
+    );
+  }
+
+  // Build simple validation details table for field presence and cross-document checks
+  Widget _buildSimpleValidationDetailsTable(
+    Map<String, dynamic> validationDetails,
+    String documentType,
+  ) {
+    List<Map<String, dynamic>> rows = [];
+
+    // Add field presence checks
+    if (validationDetails['fieldPresence'] != null) {
+      final fieldPresence =
+          validationDetails['fieldPresence'] as Map<String, dynamic>;
+      final missingFields =
+          fieldPresence['missingFields'] as List<dynamic>? ?? [];
+
+      if (documentType == 'Enquiry Dump') {
+        // For enquiry, show record-level presence
+        final totalRecords = fieldPresence['totalRecords'] ?? 0;
+        if (totalRecords > 0) {
+          final fieldChecks = {
+            'State': fieldPresence['recordsWithState'] ?? 0,
+            'Date': fieldPresence['recordsWithDate'] ?? 0,
+            'Dealer Code': fieldPresence['recordsWithDealerCode'] ?? 0,
+            'Dealer Name': fieldPresence['recordsWithDealerName'] ?? 0,
+            'District': fieldPresence['recordsWithDistrict'] ?? 0,
+            'Pincode': fieldPresence['recordsWithPincode'] ?? 0,
+            'Customer Name': fieldPresence['recordsWithCustomerName'] ?? 0,
+            'Customer Number': fieldPresence['recordsWithCustomerNumber'] ?? 0,
+            'Test Ride': fieldPresence['recordsWithTestRide'] ?? 0,
+          };
+
+          fieldChecks.forEach((field, count) {
+            final passed = count == totalRecords;
+            rows.add({
+              'field': field,
+              'passed': passed,
+              'value': passed
+                  ? 'Present in all $totalRecords records'
+                  : 'Present in $count/$totalRecords records',
+            });
+          });
+        }
+      } else {
+        // For other documents, show missing fields
+        if (missingFields.isNotEmpty) {
+          for (var field in missingFields) {
+            rows.add({
+              'field': field.toString(),
+              'passed': false,
+              'message': 'Missing',
+            });
+          }
+        } else {
+          rows.add({
+            'field': 'All required fields',
+            'passed': true,
+            'value': 'Present',
+          });
+        }
+      }
+    }
+
+    // Add cross-document checks
+    if (validationDetails['crossDocument'] != null) {
+      final crossDoc =
+          validationDetails['crossDocument'] as Map<String, dynamic>;
+      final issues = crossDoc['issues'] as List<dynamic>? ?? [];
+
+      final checkLabels = {
+        'totalCostValid': 'Total Cost Match',
+        'elementCostsValid': 'Element Costs Match',
+        'fixedCostsValid': 'Fixed Costs Match',
+        'variableCostsValid': 'Variable Costs Match',
+        'numberOfDaysMatches': 'Number of Days Match',
+      };
+
+      checkLabels.forEach((key, label) {
+        if (crossDoc.containsKey(key)) {
+          final passed = crossDoc[key] == true;
+          final issue = issues.firstWhere(
+            (i) => i.toString().toLowerCase().contains(key.toLowerCase()),
+            orElse: () => null,
+          );
+
+          rows.add({
+            'field': label,
+            'passed': passed,
+            'value': passed ? 'Valid' : null,
+            'message': !passed && issue != null ? issue.toString() : null,
+          });
+        }
+      });
+    }
+
+    if (rows.isEmpty) {
+      return const SizedBox();
+    }
+
+    return Column(
+      children: [
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'RESULT',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...rows.asMap().entries.map((entry) {
+          final index = entry.key;
+          final row = entry.value;
+          final isLast = index == rows.length - 1;
+
+          final field = row['field'] ?? 'Unknown';
+          final passed = row['passed'] ?? false;
+          final value = row['value'];
+          final message = row['message'];
+
+          final statusColor =
+              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    field,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Result
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    passed ? 'Pass' : 'Fail',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: statusColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found
+                Expanded(
+                  flex: 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (value != null)
+                        Text(
+                          value.toString(),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      if (message != null)
+                        Text(
+                          message.toString(),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFFDC2626),
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      if (value == null && message == null)
+                        Text(
+                          '-',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
       ],
     );
   }
