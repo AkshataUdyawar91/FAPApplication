@@ -1118,7 +1118,7 @@ Ensure the JSON strictly follows the schema above."),
                 InvoiceNumber = parsed.InvoiceNumber ?? string.Empty,
                 VendorName = parsed.VendorName ?? string.Empty,
                 VendorCode = parsed.VendorCode ?? string.Empty,
-                InvoiceDate = parsed.InvoiceDate ?? DateTime.Now,
+                InvoiceDate = DateTime.TryParse(parsed.InvoiceDate, out var parsedDate) ? parsedDate : DateTime.Now,
                 AgencyName = parsed.AgencyName ?? string.Empty,
                 AgencyAddress = parsed.AgencyAddress ?? string.Empty,
                 AgencyCode = parsed.AgencyCode ?? string.Empty,
@@ -1167,7 +1167,7 @@ Ensure the JSON strictly follows the schema above."),
         public string? InvoiceNumber { get; set; }
         public string? VendorName { get; set; }
         public string? VendorCode { get; set; }
-        public DateTime? InvoiceDate { get; set; }
+        public string? InvoiceDate { get; set; }
         public string? AgencyName { get; set; }
         public string? AgencyAddress { get; set; }
         public string? AgencyCode { get; set; }

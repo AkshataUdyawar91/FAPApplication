@@ -11,6 +11,7 @@ import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
+import '../../../../core/widgets/pagination_bar.dart';
 
 class AgencyDashboardPage extends StatefulWidget {
   final String token;
@@ -37,6 +38,12 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   bool _isSidebarCollapsed = true;
   bool _isChatbotOpen = true;
 
+  // Pagination state
+  int _currentPage = 1;
+  int _totalItems = 0;
+  int _totalPages = 1;
+  static const int _pageSize = 20;
+
   @override
   void initState() {
     super.initState();
@@ -49,10 +56,12 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     super.dispose();
   }
 
-  Future<void> _loadRequests() async {
+  Future<void> _loadRequests({int page = 1}) async {
+    setState(() => _isLoading = true);
     try {
       final response = await _dio.get(
         '/submissions',
+        queryParameters: {'page': page, 'pageSize': _pageSize},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
@@ -61,6 +70,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           _requests = data is Map && data.containsKey('items')
               ? List<Map<String, dynamic>>.from(data['items'])
               : [];
+          _totalItems = data is Map ? (data['total'] ?? 0) : 0;
+          _totalPages = data is Map ? (data['totalPages'] ?? 1) : 1;
+          _currentPage = page;
           _isLoading = false;
 
           // Reset filter to 'all' if current filter is not available in the new data
@@ -196,7 +208,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
 
   Map<String, int> get _stats {
     return {
-      'total': _requests.length,
+      'total': _totalItems,
       'uploaded': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
         return ['uploaded', 'draft'].contains(s);
@@ -490,7 +502,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
         mobile: 12, tablet: 16, desktop: 24);
     return RefreshIndicator(
-      onRefresh: _loadRequests,
+      onRefresh: () => _loadRequests(page: 1),
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(hPad),
@@ -766,14 +778,25 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Widget _buildRequestsList(DeviceType device) {
     final filtered = _filteredRequests;
     if (filtered.isEmpty) return _buildEmptyState();
-    if (device == DeviceType.mobile) return _buildMobileCards(filtered);
-    return _buildTable(filtered);
+    return Column(
+      children: [
+        if (device == DeviceType.mobile)
+          ..._buildMobileCards(filtered)
+        else
+          _buildTable(filtered),
+        PaginationBar(
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          totalItems: _totalItems,
+          pageSize: _pageSize,
+          onPageChanged: (page) => _loadRequests(page: page),
+        ),
+      ],
+    );
   }
 
-  Widget _buildMobileCards(List<Map<String, dynamic>> requests) {
-    return Column(
-      children: requests.map((r) => _buildMobileCard(r)).toList(),
-    );
+  List<Widget> _buildMobileCards(List<Map<String, dynamic>> requests) {
+    return requests.map((r) => _buildMobileCard(r)).toList();
   }
 
   Widget _buildMobileCard(Map<String, dynamic> request) {
