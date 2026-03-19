@@ -707,59 +707,6 @@ public class NotificationDataService : INotificationDataService
     {
         var groups = new List<ValidationCheckGroup>();
 
-        // Enquiry Document uses the generic 6 checks
-        // PO removed; Cost Summary and Activity Summary have dedicated chatbot-aligned validations below
-        var docEntries = new List<(string DocName, Guid? DocId, Domain.Enums.DocumentType DocType)>
-        {
-            ("Enquiry Document", package.EnquiryDocument?.Id, Domain.Enums.DocumentType.EnquiryDocument)
-        };
-
-        foreach (var (docName, docId, docType) in docEntries)
-        {
-            if (docId == null) continue;
-
-            var vr = allResults.FirstOrDefault(r => r.DocumentId == docId.Value)
-                  ?? allResults.FirstOrDefault(r => r.DocumentType == docType);
-
-            if (vr == null)
-            {
-                groups.Add(new ValidationCheckGroup
-                {
-                    GroupName = docName,
-                    Status = "Fail",
-                    Details = "No validation data available",
-                    Evidence = "No validation data available"
-                });
-                continue;
-            }
-
-            var evidenceMap = ParseValidationEvidenceJson(vr.ValidationDetailsJson);
-
-            var checks = new (string CheckName, bool Passed, string DetailKey)[]
-            {
-                ("SAP Verification", vr.SapVerificationPassed, "SAP Verification"),
-                ("Amount Consistency", vr.AmountConsistencyPassed, "Amount Consistency"),
-                ("Line Item Matching", vr.LineItemMatchingPassed, "Line Item Matching"),
-                ("Completeness", vr.CompletenessCheckPassed, "Completeness Check"),
-                ("Date Validation", vr.DateValidationPassed, "Date Validation"),
-                ("Vendor Matching", vr.VendorMatchingPassed, "Vendor Matching")
-            };
-
-            foreach (var (checkName, passed, detailKey) in checks)
-            {
-                var evidence = evidenceMap.GetValueOrDefault(detailKey)
-                    ?? (passed ? $"{checkName} verified" : $"{checkName} failed");
-
-                groups.Add(new ValidationCheckGroup
-                {
-                    GroupName = docName,
-                    Status = passed ? "Pass" : "Fail",
-                    Details = checkName,
-                    Evidence = evidence
-                });
-            }
-        }
-
         // Cost Summary: use the same validation as the conversational chatbot (6 checks)
         var costSummary = package.CostSummary;
         if (costSummary != null && !costSummary.IsDeleted)
@@ -950,63 +897,82 @@ public class NotificationDataService : INotificationDataService
             });
         }
 
-        // Invoice: use the same 9 specific checks as the conversational chatbot
-        var allInvoices = package.Invoices.Where(i => !i.IsDeleted).ToList();
-        var firstInvoice = allInvoices.FirstOrDefault();
-        if (firstInvoice != null)
+        // Invoice: use the same 9 specific checks as the conversational chatbot.
+        // Check both direct Invoices and CampaignInvoices (via Teams) since seed data
+        // uses CampaignInvoices linked through Teams, not direct Invoices.
+        var directInvoices = package.Invoices.Where(i => !i.IsDeleted).ToList();
+        var campaignInvoices = package.Teams
+            .SelectMany(t => t.Invoices)
+            .Where(i => !i.IsDeleted)
+            .ToList();
+
+        // Use direct invoices if available, otherwise fall back to campaign invoices
+        string? invNumber = directInvoices.FirstOrDefault()?.InvoiceNumber
+            ?? campaignInvoices.FirstOrDefault()?.InvoiceNumber;
+        DateTime? invDate = directInvoices.FirstOrDefault()?.InvoiceDate
+            ?? campaignInvoices.FirstOrDefault()?.InvoiceDate;
+        decimal? invAmount = directInvoices.FirstOrDefault()?.TotalAmount
+            ?? campaignInvoices.FirstOrDefault()?.TotalAmount;
+        string? invGst = directInvoices.FirstOrDefault()?.GSTNumber
+            ?? campaignInvoices.FirstOrDefault()?.GSTNumber;
+        string? invExtractedJson = directInvoices.FirstOrDefault()?.ExtractedDataJson
+            ?? campaignInvoices.FirstOrDefault()?.ExtractedDataJson;
+        int invoiceCount = directInvoices.Count > 0 ? directInvoices.Count : campaignInvoices.Count;
+        bool hasInvoice = invoiceCount > 0;
+
+        if (hasInvoice)
         {
-            var invoiceCount = allInvoices.Count;
             var invoiceLabel = invoiceCount > 1 ? $"Invoices ({invoiceCount})" : "Invoice";
             var po = package.PO;
 
             // Parse ExtractedDataJson once for field lookups
             JsonElement? extractedJson = null;
-            if (!string.IsNullOrEmpty(firstInvoice.ExtractedDataJson))
+            if (!string.IsNullOrEmpty(invExtractedJson))
             {
-                try { extractedJson = JsonDocument.Parse(firstInvoice.ExtractedDataJson).RootElement; }
+                try { extractedJson = JsonDocument.Parse(invExtractedJson).RootElement; }
                 catch { /* malformed JSON */ }
             }
 
             // 1. Invoice Number
-            var invNumPresent = !string.IsNullOrWhiteSpace(firstInvoice.InvoiceNumber);
+            var invNumPresent = !string.IsNullOrWhiteSpace(invNumber);
             groups.Add(new ValidationCheckGroup
             {
                 GroupName = invoiceLabel,
                 Status = invNumPresent ? "Pass" : "Fail",
                 Details = "Invoice Number",
-                Evidence = invNumPresent ? firstInvoice.InvoiceNumber! : "Invoice number not detected"
+                Evidence = invNumPresent ? invNumber! : "Invoice number not detected"
             });
 
             // 2. Invoice Date
-            var datePresent = firstInvoice.InvoiceDate.HasValue && firstInvoice.InvoiceDate.Value != default;
+            var datePresent = invDate.HasValue && invDate.Value != default;
             groups.Add(new ValidationCheckGroup
             {
                 GroupName = invoiceLabel,
                 Status = datePresent ? "Pass" : "Fail",
                 Details = "Invoice Date",
-                Evidence = datePresent ? firstInvoice.InvoiceDate!.Value.ToString("dd-MMM-yyyy") : "Invoice date not detected"
+                Evidence = datePresent ? invDate!.Value.ToString("dd-MMM-yyyy") : "Invoice date not detected"
             });
 
             // 3. Invoice Amount
-            var amountPresent = firstInvoice.TotalAmount.HasValue && firstInvoice.TotalAmount.Value > 0;
+            var amountPresent = invAmount.HasValue && invAmount.Value > 0;
             groups.Add(new ValidationCheckGroup
             {
                 GroupName = invoiceLabel,
                 Status = amountPresent ? "Pass" : "Fail",
                 Details = "Invoice Amount",
-                Evidence = amountPresent ? $"₹{firstInvoice.TotalAmount!.Value:N0}" : "Invoice amount not detected"
+                Evidence = amountPresent ? $"₹{invAmount!.Value:N0}" : "Invoice amount not detected"
             });
 
             // 4. GST Number (15-char alphanumeric)
-            var gstPresent = !string.IsNullOrWhiteSpace(firstInvoice.GSTNumber) && firstInvoice.GSTNumber.Length == 15;
+            var gstPresent = !string.IsNullOrWhiteSpace(invGst) && invGst.Length == 15;
             groups.Add(new ValidationCheckGroup
             {
                 GroupName = invoiceLabel,
                 Status = gstPresent ? "Pass" : "Fail",
                 Details = "GST Number",
                 Evidence = gstPresent
-                    ? firstInvoice.GSTNumber!
-                    : (string.IsNullOrWhiteSpace(firstInvoice.GSTNumber) ? "Not detected" : "Invalid format (must be 15 chars)")
+                    ? invGst!
+                    : (string.IsNullOrWhiteSpace(invGst) ? "Not detected" : "Invalid format (must be 15 chars)")
             });
 
             // 5. GST %
@@ -1109,7 +1075,7 @@ public class NotificationDataService : INotificationDataService
             // 9. Amount vs PO Balance
             bool amountOk;
             string balanceEvidence;
-            if (po == null || !firstInvoice.TotalAmount.HasValue)
+            if (po == null || !invAmount.HasValue)
             {
                 amountOk = po == null ? false : true;
                 balanceEvidence = po == null ? "PO balance not available" : "Invoice amount not detected";
@@ -1117,10 +1083,10 @@ public class NotificationDataService : INotificationDataService
             else
             {
                 var balance = po.RemainingBalance ?? po.TotalAmount ?? 0;
-                amountOk = firstInvoice.TotalAmount.Value <= balance;
+                amountOk = invAmount.Value <= balance;
                 balanceEvidence = amountOk
-                    ? $"₹{firstInvoice.TotalAmount.Value:N0} within PO balance (₹{balance:N0})"
-                    : $"₹{firstInvoice.TotalAmount.Value:N0} exceeds PO balance (₹{balance:N0})";
+                    ? $"₹{invAmount.Value:N0} within PO balance (₹{balance:N0})"
+                    : $"₹{invAmount.Value:N0} exceeds PO balance (₹{balance:N0})";
             }
             groups.Add(new ValidationCheckGroup
             {

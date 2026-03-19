@@ -95,7 +95,7 @@ public class TeamsCardService : ITeamsCardService
                     new Newtonsoft.Json.Linq.JObject { ["title"] = "State:", ["value"] = NullFallback(data.State) },
                     new Newtonsoft.Json.Linq.JObject { ["title"] = "Submitted:", ["value"] = NullFallback(data.SubmittedAtFormatted) },
                     new Newtonsoft.Json.Linq.JObject { ["title"] = "Teams:", ["value"] = NullFallback(data.TeamPhotoSummary, "0 teams | 0 photos") },
-                    new Newtonsoft.Json.Linq.JObject { ["title"] = "Inquiries:", ["value"] = NullFallback(data.InquirySummary) }
+                    new Newtonsoft.Json.Linq.JObject { ["title"] = "EnquiriesDoc:", ["value"] = NullFallback(data.InquirySummary) }
                 }
             });
 

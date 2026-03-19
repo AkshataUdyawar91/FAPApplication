@@ -36,6 +36,7 @@ public class StateMapping : BaseEntity
 
     /// <summary>
     /// RA user assigned to this state for second-level submission review.
+    /// RA user assigned to this state for HQ-level review.
     /// </summary>
     public Guid? RAUserId { get; set; }
 

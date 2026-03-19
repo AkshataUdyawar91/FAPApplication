@@ -114,6 +114,13 @@ public class TeamsBotService : TeamsActivityHandler
                 return;
             }
 
+            // Handle login action (no fapId required)
+            if (action == "bot_login")
+            {
+                await HandleBotLoginAsync(turnContext, data, cancellationToken);
+                return;
+            }
+
             if (string.IsNullOrEmpty(action) || string.IsNullOrEmpty(fapIdStr) || !Guid.TryParse(fapIdStr, out var fapId))
             {
                 await SendTextReplyAsync(turnContext, "Missing action or FAP ID.", cancellationToken);
@@ -296,28 +303,60 @@ public class TeamsBotService : TeamsActivityHandler
                               ?? string.Empty;
             var systemUser = await ResolveSystemUserAsync(context, teamsUserId, cancellationToken);
 
-            // Build query: show PendingASM packages assigned to this user
-            var query = context.DocumentPackages
-                .Where(p => p.State == PackageState.PendingASM)
-                .Where(p => !p.IsDeleted);
-
-            // Filter by assigned Circle Head if user is resolved
-            if (systemUser != null)
+            if (systemUser == null)
             {
-                query = query.Where(p => p.AssignedCircleHeadUserId == systemUser.Id);
-                _logger.LogInformation(
-                    "Filtering pending submissions for user {UserId} ({UserName})",
-                    systemUser.Id, systemUser.FullName);
+                _logger.LogWarning("Could not resolve Teams user {TeamsUserId} to a system user", teamsUserId);
+                // Show login card so the user can link their ClaimsIQ account
+                await SendLoginCardAsync(turnContext, cancellationToken);
+                return;
+            }
+
+            _logger.LogInformation(
+                "Resolved Teams user to {UserId} ({UserName}), Role: {Role}",
+                systemUser.Id, systemUser.FullName, systemUser.Role);
+
+            // Determine which state to filter and how to scope by user
+            IQueryable<Domain.Entities.DocumentPackage> query;
+
+            if (systemUser.Role == UserRole.RA)
+            {
+                // RA users see PendingRA submissions for their assigned states
+                var raStates = await context.StateMappings
+                    .Where(sm => sm.RAUserId == systemUser.Id && sm.IsActive)
+                    .Select(sm => sm.State)
+                    .ToListAsync(cancellationToken);
+
+                query = context.DocumentPackages
+                    .Where(p => p.State == PackageState.PendingRA)
+                    .Where(p => !p.IsDeleted)
+                    .Where(p => p.AssignedRAUserId == systemUser.Id
+                                || (p.ActivityState != null && raStates.Contains(p.ActivityState)));
+            }
+            else
+            {
+                // ASM/Circle Head users see PendingASM submissions for their assigned states
+                var asmStates = await context.StateMappings
+                    .Where(sm => sm.CircleHeadUserId == systemUser.Id && sm.IsActive)
+                    .Select(sm => sm.State)
+                    .ToListAsync(cancellationToken);
+
+                query = context.DocumentPackages
+                    .Where(p => p.State == PackageState.PendingASM)
+                    .Where(p => !p.IsDeleted)
+                    .Where(p => p.AssignedCircleHeadUserId == systemUser.Id
+                                || (p.ActivityState != null && asmStates.Contains(p.ActivityState)));
             }
 
             var pendingPackages = await query
                 .Include(p => p.Agency)
                 .Include(p => p.Invoices)
-                .Include(p => p.Teams).ThenInclude(t => t.Invoices)
+                .Include(p => p.Teams.Where(t => !t.IsDeleted))
+                    .ThenInclude(t => t.Invoices)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.PO)
                 .OrderByDescending(p => p.CreatedAt)
                 .Take(10)
+                .AsSplitQuery()
                 .AsNoTracking()
                 .ToListAsync(cancellationToken);
 
@@ -545,20 +584,6 @@ public class TeamsBotService : TeamsActivityHandler
                         u.FullName.ToLower() == teamsUserName.ToLower(),
                         cancellationToken);
                 matchedUserId = matchedUser?.Id;
-            }
-
-            // Pilot fallback: if no match found, match by ASM role (single ASM seed user)
-            if (matchedUserId == null)
-            {
-                var asmUser = await context.Users
-                    .FirstOrDefaultAsync(u => u.Role == Domain.Enums.UserRole.ASM && u.IsActive, cancellationToken);
-                matchedUserId = asmUser?.Id;
-                if (matchedUserId != null)
-                {
-                    _logger.LogInformation(
-                        "Pilot fallback: matched Teams user {TeamsUser} to ASM user {UserId}",
-                        teamsUserName, matchedUserId);
-                }
             }
 
             if (existing != null)
@@ -897,42 +922,231 @@ public class TeamsBotService : TeamsActivityHandler
         string teamsUserId,
         CancellationToken cancellationToken)
     {
-        // Try to find a TeamsConversation record matching this Teams user
+        // 1. Try to find a TeamsConversation record with a linked UserId
         var teamsConversation = await context.TeamsConversations
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 tc => tc.TeamsUserId == teamsUserId && tc.IsActive,
                 cancellationToken);
 
-        if (teamsConversation != null)
+        if (teamsConversation?.UserId != null)
         {
-            // Preferred: use UserId FK if set
-            if (teamsConversation.UserId.HasValue)
+            var linkedUser = await context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == teamsConversation.UserId.Value && u.IsActive, cancellationToken);
+            if (linkedUser != null)
             {
-                var linkedUser = await context.Users
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(u => u.Id == teamsConversation.UserId.Value && u.IsActive, cancellationToken);
-                if (linkedUser != null) return linkedUser;
+                _logger.LogInformation("Resolved Teams user {TeamsUserId} via TeamsConversation FK to {Email}", teamsUserId, linkedUser.Email);
+                return linkedUser;
             }
+        }
 
-            // Fallback: match by Teams user name to system user full name or email
+        // 2. Match by Teams display name against system user FullName or Email
+        var teamsUserName = teamsConversation?.TeamsUserName ?? "";
+        if (!string.IsNullOrEmpty(teamsUserName))
+        {
             var user = await context.Users
                 .AsNoTracking()
                 .FirstOrDefaultAsync(
-                    u => u.Role == UserRole.ASM && u.IsActive &&
-                         (u.FullName == teamsConversation.TeamsUserName ||
-                          u.Email == teamsConversation.TeamsUserName),
+                    u => u.IsActive &&
+                         (u.FullName.ToLower() == teamsUserName.ToLower() ||
+                          u.Email.ToLower() == teamsUserName.ToLower()),
                     cancellationToken);
 
-            if (user != null) return user;
+            if (user != null)
+            {
+                _logger.LogInformation("Resolved Teams user {TeamsUserId} by name/email match to {Email}", teamsUserId, user.Email);
+                return user;
+            }
         }
 
-        // Pilot fallback: return the first active ASM user
-        return await context.Users
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                u => u.Role == UserRole.ASM && u.IsActive,
+        // 3. No match found — do NOT fall back to a random user
+        _logger.LogWarning("Could not resolve Teams user {TeamsUserId} (name: {Name}) to any system user", teamsUserId, teamsUserName);
+        return null;
+    }
+
+    /// <summary>
+    /// Sends an Adaptive Card with email/password inputs so the user can link their ClaimsIQ account.
+    /// Password is masked using Input.Text with style=password.
+    /// </summary>
+    private async Task SendLoginCardAsync(
+        ITurnContext turnContext,
+        CancellationToken cancellationToken)
+    {
+        var card = new JObject
+        {
+            ["type"] = "AdaptiveCard",
+            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
+            ["version"] = "1.3",
+            ["body"] = new JArray
+            {
+                new JObject
+                {
+                    ["type"] = "TextBlock",
+                    ["text"] = "🔐 Sign in to ClaimsIQ",
+                    ["size"] = "Medium",
+                    ["weight"] = "Bolder"
+                },
+                new JObject
+                {
+                    ["type"] = "TextBlock",
+                    ["text"] = "I couldn't match your Teams account automatically. Please enter your ClaimsIQ credentials to link your account.",
+                    ["wrap"] = true,
+                    ["size"] = "Small",
+                    ["color"] = "Default"
+                },
+                new JObject
+                {
+                    ["type"] = "Input.Text",
+                    ["id"] = "loginEmail",
+                    ["label"] = "Email",
+                    ["placeholder"] = "your.email@bajaj.com",
+                    ["isRequired"] = true,
+                    ["errorMessage"] = "Email is required",
+                    ["style"] = "Email"
+                },
+                new JObject
+                {
+                    ["type"] = "Input.Text",
+                    ["id"] = "loginPassword",
+                    ["label"] = "Password",
+                    ["placeholder"] = "••••••••",
+                    ["isRequired"] = true,
+                    ["errorMessage"] = "Password is required",
+                    ["style"] = "Password"
+                }
+            },
+            ["actions"] = new JArray
+            {
+                new JObject
+                {
+                    ["type"] = "Action.Submit",
+                    ["title"] = "Sign In",
+                    ["style"] = "positive",
+                    ["data"] = new JObject
+                    {
+                        ["action"] = "bot_login",
+                        ["cardVersion"] = "1.0"
+                    }
+                }
+            }
+        };
+
+        var attachment = new Attachment
+        {
+            ContentType = "application/vnd.microsoft.card.adaptive",
+            Content = card
+        };
+
+        await turnContext.SendActivityAsync(MessageFactory.Attachment(attachment), cancellationToken);
+    }
+
+    /// <summary>
+    /// Handles the bot_login action: authenticates the user via AuthService,
+    /// links the TeamsConversation to the system user, and shows pending submissions.
+    /// </summary>
+    private async Task HandleBotLoginAsync(
+        ITurnContext<IMessageActivity> turnContext,
+        JObject data,
+        CancellationToken cancellationToken)
+    {
+        var email = data["loginEmail"]?.ToString()?.Trim();
+        var password = data["loginPassword"]?.ToString();
+
+        if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
+        {
+            await SendTextReplyAsync(turnContext, "❌ Please enter both email and password.", cancellationToken);
+            return;
+        }
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var authService = scope.ServiceProvider.GetRequiredService<IAuthService>();
+            var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+
+            // Authenticate against the existing auth service
+            var loginResult = await authService.LoginAsync(new Application.DTOs.Auth.LoginRequest
+            {
+                Email = email,
+                Password = password
+            });
+
+            if (loginResult == null)
+            {
+                _logger.LogWarning("Teams bot login failed for email {Email}", email);
+                await SendTextReplyAsync(turnContext, "❌ Invalid email or password. Please try again.", cancellationToken);
+                return;
+            }
+
+            // Find the system user
+            var systemUser = await context.Users
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == email.ToLower() && u.IsActive, cancellationToken);
+
+            if (systemUser == null)
+            {
+                await SendTextReplyAsync(turnContext, "❌ Account not found or inactive.", cancellationToken);
+                return;
+            }
+
+            // Link the TeamsConversation to this system user
+            var teamsUserId = turnContext.Activity.From?.AadObjectId
+                              ?? turnContext.Activity.From?.Id
+                              ?? string.Empty;
+            var conversationId = turnContext.Activity.Conversation?.Id ?? "";
+
+            var teamsConv = await context.TeamsConversations
+                .FirstOrDefaultAsync(
+                    tc => tc.TeamsUserId == teamsUserId && tc.IsActive,
+                    cancellationToken);
+
+            if (teamsConv != null)
+            {
+                teamsConv.UserId = systemUser.Id;
+                teamsConv.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                // Create a new TeamsConversation record linked to this user
+                context.TeamsConversations.Add(new Domain.Entities.TeamsConversation
+                {
+                    Id = Guid.NewGuid(),
+                    UserId = systemUser.Id,
+                    TeamsUserId = teamsUserId,
+                    TeamsUserName = turnContext.Activity.From?.Name ?? email,
+                    ConversationId = conversationId,
+                    ServiceUrl = turnContext.Activity.ServiceUrl ?? "",
+                    ChannelId = turnContext.Activity.ChannelId ?? "emulator",
+                    BotId = turnContext.Activity.Recipient?.Id ?? "",
+                    BotName = turnContext.Activity.Recipient?.Name ?? "",
+                    TenantId = turnContext.Activity.Conversation?.TenantId,
+                    ConversationReferenceJson = "{}",
+                    IsActive = true,
+                    LastActivityAt = DateTime.UtcNow,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+
+            await context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "Teams bot login successful: linked Teams user {TeamsUserId} to system user {Email} ({Role})",
+                teamsUserId, systemUser.Email, systemUser.Role);
+
+            await SendTextReplyAsync(turnContext,
+                $"✅ Signed in as **{systemUser.FullName}** ({systemUser.Role}).\n\nFetching your pending requests...",
                 cancellationToken);
+
+            // Now show their pending submissions
+            await HandlePendingSubmissionsQueryAsync(turnContext, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during Teams bot login for {Email}", email);
+            await SendTextReplyAsync(turnContext,
+                "Something went wrong during sign-in. Please try again.", cancellationToken);
+        }
     }
 
     /// <summary>
