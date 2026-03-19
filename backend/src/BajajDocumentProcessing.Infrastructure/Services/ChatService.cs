@@ -171,11 +171,11 @@ public class ChatService : IChatService
 
             _logger.LogInformation("ChatService - UserId: {UserId}, Role: {Role}, Packages count: {Count}", userId, userRole, userPackages.Count);
 
-            var userPendingASM = userPackages.Count(p => p.State == Domain.Enums.PackageState.PendingASM);
+            var userPendingCH = userPackages.Count(p => p.State == Domain.Enums.PackageState.PendingCH);
             var userPendingHQ = userPackages.Count(p => p.State == Domain.Enums.PackageState.PendingRA);
             var userApproved = userPackages.Count(p => p.State == Domain.Enums.PackageState.Approved);
             var userRejected = userPackages.Count(p => 
-                p.State == Domain.Enums.PackageState.ASMRejected || 
+                p.State == Domain.Enums.PackageState.CHRejected || 
                 p.State == Domain.Enums.PackageState.RARejected);
             var userUploaded = userPackages.Count(p => p.State == Domain.Enums.PackageState.Uploaded);
             var userProcessing = userPackages.Count(p => 
@@ -278,7 +278,7 @@ CURRENT USER: Role={userRole}
 SUBMISSION DATA (most recent 20):
 Total: {userPackages.Count}
 Uploaded (not yet processed): {userUploaded}
-Pending with ASM: {userPendingASM}
+Pending with CH: {userPendingCH}
 Pending with HQ/RA: {userPendingHQ}
 Approved: {userApproved}
 Rejected: {userRejected}
@@ -296,9 +296,9 @@ IMPORTANT RULES:
 3. NEVER expose internal details, error messages, or technical information to the user.
 4. Always respond in a clean, conversational, user-friendly tone.
 5. Keep responses SHORT and DIRECT — only answer what the user asked. Do NOT dump extra details they didn't ask for.
-6. When user asks about status, just say the status in plain English (e.g. 'Pending with ASM' not 'PendingASMApproval'). Do NOT list submitted date, confidence, documents, PO, invoice etc unless specifically asked.
+6. When user asks about status, just say the status in plain English (e.g. 'Pending with CH' not 'PendingCHApproval'). Do NOT list submitted date, confidence, documents, PO, invoice etc unless specifically asked.
 7. When user asks about invoice amount, just give the amount. When they ask about PO, just give the PO number. Only provide what was asked.
-8. Use friendly status names: PendingASMApproval = 'Pending with ASM', PendingHQApproval = 'Pending with RA', Uploaded = 'Uploaded', Approved = 'Approved', RejectedByASM = 'Rejected by ASM', RejectedByRA = 'Rejected by RA'.
+8. Use friendly status names: PendingCH = 'Pending with CH', PendingRA = 'Pending with RA', Uploaded = 'Uploaded', Approved = 'Approved', CHRejected = 'Rejected by CH', RejectedByRA = 'Rejected by RA'.
 9. Do NOT show [PHONE_REDACTED] or any redacted labels — if a value looks redacted, just say the value is not available.
 10. CRITICAL: When the user asks to 'show', 'view', 'open', or 'see' a PO, they want to VIEW THE ACTUAL PO DOCUMENT — NOT the PO number. You MUST respond with a clickable link using the PODocId: 'You can view your PO here: [View PO](doc://{PODocId})'. NEVER respond with just the PO number when the user asks to show/view/open a PO. The PO number is only shown when the user explicitly asks 'what is the PO number?'.
 11. If a submission does not have a PODocId, say 'The PO document is not available for this submission.'

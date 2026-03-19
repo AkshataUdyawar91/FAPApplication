@@ -110,7 +110,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         'recommending'
       ].contains(state)) {
         statuses.add('extracting');
-      } else if (['pendingapproval', 'pendingasmapproval'].contains(state)) {
+      } else if (['pendingapproval', 'pendingchapproval'].contains(state)) {
         statuses.add('pending_with_asm');
       } else if (['asmapproved', 'pendinghqapproval'].contains(state)) {
         statuses.add('pending_with_ra');
@@ -133,10 +133,10 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       'all': 'All Status',
       'uploaded': 'Submitted',
       'extracting': 'Extracting',
-      'pending_with_asm': 'Pending with ASM',
+      'pending_with_asm': 'Pending with CH',
       'pending_with_ra': 'Pending with RA',
       'approved': 'Approved',
-      'rejected_by_asm': 'Rejected by ASM',
+      'rejected_by_asm': 'Rejected by CH',
       'rejected_by_ra': 'Rejected by RA',
     };
 
@@ -186,7 +186,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           break;
         case 'pending_with_asm':
           matchesStatus =
-              ['pendingapproval', 'pendingasmapproval'].contains(state);
+              ['pendingapproval', 'pendingchapproval'].contains(state);
           break;
         case 'pending_with_ra':
           matchesStatus = ['asmapproved', 'pendinghqapproval'].contains(state);
@@ -225,7 +225,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       }).length,
       'pendingWithASM': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['pendingapproval', 'pendingasmapproval'].contains(s);
+        return ['pendingapproval', 'pendingchapproval'].contains(s);
       }).length,
       'pendingWithRA': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
@@ -532,7 +532,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Widget _buildStatsCards(DeviceType device) {
     final stats = _stats;
     final cards = [
-      _StatData('Pending with ASM', stats['pendingWithASM']!.toString(),
+      _StatData('Pending with CH', stats['pendingWithASM']!.toString(),
           Icons.schedule, const Color(0xFF3B82F6), 'pending_with_asm'),
       _StatData('Approved', stats['approved']!.toString(), Icons.check_circle,
           const Color(0xFF10B981), 'approved'),
@@ -1080,7 +1080,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       case 'rejectedbyasm':
         bgColor = const Color(0xFFFEE2E2);
         textColor = const Color(0xFF991B1B);
-        label = 'Rejected by ASM';
+        label = 'Rejected by CH';
         break;
       case 'rejectedbyhq':
       case 'rejectedbyra':
@@ -1095,18 +1095,18 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         bgColor = const Color(0xFFDBEAFE);
         textColor = const Color(0xFF1E40AF);
         label = state == 'pendingapproval'
-            ? 'Pending with ASM'
+            ? 'Pending with CH'
             : state == 'recommending'
                 ? 'Recommending'
                 : state == 'submitted'
                     ? 'Submitted'
                     : 'Validated';
         break;
-      case 'pendingasmapproval':
-      case 'pendingwithasm':
+      case 'pendingchapproval':
+      case 'pendingwithch':
         bgColor = const Color(0xFFDBEAFE);
         textColor = const Color(0xFF1E40AF);
-        label = 'Pending with ASM';
+        label = 'Pending with CH';
         break;
       case 'pendinghqapproval':
       case 'pendingwithra':
@@ -1165,11 +1165,11 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       case 'rejected':
         return 'Rejected';
       case 'rejected_by_asm':
-        return 'Rejected by ASM';
+        return 'Rejected by CH';
       case 'rejected_by_hq':
         return 'Rejected by HQ/RA';
       case 'pending_asm':
-        return 'Pending ASM Approval';
+        return 'Pending CH Approval';
       case 'pending_hq':
         return 'Pending HQ/RA Approval';
       case 'under_review':
@@ -1196,13 +1196,13 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     if (['uploaded', 'extracting', 'validating'].contains(state))
       return 'pending';
     if (['validated', 'recommending'].contains(state)) return 'pending';
-    if (['pendingasmapproval', 'pendingapproval', 'pendingwithasm']
+    if (['pendingch', 'pendingchapproval', 'pendingapproval', 'pendingwithch']
         .contains(state)) return 'pending_asm';
-    if (['pendinghqapproval', 'pendingwithra'].contains(state))
+    if (['pendingra', 'pendinghqapproval', 'pendingwithra'].contains(state))
       return 'pending_hq';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyasm') return 'rejected_by_asm';
-    if (['rejectedbyhq', 'rejectedbyra'].contains(state))
+    if (['chrejected', 'rejectedbyasm'].contains(state)) return 'rejected_by_asm';
+    if (['rarejected', 'rejectedbyhq', 'rejectedbyra'].contains(state))
       return 'rejected_by_hq';
     if (['rejected', 'validationfailed', 'reuploadrequested'].contains(state))
       return 'rejected';
@@ -1251,7 +1251,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
               _buildDetailRow(
                   'Documents', '${request['documentCount'] ?? 0} files'),
 
-              // Show ASM rejection notes if rejected by ASM
+              // Show CH rejection notes if rejected by CH
               if (status == 'rejected_by_asm' &&
                   asmReviewNotes != null &&
                   asmReviewNotes.toString().isNotEmpty) ...[
@@ -1272,7 +1272,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                               color: Color(0xFFDC2626), size: 20),
                           const SizedBox(width: 8),
                           Text(
-                            'Rejected by ASM',
+                            'Rejected by CH',
                             style: AppTextStyles.bodyMedium.copyWith(
                               fontWeight: FontWeight.bold,
                               color: const Color(0xFFB91C1C),
@@ -1352,7 +1352,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           ),
         ),
         actions: [
-          // Show Resubmit button if rejected by ASM
+          // Show Resubmit button if rejected by CH
           if (status == 'rejected_by_asm')
             ElevatedButton.icon(
               onPressed: () {

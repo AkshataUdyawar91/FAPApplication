@@ -66,7 +66,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
     /// 2. Cross-document validation
     /// 3. Confidence score calculation
     /// 4. AI recommendation generation
-    /// 5. State transition to PendingASMApproval
+    /// 5. State transition to PendingCH
     /// If any step fails, compensation logic is triggered to notify the user
     /// </remarks>
     public async Task<bool> ProcessSubmissionAsync(Guid packageId, CancellationToken cancellationToken = default)
@@ -99,10 +99,10 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
             // Check for idempotency - allow reprocessing of failed packages
             // Skip only if already in final states or approval states
-            if (package.State == PackageState.PendingASM || 
+            if (package.State == PackageState.PendingCH || 
                 package.State == PackageState.PendingRA ||
                 package.State == PackageState.Approved || 
-                package.State == PackageState.ASMRejected ||
+                package.State == PackageState.CHRejected ||
                 package.State == PackageState.RARejected)
             {
                 _logger.LogWarning("Package {PackageId} is in final/approval state {State}, skipping processing", packageId, package.State);
@@ -141,7 +141,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             }
 
             // Step 5: Final state transition
-            // Only move to PendingASM if the package was explicitly submitted (has a SubmissionNumber).
+            // Only move to PendingCH if the package was explicitly submitted (has a SubmissionNumber).
             // Partial uploads (chatbot in-progress) should stay as Uploaded until the user submits.
             if (string.IsNullOrEmpty(package.SubmissionNumber))
             {
@@ -151,7 +151,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 return true;
             }
 
-            // Safety net: ensure CircleHead is assigned before advancing to PendingASM
+            // Safety net: ensure CircleHead is assigned before advancing to PendingCH
             if (!package.AssignedCircleHeadUserId.HasValue && !string.IsNullOrEmpty(package.ActivityState))
             {
                 var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, cancellationToken);
@@ -159,7 +159,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 _logger.LogInformation("Safety net: assigned CircleHead {UserId} for package {PackageId} (state: {State})", circleHeadUserId, package.Id, package.ActivityState);
             }
 
-            package.State = PackageState.PendingASM;
+            package.State = PackageState.PendingCH;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -169,7 +169,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 new
                 {
                     submissionId = package.Id,
-                    newStatus = PackageState.PendingASM.ToString(),
+                    newStatus = PackageState.PendingCH.ToString(),
                     assignedTo = package.AssignedCircleHeadUserId
                 },
                 cancellationToken);
@@ -544,7 +544,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         {
             _logger.LogInformation("Starting scoring step for package {PackageId}", package.Id);
             
-            // Note: Scoring state removed from new schema - packages go directly from Validating to PendingASM
+            // Note: Scoring state removed from new schema - packages go directly from Validating to PendingCH
             // Keeping this method for backward compatibility but not setting state
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
@@ -596,7 +596,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         {
             _logger.LogInformation("Starting recommendation step for package {PackageId}", package.Id);
             
-            // Note: Recommending state removed from new schema - packages go directly from Validating to PendingASM
+            // Note: Recommending state removed from new schema - packages go directly from Validating to PendingCH
             // Keeping this method for backward compatibility but not setting state
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
