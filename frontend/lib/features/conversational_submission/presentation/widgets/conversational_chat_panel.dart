@@ -71,6 +71,18 @@ class _ConversationalChatPanelState
 
     final fileUploadType = _fileUploadTypeForStep(chatState.currentStep);
 
+    // Wire the upload-success callback before starting the upload so it's
+    // set when the notifier fires it (immediately after documentId is returned).
+    ref.read(fileUploadNotifierProvider.notifier).onUploadSuccess = (documentId) {
+      if (!mounted) return;
+      ref.read(conversationNotifierProvider.notifier).sendAction(
+            'upload_confirmed',
+            '{"documentId":"$documentId"}',
+          );
+      // Reset upload zone so it's ready for the next document
+      ref.read(fileUploadNotifierProvider.notifier).reset();
+    };
+
     await ref.read(fileUploadNotifierProvider.notifier).uploadFile(
           fileBytes: file.bytes,
           fileName: file.fileName,

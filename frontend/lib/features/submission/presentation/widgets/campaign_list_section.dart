@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
@@ -226,6 +228,213 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
   void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), backgroundColor: AppColors.rejectedText));
+
+  // ─── Invoice methods ─────────────────────────────────────────────────
+
+  void _addInvoice(int campaignIndex) {
+    setState(() {
+      final campaign = _campaigns[campaignIndex];
+      campaign.invoices.add(InvoiceItemData(
+        id: '${campaign.id}_invoice_${campaign.invoices.length + 1}',
+      ));
+    });
+    widget.onCampaignsChanged(_campaigns);
+  }
+
+  Future<void> _removeInvoice(int campaignIndex, int invoiceIndex) async {
+    if (_campaigns[campaignIndex].invoices.length > 1) {
+      final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
+      final label = invoice.invoiceNumber.isNotEmpty ? 'Invoice #${invoice.invoiceNumber}' : 'Invoice ${invoiceIndex + 1}';
+      final confirmed = await _confirm('Delete Invoice', 'Are you sure you want to delete "$label"?');
+      if (!confirmed || !mounted) return;
+      setState(() {
+        _campaigns[campaignIndex].invoices.removeAt(invoiceIndex);
+      });
+      widget.onCampaignsChanged(_campaigns);
+    }
+  }
+
+  Future<void> _pickInvoiceFile(int campaignIndex, int invoiceIndex) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        setState(() => _campaigns[campaignIndex].invoices[invoiceIndex].file = file);
+        widget.onCampaignsChanged(_campaigns);
+        await _uploadAndExtractInvoice(campaignIndex, invoiceIndex, file);
+      }
+    } catch (e) {
+      debugPrint('Error picking invoice file: $e');
+    }
+  }
+
+  Future<void> _uploadAndExtractInvoice(int campaignIndex, int invoiceIndex, PlatformFile file) async {
+    if (file.bytes == null || widget.token == null) return;
+
+    final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
+    if (mounted) setState(() => invoice.isExtracting = true);
+
+    try {
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+
+      final uploadResponse = await dio.post(
+        '/documents/upload',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
+          'documentType': 'Invoice',
+          if (widget.packageId != null) 'packageId': widget.packageId,
+        }),
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (uploadResponse.statusCode == 200) {
+        final packageId = uploadResponse.data['packageId']?.toString();
+        final documentId = uploadResponse.data['documentId']?.toString();
+
+        if (packageId != null && documentId != null) {
+          await _pollForInvoiceExtraction(packageId, documentId, campaignIndex, invoiceIndex);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error uploading/extracting invoice: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (campaignIndex < _campaigns.length && invoiceIndex < _campaigns[campaignIndex].invoices.length) {
+            _campaigns[campaignIndex].invoices[invoiceIndex].isExtracting = false;
+          }
+        });
+      }
+    }
+  }
+
+  Future<void> _pollForInvoiceExtraction(String packageId, String documentId, int campaignIndex, int invoiceIndex) async {
+    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+    const maxAttempts = 25;
+
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+
+      try {
+        final response = await dio.get(
+          '/submissions/$packageId',
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+
+        if (!mounted) return;
+
+        if (response.statusCode == 200 && response.data != null) {
+          final documents = response.data['documents'] as List?;
+          if (documents != null) {
+            final invoiceDoc = documents.firstWhere(
+              (doc) => doc['id']?.toString() == documentId,
+              orElse: () => null,
+            );
+
+            if (invoiceDoc != null && invoiceDoc['extractedData'] != null) {
+              var extractedData = invoiceDoc['extractedData'];
+
+              if (extractedData is String && extractedData.isNotEmpty) {
+                try {
+                  extractedData = jsonDecode(extractedData);
+                } catch (_) {}
+              }
+
+              if (extractedData is Map) {
+                final invNumber = extractedData['InvoiceNumber'] ?? extractedData['invoiceNumber'] ?? '';
+                final invDate = extractedData['InvoiceDate'] ?? extractedData['invoiceDate'] ?? '';
+                final amount = extractedData['TotalAmount'] ?? extractedData['totalAmount'] ?? '';
+                final gst = extractedData['GSTNumber'] ?? extractedData['gstNumber'] ??
+                             extractedData['GSTIN'] ?? extractedData['gstin'] ??
+                             extractedData['VendorGSTIN'] ?? extractedData['vendorGSTIN'] ??
+                             extractedData['SellerGSTIN'] ?? extractedData['sellerGSTIN'] ?? '';
+
+                if (invNumber.toString().isNotEmpty || amount.toString().isNotEmpty) {
+                  if (!mounted) return;
+
+                  if (campaignIndex < _campaigns.length && invoiceIndex < _campaigns[campaignIndex].invoices.length) {
+                    final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
+                    setState(() {
+                      if (invNumber.toString().isNotEmpty) invoice.invoiceNumber = invNumber.toString();
+                      if (invDate.toString().isNotEmpty) invoice.invoiceDate = _formatExtractedDate(invDate.toString());
+                      if (amount.toString().isNotEmpty) {
+                        final amountNum = double.tryParse(amount.toString());
+                        if (amountNum != null) {
+                          invoice.totalAmount = _formatCurrency(amountNum);
+                        } else {
+                          invoice.totalAmount = amount.toString();
+                        }
+                      }
+                      if (gst.toString().isNotEmpty) invoice.gstNumber = gst.toString();
+                      invoice.isExtracting = false;
+                    });
+                    widget.onCampaignsChanged(_campaigns);
+                    return;
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        if (!mounted) return;
+        debugPrint('Invoice polling attempt $attempt failed: $e');
+      }
+    }
+  }
+
+  String _formatExtractedDate(String dateStr) {
+    if (dateStr.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(dateStr);
+      return '${dt.day.toString().padLeft(2, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.year}';
+    } catch (_) {
+      return dateStr;
+    }
+  }
+
+  String _formatCurrency(double amount) {
+    final formatter = NumberFormat.currency(
+      symbol: '₹ ',
+      decimalDigits: 2,
+      locale: 'en_IN',
+    );
+    return formatter.format(amount);
+  }
+
+  Future<void> _pickCostSummaryFile(int campaignIndex) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'xlsx', 'xls'],
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() => _campaigns[campaignIndex].costSummaryFile = result.files.first);
+        widget.onCampaignsChanged(_campaigns);
+      }
+    } catch (e) {
+      debugPrint('Error picking cost summary file: $e');
+    }
+  }
+
+  Future<void> _pickActivitySummaryFile(int campaignIndex) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'xlsx', 'xls'],
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() => _campaigns[campaignIndex].activitySummaryFile = result.files.first);
+        widget.onCampaignsChanged(_campaigns);
+      }
+    } catch (e) {
+      debugPrint('Error picking activity summary file: $e');
+    }
+  }
 
   // ─── BUILD ───────────────────────────────────────────────────────────
 
