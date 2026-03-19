@@ -11,7 +11,7 @@ final dioProvider = Provider<Dio>((ref) {
     BaseOptions(
       baseUrl: ApiConstants.baseUrl,
       connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(minutes: 10),
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',

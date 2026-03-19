@@ -21,8 +21,18 @@
 | Phase 3 | State & Activity Region Selection | ✅ DONE |
 | Phase 4 | Invoice Upload | ✅ DONE |
 | Phase 5 | Invoice Validation (9 rules, inline card, save to DB) | ✅ DONE |
-| Phase 6 | Activity Summary Upload & Validation (AS_DEALER_LOCATION_PRESENT, save to DB) | ✅ DONE |
-| Phase 7–10 | Full Submission Flow | 🔲 Pending |
+| Phase 6 | Activity Summary Upload & Validation | ✅ DONE |
+| Phase 7 | Cost Summary Upload & Validation (7 rules) | ✅ DONE |
+| Phase 8 | Team Details Entry Loop | ✅ DONE |
+| Phase 9 | Photo Proofs Upload per Team (AI validation) | ✅ DONE |
+| Phase 10 | Enquiry Dump Upload & Validation | ✅ DONE |
+| Phase 11 | Final Review & Submit / Save as Draft | ✅ DONE |
+
+---
+
+## WORKFLOW ORDER (Complete)
+
+PO Selection → State Selection → Invoice Upload & Validation → Cost Summary Upload & Validation → Activity Summary Upload & Validation → Team Details Loop (per team: name → dealer → dates → confirm → photos) → Enquiry Dump Upload & Validation → Final Review → Submit / Save as Draft
 
 ---
 
@@ -35,7 +45,7 @@ Copilot-style assistant UI that opens as the main chat experience after login.
 - Login navigates to `/agency/assistant` (ChatScreen)
 - Greeting message: "Hello! I am your Field Activity Assistant. I can help you manage campaign requests."
 - 3 workflow action cards: Create Request, View My Requests, Pending Approvals
-- User message bubble shows action in sentence case (e.g., "Create Request")
+- User message bubble shows action in sentence case
 - FAB on Agency Dashboard navigates to `/agency/assistant`
 
 #### Backend
@@ -43,292 +53,63 @@ Copilot-style assistant UI that opens as the main chat experience after login.
 - `AssistantController.cs` handles all assistant actions via single endpoint
 
 #### Frontend Files
-- `chat_screen.dart` — main chat page with message list, input mode switching
+- `chat_screen.dart` — main chat page
+- `assistant_chat_panel.dart` — side panel variant of the same chat
 - `assistant_notifier.dart` — Riverpod StateNotifier managing chat state
 - `assistant_remote_datasource.dart` — Dio-based API calls
-- `assistant_response_model.dart` — response DTO with type, message, cards, poItems, states fields
+- `assistant_response_model.dart` — response DTO
 - `assistant_providers.dart` — Riverpod provider definitions
-- Widgets: `AssistantHeader`, `AssistantBubble`, `UserBubble`, `WorkflowActionCard`, `ChatInputBar`
-
-#### Acceptance Criteria — ALL MET ✅
-- AC1: Greeting + 3 cards appear on assistant open
-- AC2: Card tap sends action to backend
-- AC3: Backend returns structured JSON
-- AC4: AssistantNotifier manages state
-- AC5: AssistantRemoteDataSource calls API via Dio
 
 ---
 
 ## PHASE 2 — PO Search & Selection ✅
 
 ### Requirement P2.1: PO Number Typeahead Search
-When user taps "Create Request", assistant shows PO search with typeahead.
-
-#### What's Implemented
-- Tapping "Create Request" sends `create_request` action → backend returns `po_search` type
-- Search bar appears at bottom with "Search PO number (min 3 chars)..." hint
-- Typing 3+ chars triggers debounced search (400ms) via `search_po` action
-- Backend queries `PurchaseOrdersController` search endpoint internally
-- Results display as simple `OutlinedButton` list showing PO numbers only (no amount, no vendor)
-- Consistent styling: navy blue text (#003087), rounded corners, left-aligned
+- Tapping "Create Request" → `create_request` action → `po_search` type
+- Search bar at bottom, min 3 chars, debounced 400ms
+- Results as `OutlinedButton` list (PO number only, navy #003087)
+- `select_po` → backend returns `state_selection` type (no PO upload step)
 
 #### Backend Actions
-- `create_request` → returns `po_search` type with search prompt
-- `search_po` → queries POs by number, returns `po_search_results` with `poItems` array
-
-#### Frontend Files
-- `po_search_list.dart` — renders PO results as OutlinedButton list (PO number only)
-- Input mode `'po'` activates PO search bar at bottom
-
-#### Acceptance Criteria — ALL MET ✅
-- AC1: Create Request shows PO search prompt
-- AC2: Search bar appears for PO input
-- AC3: 3+ chars triggers typeahead
-- AC4: Results as selectable PO number list
-- AC5: Selecting PO sends `select_po` with PO ID
-- AC6: Mock POs seeded (8110011482, 8110011617, 8110011618, 8110011755)
-
-### Requirement P2.2: Direct to State Selection After PO Selection
-After PO selection, assistant skips file upload and goes directly to state selection.
-
-#### What's Implemented
-- `select_po` action → backend returns `state_selection` type (not `upload_po`)
-- PO upload step removed from flow
-- Response includes quick-select state buttons
-
-#### Acceptance Criteria — ALL MET ✅
-- AC1: After PO selection, state selection appears immediately
-- AC2: No upload step between PO selection and state selection
+- `create_request` → `po_search`
+- `search_po` → `po_search_results` with `poItems`
+- `select_po` → `state_selection` (returns `selectedPO` in response)
 
 ---
 
 ## PHASE 3 — State & Activity Region Selection ✅
 
-### Requirement P3.1: State Selection with Quick-Select and Typeahead
-After PO selection, assistant asks which state the activity was conducted in.
+### Requirement P3.1: State Selection
+- After `select_po`, shows top 4 quick-select state buttons + "More states..." + search bar
+- `search_state` → filters 36 Indian states/UTs
+- `select_state` → validates, creates Draft `DocumentPackage` with `SelectedPOId` + `ActivityState`, returns `invoice_upload`
+- Confirmation: "State set to {state}. Proceeding to the next step..."
 
-#### What's Implemented
-- After `select_po`, backend returns `state_selection` type with:
-  - Message: "PO {number} selected. Which state was this activity conducted in? Start typing or select:"
-  - Quick-select cards for top 4 frequent states (default: Maharashtra, Gujarat, Karnataka, Tamil Nadu)
-  - "More states..." card with search icon
-- State buttons rendered as `OutlinedButton` list (same style as PO list)
-- "More states..." button has search icon prefix
-- State search bar appears at bottom (input mode `'state'`) alongside buttons
-- Typing filters states via `search_state` action (debounced 300ms)
-- `list_states` returns all 36 Indian states/UTs as `state_search_results`
-- `select_state` validates against 36 states, returns `state_confirmed`
-- Confirmation shows green checkmark: "State set to {state}. Proceeding to the next step..."
-- Header label "Select State" above buttons (matches "Purchase Orders" label style)
-
-#### Backend Actions (AssistantController.cs)
-- `select_state` → validates state name, returns `state_confirmed`
-- `search_state` → filters AllIndianStates list by query, returns `state_search_results` with `states` array
-- `list_states` → returns full 36 states/UTs
-- `BuildStateSelectionPrompt` → builds top 4 frequent states + "More states..." card
-- `AllIndianStates` — static list of 36 Indian states and union territories
-
-#### Frontend
-- `_stateButton` helper in `chat_screen.dart` — reusable OutlinedButton with consistent styling
-- Input mode `'state'` shows state search bar for both `state_selection` and `state_search_results` types
-- `states` field on `AssistantResponseModel` for state search results
-
-#### Acceptance Criteria — ALL MET ✅
-- AC1: After PO selection, state selection prompt with quick-select buttons appears
-- AC2: Top 4 frequent states shown as tappable buttons (OutlinedButton style)
-- AC3: "More states..." opens full searchable list
-- AC4: Typing in search bar filters states in real-time
-- AC5: Selecting a state shows confirmation with green checkmark
-- AC6: Invalid state names rejected with helpful message
-- AC7: Both quick-select buttons and search bar available simultaneously
+#### Backend Actions
+- `select_state`, `search_state`, `list_states`
+- `HandleSelectState` creates Draft `DocumentPackage` (linked to PO via `SelectedPOId`)
 
 ---
 
 ## PHASE 4 — Invoice Upload ✅
 
 ### Requirement P4.1: Invoice Document Upload
-After state confirmation, assistant prompts for invoice upload with two action buttons.
+- After state confirmation → `invoice_upload` type
+- "Upload from device" button only (camera button removed)
+- Accepted: PDF, JPG, PNG (max 10 MB)
+- Upload to `POST /api/documents/upload` with `documentType=Invoice`, `submissionId`
+- `LinearProgressIndicator` during upload (only on last bot message)
+- On success → `invoice_uploaded` action → `invoice_validation` type
 
-#### What's Implemented
-- After `select_state`, backend creates a Draft `DocumentPackage` (linked to selected PO via `SelectedPOId` and `ActivityState`)
-- Backend returns `invoice_upload` type with:
-  - Message: "State set to {state}. Please upload the invoice document."
-  - Two action buttons: "Upload from device" (upload_file icon), "Take photo" (camera_alt icon)
-  - `submissionId` (the draft package GUID) for frontend to attach upload to correct package
-  - `allowedFormats`: PDF, JPG, PNG
-- `HandleSelectPO` now returns `SelectedPO` in response so frontend stores the PO ID in state
-- `selectState` frontend method passes `poId` in `payloadJson` so backend can link PO to draft
-- Frontend `_pickInvoiceFile` uses `file_picker` package (PDF, JPG, PNG, max 10 MB)
-- Upload posts to `POST /api/documents/upload` with `documentType=Invoice`, `submissionId`, `Content-Type: multipart/form-data`
-- `LinearProgressIndicator` shown during upload
-- On success, frontend sends `invoice_uploaded` action with `documentId` → backend returns `invoice_upload_success`
-- Green checkmark confirmation: "Invoice uploaded successfully!"
-
-#### Backend Changes (AssistantController.cs)
-- `HandleSelectState` creates Draft `DocumentPackage` with `SelectedPOId`, `ActivityState`, `AgencyId`
-- `HandleSelectPO` returns `SelectedPO` object in response (fix: was missing, caused null `poId` downstream)
-- Added `SubmissionId` field to `AssistantResponse` DTO
-- Added `invoice_uploaded` action to router → `HandleInvoiceUploaded` method
-- Logging: `=== SELECT STATE ===` shows PayloadJson and SelectedPOId for debugging
-
-#### Backend Changes (DocumentService.cs)
-- Invoice `POId` FK fix: now uses `package.SelectedPOId` (assistant flow) before falling back to `PackageId` match (legacy flow)
-- Invoice extraction now saves individual fields (InvoiceNumber, InvoiceDate, VendorName, GSTNumber, SubTotal, TaxAmount, TotalAmount) to Invoice entity columns, not just `ExtractedDataJson`
-- Extraction pipeline: File → Azure Blob Storage → Azure Document Intelligence + OpenAI → DB
-- Detailed logging added: `=== UPLOAD START ===`, `=== BLOB UPLOAD ===`, `=== INVOICE: Looking for PO ===`, `=== INVOICE EXTRACTION START/RESULT ===`
-
-#### Frontend Changes
-- `assistant_response_model.dart` — added `submissionId` field
-- `assistant_remote_datasource.dart` — added `uploadInvoice` method (multipart form to `/documents/upload` with explicit `Content-Type: multipart/form-data` via Dio `Options`)
-- `assistant_notifier.dart` — added `submissionId` to `AssistantState`, added `uploadInvoice(bytes, fileName)` method, `selectState` passes `poId` in payload
-- `chat_screen.dart` — `invoice_upload` case with two `OutlinedButton.icon` buttons (consistent navy blue #003087 styling), `LinearProgressIndicator`, format hint text; `invoice_upload_success` case with green checkmark; `_pickInvoiceFile` method
-
-#### Upload Endpoint (Existing — No Changes to Interface)
-- `POST /api/documents/upload` in `DocumentsController.cs`
-- Multipart form: `file`, `documentType=Invoice`, `submissionId={packageId}`
-- Pipeline: blob storage → AI extraction (Document Intelligence + OpenAI) → DB record with extracted fields → proactive validation
-
-#### Acceptance Criteria — ALL MET ✅
-- AC1: After state confirmation, invoice upload prompt appears with two buttons
-- AC2: Two buttons: "Upload from device" and "Take photo" (OutlinedButton.icon style)
-- AC3: File picker accepts PDF, JPG, PNG (max 10 MB enforced client-side)
-- AC4: Upload progress shown via LinearProgressIndicator
-- AC5: Upload uses existing `POST /api/documents/upload` endpoint with multipart/form-data
-- AC6: Draft submission created with PO (via SelectedPOId) and state linked
-- AC7: Invoice row saved to Invoices table with correct POId FK
-- AC8: AI extraction runs and saves extracted fields to individual DB columns
-
----
-
-## PHASES 5–10 — Full Submission Flow
-
-- **Phase 5**: ✅ DONE — Proactive Invoice Validation at Upload Time (see below)
-- **Phase 6**: ✅ DONE — Activity Summary Upload & Validation (see below)
-- **Phase 7**: Team Details Entry Loop (team name, dealer, dates, working days, photo proofs with AI vision)
-- **Phase 8**: Enquiry Dump Upload (mandatory, Excel/CSV/PDF)
-- **Phase 9**: Additional Documents Upload (optional with skip)
-- **Phase 10**: Final Review & Submit (summary card, Draft → Submitted, CIRCLE HEAD auto-assigned)
-
----
-
-## PHASE 6 — Activity Summary Upload & Validation ✅
-
-### Requirement P6.1: Activity Summary Upload After Invoice Accepted
-
-After the user clicks "Continue" on the invoice validation card, the assistant prompts for Activity Summary upload.
-
-#### What's Implemented
-- `continue_invoice` action → backend returns `activity_summary_upload` type
-- Upload card shows: "Upload Activity Summary" label, "Upload from device" button, accepted formats hint (PDF, JPG, PNG, XLS, XLSX, max 10 MB)
-- `reupload_activity_summary` action → returns same `activity_summary_upload` prompt
-- Frontend `_pickActivitySummaryFile` uses `file_picker` (PDF, JPG, JPEG, PNG, XLS, XLSX, max 10 MB enforced client-side)
-- Upload posts to `POST /api/documents/upload` with `documentType=ActivitySummary`, `submissionId`
-- Frontend polls `GET /api/documents/{id}/extraction-status` every 3s (max 60s) until `"extracted"`
-- On extraction complete, frontend sends `activity_summary_uploaded` action with `documentId`
-
-### Requirement P6.2: Activity Summary Extraction — Dedicated DB Columns
-
-Extracted data from the Activity Summary is stored in both `ExtractedDataJson` and dedicated columns.
-
-#### What's Implemented
-- `ActivitySummary` entity has 3 new columns: `DealerName` (nvarchar 500), `TotalDays` (int), `TotalWorkingDays` (int)
-- `ActivitySummaryConfiguration.cs` maps these columns with correct types/lengths
-- `DocumentService.cs` — after extraction, parses `ActivityData.Rows`:
-  - `DealerName` ← `Rows[0].DealerName`
-  - `TotalDays` ← `Sum(r.Day)` across all rows
-  - `TotalWorkingDays` ← `Sum(r.WorkingDay)` across all rows
-- Migration `20260317000001_AddActivitySummaryExtractedColumns` adds the 3 columns to `ActivitySummaries` table
-- `ApplicationDbContextModelSnapshot` updated to reflect new columns
-
-#### Database Tables Affected
-- `ActivitySummaries` — `DealerName`, `TotalDays`, `TotalWorkingDays` columns added alongside `ExtractedDataJson`
-
-### Requirement P6.3: Activity Summary Validation — AS_DEALER_LOCATION_PRESENT
-
-After extraction completes, backend runs 1 validation rule and shows a structured validation card (same pattern as invoice validation).
-
-#### End-to-End Flow
-
-1. User uploads Activity Summary → `POST /api/documents/upload` → new row in `ActivitySummaries` table
-2. Background job runs AI extraction → writes `DealerName`, `TotalDays`, `TotalWorkingDays`, `ExtractedDataJson` to `ActivitySummaries` row
-3. Frontend polls `GET /api/documents/{id}/extraction-status` every 3s (max 60s) until `"extracted"`
-4. Frontend sends `activity_summary_uploaded` action with `documentId`
-5. Backend loads `ActivitySummaries` row, runs 1 validation rule, saves to `ValidationResults`, returns `activity_summary_validation` response
-6. Bot shows validation card with rule row + Re-upload and Continue buttons
-
-#### Validation Rule
-
-| Rule Code | Type | Logic |
-|-----------|------|-------|
-| AS_DEALER_LOCATION_PRESENT | Required | Both `DealerName` and `Location` (from `Rows[0]`) must be non-empty |
-
-- If dealer present but location missing → "Location not detected"
-- If location present but dealer missing → "Dealer name not detected"
-- If both missing → "Dealer name and location not detected"
-- Extracted value shown in card: "DealerName, Location" (comma-separated, whichever are present)
-
-#### Database — What Gets Saved
-
-- `ValidationResults` table — upsert by `DocumentId` (ActivitySummary Id): `AllValidationsPassed`, `RuleResultsJson` (rule as JSON array), `FailureReason`, `DocumentType = ActivitySummary`
-- Response is built by reading back from `ValidationResults.RuleResultsJson` (same DB-first pattern as invoice)
-
-#### Backend (AssistantController.cs)
-
-- `HandleActivitySummaryUploaded` — loads `ActivitySummaries` row, calls `RunActivitySummaryValidationRules`, persists to `ValidationResults`, reads back from DB, returns `activity_summary_validation` type
-- `RunActivitySummaryValidationRules` — runs `AS_DEALER_LOCATION_PRESENT`: reads `DealerName` from entity column (falls back to `ExtractedDataJson` → `Rows[0].DealerName`), reads `Location` from `ExtractedDataJson` → `Rows[0].Location`
-- `HandleContinueAfterActivity` — placeholder returning `text` type (Phase 7 pending)
-- `HandleReuploadActivitySummary` — returns `activity_summary_upload` type
-
-#### Frontend
-
-- `assistant_notifier.dart`
-  - `uploadActivitySummary(bytes, fileName)` — uploads file, stores `lastDocumentId`, polls extraction status, sends `activity_summary_uploaded`
-  - `continueAfterActivity()` — sends `continue_after_activity`
-  - `reUploadActivitySummary()` — sends `reupload_activity_summary`
-- `chat_screen.dart`
-  - `activity_summary_upload` case — upload card with "Upload from device" button, `LinearProgressIndicator` (only on last bot message), format hint
-  - `activity_summary_validation` case → calls `_activitySummaryValidationCard(r)`
-  - `_activitySummaryValidationCard` — same structure as `_invoiceValidationCard`: pass/fail/warn chips, rule rows, two action buttons
-  - Buttons: "Re-upload" (red outlined, calls `reUploadActivitySummary()`) + "Continue with warnings" / "Continue →" (navy filled, calls `continueAfterActivity()`)
-  - Loading bar fix: `LinearProgressIndicator` only shows on the last bot message (`isLastBot` check) — prevents old upload cards from showing loading bar when a new upload is in progress
-
-#### Loading Bar Fix
-
-- `_msgList` passes `isLastBot` flag to `_botMsg` — true only if no later bot message exists after this index
-- `_botMsg(msg, {bool isLast = false})` — `LinearProgressIndicator` renders only when `isLoading && isLast`
-- Prevents invoice upload card from showing loading bar while activity summary is uploading
-
-#### Acceptance Criteria — ALL MET ✅
-- AC1: After invoice "Continue", activity summary upload prompt appears
-- AC2: Upload card accepts PDF, JPG, PNG, XLS, XLSX (max 10 MB)
-- AC3: Frontend polls extraction status before firing validation
-- AC4: `AS_DEALER_LOCATION_PRESENT` rule runs against real extracted data
-- AC5: Result saved to `ValidationResults` table with `DocumentType = ActivitySummary`
-- AC6: Response built from DB read-back (not in-memory) — UI always reflects DB state
-- AC7: Validation card shows rule row with color-coded icon, extracted value, error message
-- AC8: "Re-upload" button shows upload prompt again
-- AC9: "Continue" / "Continue with warnings" button moves to next phase
-- AC10: `DealerName`, `TotalDays`, `TotalWorkingDays` saved as dedicated columns in `ActivitySummaries`
-- AC11: Loading bar only shows on the currently active upload card, not on previously completed cards
+#### Key Rules
+- Each invoice upload creates a new `Invoices` row (never replaced)
+- `submissionId` always passed in payload
 
 ---
 
 ## PHASE 5 — Invoice Validation ✅
 
-### Requirement P5.1: Proactive Validation After Invoice Upload
-
-After invoice upload, the assistant waits for AI extraction to complete, then runs 9 validation rules and shows a structured validation card.
-
-#### End-to-End Flow
-
-1. User uploads invoice → `POST /api/documents/upload` → new row in `Invoices` table (new `Guid` per upload)
-2. Background job runs AI extraction (Azure Document Intelligence + OpenAI) → writes `InvoiceNumber`, `InvoiceDate`, `TotalAmount`, `GSTNumber`, `ExtractedDataJson` back to the same `Invoices` row
-3. Frontend polls `GET /api/documents/{id}/extraction-status` every 3s (max 60s) until status = `"extracted"`
-4. Frontend sends `invoice_uploaded` action with `documentId`
-5. Backend loads `Invoices` row + linked `POs` row, runs 9 rules, saves to `ValidationResults`, returns `invoice_validation` response
-6. Bot shows validation card with rule rows + action buttons
-
-#### 9 Validation Rules
+### 9 Validation Rules
 
 | Rule Code | Type | Logic |
 |-----------|------|-------|
@@ -340,68 +121,226 @@ After invoice upload, the assistant waits for AI extraction to complete, then ru
 | INV_HSN_SAC_PRESENT | Required | `HSNSACCode` in `ExtractedDataJson` not empty |
 | INV_VENDOR_CODE_PRESENT | Required | `VendorCode` in `ExtractedDataJson` not empty |
 | INV_PO_NUMBER_MATCH | Check | Extracted `PONumber` matches `POs.PONumber` |
-| INV_AMOUNT_VS_PO_BALANCE | Warning | `TotalAmount` ≤ `POs.RemainingBalance` (warning only, not hard block) |
+| INV_AMOUNT_VS_PO_BALANCE | Warning | `TotalAmount` ≤ `POs.RemainingBalance` (warning only) |
 
-#### Database — What Gets Saved
-
-- `Invoices` table — new row per upload (never replaced/updated on re-upload)
-- `ValidationResults` table — upsert by `DocumentId` (Invoice Id): `AllValidationsPassed`, `RuleResultsJson` (all 9 rules as JSON array), `FailureReason`, `DocumentType = Invoice`
-- `DocumentPackages` table — already created in Phase 4, `CurrentStep` stays at 4 until user continues
-
-#### Backend (AssistantController.cs)
-
-- `HandleInvoiceUploaded` — loads Invoice + PO, calls `RunInvoiceValidationRules`, persists to `ValidationResults`, then reads back the saved `ValidationResults` row and deserializes `RuleResultsJson` to build the response (UI always reflects DB data, not in-memory rules)
-- `RunInvoiceValidationRules` — all 9 rules, reads direct DB columns for rules 1–4, reads `ExtractedDataJson` for rules 5–8, compares against PO for rules 8–9
-- `HandleContinueInvoice` — returns `activity_upload_prompt` (Phase 6 placeholder)
-- `HandleReuploadInvoice` — returns `invoice_upload` type so user can upload again
-- `GET /api/documents/{id}/extraction-status` — polls `Invoices` row, returns `"extracted"` or `"processing"`
-- Bot message is a short summary: "Invoice analysed. X of 9 checks passed." — detail is in the card
-- Fallback: if DB read-back fails, in-memory rules are used so the response is never empty
-
-#### Frontend
-
-- `assistant_notifier.dart`
-  - `uploadInvoice` — uploads file, stores `lastDocumentId` in state, polls extraction status (max 60s/3s interval), then sends `invoice_uploaded`
-  - `continueAfterValidation()` — sends `continue_invoice` with `documentId`
-  - `reUploadInvoice()` — sends `reupload_invoice`, bot shows upload prompt again
-  - `AssistantState` has `lastDocumentId` field to track current invoice
-- `chat_screen.dart`
-  - `invoice_validation` case → calls `_invoiceValidationCard(r)`
-  - `_invoiceValidationCard` — renders pass/fail/warn count chips, rule rows, two action buttons
-  - `_validationRuleRow` — ✅ green / ❌ red / ⚠️ orange icon + label + extracted value + message
-  - `_validationChip` — colored pill badge for counts
-  - Buttons: "Re-upload invoice" (red outlined) + "Continue with warnings" or "Continue" (navy filled)
-- `assistant_response_model.dart` — `validationRules`, `passedCount`, `failedCount`, `warningCount` fields + `ValidationRuleResultModel` class
-- `assistant_remote_datasource.dart` — `getDocumentExtractionStatus(documentId)` method
-
-#### Acceptance Criteria — ALL MET ✅
-- AC1: After upload, frontend polls extraction status before firing validation
-- AC2: All 9 rules run against real extracted data + PO master
-- AC3: Results always saved to `ValidationResults` table regardless of pass/fail
-- AC3a: Response is built by reading back from `ValidationResults.RuleResultsJson` (not in-memory) — UI always reflects DB state
-- AC4: Bot shows short summary message + styled validation card below
-- AC5: Card shows color-coded rule rows with extracted values
-- AC6: Pass/fail/warn count chips shown
-- AC7: "Re-upload invoice" button works — shows upload prompt again
-- AC8: "Continue with warnings" / "Continue" button works — moves to next phase
-- AC9: `INV_AMOUNT_VS_PO_BALANCE` is warning only, not a hard block
-- AC10: Each invoice upload creates a new `Invoices` row (no replace)
+- Results saved to `ValidationResults` table regardless of pass/fail
+- Response built by reading back from `ValidationResults.RuleResultsJson` (DB-first)
+- Validation card: pass/fail/warn chips + rule rows + "Re-upload" + "Continue" buttons
 
 ---
 
-## Routing (Current)
+## PHASE 7 — Cost Summary Upload & Validation ✅
 
-| Route | Page | Auth |
-|-------|------|------|
-| `/` | NewLoginPage | No |
-| `/agency/dashboard` | AgencyDashboardPage | Yes (AuthWrapper) |
-| `/agency/assistant` | ChatScreen | Yes (AuthWrapper) |
-| `/agency/conversational-submission` | ConversationalSubmissionPage (old) | Yes |
+### Flow
+- After invoice "Continue" → `cost_summary_upload`
+- Accepted: PDF, JPG, PNG, XLS, XLSX (max 10 MB)
+- Frontend polls extraction status before firing validation
+- Backend waits up to 60s for extraction (polls every 2s)
 
-- Login navigates to `/agency/assistant`
-- Dashboard FAB navigates to `/agency/assistant`
-- "New Request" button on dashboard navigates to upload page
-- `main.dart` uses `MaterialApp` with named routes (active routing system)
+### 7 Validation Rules
+
+| Rule Code | Type | Logic |
+|-----------|------|-------|
+| CS_PLACE_OF_SUPPLY_PRESENT | Required | `PlaceOfSupply` not empty |
+| CS_TOTAL_DAYS_PRESENT | Required | `NumberOfDays` > 0 |
+| CS_ACTIVATIONS_PRESENT | Required | `NumberOfActivations` > 0 |
+| CS_TEAMS_PRESENT | Required | `NumberOfTeams` > 0 |
+| CS_ELEMENT_WISE_COSTS_PRESENT | Required | `ElementWiseCostsJson` not empty |
+| CS_ELEMENT_WISE_QUANTITY_PRESENT | Required | `ElementWiseQuantityJson` not empty |
+| CS_TOTAL_VS_INVOICE | Required | `TotalCost` ≤ latest `Invoice.TotalAmount` for same `PackageId` |
+
+- Team count sourced from `CostSummaries.NumberOfTeams` (primary), fallback to `ExtractedDataJson`
+- Dedicated DB columns: `PlaceOfSupply`, `NumberOfDays`, `NumberOfActivations`, `NumberOfTeams`, `TotalCost`, `ElementWiseCostsJson`, `ElementWiseQuantityJson`
+
+---
+
+## PHASE 6 — Activity Summary Upload & Validation ✅
+
+### Flow
+- After cost summary "Continue" → `activity_summary_upload`
+- Accepted: PDF, JPG, PNG, XLS, XLSX (max 10 MB)
+- Frontend polls extraction status before firing validation
+
+### 4 Validation Rules
+
+| Rule Code | Type | Logic |
+|-----------|------|-------|
+| AS_DEALER_LOCATION_PRESENT | Required | `DealerName` and `Location` from `Rows[0]` must be non-empty |
+| AS_TOTAL_DAYS | Info | Always passes — shows `TotalDays` |
+| AS_TOTAL_WORKING_DAYS | Info | Always passes — shows `TotalWorkingDays` |
+| AS_DAYS_MATCH_COST_SUMMARY | Required | `ActivitySummary.TotalDays` == `CostSummaries.NumberOfDays` |
+
+- Dedicated DB columns: `DealerName`, `TotalDays`, `TotalWorkingDays`
+- `continue_after_activity` passes `submissionId` in payload
+
+---
+
+## PHASE 8 — Team Details Entry Loop ✅
+
+### Flow
+After activity summary "Continue" → team entry loop begins. Repeats for each team (count from `CostSummaries.NumberOfTeams`).
+
+Per team:
+1. **Team Name** — free text input (input mode `team_name`)
+2. **Dealer Search** — typeahead search (input mode `dealer`), min 2 chars, debounced 300ms
+3. **Date Picker** — start date + end date pickers (Flutter `showDatePicker`), working days auto-calculated excluding Sundays and Indian public holidays (2025–2026)
+4. **Confirm** — shows summary card: team name, dealer, city, state, start–end dates, working days. User confirms → saved to `Teams` table
+5. **Loop** — repeats for next team until all teams done
+
+### Date Confirmation Message
+- Format: "Team {N}: {TeamName} at {DealerName}, {City} from {StartDate} to {EndDate} ({WorkingDays} working days)."
+- No "Correct?" word appended
+
+### Re-pick Dates Bug Fix
+- "Re-pick dates" button opens date pickers locally then calls `submitTeamDates` directly (no extra action round-trip)
+
+### Backend Actions
+- `continue_after_activity` → `start_team_entry` (reads team count from DB)
+- `start_team_entry` → `team_count_input` (asks how many teams if not from CS)
+- `submit_team_count` → `team_name_input`
+- `submit_team_name` → `dealer_search`
+- `search_dealer` → `dealer_search_results`
+- `select_dealer` → `team_date_input`
+- `submit_team_dates` → `team_confirm` (shows confirmation card)
+- `confirm_team` → saves to `Teams` table, moves to next team or photo upload
+
+### Teams Table Columns Used
+- `CampaignName` (team name), `DealershipName`, `DealershipAddress`, `State`, `StartDate`, `EndDate`, `WorkingDays`, `TeamNumber`, `PackageId`
+
+---
+
+## PHASE 9 — Photo Proofs Upload per Team ✅
+
+### Flow
+After all teams confirmed → photo upload per team. Min 3, max 10 photos per team.
+
+### AI Validation (4 rules per photo)
+
+| Rule Code | Logic |
+|-----------|-------|
+| PHOTO_DATE_VISIBLE | Date visible in EXIF or overlay |
+| PHOTO_GPS_VISIBLE | GPS coordinates detected (Latitude + Longitude columns) |
+| PHOTO_BLUE_TSHIRT | Person with blue T-shirt detected |
+| PHOTO_3W_VEHICLE | 3-wheel vehicle detected |
+
+- Results shown in a `Table` widget: columns = Photo | Date | GPS | Blue T-shirt | 3W Vehicle
+- ✅ / ❌ per cell
+- `flutter_image_compress` not used — raw bytes sent directly (Windows/web compatibility)
+- GPS: `Latitude` and `Longitude` columns already exist on `TeamPhotos` entity
+
+### Replace Photo
+- "Replace photo" button shows `AlertDialog` asking for photo number
+- Calls `_pickSinglePhotoForReplace` directly
+- Backend `HandleReplacePhoto` uses upsert pattern on `ValidationResults`
+- Allows +1 overage for single-photo replace (so replacing photo 10 of 10 works)
+- `teamNumber` passed from real `payloadJson` (not hardcoded)
+
+### Final Team Summary Card
+- After all teams' photos done → `final_team_summary` type
+- Shows each team: number, name, dealer, city, state, start–end dates, working days, photo count, photos passed
+- "Continue →" button → triggers enquiry dump upload
+
+---
+
+## PHASE 10 — Enquiry Dump Upload & Validation ✅
+
+### Flow
+After team summary "Continue" → `enquiry_dump_upload`
+
+- Message: "Please upload Enquiry Dump Document."
+- Accepted: XLSX, CSV, PDF (max 10 MB)
+- Upload to `POST /api/documents/upload` with `documentType=EnquiryDocument`
+- Extraction runs as **background task** (fire-and-forget) — not synchronous
+- `HandleEnquiryDumpUploaded` waits up to 60s (polls every 2s) for `ExtractedDataJson` to be populated before running validation
+
+### Excel Column Mapping
+Actual columns: `Sr No | Date | Dealership Name | District | Segment | Company Name | Brand | Address | Principal Name | Contact | Secondary Name | Secondary Contact | ...`
+
+Mapped to:
+- `dealerName` ← Dealership Name
+- `district` ← District
+- `customerName` ← Principal Name (fallback: Company Name)
+- `customerNumber` ← Contact (column J, first contact column)
+- `date` ← Date (YYYY-MM-DD)
+- `state` ← inferred from district names (e.g. Muzaffarpur → Bihar)
+- `testRideTaken` ← Test Drive column if present
+- Phone numbers in scientific notation (e.g. `9.63E+09`) converted to full string
+
+### 9 Validation Rules (≥80% threshold per field)
+
+| Rule Code | Field | Logic |
+|-----------|-------|-------|
+| EQ_CUSTOMER_PHONE | Customer Phone | ≥80% records have `CustomerNumber` |
+| EQ_STATE | State | ≥80% records have `State` |
+| EQ_DATE | Date | ≥80% records have `Date` |
+| EQ_DEALER_CODE | Dealer Code | ≥80% records have `DealerCode` |
+| EQ_DEALER_NAME | Dealer Name | ≥80% records have `DealerName` |
+| EQ_DISTRICT | District | ≥80% records have `District` |
+| EQ_PINCODE | Pincode | ≥80% records have `Pincode` |
+| EQ_CUSTOMER_NAME | Customer Name | ≥80% records have `CustomerName` |
+| EQ_TEST_RIDE | Test Ride | ≥80% records have `TestRideTaken` |
+
+- `EnquiryRecord.CustomerPhone` field is named `CustomerNumber` in the DTO
+- Results saved to `ValidationResults` table
+- Shows total records count + missing phone count
+- "Re-upload" + "Continue →" buttons
+
+---
+
+## PHASE 11 — Final Review & Submit ✅
+
+### Flow
+After enquiry dump "Continue" → `final_review` type
+
+### Final Review Card
+Shows 6 sections, each with a ✅ (all validations passed) or ⚠️ (some failed) header:
+
+| Section | Fields Shown |
+|---------|-------------|
+| Purchase Order | PO Number, PO Date, Vendor, Amount |
+| Invoice | Invoice No, Invoice Date, Amount, GST No |
+| Cost Summary | State, No. of Teams, No. of Days, Total Cost |
+| Activity Summary | Dealer, Total Days, Working Days |
+| Teams | One row per team: Team N → CampaignName \| DealershipName \| StartDate – EndDate |
+| Enquiry Dump | Total Records, Missing Phone count |
+
+- PO loaded via `SelectedPOId` (chatbot flow — no uploaded PO document)
+- Validation pass/fail per section read from `ValidationResults` table
+
+### Buttons
+- **Submit** → `submit_from_chat` action → validates all required docs, generates FAP number via `ISubmissionNumberService`, transitions `Draft → Uploaded`, returns `submit_success` with FAP number
+- **Save as Draft** → `save_draft_from_chat` action → package already in Draft state, returns `draft_saved` confirmation
+
+### Submit Validation
+- `SelectedPOId` must be set (PO selected via typeahead)
+- At least one invoice
+- Cost Summary present
+- Activity Summary present
+- Enquiry Dump present
+- At least one team with ≥3 photos
+
+### FAP Number Format
+`CIQ-{year}-{sequence:D5}` e.g. `CIQ-2026-00001`
+
+---
+
+## UI Bugs Fixed
+
+| Bug | Fix |
+|-----|-----|
+| Re-pick dates opens pickers again | Opens date pickers locally then calls `submitTeamDates` directly |
+| Replace photo shows wrong dialog | `AlertDialog` asks for photo number, calls `_pickSinglePhotoForReplace` directly |
+| Loading spinner on old messages | `_botMsg` accepts `isLast` param, `LinearProgressIndicator` only renders when `isLoading && isLast` |
+| "Correct?" word in date confirmation | Removed |
+| Camera button on invoice upload | Removed — only "Upload from device" |
+
+---
+
+## Network / Timeout Settings
+
+- Dio `receiveTimeout`: 10 minutes (raised from 3 min to handle slow AI extraction calls)
+- Enquiry dump extraction: background task, `HandleEnquiryDumpUploaded` polls DB up to 60s
+- Cost summary extraction: background task, `HandleCostSummaryUploaded` polls DB up to 60s
 
 ---
 
@@ -409,24 +348,36 @@ After invoice upload, the assistant waits for AI extraction to complete, then ru
 
 | File | Purpose |
 |------|---------|
-| `AssistantController.cs` | All assistant chat actions (greet, create_request, search_po, select_po, select_state, search_state, list_states, invoice_uploaded, continue_invoice, reupload_invoice, activity_summary_uploaded, reupload_activity_summary, continue_after_activity) |
-| `DocumentsController.cs` | Document upload (with logging), extraction status, validation, download |
-| `DocumentService.cs` | Upload pipeline: file validation → blob storage → Invoice/PO entity creation → AI extraction → save extracted fields to DB columns |
-| `PurchaseOrdersController.cs` | PO search/typeahead and paginated list |
-| `DocumentsController.cs` | Document upload, extraction status, validation, download |
-| `SubmissionsController.cs` | Submission CRUD, approval flow, draft creation |
-| `ConversationalSubmissionController.cs` | Old 10-step chatbot (still functional) |
-| `ApplicationDbContextSeed.cs` | Seeds agency, user, 3 sample POs |
+| `AssistantController.cs` | All assistant chat actions — full flow phases 1–11 |
+| `DocumentService.cs` | Upload pipeline: validation → blob → entity creation → AI extraction → DB columns |
+| `DocumentAgent.cs` | AI extraction: PO, Invoice, CostSummary, ActivitySummary, TeamPhoto, EnquiryDump |
+| `DocumentsController.cs` | Upload endpoint, extraction status polling |
+| `SubmissionsController.cs` | Submission CRUD, approval flow |
+| `SubmissionNumberService.cs` | Generates `CIQ-{year}-{seq}` FAP numbers |
 
 ## Key Frontend Files
 
 | File | Purpose |
 |------|---------|
-| `chat_screen.dart` | Main chat page, message list, input mode switching (none/po/state) |
-| `assistant_notifier.dart` | StateNotifier: greet, sendAction, searchPO, selectPO, searchState, selectState, listAllStates, uploadInvoice, continueAfterValidation, reUploadInvoice, uploadActivitySummary, continueAfterActivity, reUploadActivitySummary. State includes `lastDocumentId` |
-| `assistant_remote_datasource.dart` | Dio API calls to /assistant/message, /upload/po, /documents/upload (invoice + activity summary), /documents/{id}/extraction-status |
-| `assistant_response_model.dart` | Response DTO: type, message, cards, poItems, states, selectedPO, allowedFormats, submissionId, validationRules, passedCount, failedCount, warningCount. Includes `ValidationRuleResultModel` |
-| `assistant_providers.dart` | Riverpod provider definitions |
-| `po_search_list.dart` | PO results as OutlinedButton list (number only) |
-| `workflow_action_card.dart` | Tappable workflow card with icon |
-| `file_upload_card.dart` | File upload widget with drag-drop |
+| `chat_screen.dart` | Main chat page — all card renderers for all phases |
+| `assistant_chat_panel.dart` | Side panel variant — mirrors chat_screen.dart |
+| `assistant_notifier.dart` | StateNotifier — all actions for all phases |
+| `assistant_remote_datasource.dart` | Dio API calls — upload, sendMessage, extraction status |
+| `assistant_response_model.dart` | Response DTO — all fields including `reviewSections`, `teamSummaries`, `photoResults` |
+| `dio_client.dart` | Dio config — receiveTimeout: 10 min |
+
+---
+
+## Database Tables Used
+
+| Table | Purpose |
+|-------|---------|
+| `DocumentPackages` | One per submission — holds `SelectedPOId`, `ActivityState`, `State` (Draft/Uploaded), `SubmissionNumber` |
+| `POs` | Purchase orders — searched via typeahead |
+| `Invoices` | One row per upload — `InvoiceNumber`, `InvoiceDate`, `TotalAmount`, `GSTNumber`, `ExtractedDataJson` |
+| `CostSummaries` | `PlaceOfSupply`, `NumberOfTeams`, `NumberOfDays`, `TotalCost`, `ElementWiseCostsJson` |
+| `ActivitySummaries` | `DealerName`, `TotalDays`, `TotalWorkingDays`, `ExtractedDataJson` |
+| `Teams` | `CampaignName`, `DealershipName`, `StartDate`, `EndDate`, `WorkingDays`, `TeamNumber` |
+| `TeamPhotos` | `Latitude`, `Longitude`, `BlueTshirtPresent`, `ThreeWheelerPresent`, `DateVisible`, `ExtractedMetadataJson` |
+| `EnquiryDocuments` | `ExtractedDataJson` (list of `EnquiryRecord`) |
+| `ValidationResults` | `DocumentId`, `DocumentType`, `AllValidationsPassed`, `RuleResultsJson`, `FailureReason` |
