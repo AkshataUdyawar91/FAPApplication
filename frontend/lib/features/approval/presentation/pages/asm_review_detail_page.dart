@@ -69,6 +69,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   // Validation data from submission response
   List<dynamic> _invoiceValidations = [];
   List<dynamic> _photoValidations = [];
+  Map<String, dynamic> _costSummaryValidation = {};
+  Map<String, dynamic> _activityValidation = {};
+  Map<String, dynamic> _enquiryValidation = {};
 
   @override
   void initState() {
@@ -137,10 +140,20 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
             submissionData['invoiceValidations'] as List<dynamic>? ?? [];
         final photoValidations =
             submissionData['photoValidations'] as List<dynamic>? ?? [];
+        final costSummaryValidation =
+            submissionData['costSummaryValidation'] as Map<String, dynamic>? ??
+                {};
+        final activityValidation =
+            submissionData['activityValidation'] as Map<String, dynamic>? ?? {};
+        final enquiryValidation =
+            submissionData['enquiryValidation'] as Map<String, dynamic>? ?? {};
 
         print('=== ASM - Validation Data from Submission ===');
         print('Invoice Validations Count: ${invoiceValidations.length}');
         print('Photo Validations Count: ${photoValidations.length}');
+        print('Cost Summary Validation: ${costSummaryValidation.isNotEmpty}');
+        print('Activity Validation: ${activityValidation.isNotEmpty}');
+        print('Enquiry Validation: ${enquiryValidation.isNotEmpty}');
         if (invoiceValidations.isNotEmpty) {
           print('First Invoice Validation: ${invoiceValidations[0]}');
         }
@@ -156,6 +169,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           _campaignDetails = allCampaignDetails;
           _invoiceValidations = invoiceValidations;
           _photoValidations = photoValidations;
+          _costSummaryValidation = costSummaryValidation;
+          _activityValidation = activityValidation;
+          _enquiryValidation = enquiryValidation;
           _isLoading = false;
         });
       }
@@ -1232,11 +1248,47 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
             ],
 
             // Photo Validations
-            if (_photoValidations.isNotEmpty)
+            if (_photoValidations.isNotEmpty) ...[
               _buildPhotoValidationsSection(_photoValidations),
+              const SizedBox(height: 24),
+            ],
+
+            // Cost Summary Validation
+            if (_costSummaryValidation.isNotEmpty) ...[
+              _buildSingleValidationCard(
+                title: 'Cost Summary Validation',
+                fileName: _getCostSummaryFileName(),
+                validation: _costSummaryValidation,
+              ),
+              const SizedBox(height: 24),
+            ],
+
+            // Activity Validation
+            if (_activityValidation.isNotEmpty) ...[
+              _buildSingleValidationCard(
+                title: 'Activity Validation',
+                fileName: _getActivitySummaryFileName(),
+                validation: _activityValidation,
+              ),
+              const SizedBox(height: 24),
+            ],
+
+            // Enquiry Validation
+            if (_enquiryValidation.isNotEmpty) ...[
+              _buildSingleValidationCard(
+                title: 'Enquiry Validation',
+                fileName: _getEnquiryFileName(),
+                validation: _enquiryValidation,
+              ),
+              const SizedBox(height: 24),
+            ],
 
             // No validations message
-            if (_invoiceValidations.isEmpty && _photoValidations.isEmpty)
+            if (_invoiceValidations.isEmpty &&
+                _photoValidations.isEmpty &&
+                _costSummaryValidation.isEmpty &&
+                _activityValidation.isEmpty &&
+                _enquiryValidation.isEmpty)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -1388,28 +1440,6 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
             ),
           ),
 
-          // Failure Reason
-          if (failureReason != null && failureReason.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(12),
-              color: const Color(0xFFFEF2F2),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning, color: Color(0xFFDC2626), size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      failureReason,
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: const Color(0xFFDC2626),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
           // Validation Details - Single unified table
           if (validationDetails != null)
             _buildUnifiedValidationTable(validationDetails),
@@ -1546,6 +1576,24 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     // Collect all validations into a single list
     List<Map<String, dynamic>> allValidations = [];
 
+    // Add missing fields from fieldPresence (for invoice validations)
+    if (validationDetails['fieldPresence'] != null) {
+      final fieldPresence =
+          validationDetails['fieldPresence'] as Map<String, dynamic>;
+      final missingFields =
+          fieldPresence['missingFields'] as List<dynamic>? ?? [];
+
+      // Create a row for each missing field
+      for (var field in missingFields) {
+        allValidations.add({
+          'field': field.toString(),
+          'label': field.toString(),
+          'passed': false,
+          'message': 'Field is missing',
+        });
+      }
+    }
+
     // Add proactive validations
     if (validationDetails['proactive'] != null) {
       final proactive = validationDetails['proactive'] as List<dynamic>;
@@ -1600,7 +1648,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               SizedBox(
                 width: 80,
                 child: Text(
-                  'STATUS',
+                  'RESULT',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
@@ -1706,6 +1754,234 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     );
   }
 
+  String _getCostSummaryFileName() {
+    if (_submission == null) return '';
+    final campaigns = _submission!['campaigns'] as List? ?? [];
+    if (campaigns.isEmpty) return '';
+    final firstCampaign = campaigns[0] as Map<String, dynamic>;
+    return firstCampaign['costSummaryFileName']?.toString() ??
+        'Cost Summary.pdf';
+  }
+
+  String _getActivitySummaryFileName() {
+    if (_submission == null) return '';
+    final campaigns = _submission!['campaigns'] as List? ?? [];
+    if (campaigns.isEmpty) return '';
+    final firstCampaign = campaigns[0] as Map<String, dynamic>;
+    return firstCampaign['activitySummaryFileName']?.toString() ??
+        'Activity Summary.pdf';
+  }
+
+  String _getEnquiryFileName() {
+    return 'Enquiry Data.xlsx';
+  }
+
+  Widget _buildSingleValidationCard({
+    required String title,
+    String? fileName,
+    required Map<String, dynamic> validation,
+  }) {
+    final validationDetailsJson =
+        validation['validationDetailsJson'] as String?;
+
+    Map<String, dynamic>? validationDetails;
+    int passedCount = 0;
+    int totalCount = 0;
+
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+      try {
+        validationDetails =
+            jsonDecode(validationDetailsJson) as Map<String, dynamic>;
+
+        // Count passed and total validations
+        if (validationDetails != null) {
+          // Count field presence checks
+          final fieldPresence =
+              validationDetails['fieldPresence'] as Map<String, dynamic>?;
+          if (fieldPresence != null) {
+            final missingFields =
+                fieldPresence['missingFields'] as List<dynamic>? ?? [];
+            final totalRecords = fieldPresence['totalRecords'];
+
+            // Count missing fields
+            totalCount += missingFields.length;
+
+            // Count enquiry field validations
+            if (totalRecords != null) {
+              final recordsWithState = fieldPresence['recordsWithState'];
+              final recordsWithDate = fieldPresence['recordsWithDate'];
+              final recordsWithDealerCode =
+                  fieldPresence['recordsWithDealerCode'];
+              final recordsWithDealerName =
+                  fieldPresence['recordsWithDealerName'];
+              final recordsWithDistrict = fieldPresence['recordsWithDistrict'];
+              final recordsWithPincode = fieldPresence['recordsWithPincode'];
+              final recordsWithCustomerName =
+                  fieldPresence['recordsWithCustomerName'];
+              final recordsWithCustomerNumber =
+                  fieldPresence['recordsWithCustomerNumber'];
+              final recordsWithTestRide = fieldPresence['recordsWithTestRide'];
+
+              if (recordsWithState != null) {
+                totalCount++;
+                if (recordsWithState == totalRecords) passedCount++;
+              }
+              if (recordsWithDate != null) {
+                totalCount++;
+                if (recordsWithDate == totalRecords) passedCount++;
+              }
+              if (recordsWithDealerCode != null) {
+                totalCount++;
+                if (recordsWithDealerCode == totalRecords) passedCount++;
+              }
+              if (recordsWithDealerName != null) {
+                totalCount++;
+                if (recordsWithDealerName == totalRecords) passedCount++;
+              }
+              if (recordsWithDistrict != null) {
+                totalCount++;
+                if (recordsWithDistrict == totalRecords) passedCount++;
+              }
+              if (recordsWithPincode != null) {
+                totalCount++;
+                if (recordsWithPincode == totalRecords) passedCount++;
+              }
+              if (recordsWithCustomerName != null) {
+                totalCount++;
+                if (recordsWithCustomerName == totalRecords) passedCount++;
+              }
+              if (recordsWithCustomerNumber != null) {
+                totalCount++;
+                if (recordsWithCustomerNumber == totalRecords) passedCount++;
+              }
+              if (recordsWithTestRide != null) {
+                totalCount++;
+                if (recordsWithTestRide == totalRecords) passedCount++;
+              }
+            }
+          }
+
+          // Count cross-document checks
+          final crossDocument =
+              validationDetails['crossDocument'] as Map<String, dynamic>?;
+          if (crossDocument != null) {
+            final totalCostValid = crossDocument['totalCostValid'];
+            final elementCostsValid = crossDocument['elementCostsValid'];
+            final fixedCostsValid = crossDocument['fixedCostsValid'];
+            final variableCostsValid = crossDocument['variableCostsValid'];
+            final numberOfDaysMatches = crossDocument['numberOfDaysMatches'];
+
+            if (totalCostValid != null) {
+              totalCount++;
+              if (totalCostValid == true) passedCount++;
+            }
+            if (elementCostsValid != null) {
+              totalCount++;
+              if (elementCostsValid == true) passedCount++;
+            }
+            if (fixedCostsValid != null) {
+              totalCount++;
+              if (fixedCostsValid == true) passedCount++;
+            }
+            if (variableCostsValid != null) {
+              totalCount++;
+              if (variableCostsValid == true) passedCount++;
+            }
+            if (numberOfDaysMatches != null) {
+              totalCount++;
+              if (numberOfDaysMatches == true) passedCount++;
+            }
+
+            // Count issues
+            final issues = crossDocument['issues'] as List<dynamic>? ?? [];
+            totalCount += issues.length;
+          }
+        }
+      } catch (e) {
+        print('Error parsing validation details: $e');
+      }
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(
+          color: Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: const BoxDecoration(
+              color: Color.fromARGB(255, 240, 237, 237),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (fileName != null && fileName.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          fileName,
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (totalCount > 0)
+                  RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '$passedCount/$totalCount ',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                        TextSpan(
+                          text: 'Passed',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFF16A34A),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // Validation Details Table (if available)
+          if (validationDetails != null)
+            _buildSimpleValidationDetailsTable(validationDetails),
+        ],
+      ),
+    );
+  }
+
   Widget _buildWhatWasFoundColumn({
     dynamic value,
     dynamic message,
@@ -1775,6 +2051,330 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               color: AppColors.textSecondary,
             ),
           ),
+      ],
+    );
+  }
+
+  Widget _buildSimpleValidationDetailsTable(
+      Map<String, dynamic> validationDetails) {
+    // Extract field presence and cross-document checks
+    final fieldPresence =
+        validationDetails['fieldPresence'] as Map<String, dynamic>?;
+    final crossDocument =
+        validationDetails['crossDocument'] as Map<String, dynamic>?;
+
+    List<Map<String, dynamic>> rows = [];
+
+    // Add field presence checks - ONE ROW PER MISSING FIELD
+    if (fieldPresence != null) {
+      final allFieldsPresent = fieldPresence['allFieldsPresent'] ?? true;
+      final missingFields =
+          fieldPresence['missingFields'] as List<dynamic>? ?? [];
+      final totalRecords = fieldPresence['totalRecords'];
+
+      // For enquiry validation (has totalRecords), don't add missingFields
+      // because we'll add individual field checks below
+      if (totalRecords == null &&
+          !allFieldsPresent &&
+          missingFields.isNotEmpty) {
+        // This is for Invoice/Cost Summary/Activity validations
+        // Create a separate row for each missing field
+        for (var field in missingFields) {
+          rows.add({
+            'label': field.toString(),
+            'passed': false,
+            'message': 'Field is missing',
+          });
+        }
+      }
+
+      // Add other field presence details if available (for enquiry validation)
+      if (totalRecords != null) {
+        // Show ALL fields with their pass/fail status
+        final recordsWithState = fieldPresence['recordsWithState'];
+        final recordsWithDate = fieldPresence['recordsWithDate'];
+        final recordsWithDealerCode = fieldPresence['recordsWithDealerCode'];
+        final recordsWithDealerName = fieldPresence['recordsWithDealerName'];
+        final recordsWithDistrict = fieldPresence['recordsWithDistrict'];
+        final recordsWithPincode = fieldPresence['recordsWithPincode'];
+        final recordsWithCustomerName =
+            fieldPresence['recordsWithCustomerName'];
+        final recordsWithCustomerNumber =
+            fieldPresence['recordsWithCustomerNumber'];
+        final recordsWithTestRide = fieldPresence['recordsWithTestRide'];
+
+        // Add all fields with their status
+        if (recordsWithState != null) {
+          rows.add({
+            'label': 'State',
+            'passed': recordsWithState == totalRecords,
+            'message': 'Present in $recordsWithState/$totalRecords records',
+          });
+        }
+        if (recordsWithDate != null) {
+          rows.add({
+            'label': 'Date',
+            'passed': recordsWithDate == totalRecords,
+            'message': 'Present in $recordsWithDate/$totalRecords records',
+          });
+        }
+        if (recordsWithDealerCode != null) {
+          rows.add({
+            'label': 'Dealer Code',
+            'passed': recordsWithDealerCode == totalRecords,
+            'message':
+                'Present in $recordsWithDealerCode/$totalRecords records',
+          });
+        }
+        if (recordsWithDealerName != null) {
+          rows.add({
+            'label': 'Dealer Name',
+            'passed': recordsWithDealerName == totalRecords,
+            'message':
+                'Present in $recordsWithDealerName/$totalRecords records',
+          });
+        }
+        if (recordsWithDistrict != null) {
+          rows.add({
+            'label': 'District',
+            'passed': recordsWithDistrict == totalRecords,
+            'message': 'Present in $recordsWithDistrict/$totalRecords records',
+          });
+        }
+        if (recordsWithPincode != null) {
+          rows.add({
+            'label': 'Pincode',
+            'passed': recordsWithPincode == totalRecords,
+            'message': 'Present in $recordsWithPincode/$totalRecords records',
+          });
+        }
+        if (recordsWithCustomerName != null) {
+          rows.add({
+            'label': 'Customer Name',
+            'passed': recordsWithCustomerName == totalRecords,
+            'message':
+                'Present in $recordsWithCustomerName/$totalRecords records',
+          });
+        }
+        if (recordsWithCustomerNumber != null) {
+          rows.add({
+            'label': 'Customer Number',
+            'passed': recordsWithCustomerNumber == totalRecords,
+            'message':
+                'Present in $recordsWithCustomerNumber/$totalRecords records',
+          });
+        }
+        if (recordsWithTestRide != null) {
+          rows.add({
+            'label': 'Test Ride',
+            'passed': recordsWithTestRide == totalRecords,
+            'message': 'Present in $recordsWithTestRide/$totalRecords records',
+          });
+        }
+      }
+    }
+
+    // Add cross-document checks
+    if (crossDocument != null) {
+      // Add specific validation checks for cost summary
+      final totalCostValid = crossDocument['totalCostValid'];
+      final elementCostsValid = crossDocument['elementCostsValid'];
+      final fixedCostsValid = crossDocument['fixedCostsValid'];
+      final variableCostsValid = crossDocument['variableCostsValid'];
+      final numberOfDaysMatches = crossDocument['numberOfDaysMatches'];
+
+      if (totalCostValid != null) {
+        rows.add({
+          'label': 'Total Cost Validation',
+          'passed': totalCostValid,
+          'message': totalCostValid
+              ? 'Total cost matches invoice'
+              : 'Total cost does not match invoice',
+        });
+      }
+
+      if (elementCostsValid != null) {
+        rows.add({
+          'label': 'Element Costs Validation',
+          'passed': elementCostsValid,
+          'message': elementCostsValid
+              ? 'Element costs are valid'
+              : 'Element costs are invalid',
+        });
+      }
+
+      if (fixedCostsValid != null) {
+        rows.add({
+          'label': 'Fixed Costs Validation',
+          'passed': fixedCostsValid,
+          'message': fixedCostsValid
+              ? 'Fixed costs are valid'
+              : 'Fixed costs are invalid',
+        });
+      }
+
+      if (variableCostsValid != null) {
+        rows.add({
+          'label': 'Variable Costs Validation',
+          'passed': variableCostsValid,
+          'message': variableCostsValid
+              ? 'Variable costs are valid'
+              : 'Variable costs are invalid',
+        });
+      }
+
+      if (numberOfDaysMatches != null) {
+        rows.add({
+          'label': 'Number of Days Match',
+          'passed': numberOfDaysMatches,
+          'message': numberOfDaysMatches
+              ? 'Number of days matches between documents'
+              : 'Number of days mismatch between documents',
+        });
+      }
+
+      // Add issues as separate rows
+      final issues = crossDocument['issues'] as List<dynamic>? ?? [];
+      for (var issue in issues) {
+        rows.add({
+          'label': 'Cross-document Issue',
+          'passed': false,
+          'message': issue.toString(),
+        });
+      }
+    }
+
+    if (rows.isEmpty) {
+      return const SizedBox();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'RESULT',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...rows.asMap().entries.map((entry) {
+          final index = entry.key;
+          final row = entry.value;
+          final isLast = index == rows.length - 1;
+
+          final label = row['label'] ?? 'Unknown';
+          final passed = row['passed'] ?? false;
+          final message = row['message'] ?? '';
+
+          final statusColor =
+              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    label,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Status
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    passed ? 'Pass' : 'Fail',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: statusColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    message,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: passed
+                          ? const Color(0xFF16A34A)
+                          : const Color(0xFFDC2626),
+                      fontStyle: passed ? FontStyle.normal : FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
       ],
     );
   }
