@@ -21,6 +21,8 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
     private readonly IFileStorageService _fileStorageService;
     private readonly ILogger<WorkflowOrchestrator> _logger;
     private readonly ICorrelationIdService _correlationIdService;
+    private readonly ICircleHeadAssignmentService _circleHeadAssignmentService;
+    private readonly ISubmissionNumberService _submissionNumberService;
 
     public WorkflowOrchestrator(
         IApplicationDbContext context,
@@ -33,7 +35,9 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         ISubmissionNotificationService submissionNotificationService,
         IFileStorageService fileStorageService,
         ILogger<WorkflowOrchestrator> logger,
-        ICorrelationIdService correlationIdService)
+        ICorrelationIdService correlationIdService,
+        ICircleHeadAssignmentService circleHeadAssignmentService,
+        ISubmissionNumberService submissionNumberService)
     {
         _context = context;
         _documentAgent = documentAgent;
@@ -46,6 +50,8 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         _fileStorageService = fileStorageService;
         _logger = logger;
         _correlationIdService = correlationIdService;
+        _circleHeadAssignmentService = circleHeadAssignmentService;
+        _submissionNumberService = submissionNumberService;
     }
 
     /// <summary>
@@ -143,6 +149,14 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 package.UpdatedAt = DateTime.UtcNow;
                 await _context.SaveChangesAsync(cancellationToken);
                 return true;
+            }
+
+            // Safety net: ensure CircleHead is assigned before advancing to PendingASM
+            if (!package.AssignedCircleHeadUserId.HasValue && !string.IsNullOrEmpty(package.ActivityState))
+            {
+                var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, cancellationToken);
+                package.AssignedCircleHeadUserId = circleHeadUserId;
+                _logger.LogInformation("Safety net: assigned CircleHead {UserId} for package {PackageId} (state: {State})", circleHeadUserId, package.Id, package.ActivityState);
             }
 
             package.State = PackageState.PendingASM;
@@ -291,7 +305,28 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                         _logger.LogInformation("Extracting ActivitySummary for package {PackageId}", package.Id);
                         var activityData = await _documentAgent.ExtractActivityAsync(package.ActivitySummary.BlobUrl, cancellationToken);
                         package.ActivitySummary.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(activityData);
+                        package.ActivitySummary.ExtractionConfidence = activityData.FieldConfidences.Values.Any()
+                            ? activityData.FieldConfidences.Values.Average() : 0.5;
+                        package.ActivitySummary.IsFlaggedForReview = activityData.IsFlaggedForReview;
                         package.ActivitySummary.UpdatedAt = DateTime.UtcNow;
+
+                        // Populate summary fields from extracted rows
+                        if (activityData.Rows != null && activityData.Rows.Count > 0)
+                        {
+                            package.ActivitySummary.DealerName = activityData.Rows[0].DealerName;
+                            package.ActivitySummary.TotalDays = activityData.Rows.Sum(r => r.Day);
+                            package.ActivitySummary.TotalWorkingDays = activityData.Rows.Sum(r => r.WorkingDay);
+                            var locations = activityData.Rows
+                                .Where(r => !string.IsNullOrWhiteSpace(r.Location))
+                                .Select(r => r.Location)
+                                .Distinct()
+                                .ToList();
+                            if (locations.Any())
+                            {
+                                package.ActivitySummary.ActivityDescription = $"Activity across {locations.Count} location(s): {string.Join(", ", locations)}";
+                            }
+                        }
+
                         hasPackageLevelDocs = true;
                     }
                     catch (Exception ex)
@@ -315,6 +350,9 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                         _logger.LogInformation("Extracting EnquiryDocument for package {PackageId}", package.Id);
                         var enquiryData = await _documentAgent.ExtractEnquiryDumpAsync(package.EnquiryDocument.BlobUrl, cancellationToken);
                         package.EnquiryDocument.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(enquiryData);
+                        package.EnquiryDocument.ExtractionConfidence = enquiryData.FieldConfidences.Values.Any()
+                            ? enquiryData.FieldConfidences.Values.Average() : 0.5;
+                        package.EnquiryDocument.IsFlaggedForReview = enquiryData.IsFlaggedForReview;
                         package.EnquiryDocument.UpdatedAt = DateTime.UtcNow;
                         hasPackageLevelDocs = true;
                     }

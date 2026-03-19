@@ -24,10 +24,13 @@ public class WorkflowOrchestratorTests : IDisposable
     private readonly Mock<IConfidenceScoreService> _mockConfidenceScoreService;
     private readonly Mock<IRecommendationAgent> _mockRecommendationAgent;
     private readonly Mock<INotificationAgent> _mockNotificationAgent;
+    private readonly Mock<IEmailAgent> _mockEmailAgent;
     private readonly Mock<ISubmissionNotificationService> _mockSubmissionNotificationService;
     private readonly Mock<IFileStorageService> _mockFileStorageService;
     private readonly Mock<ILogger<WorkflowOrchestrator>> _mockLogger;
     private readonly Mock<ICorrelationIdService> _mockCorrelationIdService;
+    private readonly Mock<ICircleHeadAssignmentService> _mockCircleHeadAssignmentService;
+    private readonly Mock<ISubmissionNumberService> _mockSubmissionNumberService;
     private readonly WorkflowOrchestrator _orchestrator;
 
     public WorkflowOrchestratorTests()
@@ -42,14 +45,18 @@ public class WorkflowOrchestratorTests : IDisposable
         _mockConfidenceScoreService = new Mock<IConfidenceScoreService>();
         _mockRecommendationAgent = new Mock<IRecommendationAgent>();
         _mockNotificationAgent = new Mock<INotificationAgent>();
+        _mockEmailAgent = new Mock<IEmailAgent>();
         _mockSubmissionNotificationService = new Mock<ISubmissionNotificationService>();
         _mockFileStorageService = new Mock<IFileStorageService>();
         _mockLogger = new Mock<ILogger<WorkflowOrchestrator>>();
         _mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        _mockCircleHeadAssignmentService = new Mock<ICircleHeadAssignmentService>();
+        _mockSubmissionNumberService = new Mock<ISubmissionNumberService>();
 
         _mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns("test-correlation-id");
         // Default: all blobs are accessible in tests
         _mockFileStorageService.Setup(f => f.IsBlobAccessibleAsync(It.IsAny<string>())).ReturnsAsync(true);
+        _mockSubmissionNumberService.Setup(s => s.GenerateAsync(It.IsAny<CancellationToken>())).ReturnsAsync("CIQ-2026-99999");
 
         _orchestrator = new WorkflowOrchestrator(
             _context,
@@ -58,10 +65,13 @@ public class WorkflowOrchestratorTests : IDisposable
             _mockConfidenceScoreService.Object,
             _mockRecommendationAgent.Object,
             _mockNotificationAgent.Object,
+            _mockEmailAgent.Object,
             _mockSubmissionNotificationService.Object,
             _mockFileStorageService.Object,
             _mockLogger.Object,
-            _mockCorrelationIdService.Object);
+            _mockCorrelationIdService.Object,
+            _mockCircleHeadAssignmentService.Object,
+            _mockSubmissionNumberService.Object);
     }
 
     public void Dispose()

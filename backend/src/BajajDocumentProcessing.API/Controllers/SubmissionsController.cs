@@ -97,10 +97,27 @@ public class SubmissionsController : ControllerBase
                 SubmittedByUserId = userId,
                 AgencyId = user.AgencyId.Value,
                 SelectedPOId = request.SelectedPoId,
+                ActivityState = request.ActivityState,
                 State = PackageState.Uploaded,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
+
+            // Generate submission number
+            var submissionNumber = await _submissionNumberService.GenerateAsync(cancellationToken);
+            package.SubmissionNumber = submissionNumber;
+
+            // Auto-assign CIRCLE HEAD based on ActivityState
+            if (!string.IsNullOrEmpty(request.ActivityState))
+            {
+                var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(request.ActivityState, cancellationToken);
+                package.AssignedCircleHeadUserId = circleHeadUserId;
+
+                if (circleHeadUserId == null)
+                {
+                    _logger.LogWarning("No CIRCLE HEAD found for state {State} on new submission", request.ActivityState);
+                }
+            }
 
             _context.DocumentPackages.Add(package);
             await _context.SaveChangesAsync(cancellationToken);
@@ -411,7 +428,7 @@ public class SubmissionsController : ControllerBase
                 ReviewedAt = asmApproval?.ActionDate,
                 ReviewNotes = asmApproval?.Comments,
                 Documents = BuildDocumentDtos(package),
-                Campaigns = package.Teams.Where(c => !c.IsDeleted).Select(c => new CampaignDto
+                Campaigns = package.Teams.Where(c => !c.IsDeleted).Select((c, index) => new CampaignDto
                 {
                     Id = c.Id,
                     CampaignName = c.CampaignName,
@@ -432,7 +449,19 @@ public class SubmissionsController : ControllerBase
                         FileName = p2.FileName,
                         BlobUrl = p2.BlobUrl,
                         Caption = p2.Caption
-                    }).ToList()
+                    }).ToList(),
+                    // Include package-level invoices in the first campaign so the frontend can display them
+                    Invoices = index == 0
+                        ? package.Invoices.Where(i => !i.IsDeleted).Select(i => new CampaignInvoiceDto
+                        {
+                            Id = i.Id,
+                            InvoiceNumber = i.InvoiceNumber,
+                            VendorName = i.VendorName,
+                            TotalAmount = i.TotalAmount,
+                            FileName = i.FileName ?? "",
+                            BlobUrl = i.BlobUrl ?? ""
+                        }).ToList()
+                        : new List<CampaignInvoiceDto>()
                 }).ToList(),
                 ValidationResult = validationResult != null ? new ValidationResultDto
                 {
@@ -1856,7 +1885,10 @@ public class SubmissionsController : ControllerBase
     [HttpPost("{packageId}/process-async")]
     [Authorize]
     [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status202Accepted)]
-    public async Task<IActionResult> ProcessPackageAsync(Guid packageId, CancellationToken cancellationToken)
+    public async Task<IActionResult> ProcessPackageAsync(
+        Guid packageId,
+        [FromBody] ProcessAsyncRequest? request,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -1867,6 +1899,31 @@ public class SubmissionsController : ControllerBase
             {
                 return NotFound(new { error = "Package not found" });
             }
+
+            // Set ActivityState if provided and not already set
+            if (!string.IsNullOrEmpty(request?.ActivityState) && string.IsNullOrEmpty(package.ActivityState))
+            {
+                package.ActivityState = request.ActivityState;
+                _logger.LogInformation("ActivityState set to {State} for package {PackageId}", request.ActivityState, packageId);
+            }
+
+            // Generate submission number if missing
+            if (string.IsNullOrEmpty(package.SubmissionNumber))
+            {
+                package.SubmissionNumber = await _submissionNumberService.GenerateAsync(cancellationToken);
+                _logger.LogInformation("SubmissionNumber {Number} generated for package {PackageId}", package.SubmissionNumber, packageId);
+            }
+
+            // Auto-assign CIRCLE HEAD if missing and ActivityState is set
+            if (!package.AssignedCircleHeadUserId.HasValue && !string.IsNullOrEmpty(package.ActivityState))
+            {
+                var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, cancellationToken);
+                package.AssignedCircleHeadUserId = circleHeadUserId;
+                _logger.LogInformation("CircleHead {UserId} assigned for package {PackageId}", circleHeadUserId, packageId);
+            }
+
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
 
             // Queue for background processing - returns immediately
             await _backgroundQueue.QueueWorkflowAsync(packageId);
@@ -2452,7 +2509,8 @@ public record CreateSubmissionRequest(
     DateTime? CampaignStartDate = null,
     DateTime? CampaignEndDate = null,
     int? CampaignWorkingDays = null,
-    Guid? SelectedPoId = null
+    Guid? SelectedPoId = null,
+    string? ActivityState = null
 );
 
 /// <summary>
@@ -2472,6 +2530,14 @@ public record RejectSubmissionRequest(
     [Required(ErrorMessage = "Reason is required")]
     [StringLength(500, MinimumLength = 10, ErrorMessage = "Reason must be between 10 and 500 characters")]
     string Reason
+);
+
+/// <summary>
+/// Request to trigger async processing with optional ActivityState
+/// </summary>
+/// <param name="ActivityState">Activity state/region for the submission</param>
+public record ProcessAsyncRequest(
+    string? ActivityState = null
 );
 
 /// <summary>
