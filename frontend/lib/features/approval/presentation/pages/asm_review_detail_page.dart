@@ -620,7 +620,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     Color textColor;
     String displayText;
     
-    if (normalizedState == 'pendingapproval' || normalizedState == 'pendingasmapproval') {
+    if (normalizedState == 'pendingapproval' || normalizedState == 'pendingchapproval') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending';
@@ -677,7 +677,7 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
     return state == 'pendingapproval' || 
-           state == 'pendingasmapproval';
+           state == 'pendingchapproval';
   }
 
   /// Builds CampaignDetailRow list from hierarchical campaign data.

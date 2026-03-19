@@ -1236,10 +1236,10 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                       ? const Color(0xFFDC2626)
                       : const Color(0xFF9CA3AF),
               title: asmStatus == 'approved'
-                  ? 'Approved by ASM'
+                  ? 'Approved by CH'
                   : asmStatus == 'rejected'
-                      ? 'Rejected by ASM'
-                      : 'Pending ASM Review',
+                      ? 'Rejected by CH'
+                      : 'Pending CH Review',
               date: asmReviewedAt != null ? _formatDate(asmReviewedAt) : null,
               comment: asmReviewNotes,
               isCompleted: asmStatus != 'pending',
@@ -1379,7 +1379,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       };
     } else if (stateLower == 'rejectedbyasm') {
       return {
-        'label': 'Rejected by ASM',
+        'label': 'Rejected by CH',
         'color': const Color(0xFFDC2626),
         'bgColor': const Color(0xFFFEE2E2),
         'borderColor': const Color(0xFFFCA5A5),
@@ -1418,10 +1418,10 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         'borderColor': const Color(0xFFFCD34D),
         'icon': Icons.warning_amber,
       };
-    } else if (stateLower.contains('pendingasm') ||
+    } else if (stateLower.contains('pendingch') ||
         stateLower.contains('pendingapproval')) {
       return {
-        'label': 'Pending with ASM',
+        'label': 'Pending with CH',
         'color': const Color(0xFFF59E0B),
         'bgColor': const Color(0xFFFEF3C7),
         'borderColor': const Color(0xFFFCD34D),

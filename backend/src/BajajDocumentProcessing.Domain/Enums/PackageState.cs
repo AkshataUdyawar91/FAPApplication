@@ -9,8 +9,8 @@ public enum PackageState
     Uploaded = 1,
     Extracting = 2,
     Validating = 3,
-    PendingASM = 4,
-    ASMRejected = 5,
+    PendingCH = 4,
+    CHRejected = 5,
     PendingRA = 6,
     RARejected = 7,
     Approved = 8

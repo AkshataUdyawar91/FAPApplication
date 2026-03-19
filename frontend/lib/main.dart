@@ -7,6 +7,10 @@ import 'features/submission/presentation/pages/agency_upload_page.dart';
 import 'features/submission/presentation/pages/agency_submission_detail_page.dart';
 import 'features/conversational_submission/presentation/pages/conversational_submission_page.dart';
 import 'features/assistant/presentation/pages/chat_screen.dart';
+import 'features/approval/presentation/pages/asm_review_page.dart';
+import 'features/approval/presentation/pages/asm_review_detail_page.dart';
+import 'features/approval/presentation/pages/hq_review_page.dart';
+import 'features/approval/presentation/pages/hq_review_detail_page.dart';
 import 'core/network/dio_client.dart';
 
 void main() {
@@ -82,6 +86,52 @@ class MyApp extends StatelessWidget {
             return MaterialPageRoute(
               builder: (context) => _ConversationalSubmissionWrapper(
                 token: args?['token'] ?? '',
+              ),
+            );
+          case '/asm/dashboard':
+            final args = settings.arguments as Map<String, dynamic>?;
+            return MaterialPageRoute(
+              builder: (context) => _AuthWrapper(
+                token: args?['token'] ?? '',
+                child: ASMReviewPage(
+                  token: args?['token'] ?? '',
+                  userName: args?['userName'] ?? '',
+                ),
+              ),
+            );
+          case '/asm/review-detail':
+            final args = settings.arguments as Map<String, dynamic>?;
+            return MaterialPageRoute(
+              builder: (context) => _AuthWrapper(
+                token: args?['token'] ?? '',
+                child: ASMReviewDetailPage(
+                  submissionId: args?['submissionId']?.toString() ?? '',
+                  token: args?['token'] ?? '',
+                  userName: args?['userName'] ?? '',
+                ),
+              ),
+            );
+          case '/ra/dashboard':
+            final args = settings.arguments as Map<String, dynamic>?;
+            return MaterialPageRoute(
+              builder: (context) => _AuthWrapper(
+                token: args?['token'] ?? '',
+                child: HQReviewPage(
+                  token: args?['token'] ?? '',
+                  userName: args?['userName'] ?? '',
+                ),
+              ),
+            );
+          case '/hq/review-detail':
+            final args = settings.arguments as Map<String, dynamic>?;
+            return MaterialPageRoute(
+              builder: (context) => _AuthWrapper(
+                token: args?['token'] ?? '',
+                child: HQReviewDetailPage(
+                  submissionId: args?['submissionId']?.toString() ?? '',
+                  token: args?['token'] ?? '',
+                  userName: args?['userName'] ?? '',
+                ),
               ),
             );
           default:

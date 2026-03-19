@@ -455,7 +455,7 @@ public class ValidationAgent : IValidationAgent
             await SaveValidationResultsAsync(result, package, cancellationToken);
 
             // Update package state - validation no longer sets state (removed Validated/ValidationFailed states)
-            // Package remains in Validating state, workflow orchestrator will move to PendingASM
+            // Package remains in Validating state, workflow orchestrator will move to PendingCH
 
             await _context.SaveChangesAsync(cancellationToken);
 

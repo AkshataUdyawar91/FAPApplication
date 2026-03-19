@@ -18,14 +18,24 @@ class QuarterYearFilter extends StatelessWidget {
     required this.availableYears,
   });
 
-  /// Returns the current calendar quarter string (Q1-Q4).
+  /// Returns the current Indian fiscal quarter string (Q1-Q4).
+  /// Q1 = Apr-Jun, Q2 = Jul-Sep, Q3 = Oct-Dec, Q4 = Jan-Mar.
   static String currentQuarter() {
     final month = DateTime.now().month;
-    if (month <= 3) return 'Q1';
-    if (month <= 6) return 'Q2';
-    if (month <= 9) return 'Q3';
+    if (month >= 4 && month <= 6) return 'Q1';
+    if (month >= 7 && month <= 9) return 'Q2';
+    if (month >= 10 && month <= 12) return 'Q3';
     return 'Q4';
   }
+
+  /// Returns the fiscal year for a given date.
+  /// Indian FY runs Apr-Mar: Apr 2025 → FY 2025, Jan 2026 → FY 2025.
+  static int fiscalYear(DateTime date) {
+    return date.month >= 4 ? date.year : date.year - 1;
+  }
+
+  /// Returns the current fiscal year.
+  static int currentFiscalYear() => fiscalYear(DateTime.now());
 
   @override
   Widget build(BuildContext context) {
@@ -44,10 +54,10 @@ class QuarterYearFilter extends StatelessWidget {
             ),
             items: const [
               DropdownMenuItem(value: 'All', child: Text('All')),
-              DropdownMenuItem(value: 'Q1', child: Text('Q1')),
-              DropdownMenuItem(value: 'Q2', child: Text('Q2')),
-              DropdownMenuItem(value: 'Q3', child: Text('Q3')),
-              DropdownMenuItem(value: 'Q4', child: Text('Q4')),
+              DropdownMenuItem(value: 'Q1', child: Text('Q1 (Apr-Jun)')),
+              DropdownMenuItem(value: 'Q2', child: Text('Q2 (Jul-Sep)')),
+              DropdownMenuItem(value: 'Q3', child: Text('Q3 (Oct-Dec)')),
+              DropdownMenuItem(value: 'Q4', child: Text('Q4 (Jan-Mar)')),
             ],
             onChanged: (v) {
               if (v != null) onQuarterChanged(v);
@@ -67,7 +77,7 @@ class QuarterYearFilter extends StatelessWidget {
               isDense: true,
             ),
             items: availableYears
-                .map((y) => DropdownMenuItem(value: y, child: Text(y.toString())))
+                .map((y) => DropdownMenuItem(value: y, child: Text('FY ${y.toString().substring(2)}-${(y + 1).toString().substring(2)}')))
                 .toList(),
             onChanged: (v) {
               if (v != null) onYearChanged(v);
