@@ -28,6 +28,9 @@ public class ValidationResultConfiguration : IEntityTypeConfiguration<Validation
         builder.Property(v => v.RuleResultsJson)
             .HasColumnType("nvarchar(max)");
 
+        // Column was removed from the database — prevent EF from querying it
+        builder.Ignore(v => v.ValidationDetailsJson);
+
         builder.HasIndex(v => new { v.DocumentType, v.DocumentId })
             .IsUnique();
     }
