@@ -56,16 +56,18 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
     final state = backendState.toLowerCase().replaceAll('_', '');
     if (state == 'pendinghqapproval') return 'pending';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyhq') return 'rejected';
+    if (state == 'rejectedbyhq' ||
+        state == 'hqrejected' ||
+        state == 'asmrejected') return 'rejected';
     if (state == 'pendingasmapproval' ||
         state == 'uploaded' ||
         state == 'extracting' ||
         state == 'validating' ||
         state == 'scoring' ||
         state == 'recommending') {
-      return 'processing';
+      return 'pending';
     }
-    return 'processing';
+    return 'pending';
   }
 
   @override
@@ -171,7 +173,6 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
   List<Map<String, dynamic>> get _filteredDocuments {
     final filtered = _documents.where((doc) {
       final status = _normalizeStatus(doc['state']?.toString() ?? '');
-      if (status == 'processing') return false;
       if (!_matchesQuarterYear(doc)) return false;
       final matchesSearch = _searchController.text.isEmpty ||
           doc['id']

@@ -138,6 +138,17 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         final photoValidations =
             submissionData['photoValidations'] as List<dynamic>? ?? [];
 
+        print('=== ASM - Validation Data from Submission ===');
+        print('Invoice Validations Count: ${invoiceValidations.length}');
+        print('Photo Validations Count: ${photoValidations.length}');
+        if (invoiceValidations.isNotEmpty) {
+          print('First Invoice Validation: ${invoiceValidations[0]}');
+        }
+        if (photoValidations.isNotEmpty) {
+          print('First Photo Validation: ${photoValidations[0]}');
+        }
+        print('======================================');
+
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
