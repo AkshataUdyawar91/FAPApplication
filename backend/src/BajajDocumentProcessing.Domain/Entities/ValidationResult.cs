@@ -71,10 +71,4 @@ public class ValidationResult : BaseEntity
     /// Populated by ProactiveValidationService during conversational submission.
     /// </summary>
     public string? RuleResultsJson { get; set; }
-
-    /// <summary>
-    /// Gets or sets the detailed validation results JSON with proactive, reactive, and checks.
-    /// Contains structured validation details for UI display.
-    /// </summary>
-    public string? ValidationDetailsJson { get; set; }
 }
