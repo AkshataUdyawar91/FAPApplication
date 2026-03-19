@@ -50,18 +50,18 @@ class _HQReviewPageState extends State<HQReviewPage> {
   static const int _pageSize = 20;
 
   // KPI state
-  String _selectedQuarter = 'Q${(DateTime.now().month - 1) ~/ 3 + 1}';
-  int _selectedYear = DateTime.now().year;
+  String _selectedQuarter = 'All';
+  int _selectedYear = QuarterYearFilter.currentFiscalYear();
   QuarterlyFapKpiModel? _kpiData;
   bool _isKpiLoading = true;
   String? _kpiError;
 
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
-    if (state == 'pendinghqapproval') return 'pending';
+    if (state == 'pendingra' || state == 'pendinghqapproval') return 'pending';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyhq') return 'rejected';
-    if (state == 'pendingasmapproval' || state == 'uploaded' || state == 'extracting' ||
+    if (state == 'rarejected' || state == 'rejectedbyhq' || state == 'rejectedbyra') return 'rejected';
+    if (state == 'pendingch' || state == 'pendingchapproval' || state == 'uploaded' || state == 'extracting' ||
         state == 'validating' || state == 'scoring' || state == 'recommending') {
       return 'processing';
     }
@@ -140,12 +140,14 @@ class _HQReviewPageState extends State<HQReviewPage> {
     }
   }
 
+  /// Returns the start and end months for an Indian fiscal quarter.
+  /// Q1 = Apr-Jun, Q2 = Jul-Sep, Q3 = Oct-Dec, Q4 = Jan-Mar.
   (int, int) _quarterMonthRange(String quarter) {
     switch (quarter) {
-      case 'Q1': return (1, 3);
-      case 'Q2': return (4, 6);
-      case 'Q3': return (7, 9);
-      case 'Q4': return (10, 12);
+      case 'Q1': return (4, 6);
+      case 'Q2': return (7, 9);
+      case 'Q3': return (10, 12);
+      case 'Q4': return (1, 3);
       default: return (1, 12);
     }
   }
@@ -155,7 +157,8 @@ class _HQReviewPageState extends State<HQReviewPage> {
     if (dateStr == null) return false;
     try {
       final dt = DateTime.parse(dateStr);
-      if (dt.year != _selectedYear) return false;
+      final docFY = QuarterYearFilter.fiscalYear(dt);
+      if (docFY != _selectedYear) return false;
       if (_selectedQuarter == 'All') return true;
       final (startMonth, endMonth) = _quarterMonthRange(_selectedQuarter);
       return dt.month >= startMonth && dt.month <= endMonth;
@@ -425,7 +428,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                           QuarterYearFilter(
                             selectedQuarter: _selectedQuarter,
                             selectedYear: _selectedYear,
-                            availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                            availableYears: List.generate(5, (i) => QuarterYearFilter.currentFiscalYear() - i),
                             onQuarterChanged: (q) {
                               setState(() => _selectedQuarter = q);
                               _loadKpiData();
@@ -456,7 +459,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                     QuarterYearFilter(
                       selectedQuarter: _selectedQuarter,
                       selectedYear: _selectedYear,
-                      availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                      availableYears: List.generate(5, (i) => QuarterYearFilter.currentFiscalYear() - i),
                       onQuarterChanged: (q) {
                         setState(() => _selectedQuarter = q);
                         _loadKpiData();

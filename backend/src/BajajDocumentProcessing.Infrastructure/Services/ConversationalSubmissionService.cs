@@ -428,7 +428,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
                                          && dp.Invoices.Any(i => i.InvoiceNumber == invoice.InvoiceNumber)
                                          && !dp.IsDeleted
                                          && dp.Id != package.Id
-                                         && dp.State != PackageState.ASMRejected
+                                         && dp.State != PackageState.CHRejected
                                          && dp.State != PackageState.RARejected)
                             .FirstOrDefaultAsync(ct);
 
@@ -1017,7 +1017,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
             // Load-balance: assign to CIRCLE HEAD with fewest pending submissions
             var leastLoaded = await _db.DocumentPackages
                 .Where(dp => circleHeads.Contains(dp.AssignedCircleHeadUserId)
-                              && (dp.State == PackageState.PendingASM || dp.State == PackageState.PendingRA)
+                              && (dp.State == PackageState.PendingCH || dp.State == PackageState.PendingRA)
                               && !dp.IsDeleted)
                 .GroupBy(dp => dp.AssignedCircleHeadUserId)
                 .Select(g => new { UserId = g.Key, Count = g.Count() })
@@ -1029,7 +1029,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
         // else: no CIRCLE HEAD found — leave null for manual assignment
 
         // Transition to Submitted
-        package.State = PackageState.PendingASM;
+        package.State = PackageState.PendingCH;
         package.CurrentStep = (int)ConversationStep.Submitted;
         package.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);

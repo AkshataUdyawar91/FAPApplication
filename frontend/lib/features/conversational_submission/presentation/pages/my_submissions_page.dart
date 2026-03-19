@@ -247,7 +247,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
         fg = Colors.grey.shade700;
         break;
       case 'submitted':
-      case 'pendingasm':
+      case 'pendingch':
       case 'pendingra':
         bg = const Color(0xFFDBEAFE);
         fg = const Color(0xFF1E40AF);
@@ -256,7 +256,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
         bg = const Color(0xFFD1FAE5);
         fg = const Color(0xFF065F46);
         break;
-      case 'asmrejected':
+      case 'chrejected':
       case 'rarejected':
         bg = const Color(0xFFFEE2E2);
         fg = const Color(0xFF991B1B);
@@ -282,14 +282,14 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
         return 'Draft';
       case 'submitted':
         return 'Submitted';
-      case 'pendingasm':
-        return 'Pending ASM';
+      case 'pendingch':
+        return 'Pending CH';
       case 'pendingra':
         return 'Pending RA';
       case 'approved':
         return 'Approved';
-      case 'asmrejected':
-        return 'ASM Rejected';
+      case 'chrejected':
+        return 'CH Rejected';
       case 'rarejected':
         return 'RA Rejected';
       default:

@@ -46,10 +46,27 @@ class _NewLoginPageState extends State<NewLoginPage> {
         'password': _passwordController.text,
       });
       if (response.statusCode == 200 && mounted) {
-        Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: {
+        final role = (response.data['role'] as String?)?.toLowerCase() ?? 'agency';
+        final args = {
           'token': response.data['token'],
           'userName': response.data['email'] ?? '',
-        });
+        };
+
+        String route;
+        switch (role) {
+          case 'asm':
+            route = '/asm/dashboard';
+            break;
+          case 'ra':
+            route = '/ra/dashboard';
+            break;
+          case 'admin':
+            route = '/ra/dashboard';
+            break;
+          default:
+            route = '/agency/dashboard';
+        }
+        Navigator.pushReplacementNamed(context, route, arguments: args);
       }
     } on DioException catch (e) {
       debugPrint('Login DioException: type=${e.type}, message=${e.message}, statusCode=${e.response?.statusCode}, responseData=${e.response?.data}');

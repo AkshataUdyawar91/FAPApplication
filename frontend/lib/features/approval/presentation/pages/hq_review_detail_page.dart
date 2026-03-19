@@ -645,10 +645,10 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected';
-    } else if (normalizedState == 'pendingapproval' || normalizedState == 'pendingasmapproval' || normalizedState == 'pendingwithasm') {
+    } else if (normalizedState == 'pendingapproval' || normalizedState == 'pendingchapproval' || normalizedState == 'pendingwithch') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
-      displayText = 'Pending ASM Review';
+      displayText = 'Pending CH Review';
     } else {
       backgroundColor = const Color(0xFFF3F4F6);
       textColor = const Color(0xFF6B7280);
