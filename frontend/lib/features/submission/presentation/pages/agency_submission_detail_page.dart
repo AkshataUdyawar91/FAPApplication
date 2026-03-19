@@ -38,8 +38,10 @@ class AgencySubmissionDetailPage extends StatefulWidget {
       _AgencySubmissionDetailPageState();
 }
 
-class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
+class _AgencySubmissionDetailPageState
+    extends State<AgencySubmissionDetailPage> {
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    ..interceptors.add(PrettyDioLogger());
 
   bool _isLoading = true;
   Map<String, dynamic>? _submission;
@@ -59,10 +61,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
   // Submit functionality
   bool _isSubmitting = false;
 
-  // Validation Report API result on page load
-  bool _isLoadingValidationReport = false;
-  Map<String, dynamic>? _validationReport;
-  String? _validationReportError;
+  // Validation data from submission response
+  List<dynamic> _invoiceValidations = [];
+  List<dynamic> _photoValidations = [];
 
   @override
   void initState() {
@@ -70,7 +71,6 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     super.initState();
     _debugToken(); // Debug token contents
     _loadSubmissionDetails();
-    _loadValidationReport(); // Call validation report API on page load
   }
 
   void _debugToken() {
@@ -119,10 +119,23 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             SubmissionDataTransformer.transformToCampaignDetails(
                 submissionData);
 
+        // Extract validation data from submission response
+        final invoiceValidations =
+            submissionData['invoiceValidations'] as List<dynamic>? ?? [];
+        final photoValidations =
+            submissionData['photoValidations'] as List<dynamic>? ?? [];
+
+        print('=== Validation Data from Submission ===');
+        print('Invoice Validations Count: ${invoiceValidations.length}');
+        print('Photo Validations Count: ${photoValidations.length}');
+        print('======================================');
+
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
           _campaignDetails = campaignDetails;
+          _invoiceValidations = invoiceValidations;
+          _photoValidations = photoValidations;
           _isLoading = false;
         });
       }
@@ -131,75 +144,6 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         setState(() {
           _errorMessage = 'Failed to load submission details';
           _isLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadValidationReport() async {
-    setState(() {
-      _isLoadingValidationReport = true;
-      _validationReportError = null;
-      _validationReport = null;
-    });
-
-    try {
-      // Debug: Log the request details
-      print('=== Validation Report API Debug Info ===');
-      print('URL: /submissions/${widget.submissionId}/validation-report');
-      print('Token: ${widget.token.substring(0, 20)}...');
-      print('User: ${widget.userName}');
-      print('============================');
-
-      final response = await _dio.get(
-        '/submissions/${widget.submissionId}/validation-report',
-        options: Options(
-          headers: {
-            'Authorization': 'Bearer ${widget.token}',
-            'Content-Type': 'application/json',
-          },
-        ),
-      );
-
-      if (response.statusCode == 200 && mounted) {
-        final resultData = response.data as Map<String, dynamic>;
-        print('Validation Report API Response: $resultData'); // Debug log
-        setState(() {
-          _validationReport = resultData;
-          _isLoadingValidationReport = false;
-        });
-      }
-    } catch (e) {
-      print('Validation Report API Error: $e'); // Debug log
-
-      if (mounted) {
-        String errorMessage = 'Failed to call validation report API';
-
-        // Handle specific error cases
-        if (e is DioException) {
-          print('DioException details:');
-          print('Status Code: ${e.response?.statusCode}');
-          print('Response Data: ${e.response?.data}');
-          print('Headers: ${e.response?.headers}');
-
-          if (e.response?.statusCode == 400) {
-            errorMessage = e.response?.data?['message'] ?? 'Invalid request';
-          } else if (e.response?.statusCode == 401) {
-            errorMessage = 'Authentication failed - Invalid or expired token';
-          } else if (e.response?.statusCode == 403) {
-            errorMessage =
-                'Access forbidden - ASM or HQ role required for validation reports';
-          } else if (e.response?.statusCode == 404) {
-            errorMessage = 'Submission not found';
-          } else {
-            errorMessage =
-                'HTTP ${e.response?.statusCode}: ${e.response?.data?['message'] ?? e.message}';
-          }
-        }
-
-        setState(() {
-          _validationReportError = errorMessage;
-          _isLoadingValidationReport = false;
         });
       }
     }
@@ -370,81 +314,28 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
           children: [
             Row(
               children: [
-                const Icon(Icons.api, color: AppColors.primary, size: 24),
+                const Icon(Icons.verified_user,
+                    color: AppColors.primary, size: 24),
                 const SizedBox(width: 12),
-                const Text('Validation Report', style: AppTextStyles.h3),
-                const Spacer(),
-                if (!_isLoadingValidationReport)
-                  IconButton(
-                    onPressed: _loadValidationReport,
-                    icon: const Icon(Icons.refresh, size: 20),
-                    tooltip: 'Refresh Validation Report',
-                    color: AppColors.primary,
-                  ),
-                if (_isLoadingValidationReport)
-                  const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+                const Text('Document Validations', style: AppTextStyles.h3),
               ],
             ),
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 16),
-            if (_isLoadingValidationReport)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 12),
-                      Text('Loading validation report...',
-                          style: TextStyle(color: AppColors.textSecondary)),
-                    ],
-                  ),
-                ),
-              )
-            else if (_validationReportError != null)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEE2E2),
-                  border: Border.all(color: const Color(0xFFFCA5A5)),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.error_outline,
-                            color: Color(0xFFDC2626), size: 20),
-                        const SizedBox(width: 8),
-                        Text(
-                          'API Error',
-                          style: AppTextStyles.bodyMedium.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFFDC2626),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _validationReportError!,
-                      style: AppTextStyles.bodyMedium.copyWith(
-                        color: const Color(0xFF7F1D1D),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else if (_validationReport != null)
-              _buildValidationReportContent()
-            else
+
+            // Invoice Validations
+            if (_invoiceValidations.isNotEmpty) ...[
+              _buildInvoiceValidationsSection(_invoiceValidations),
+              const SizedBox(height: 24),
+            ],
+
+            // Photo Validations
+            if (_photoValidations.isNotEmpty)
+              _buildPhotoValidationsSection(_photoValidations),
+
+            // No validations message
+            if (_invoiceValidations.isEmpty && _photoValidations.isEmpty)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -454,7 +345,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  'No validation report available',
+                  'No validation data available for this submission',
                   style: AppTextStyles.bodyMedium.copyWith(
                     color: AppColors.textSecondary,
                   ),
@@ -466,235 +357,357 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     );
   }
 
-  Widget _buildValidationReportContent() {
-    final summary = _validationReport!['summary'] as Map<String, dynamic>?;
-    final categories = _validationReport!['categories'] as List<dynamic>? ?? [];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Summary Section
-        if (summary != null) _buildSummarySection(summary),
-
-        const SizedBox(height: 24),
-
-        // Validation Categories
-        _buildValidationCategoriesSection(categories),
-      ],
-    );
-  }
-
-  Widget _buildSummarySection(Map<String, dynamic> summary) {
-    final overallConfidence = summary['overallConfidence'] ?? 0;
-    final recommendationType = summary['recommendationType'] ?? 'Unknown';
-    final riskLevel = summary['riskLevel'] ?? 'Unknown';
-    final passedValidations = summary['passedValidations'] ?? 0;
-    final failedValidations = summary['failedValidations'] ?? 0;
-    final totalValidations = summary['totalValidations'] ?? 0;
-
-    Color recommendationColor = recommendationType.toLowerCase() == 'reject'
-        ? const Color(0xFFDC2626)
-        : recommendationType.toLowerCase() == 'approve'
-            ? const Color(0xFF16A34A)
-            : const Color(0xFFF59E0B);
-
-    Color riskColor = riskLevel.toLowerCase() == 'high'
-        ? const Color(0xFFDC2626)
-        : riskLevel.toLowerCase() == 'medium'
-            ? const Color(0xFFF59E0B)
-            : const Color(0xFF16A34A);
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppColors.primary.withOpacity(0.05),
-            AppColors.primary.withOpacity(0.02),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withOpacity(0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.analytics, color: AppColors.primary, size: 24),
-              const SizedBox(width: 12),
-              Text('Validation Summary', style: AppTextStyles.h3),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Key Metrics Row
-          Row(
-            children: [
-              Expanded(
-                child: _buildMetricCard(
-                  'Overall Confidence',
-                  '$overallConfidence%',
-                  Icons.trending_up,
-                  _getConfidenceColor(overallConfidence.toDouble()),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildMetricCard(
-                  'Recommendation',
-                  recommendationType,
-                  recommendationType.toLowerCase() == 'reject'
-                      ? Icons.cancel
-                      : Icons.check_circle,
-                  recommendationColor,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildMetricCard(
-                  'Risk Level',
-                  riskLevel,
-                  Icons.warning,
-                  riskColor,
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          // Validation Stats
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFE5E7EB)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildStatItem(
-                    'Total', totalValidations.toString(), Icons.list_alt),
-                _buildStatItem('Passed', passedValidations.toString(),
-                    Icons.check_circle, const Color(0xFF16A34A)),
-                _buildStatItem('Failed', failedValidations.toString(),
-                    Icons.cancel, const Color(0xFFDC2626)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMetricCard(
-      String title, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, color: color, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.textSecondary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: AppTextStyles.h3.copyWith(
-              color: color,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatItem(String label, String value, IconData icon,
-      [Color? color]) {
-    final itemColor = color ?? AppColors.textSecondary;
-    return Column(
-      children: [
-        Icon(icon, color: itemColor, size: 24),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: AppTextStyles.h3.copyWith(
-            color: itemColor,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          label,
-          style: AppTextStyles.bodySmall.copyWith(
-            color: AppColors.textSecondary,
-          ),
-        ),
-      ],
-    );
-  }
-
   Color _getConfidenceColor(double confidence) {
     if (confidence >= 80) return const Color(0xFF16A34A);
     if (confidence >= 60) return const Color(0xFFF59E0B);
     return const Color(0xFFDC2626);
   }
 
-  Widget _buildValidationCategoriesSection(List<dynamic> categories) {
+  Widget _buildInvoiceValidationsSection(List<dynamic> invoiceValidations) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(Icons.checklist, color: AppColors.primary, size: 24),
-            const SizedBox(width: 12),
-            Text('Validation Categories', style: AppTextStyles.h3),
-          ],
-        ),
-        const SizedBox(height: 16),
+        ...invoiceValidations.map((invoice) {
+          final invoiceData = invoice as Map<String, dynamic>;
+          return _buildInvoiceValidationCard(invoiceData);
+        }),
+      ],
+    );
+  }
 
-        // Categories Table Header
+  Widget _buildInvoiceValidationCard(Map<String, dynamic> invoice) {
+    final fileName = invoice['fileName'] ?? 'Unknown';
+    final allPassed = invoice['allPassed'] ?? false;
+    final failureReason = invoice['failureReason'];
+    final validationDetailsJson = invoice['validationDetailsJson'] as String?;
+
+    Map<String, dynamic>? validationDetails;
+    int passedCount = 0;
+    int totalCount = 0;
+
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+      try {
+        validationDetails =
+            jsonDecode(validationDetailsJson) as Map<String, dynamic>;
+
+        // Count passed and total validations
+        if (validationDetails != null) {
+          // Count proactive validations
+          if (validationDetails['proactive'] != null) {
+            final proactive = validationDetails['proactive'] as List<dynamic>;
+            totalCount += proactive.length;
+            passedCount += proactive.where((v) => v['passed'] == true).length;
+          }
+
+          // Count reactive validations
+          if (validationDetails['reactive'] != null) {
+            final reactive = validationDetails['reactive'] as List<dynamic>;
+            totalCount += reactive.length;
+            passedCount += reactive.where((v) => v['passed'] == true).length;
+          }
+
+          // Count checks
+          if (validationDetails['checks'] != null) {
+            final checks = validationDetails['checks'] as List<dynamic>;
+            totalCount += checks.length;
+            passedCount += checks.where((v) => v['passed'] == true).length;
+          }
+        }
+      } catch (e) {
+        print('Error parsing validation details: $e');
+      }
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(
+          color: Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color.fromARGB(255, 240, 237, 237),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Invoice Validations',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        fileName,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                RichText(
+                  text: TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '$passedCount/$totalCount ',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                      TextSpan(
+                        text: 'Passed',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: const Color(0xFF16A34A),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Failure Reason
+          if (failureReason != null && failureReason.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: const Color(0xFFFEF2F2),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning, color: Color(0xFFDC2626), size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      failureReason,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: const Color(0xFFDC2626),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Validation Details - Single unified table
+          if (validationDetails != null)
+            _buildUnifiedValidationTable(validationDetails),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhotoValidationsSection(List<dynamic> photoValidations) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...photoValidations.map((photo) {
+          final photoData = photo as Map<String, dynamic>;
+          return _buildPhotoValidationCard(photoData);
+        }),
+      ],
+    );
+  }
+
+  Widget _buildPhotoValidationCard(Map<String, dynamic> photo) {
+    final fileName = photo['fileName'] ?? 'Unknown';
+    final allPassed = photo['allPassed'] ?? false;
+    final failureReason = photo['failureReason'];
+    final validationDetailsJson = photo['validationDetailsJson'] as String?;
+
+    Map<String, dynamic>? validationDetails;
+    int passedCount = 0;
+    int totalCount = 0;
+
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+      try {
+        validationDetails =
+            jsonDecode(validationDetailsJson) as Map<String, dynamic>;
+
+        // Count passed and total validations
+        if (validationDetails != null) {
+          // Count required items (for photos)
+          if (validationDetails['requiredItems'] != null) {
+            final items = validationDetails['requiredItems'] as List<dynamic>;
+            totalCount += items.length;
+            passedCount += items.where((v) => v['passed'] == true).length;
+          }
+
+          // Count checks
+          if (validationDetails['checks'] != null) {
+            final checks = validationDetails['checks'] as List<dynamic>;
+            totalCount += checks.length;
+            passedCount += checks.where((v) => v['passed'] == true).length;
+          }
+        }
+      } catch (e) {
+        print('Error parsing validation details: $e');
+      }
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(
+          color: Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: const BoxDecoration(
+              color: Color.fromARGB(255, 240, 237, 237),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Photo Validations',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        fileName,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                RichText(
+                  text: TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '$passedCount/$totalCount ',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                      TextSpan(
+                        text: 'Passed',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: const Color(0xFF16A34A),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Failure Reason
+          // if (failureReason != null && failureReason.isNotEmpty)
+          //   Container(
+          //     padding: const EdgeInsets.all(12),
+          //     color: const Color(0xFFFEF2F2),
+          //     child: Row(
+          //       children: [
+          //         const Icon(Icons.warning, color: Color(0xFFDC2626), size: 16),
+          //         const SizedBox(width: 8),
+          //         Expanded(
+          //           child: Text(
+          //             failureReason,
+          //             style: AppTextStyles.bodySmall.copyWith(
+          //               color: const Color(0xFFDC2626),
+          //               fontWeight: FontWeight.w500,
+          //             ),
+          //           ),
+          //         ),
+          //       ],
+          //     ),
+          //   ),
+
+          // Validation Details - Single unified table
+          if (validationDetails != null)
+            _buildUnifiedValidationTable(validationDetails),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUnifiedValidationTable(Map<String, dynamic> validationDetails) {
+    // Collect all validations into a single list
+    List<Map<String, dynamic>> allValidations = [];
+
+    // Add proactive validations
+    if (validationDetails['proactive'] != null) {
+      final proactive = validationDetails['proactive'] as List<dynamic>;
+      allValidations.addAll(proactive.map((v) => v as Map<String, dynamic>));
+    }
+
+    // Add reactive validations
+    if (validationDetails['reactive'] != null) {
+      final reactive = validationDetails['reactive'] as List<dynamic>;
+      allValidations.addAll(reactive.map((v) => v as Map<String, dynamic>));
+    }
+
+    // Add checks
+    if (validationDetails['checks'] != null) {
+      final checks = validationDetails['checks'] as List<dynamic>;
+      allValidations.addAll(checks.map((v) => v as Map<String, dynamic>));
+    }
+
+    // Add required items (for photos)
+    if (validationDetails['requiredItems'] != null) {
+      final items = validationDetails['requiredItems'] as List<dynamic>;
+      allValidations.addAll(items.map((v) => v as Map<String, dynamic>));
+    }
+
+    if (allValidations.isEmpty) {
+      return const SizedBox();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Table Header
         Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: const Color(0xFFF8FAFC),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            // borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
             border: Border.all(color: const Color(0xFFE5E7EB)),
           ),
           child: Row(
             children: [
-              SizedBox(
-                width: 30,
-                child: Text(
-                  '#',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ),
               Expanded(
                 flex: 3,
                 child: Text(
@@ -702,16 +715,18 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
+                    fontSize: 11,
                   ),
                 ),
               ),
               SizedBox(
-                width: 70,
+                width: 80,
                 child: Text(
-                  'RESULT',
+                  'STATUS',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
+                    fontSize: 11,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -724,6 +739,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
+                    fontSize: 11,
                   ),
                 ),
               ),
@@ -731,130 +747,514 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
           ),
         ),
 
-        // Categories List
-        ...categories.asMap().entries.map((entry) {
+        // Table Rows
+        ...allValidations.asMap().entries.map((entry) {
           final index = entry.key;
-          final category = entry.value as Map<String, dynamic>;
-          final isLast = index == categories.length - 1;
+          final validation = entry.value;
+          final isLast = index == allValidations.length - 1;
 
-          return _buildValidationCategoryRow(category, index + 1, isLast);
+          final field = validation['field'] ?? validation['item'] ?? 'Unknown';
+          final passed = validation['passed'] ?? false;
+          final value = validation['value'];
+          final message = validation['message'];
+          final label = validation['label'];
+          final confidence = validation['confidence'];
+          final present = validation['present'];
+
+          final statusColor =
+              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    label ?? field,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Status
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    passed ? 'Pass' : 'Fail',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: statusColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found
+                Expanded(
+                  flex: 3,
+                  child: _buildWhatWasFoundColumn(
+                    value: value,
+                    message: message,
+                    confidence: confidence,
+                    present: present,
+                  ),
+                ),
+              ],
+            ),
+          );
         }),
       ],
     );
   }
 
-  Widget _buildValidationCategoryRow(
-      Map<String, dynamic> category, int index, bool isLast) {
-    final categoryName = category['categoryName'] ?? 'Unknown';
-    final passed = category['passed'] ?? false;
-    final status = category['status'] ?? 'Unknown';
-    final shortDescription = category['shortDescription'] ?? 'No description';
-
-    Color statusColor =
-        passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          left: BorderSide(color: const Color(0xFFE5E7EB)),
-          right: BorderSide(color: const Color(0xFFE5E7EB)),
-          bottom: BorderSide(
-            color: const Color(0xFFE5E7EB),
-            width: isLast ? 1 : 0.5,
-          ),
-        ),
-        borderRadius: isLast
-            ? const BorderRadius.vertical(bottom: Radius.circular(8))
-            : BorderRadius.zero,
-      ),
-      child: Row(
+  Widget _buildWhatWasFoundColumn({
+    dynamic value,
+    dynamic message,
+    dynamic confidence,
+    dynamic present,
+  }) {
+    // Handle required items with confidence
+    if (confidence != null) {
+      final isPresent = present ?? false;
+      return Row(
         children: [
-          // Serial Number
-          SizedBox(
-            width: 30,
+          Text(
+            isPresent ? 'Detected with ' : 'Not detected, ',
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textPrimary,
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: _getConfidenceColor((confidence as num).toDouble() * 100)
+                  .withOpacity(0.1),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color:
+                    _getConfidenceColor((confidence as num).toDouble() * 100),
+                width: 0.5,
+              ),
+            ),
             child: Text(
-              '$index',
+              '${((confidence as num) * 100).toStringAsFixed(0)}% confidence',
               style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textSecondary,
-                fontWeight: FontWeight.w500,
+                color:
+                    _getConfidenceColor((confidence as num).toDouble() * 100),
+                fontWeight: FontWeight.w600,
+                fontSize: 10,
               ),
-            ),
-          ),
-
-          // Category Name (without severity indicator)
-          Expanded(
-            flex: 3,
-            child: Text(
-              categoryName,
-              style: AppTextStyles.bodySmall.copyWith(
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-
-          // Status
-          SizedBox(
-            width: 70,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              decoration: BoxDecoration(
-                color: statusColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(3),
-              ),
-              child: Text(
-                status.toUpperCase(),
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: statusColor,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 10,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-
-          const SizedBox(
-            width: 12,
-          ),
-
-          // Description
-          Expanded(
-            flex: 3,
-            child: Text(
-              shortDescription,
-              style: AppTextStyles.bodySmall,
             ),
           ),
         ],
-      ),
+      );
+    }
+
+    // Handle regular validations
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (value != null)
+          Text(
+            value.toString(),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textPrimary,
+            ),
+          ),
+        if (message != null)
+          Text(
+            message.toString(),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: const Color(0xFFDC2626),
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        if (value == null && message == null)
+          Text(
+            '-',
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+      ],
     );
   }
 
-  IconData _getIconFromString(String iconName) {
-    switch (iconName.toLowerCase()) {
-      case 'description':
-        return Icons.description;
-      case 'attach_money':
-        return Icons.attach_money;
-      case 'calendar_today':
-        return Icons.calendar_today;
-      case 'business':
-        return Icons.business;
-      case 'folder_open':
-        return Icons.folder_open;
-      case 'photo_camera':
-        return Icons.photo_camera;
-      case 'branding_watermark':
-        return Icons.branding_watermark;
-      case 'event':
-        return Icons.event;
-      case 'receipt':
-        return Icons.receipt;
-      default:
-        return Icons.help_outline;
-    }
+  Widget _buildValidationSection(String title, List<dynamic> validations) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: AppTextStyles.bodySmall.copyWith(
+            fontWeight: FontWeight.w600,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'STATUS',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...validations.asMap().entries.map((entry) {
+          final index = entry.key;
+          final validation = entry.value as Map<String, dynamic>;
+          final isLast = index == validations.length - 1;
+
+          final field = validation['field'] ?? validation['item'] ?? 'Unknown';
+          final passed = validation['passed'] ?? false;
+          final value = validation['value'];
+          final message = validation['message'];
+          final label = validation['label'];
+
+          final statusColor =
+              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    label ?? field,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Status
+                SizedBox(
+                  width: 80,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        passed ? Icons.check_circle : Icons.cancel,
+                        color: statusColor,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        passed ? 'Pass' : 'Fail',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: statusColor,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found
+                Expanded(
+                  flex: 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (value != null)
+                        Text(
+                          value.toString(),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      if (message != null)
+                        Text(
+                          message.toString(),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFFDC2626),
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      if (value == null && message == null)
+                        Text(
+                          '-',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildRequiredItemsSection(List<dynamic> requiredItems) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Required Items in Photo',
+          style: AppTextStyles.bodySmall.copyWith(
+            fontWeight: FontWeight.w600,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'STATUS',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...requiredItems.asMap().entries.map((entry) {
+          final index = entry.key;
+          final item = entry.value as Map<String, dynamic>;
+          final isLast = index == requiredItems.length - 1;
+
+          final itemName = item['item'] ?? 'Unknown';
+          final present = item['present'] ?? false;
+          final confidence = item['confidence'];
+
+          final statusColor =
+              present ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    itemName,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Status
+                SizedBox(
+                  width: 80,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        present ? Icons.check_circle : Icons.cancel,
+                        color: statusColor,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        present ? 'Pass' : 'Fail',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: statusColor,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found (confidence score)
+                Expanded(
+                  flex: 3,
+                  child: confidence != null
+                      ? Row(
+                          children: [
+                            Text(
+                              present ? 'Detected with ' : 'Not detected, ',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: _getConfidenceColor(
+                                        (confidence as num).toDouble() * 100)
+                                    .withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(
+                                  color: _getConfidenceColor(
+                                      (confidence as num).toDouble() * 100),
+                                  width: 0.5,
+                                ),
+                              ),
+                              child: Text(
+                                '${((confidence as num) * 100).toStringAsFixed(0)}% confidence',
+                                style: AppTextStyles.bodySmall.copyWith(
+                                  color: _getConfidenceColor(
+                                      (confidence as num).toDouble() * 100),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : Text(
+                          present ? 'Detected' : 'Not detected',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
   }
 
   void _navigateToUpload() {
