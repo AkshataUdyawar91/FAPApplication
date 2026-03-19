@@ -637,7 +637,7 @@ public class NotificationDataService : INotificationDataService
             SubmissionId = package.Id,
             SubmissionNumber = shortId,
             CurrentStatus = package.State.ToString(),
-            IsAlreadyProcessed = package.State != PackageState.PendingASM,
+            IsAlreadyProcessed = package.State != PackageState.PendingCH,
             PortalUrl = $"{portalBaseUrl}/fap/{package.Id}/review"
         };
 

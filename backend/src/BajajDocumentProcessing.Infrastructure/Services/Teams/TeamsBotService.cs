@@ -341,7 +341,7 @@ public class TeamsBotService : TeamsActivityHandler
                     .ToListAsync(cancellationToken);
 
                 query = context.DocumentPackages
-                    .Where(p => p.State == PackageState.PendingASM)
+                    .Where(p => p.State == PackageState.PendingCH)
                     .Where(p => !p.IsDeleted)
                     .Where(p => p.AssignedCircleHeadUserId == systemUser.Id
                                 || (p.ActivityState != null && asmStates.Contains(p.ActivityState)));
@@ -810,8 +810,8 @@ public class TeamsBotService : TeamsActivityHandler
         if (package == null)
             return CreateAdaptiveCardResponse($"FAP-{shortId} not found.");
 
-        // Idempotency: only PendingASM or RARejected can be approved
-        if (package.State != PackageState.PendingASM && package.State != PackageState.RARejected)
+        // Idempotency: only PendingCH or RARejected can be approved
+        if (package.State != PackageState.PendingCH && package.State != PackageState.RARejected)
         {
             return CreateAdaptiveCardResponse(
                 $"FAP-{shortId} has already been processed. No further action needed.");
@@ -869,8 +869,8 @@ public class TeamsBotService : TeamsActivityHandler
         if (package == null)
             return CreateAdaptiveCardResponse($"FAP-{shortId} not found.");
 
-        // Idempotency check: only PendingASM or RARejected can be approved
-        if (package.State != PackageState.PendingASM && package.State != PackageState.RARejected)
+        // Idempotency check: only PendingCH or RARejected can be approved
+        if (package.State != PackageState.PendingCH && package.State != PackageState.RARejected)
         {
             return CreateAdaptiveCardResponse(
                 $"FAP-{shortId} has already been processed. No further action needed.");
@@ -1758,8 +1758,8 @@ public class TeamsBotService : TeamsActivityHandler
         if (package == null)
             return CreateAdaptiveCardResponse($"FAP-{shortId} not found.");
 
-        // Idempotency: only PendingASM or RARejected can be rejected
-        if (package.State != PackageState.PendingASM && package.State != PackageState.RARejected)
+        // Idempotency: only PendingCH or RARejected can be rejected
+        if (package.State != PackageState.PendingCH && package.State != PackageState.RARejected)
         {
             return CreateAdaptiveCardResponse(
                 $"FAP-{shortId} has already been processed. No further action needed.");
@@ -1768,7 +1768,7 @@ public class TeamsBotService : TeamsActivityHandler
         var approverId = systemUser?.Id ?? Guid.Empty;
 
         // Execute rejection: state transition + RequestApprovalHistory
-        package.State = PackageState.ASMRejected;
+        package.State = PackageState.CHRejected;
         package.UpdatedAt = DateTime.UtcNow;
 
         var rejectionHistory = new RequestApprovalHistory
@@ -1821,14 +1821,14 @@ public class TeamsBotService : TeamsActivityHandler
         // Check if already actioned (idempotency)
         if (package.State == PackageState.PendingRA ||
             package.State == PackageState.Approved ||
-            package.State == PackageState.ASMRejected ||
+            package.State == PackageState.CHRejected ||
             package.State == PackageState.RARejected)
         {
             return CreateAdaptiveCardResponse($"This FAP has already been {package.State}. No action taken.");
         }
 
         // Validate state allows approval
-        if (package.State != PackageState.PendingASM)
+        if (package.State != PackageState.PendingCH)
         {
             return CreateAdaptiveCardResponse(
                 $"This FAP is in state '{package.State}' and cannot be actioned from Teams right now.");
@@ -1852,7 +1852,7 @@ public class TeamsBotService : TeamsActivityHandler
             }
             else if (action == "reject")
             {
-                package.State = PackageState.ASMRejected;
+                package.State = PackageState.CHRejected;
                 package.UpdatedAt = now;
             }
 
