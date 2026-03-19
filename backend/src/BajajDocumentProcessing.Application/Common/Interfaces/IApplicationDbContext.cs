@@ -47,6 +47,10 @@ public interface IApplicationDbContext
     DbSet<StateMapping> StateMappings { get; }
     DbSet<SubmissionSequence> SubmissionSequences { get; }
 
+    // Dealer and state/city master data
+    DbSet<Dealer> Dealers { get; }
+    DbSet<StateCity> StateCities { get; }
+
     // Reference data
     DbSet<StateGstMaster> StateGstMasters { get; }
     DbSet<HsnMaster> HsnMasters { get; }
@@ -56,6 +60,9 @@ public interface IApplicationDbContext
     // Audit logs
     DbSet<PoBalanceLog> POBalanceLogs { get; }
     DbSet<POSyncLog> POSyncLogs { get; }
+
+    // Email delivery audit
+    DbSet<EmailDeliveryLog> EmailDeliveryLogs { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

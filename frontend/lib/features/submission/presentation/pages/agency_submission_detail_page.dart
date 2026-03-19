@@ -1,3 +1,4 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
@@ -37,9 +38,8 @@ class AgencySubmissionDetailPage extends StatefulWidget {
       _AgencySubmissionDetailPageState();
 }
 
-class _AgencySubmissionDetailPageState
-    extends State<AgencySubmissionDetailPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage> {
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
 
   bool _isLoading = true;
   Map<String, dynamic>? _submission;

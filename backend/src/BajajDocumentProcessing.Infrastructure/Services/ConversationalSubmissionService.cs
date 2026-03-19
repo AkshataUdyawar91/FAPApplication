@@ -1029,7 +1029,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
         // else: no CIRCLE HEAD found — leave null for manual assignment
 
         // Transition to Submitted
-        package.State = PackageState.Uploaded; // Draft -> Uploaded (Submitted)
+        package.State = PackageState.PendingASM;
         package.CurrentStep = (int)ConversationStep.Submitted;
         package.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);

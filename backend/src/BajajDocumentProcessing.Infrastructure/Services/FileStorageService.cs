@@ -78,7 +78,9 @@ public class FileStorageService : IFileStorageService
                 return true;
             }
 
-            var blobClient = new BlobClient(new Uri(blobUrl));
+            var uri = new BlobUriBuilder(new Uri(blobUrl));
+            var containerClient = _blobServiceClient.GetBlobContainerClient(uri.BlobContainerName);
+            var blobClient = containerClient.GetBlobClient(uri.BlobName);
             var result = await blobClient.DeleteIfExistsAsync();
             
             _logger.LogInformation("File deleted: {BlobUrl}", blobUrl);
@@ -152,10 +154,59 @@ public class FileStorageService : IFileStorageService
         return localUrl;
     }
     
+    /// <summary>
+    /// Checks whether the given URL points to a valid, retrievable blob.
+    /// Returns false for seed/placeholder URLs and blobs that don't exist in storage.
+    /// </summary>
+    public async Task<bool> IsBlobAccessibleAsync(string blobUrl)
+    {
+        if (string.IsNullOrWhiteSpace(blobUrl))
+            return false;
+
+        // Seed/placeholder URLs are never accessible
+        if (IsSeedUrl(blobUrl))
+        {
+            _logger.LogWarning("Skipping seed/placeholder URL: {BlobUrl}", blobUrl);
+            return false;
+        }
+
+        if (blobUrl.StartsWith("file:///"))
+        {
+            var filePath = blobUrl.Replace("file:///", "").Replace("/", "\\");
+            return File.Exists(filePath);
+        }
+
+        if (_blobServiceClient == null)
+            return true; // Assume accessible in dev without storage configured
+
+        try
+        {
+            var uri = new Uri(blobUrl);
+            var pathParts = uri.AbsolutePath.TrimStart('/').Split('/', 2);
+            if (pathParts.Length < 2)
+                return false;
+
+            var containerClient = _blobServiceClient.GetBlobContainerClient(Uri.UnescapeDataString(pathParts[0]));
+            var blobClient = containerClient.GetBlobClient(Uri.UnescapeDataString(pathParts[1]));
+            return await blobClient.ExistsAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Blob accessibility check failed for: {BlobUrl}", blobUrl);
+            return false;
+        }
+    }
+
     public async Task<byte[]> GetFileBytesAsync(string blobUrl)
     {
         try
         {
+            if (IsSeedUrl(blobUrl))
+            {
+                _logger.LogWarning("Cannot retrieve file bytes for seed/placeholder URL: {BlobUrl}", blobUrl);
+                throw new InvalidOperationException($"Seed/placeholder URL cannot be downloaded: {blobUrl}");
+            }
+
             if (blobUrl.StartsWith("file:///"))
             {
                 // Local file
@@ -178,8 +229,8 @@ public class FileStorageService : IFileStorageService
                     throw new InvalidOperationException($"Invalid blob URL format: {blobUrl}");
                 }
                 
-                var containerName = pathParts[0];
-                var blobName = pathParts[1];
+                var containerName = Uri.UnescapeDataString(pathParts[0]);
+                var blobName = Uri.UnescapeDataString(pathParts[1]);
                 
                 _logger.LogInformation("Downloading blob: Container={Container}, Blob={Blob}", containerName, blobName);
                 
@@ -205,10 +256,37 @@ public class FileStorageService : IFileStorageService
         }
     }
     
+    /// <summary>
+    /// Returns true if the URL is a seed/placeholder that doesn't point to real storage.
+    /// </summary>
+    private static bool IsSeedUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return false;
+
+        // seed:// prefix used by ApplicationDbContextSeed for placeholder data
+        if (url.StartsWith("seed://", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Catch other non-http(s) schemes that aren't file:// (e.g., test://, mock://)
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
+            !url.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
+    }
+
     public async Task<string> GetPublicUrlWithSasAsync(string blobUrl, TimeSpan validity)
     {
         try
         {
+            if (IsSeedUrl(blobUrl))
+            {
+                _logger.LogWarning("Cannot generate SAS URL for seed/placeholder URL: {BlobUrl}", blobUrl);
+                throw new InvalidOperationException($"Seed/placeholder URL cannot generate SAS: {blobUrl}");
+            }
+
             if (blobUrl.StartsWith("file:///"))
             {
                 // For local files, return the file URL as-is (development only)
@@ -230,8 +308,8 @@ public class FileStorageService : IFileStorageService
                 throw new InvalidOperationException($"Invalid blob URL format: {blobUrl}");
             }
             
-            var containerName = pathParts[0];
-            var blobName = pathParts[1];
+            var containerName = Uri.UnescapeDataString(pathParts[0]);
+            var blobName = Uri.UnescapeDataString(pathParts[1]);
             
             var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
             var blobClient = containerClient.GetBlobClient(blobName);
