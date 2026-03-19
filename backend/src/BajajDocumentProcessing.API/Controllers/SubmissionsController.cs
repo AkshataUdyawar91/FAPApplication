@@ -612,23 +612,8 @@ public class SubmissionsController : ControllerBase
                     ValidatedAt = vr.UpdatedAt ?? vr.CreatedAt
                 };
 
-                // Parse ValidationDetailsJson to extract field presence and cross-document results
-                if (!string.IsNullOrEmpty(vr.ValidationDetailsJson))
-                {
-                    try
-                    {
-                        var json = JsonSerializer.Deserialize<JsonElement>(vr.ValidationDetailsJson);
-                        docDto.FieldPresence = ExtractFieldPresence(json, vr.DocumentType);
-                        docDto.CrossDocument = ExtractCrossDocument(json, vr.DocumentType);
-
-                        // Build flat check list for this document
-                        BuildChecksForDocument(response.Checks, json, vr.DocumentType, docTypeStr, fileName);
-                    }
-                    catch (JsonException ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to parse ValidationDetailsJson for {DocumentType} {DocumentId}", docTypeStr, vr.DocumentId);
-                    }
-                }
+                // Note: ValidationDetailsJson was removed. FieldPresence and CrossDocument
+                // details are no longer stored as JSON. FailureReason contains the summary.
 
                 response.Documents.Add(docDto);
             }
@@ -2353,6 +2338,71 @@ public class SubmissionsController : ControllerBase
             CheckName = checkName, Passed = isPass,
             Description = desc
         });
+    }
+
+    /// <summary>
+    /// Checks whether a named section exists in a JsonElement object.
+    /// </summary>
+    private static bool SafeSectionExists(JsonElement json, string sectionName)
+    {
+        return json.ValueKind == JsonValueKind.Object && json.TryGetProperty(sectionName, out _);
+    }
+
+    /// <summary>
+    /// Safely retrieves a named section from a JsonElement object.
+    /// Returns a default (Undefined) JsonElement if the section does not exist.
+    /// </summary>
+    private static JsonElement SafeGetSection(JsonElement json, string sectionName)
+    {
+        if (json.ValueKind == JsonValueKind.Object && json.TryGetProperty(sectionName, out var section))
+            return section;
+        return default;
+    }
+
+    /// <summary>
+    /// Safely retrieves a boolean property from a JsonElement.
+    /// Returns null if the property does not exist or is not a boolean.
+    /// </summary>
+    private static bool? SafeGetBoolProp(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(propertyName, out var prop))
+        {
+            if (prop.ValueKind == JsonValueKind.True) return true;
+            if (prop.ValueKind == JsonValueKind.False) return false;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Safely retrieves a string list from a nested array property within a named section.
+    /// Returns an empty list if the section or property does not exist.
+    /// </summary>
+    private static List<string> SafeGetStringList(JsonElement json, string sectionName, string arrayPropertyName)
+    {
+        var result = new List<string>();
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(sectionName, out var section))
+            return result;
+        if (section.ValueKind != JsonValueKind.Object || !section.TryGetProperty(arrayPropertyName, out var array))
+            return result;
+        if (array.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var item in array.EnumerateArray())
+        {
+            var str = item.GetString();
+            if (!string.IsNullOrEmpty(str))
+                result.Add(str);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Finds the first issue string that contains the given keyword (case-insensitive).
+    /// Returns null if no matching issue is found.
+    /// </summary>
+    private static string? FindIssue(List<string> issues, string keyword)
+    {
+        return issues.FirstOrDefault(i => i.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     }
 }
 
