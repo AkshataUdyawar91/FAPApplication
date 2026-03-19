@@ -757,6 +757,73 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.ToTable("DocumentPackages", (string)null);
                 });
 
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.EmailDeliveryLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AttemptsCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("MessageId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("PackageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RecipientEmail")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("TemplateName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PackageId")
+                        .HasDatabaseName("IX_EmailDeliveryLogs_PackageId");
+
+                    b.HasIndex("TemplateName")
+                        .HasDatabaseName("IX_EmailDeliveryLogs_TemplateName");
+
+                    b.ToTable("EmailDeliveryLogs", (string)null);
+                });
+
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.EnquiryDocument", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1626,6 +1693,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
 
+                    b.Property<bool?>("BlueTshirtPresent")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Caption")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
@@ -1640,6 +1710,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.Property<string>("CreatedBy")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool?>("DateVisible")
+                        .HasColumnType("bit");
 
                     b.Property<string>("DeviceModel")
                         .HasMaxLength(200)
@@ -1682,11 +1755,18 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<Guid>("PackageId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("PhotoDateOverlay")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<DateTime?>("PhotoTimestamp")
                         .HasColumnType("datetime2");
 
                     b.Property<Guid>("TeamId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool?>("ThreeWheelerPresent")
+                        .HasColumnType("bit");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -1759,6 +1839,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<string>("TeamCode")
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
+
+                    b.Property<int?>("TeamNumber")
+                        .HasColumnType("int");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
