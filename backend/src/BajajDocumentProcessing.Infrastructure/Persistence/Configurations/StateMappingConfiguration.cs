@@ -6,7 +6,8 @@ namespace BajajDocumentProcessing.Infrastructure.Persistence.Configurations;
 
 /// <summary>
 /// Entity Framework Core configuration for the StateMapping entity.
-/// Maps Indian states/UTs to dealers, Circle Head users, and RA users.
+/// Maps Indian states/UTs to Circle Head and RA users for approval routing.
+/// Dealer data has been moved to the Dealers table.
 /// </summary>
 public class StateMappingConfiguration : IEntityTypeConfiguration<StateMapping>
 {
@@ -18,17 +19,6 @@ public class StateMappingConfiguration : IEntityTypeConfiguration<StateMapping>
 
         builder.Property(s => s.State)
             .IsRequired()
-            .HasMaxLength(100);
-
-        builder.Property(s => s.DealerCode)
-            .IsRequired()
-            .HasMaxLength(50);
-
-        builder.Property(s => s.DealerName)
-            .IsRequired()
-            .HasMaxLength(200);
-
-        builder.Property(s => s.City)
             .HasMaxLength(100);
 
         builder.Property(s => s.CircleHeadUserId);
@@ -43,22 +33,16 @@ public class StateMappingConfiguration : IEntityTypeConfiguration<StateMapping>
             .IsRequired()
             .HasDefaultValue(false);
 
-        // Global query filter for soft delete
         builder.HasQueryFilter(s => !s.IsDeleted);
 
-        // Indexes
-        // Each state has exactly one active mapping — enforce uniqueness
+        // One active mapping per state
         builder.HasIndex(s => s.State)
             .IsUnique()
             .HasDatabaseName("IX_StateMappings_State");
 
-        builder.HasIndex(s => s.DealerCode)
-            .HasDatabaseName("IX_StateMappings_DealerCode");
-
         builder.HasIndex(s => new { s.State, s.IsActive })
             .HasDatabaseName("IX_StateMappings_State_IsActive");
 
-        // Each ASM is assigned to exactly one state — enforce 1:1 uniqueness
         builder.HasIndex(s => s.CircleHeadUserId)
             .IsUnique()
             .HasFilter("[CircleHeadUserId] IS NOT NULL")

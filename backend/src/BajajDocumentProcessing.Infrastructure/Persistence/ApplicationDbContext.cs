@@ -63,6 +63,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<HsnMaster> HsnMasters => Set<HsnMaster>();
     public DbSet<CostMaster> CostMasters => Set<CostMaster>();
     public DbSet<CostMasterStateRate> CostMasterStateRates => Set<CostMasterStateRate>();
+    public DbSet<Dealer> Dealers => Set<Dealer>();
+    public DbSet<StateCity> StateCities => Set<StateCity>();
 
     // Audit logs
     public DbSet<PoBalanceLog> POBalanceLogs => Set<PoBalanceLog>();
@@ -105,6 +107,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<HsnMaster>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CostMaster>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CostMasterStateRate>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Dealer>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<StateCity>().HasQueryFilter(e => !e.IsDeleted);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

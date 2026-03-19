@@ -52,6 +52,8 @@ public interface IApplicationDbContext
     DbSet<HsnMaster> HsnMasters { get; }
     DbSet<CostMaster> CostMasters { get; }
     DbSet<CostMasterStateRate> CostMasterStateRates { get; }
+    DbSet<Dealer> Dealers { get; }
+    DbSet<StateCity> StateCities { get; }
 
     // Audit logs
     DbSet<PoBalanceLog> POBalanceLogs { get; }

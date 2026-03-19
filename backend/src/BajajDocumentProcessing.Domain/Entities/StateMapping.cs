@@ -3,8 +3,9 @@ using BajajDocumentProcessing.Domain.Common;
 namespace BajajDocumentProcessing.Domain.Entities;
 
 /// <summary>
-/// Maps Indian states/UTs to dealers and CIRCLE HEAD users.
-/// Used for dealer typeahead in conversational submission and CIRCLE HEAD auto-assignment at submit time.
+/// Maps Indian states/UTs to CIRCLE HEAD and RA users for approval routing.
+/// Used for CIRCLE HEAD auto-assignment at submit time.
+/// Dealer data has been moved to the Dealers table.
 /// Supports soft-delete via BaseEntity.IsDeleted.
 /// </summary>
 public class StateMapping : BaseEntity
@@ -13,21 +14,6 @@ public class StateMapping : BaseEntity
     /// Indian state or union territory name (e.g., Maharashtra, Gujarat).
     /// </summary>
     public string State { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Dealer code for the dealer in this state.
-    /// </summary>
-    public string DealerCode { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Dealer name for display in typeahead results.
-    /// </summary>
-    public string DealerName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// City where the dealer is located.
-    /// </summary>
-    public string? City { get; set; }
 
     /// <summary>
     /// CIRCLE HEAD user assigned to this state for submission review.
