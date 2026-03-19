@@ -2061,50 +2061,42 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           validationDetails['fieldPresence'] as Map<String, dynamic>;
       final missingFields =
           fieldPresence['missingFields'] as List<dynamic>? ?? [];
+      final totalRecords = fieldPresence['totalRecords'];
 
-      if (documentType == 'Enquiry Dump') {
-        // For enquiry, show record-level presence
-        final totalRecords = fieldPresence['totalRecords'] ?? 0;
-        if (totalRecords > 0) {
-          final fieldChecks = {
-            'State': fieldPresence['recordsWithState'] ?? 0,
-            'Date': fieldPresence['recordsWithDate'] ?? 0,
-            'Dealer Code': fieldPresence['recordsWithDealerCode'] ?? 0,
-            'Dealer Name': fieldPresence['recordsWithDealerName'] ?? 0,
-            'District': fieldPresence['recordsWithDistrict'] ?? 0,
-            'Pincode': fieldPresence['recordsWithPincode'] ?? 0,
-            'Customer Name': fieldPresence['recordsWithCustomerName'] ?? 0,
-            'Customer Number': fieldPresence['recordsWithCustomerNumber'] ?? 0,
-            'Test Ride': fieldPresence['recordsWithTestRide'] ?? 0,
-          };
+      if (documentType == 'Enquiry Dump' && totalRecords != null) {
+        // For enquiry, show ALL record-level presence checks
+        final fieldChecks = {
+          'State': fieldPresence['recordsWithState'] ?? 0,
+          'Date': fieldPresence['recordsWithDate'] ?? 0,
+          'Dealer Code': fieldPresence['recordsWithDealerCode'] ?? 0,
+          'Dealer Name': fieldPresence['recordsWithDealerName'] ?? 0,
+          'District': fieldPresence['recordsWithDistrict'] ?? 0,
+          'Pincode': fieldPresence['recordsWithPincode'] ?? 0,
+          'Customer Name': fieldPresence['recordsWithCustomerName'] ?? 0,
+          'Customer Number': fieldPresence['recordsWithCustomerNumber'] ?? 0,
+          'Test Ride': fieldPresence['recordsWithTestRide'] ?? 0,
+        };
 
-          fieldChecks.forEach((field, count) {
-            final passed = count == totalRecords;
-            rows.add({
-              'field': field,
-              'passed': passed,
-              'value': passed
-                  ? 'Present in all $totalRecords records'
-                  : 'Present in $count/$totalRecords records',
-            });
+        fieldChecks.forEach((field, count) {
+          final passed = count == totalRecords;
+          rows.add({
+            'field': field,
+            'passed': passed,
+            'value': 'Present in $count/$totalRecords records',
+            'message': null,
           });
-        }
+        });
       } else {
-        // For other documents, show missing fields
+        // For other documents (Invoice, Cost Summary, Activity), show missing fields
         if (missingFields.isNotEmpty) {
           for (var field in missingFields) {
             rows.add({
               'field': field.toString(),
               'passed': false,
-              'message': 'Missing',
+              'value': null,
+              'message': 'Field is missing',
             });
           }
-        } else {
-          rows.add({
-            'field': 'All required fields',
-            'passed': true,
-            'value': 'Present',
-          });
         }
       }
     }
@@ -2115,30 +2107,56 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           validationDetails['crossDocument'] as Map<String, dynamic>;
       final issues = crossDoc['issues'] as List<dynamic>? ?? [];
 
+      // Add specific validation checks
       final checkLabels = {
-        'totalCostValid': 'Total Cost Match',
-        'elementCostsValid': 'Element Costs Match',
-        'fixedCostsValid': 'Fixed Costs Match',
-        'variableCostsValid': 'Variable Costs Match',
+        'totalCostValid': 'Total Cost Validation',
+        'elementCostsValid': 'Element Costs Validation',
+        'fixedCostsValid': 'Fixed Costs Validation',
+        'variableCostsValid': 'Variable Costs Validation',
         'numberOfDaysMatches': 'Number of Days Match',
       };
 
       checkLabels.forEach((key, label) {
         if (crossDoc.containsKey(key)) {
           final passed = crossDoc[key] == true;
-          final issue = issues.firstWhere(
-            (i) => i.toString().toLowerCase().contains(key.toLowerCase()),
-            orElse: () => null,
-          );
-
           rows.add({
             'field': label,
             'passed': passed,
-            'value': passed ? 'Valid' : null,
-            'message': !passed && issue != null ? issue.toString() : null,
+            'value': passed
+                ? (key == 'totalCostValid'
+                    ? 'Total cost matches invoice'
+                    : key == 'elementCostsValid'
+                        ? 'Element costs are valid'
+                        : key == 'fixedCostsValid'
+                            ? 'Fixed costs are valid'
+                            : key == 'variableCostsValid'
+                                ? 'Variable costs are valid'
+                                : 'Number of days matches between documents')
+                : null,
+            'message': !passed
+                ? (key == 'totalCostValid'
+                    ? 'Total cost does not match invoice'
+                    : key == 'elementCostsValid'
+                        ? 'Element costs are invalid'
+                        : key == 'fixedCostsValid'
+                            ? 'Fixed costs are invalid'
+                            : key == 'variableCostsValid'
+                                ? 'Variable costs are invalid'
+                                : 'Number of days mismatch between documents')
+                : null,
           });
         }
       });
+
+      // Add issues as separate rows
+      for (var issue in issues) {
+        rows.add({
+          'field': 'Cross-document Issue',
+          'passed': false,
+          'value': null,
+          'message': issue.toString(),
+        });
+      }
     }
 
     if (rows.isEmpty) {
@@ -2265,7 +2283,11 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                         Text(
                           value.toString(),
                           style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textPrimary,
+                            color: passed
+                                ? const Color(0xFF16A34A)
+                                : AppColors.textPrimary,
+                            fontStyle:
+                                passed ? FontStyle.normal : FontStyle.italic,
                           ),
                         ),
                       if (message != null)
