@@ -3,6 +3,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/theme/app_colors.dart';
 
+/// Extraction status for UI feedback
+enum ExtractionStatus { none, extracting, success, failed }
+
 /// Data class for an invoice (child of campaign)
 class InvoiceItemData {
   final String id;
@@ -12,7 +15,15 @@ class InvoiceItemData {
   String totalAmount;
   String gstNumber;
   bool isExtracting;
+  ExtractionStatus extractionStatus;
+  String? extractionError;
   String? existingFileName;
+
+  // Controllers so programmatic updates (extraction) reflect in the UI
+  late final TextEditingController invoiceNumberController;
+  late final TextEditingController invoiceDateController;
+  late final TextEditingController totalAmountController;
+  late final TextEditingController gstNumberController;
 
   InvoiceItemData({
     required this.id,
@@ -22,8 +33,23 @@ class InvoiceItemData {
     this.totalAmount = '',
     this.gstNumber = '',
     this.isExtracting = false,
+    this.extractionStatus = ExtractionStatus.none,
+    this.extractionError,
     this.existingFileName,
-  });
+  }) {
+    invoiceNumberController = TextEditingController(text: invoiceNumber);
+    invoiceDateController = TextEditingController(text: invoiceDate);
+    totalAmountController = TextEditingController(text: totalAmount);
+    gstNumberController = TextEditingController(text: gstNumber);
+  }
+
+  /// Dispose controllers when this invoice is removed
+  void dispose() {
+    invoiceNumberController.dispose();
+    invoiceDateController.dispose();
+    totalAmountController.dispose();
+    gstNumberController.dispose();
+  }
 }
 
 /// Data class for a team/campaign
@@ -109,6 +135,12 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     _campaigns = widget.campaigns.isEmpty
         ? [CampaignItemData(id: 'campaign_1')]
         : widget.campaigns;
+    // Sync the default team back to the parent so validation sees it
+    if (widget.campaigns.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        widget.onCampaignsChanged(_campaigns);
+      });
+    }
   }
 
   @override

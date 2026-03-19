@@ -1,3 +1,5 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
@@ -29,7 +31,7 @@ class ChatSidePanel extends StatefulWidget {
 }
 
 class _ChatSidePanelState extends State<ChatSidePanel> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
   final _chatController = TextEditingController();
   final List<Map<String, dynamic>> _chatMessages = [];
   bool _isSendingMessage = false;

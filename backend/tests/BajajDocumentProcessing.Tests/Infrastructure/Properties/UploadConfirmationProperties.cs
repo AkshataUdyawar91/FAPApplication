@@ -34,6 +34,26 @@ public class UploadConfirmationProperties
     {
         var fileMock = new Mock<IFormFile>();
         var content = new byte[fileSize];
+        
+        // Add magic bytes based on file extension
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+        if (content.Length >= 4)
+        {
+            if (ext == ".pdf")
+            {
+                content[0] = 0x25; content[1] = 0x50; content[2] = 0x44; content[3] = 0x46; // %PDF
+            }
+            else if (ext == ".jpg" || ext == ".jpeg")
+            {
+                content[0] = 0xFF; content[1] = 0xD8; content[2] = 0xFF; content[3] = 0xE0; // JFIF
+            }
+            else if (ext == ".png" && content.Length >= 8)
+            {
+                content[0] = 0x89; content[1] = 0x50; content[2] = 0x4E; content[3] = 0x47;
+                content[4] = 0x0D; content[5] = 0x0A; content[6] = 0x1A; content[7] = 0x0A;
+            }
+        }
+        
         var ms = new MemoryStream(content);
         
         fileMock.Setup(f => f.FileName).Returns(fileName);

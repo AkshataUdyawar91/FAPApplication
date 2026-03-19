@@ -1,3 +1,4 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
@@ -45,7 +46,7 @@ class _HQReviewDetailPageState extends State<HQReviewDetailPage> {
       'Pragma': 'no-cache',
       'Expires': '0',
     },
-  ),);
+  ),)..interceptors.add(PrettyDioLogger());
   final _commentsController = TextEditingController();
 
   bool _isLoading = true;

@@ -1,3 +1,4 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -24,7 +25,7 @@ import '../../../../core/widgets/nav_item.dart';class AgencyDashboardPage extend
 }
 
 class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
   final _searchController = TextEditingController();
 
   String _statusFilter = 'all';

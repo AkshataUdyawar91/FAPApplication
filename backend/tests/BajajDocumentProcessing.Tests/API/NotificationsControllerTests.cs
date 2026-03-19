@@ -143,6 +143,20 @@ public class NotificationsControllerTests
     {
         // Arrange
         var notificationId = Guid.NewGuid();
+        
+        _mockNotificationAgent
+            .Setup(x => x.GetNotificationByIdAsync(notificationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Notification
+            {
+                Id = notificationId,
+                UserId = _testUserId,
+                Type = NotificationType.SubmissionReceived,
+                Title = "Test",
+                Message = "Test notification",
+                IsRead = false,
+                CreatedAt = DateTime.UtcNow
+            });
+        
         _mockNotificationAgent
             .Setup(x => x.MarkAsReadAsync(notificationId, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -163,8 +177,8 @@ public class NotificationsControllerTests
         // Arrange
         var notificationId = Guid.NewGuid();
         _mockNotificationAgent
-            .Setup(x => x.MarkAsReadAsync(notificationId, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Notification not found"));
+            .Setup(x => x.GetNotificationByIdAsync(notificationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Notification?)null);
 
         // Act
         var result = await _controller.MarkAsRead(notificationId);

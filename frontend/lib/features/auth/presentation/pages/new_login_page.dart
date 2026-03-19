@@ -1,3 +1,4 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 
@@ -10,7 +11,7 @@ class NewLoginPage extends StatefulWidget {
 class _NewLoginPageState extends State<NewLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
   bool _isLoading = false;
   String? _errorMessage;
   bool _obscurePassword = true;

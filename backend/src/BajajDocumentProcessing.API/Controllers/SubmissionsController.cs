@@ -101,6 +101,47 @@ public class SubmissionsController : ControllerBase
             _context.DocumentPackages.Add(package);
             await _context.SaveChangesAsync(cancellationToken);
 
+            // If a PO was selected, clone it into a new PO record linked to this package
+            if (request.SelectedPoId.HasValue)
+            {
+                var sourcePo = await _context.POs
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(po => po.Id == request.SelectedPoId.Value, cancellationToken);
+
+                if (sourcePo != null)
+                {
+                    var newPo = new Domain.Entities.PO
+                    {
+                        Id = Guid.NewGuid(),
+                        PackageId = package.Id,
+                        AgencyId = user.AgencyId.Value,
+                        PONumber = sourcePo.PONumber,
+                        PODate = sourcePo.PODate,
+                        VendorName = sourcePo.VendorName,
+                        VendorCode = sourcePo.VendorCode,
+                        TotalAmount = sourcePo.TotalAmount,
+                        RemainingBalance = sourcePo.RemainingBalance,
+                        POStatus = sourcePo.POStatus,
+                        FileName = sourcePo.FileName,
+                        BlobUrl = sourcePo.BlobUrl,
+                        FileSizeBytes = sourcePo.FileSizeBytes,
+                        ContentType = sourcePo.ContentType,
+                        ExtractedDataJson = sourcePo.ExtractedDataJson,
+                        ExtractionConfidence = sourcePo.ExtractionConfidence,
+                        RefreshedAt = sourcePo.RefreshedAt,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    _context.POs.Add(newPo);
+                    await _context.SaveChangesAsync(cancellationToken);
+                    _logger.LogInformation("PO {POId} cloned from {SourcePOId} for package {PackageId}", newPo.Id, sourcePo.Id, package.Id);
+                }
+                else
+                {
+                    _logger.LogWarning("Selected PO {SelectedPOId} not found — package created without PO", request.SelectedPoId);
+                }
+            }
+
             // Queue workflow for background processing (non-blocking)
             await _backgroundQueue.QueueWorkflowAsync(package.Id);
             
@@ -286,7 +327,6 @@ public class SubmissionsController : ControllerBase
             var query = _context.DocumentPackages
                 .Include(p => p.PO)
                 .Include(p => p.Invoices)
-                .Include(p => p.ValidationResult)
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
                 .Include(p => p.SubmittedBy)
@@ -310,6 +350,11 @@ public class SubmissionsController : ControllerBase
             {
                 return NotFound(new { error = "Submission not found" });
             }
+
+            // Load ValidationResult separately — it uses polymorphic DocumentType+DocumentId, not a direct FK
+            var validationResult = await _context.ValidationResults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(v => v.DocumentId == package.Id, cancellationToken);
 
             // Get approval history for review fields
             var asmApproval = package.RequestApprovalHistory
@@ -357,10 +402,10 @@ public class SubmissionsController : ControllerBase
                         Caption = p2.Caption
                     }).ToList()
                 }).ToList(),
-                ValidationResult = package.ValidationResult != null ? new ValidationResultDto
+                ValidationResult = validationResult != null ? new ValidationResultDto
                 {
-                    AllValidationsPassed = package.ValidationResult.AllValidationsPassed,
-                    FailureReason = package.ValidationResult.FailureReason
+                    AllValidationsPassed = validationResult.AllValidationsPassed,
+                    FailureReason = validationResult.FailureReason
                 } : null,
                 ConfidenceScore = package.ConfidenceScore != null ? new ConfidenceScoreDto
                 {
@@ -433,6 +478,131 @@ public class SubmissionsController : ControllerBase
         {
             _logger.LogError(ex, "Error generating validation report for package {PackageId}", id);
             return StatusCode(500, new { error = "An error occurred while generating the validation report" });
+        }
+    }
+
+    /// <summary>
+    /// Get per-document validation results for a submission.
+    /// Returns field-presence and cross-document checks for Invoice, Cost Summary, Activity Summary, etc.
+    /// Data is read from the ValidationResults table (populated by the workflow pipeline).
+    /// </summary>
+    /// <param name="id">Submission package ID</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Structured validation results per document type with individual check details</returns>
+    /// <response code="200">Returns validation results</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="404">Not found - submission does not exist or has no validation results</response>
+    /// <response code="500">Internal server error</response>
+    [HttpGet("{id}/validations")]
+    [ProducesResponseType(typeof(SubmissionValidationsResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetValidations(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+                return Unauthorized(new { error = "User ID not found in token" });
+
+            var userId = Guid.Parse(userIdClaim);
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+
+            // Load package with document navigations to get document IDs
+            var package = await _context.DocumentPackages
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
+                .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
+                .Include(p => p.EnquiryDocument)
+                .Include(p => p.Teams).ThenInclude(c => c.Photos)
+                .AsSplitQuery()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+                return NotFound(new { error = "Submission not found" });
+
+            // Agency users can only see their own submissions
+            if (userRole == "Agency" && package.SubmittedByUserId != userId)
+                return NotFound(new { error = "Submission not found" });
+
+            // Collect all document IDs that could have validation results
+            var documentIds = new List<Guid>();
+            if (package.PO != null) documentIds.Add(package.PO.Id);
+            foreach (var inv in package.Invoices.Where(i => !i.IsDeleted))
+                documentIds.Add(inv.Id);
+            if (package.CostSummary != null) documentIds.Add(package.CostSummary.Id);
+            if (package.ActivitySummary != null) documentIds.Add(package.ActivitySummary.Id);
+            if (package.EnquiryDocument != null) documentIds.Add(package.EnquiryDocument.Id);
+            // TeamPhoto uses package.Id as DocumentId
+            documentIds.Add(package.Id);
+
+            // Query all validation results for these document IDs
+            var validationResults = await _context.ValidationResults
+                .Where(vr => documentIds.Contains(vr.DocumentId))
+                .AsNoTracking()
+                .ToListAsync(cancellationToken);
+
+            if (!validationResults.Any())
+                return NotFound(new { error = "No validation results found. The submission may not have been processed yet." });
+
+            // Build filename lookup
+            var fileNames = new Dictionary<string, string>();
+            if (package.PO != null) fileNames["PO"] = package.PO.FileName ?? "PO document";
+            if (package.Invoices.Any(i => !i.IsDeleted)) fileNames["Invoice"] = package.Invoices.First(i => !i.IsDeleted).FileName ?? "Invoice document";
+            if (package.CostSummary != null) fileNames["CostSummary"] = package.CostSummary.FileName ?? "Cost Summary document";
+            if (package.ActivitySummary != null) fileNames["ActivitySummary"] = package.ActivitySummary.FileName ?? "Activity Summary document";
+            if (package.EnquiryDocument != null) fileNames["EnquiryDocument"] = package.EnquiryDocument.FileName ?? "Enquiry Dump document";
+
+            var response = new SubmissionValidationsResponse
+            {
+                PackageId = id,
+                AllPassed = validationResults.All(vr => vr.AllValidationsPassed)
+            };
+
+            foreach (var vr in validationResults)
+            {
+                var docTypeStr = vr.DocumentType.ToString();
+                var fileName = fileNames.GetValueOrDefault(docTypeStr);
+
+                var docDto = new DocumentValidationDto
+                {
+                    DocumentType = docTypeStr,
+                    DocumentId = vr.DocumentId,
+                    FileName = fileName,
+                    AllPassed = vr.AllValidationsPassed,
+                    FailureReason = vr.FailureReason,
+                    ValidatedAt = vr.UpdatedAt ?? vr.CreatedAt
+                };
+
+                // Parse ValidationDetailsJson to extract field presence and cross-document results
+                if (!string.IsNullOrEmpty(vr.ValidationDetailsJson))
+                {
+                    try
+                    {
+                        var json = JsonSerializer.Deserialize<JsonElement>(vr.ValidationDetailsJson);
+                        docDto.FieldPresence = ExtractFieldPresence(json, vr.DocumentType);
+                        docDto.CrossDocument = ExtractCrossDocument(json, vr.DocumentType);
+
+                        // Build flat check list for this document
+                        BuildChecksForDocument(response.Checks, json, vr.DocumentType, docTypeStr, fileName);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse ValidationDetailsJson for {DocumentType} {DocumentId}", docTypeStr, vr.DocumentId);
+                    }
+                }
+
+                response.Documents.Add(docDto);
+            }
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting validations for submission {Id}", id);
+            return StatusCode(500, new { error = "An error occurred while retrieving validation results" });
         }
     }
 
@@ -1977,6 +2147,314 @@ public class SubmissionsController : ControllerBase
         }
 
         return docs;
+    }
+
+    /// <summary>
+    /// Extracts field presence validation from parsed ValidationDetailsJson
+    /// </summary>
+    private static FieldPresenceDto? ExtractFieldPresence(JsonElement json, DocumentType docType)
+    {
+        var sectionName = docType switch
+        {
+            DocumentType.Invoice => "InvoiceFieldPresence",
+            DocumentType.CostSummary => "CostSummaryFieldPresence",
+            DocumentType.ActivitySummary => "ActivityFieldPresence",
+            DocumentType.TeamPhoto => "PhotoFieldPresence",
+            DocumentType.EnquiryDocument => "EnquiryDumpFieldPresence",
+            _ => null
+        };
+
+        if (sectionName == null || !SafeSectionExists(json, sectionName))
+            return null;
+
+        var missingFields = SafeGetStringList(json, sectionName, "MissingFields");
+        return new FieldPresenceDto
+        {
+            AllFieldsPresent = missingFields.Count == 0,
+            MissingFields = missingFields
+        };
+    }
+
+    /// <summary>
+    /// Extracts cross-document validation from parsed ValidationDetailsJson
+    /// </summary>
+    private static CrossDocumentDto? ExtractCrossDocument(JsonElement json, DocumentType docType)
+    {
+        string? sectionName;
+        string[]? boolProps;
+
+        switch (docType)
+        {
+            case DocumentType.PO:
+                // PO has SAPVerification + DateValidation
+                var hasSap = SafeSectionExists(json, "SAPVerification");
+                var hasDate = SafeSectionExists(json, "DateValidation");
+                if (!hasSap && !hasDate) return null;
+
+                var poDto = new CrossDocumentDto { AllChecksPass = true };
+                if (hasSap)
+                {
+                    var sapVerified = SafeGetBoolProp(SafeGetSection(json, "SAPVerification"), "IsVerified");
+                    var sapFailed = SafeGetBoolProp(SafeGetSection(json, "SAPVerification"), "SAPConnectionFailed");
+                    var sapPass = sapVerified == true || sapFailed == true;
+                    poDto.CheckResults["SAPVerified"] = sapPass;
+                    if (!sapPass)
+                    {
+                        poDto.AllChecksPass = false;
+                        var discrepancies = SafeGetStringList(json, "SAPVerification", "Discrepancies");
+                        poDto.Issues.AddRange(discrepancies);
+                    }
+                }
+                if (hasDate)
+                {
+                    var dateValid = SafeGetBoolProp(SafeGetSection(json, "DateValidation"), "IsValid");
+                    poDto.CheckResults["DateValid"] = dateValid == true;
+                    if (dateValid == false)
+                    {
+                        poDto.AllChecksPass = false;
+                        var dateIssues = SafeGetStringList(json, "DateValidation", "DateIssues");
+                        poDto.Issues.AddRange(dateIssues);
+                    }
+                }
+                return poDto;
+
+            case DocumentType.Invoice:
+                sectionName = "InvoiceCrossDocument";
+                boolProps = new[] { "AgencyCodeMatches", "PONumberMatches", "GSTStateMatches", "HSNSACCodeValid", "InvoiceAmountValid", "GSTPercentageValid" };
+                break;
+
+            case DocumentType.CostSummary:
+                sectionName = "CostSummaryCrossDocument";
+                boolProps = new[] { "TotalCostValid", "ElementCostsValid", "FixedCostsValid", "VariableCostsValid" };
+                break;
+
+            case DocumentType.ActivitySummary:
+                sectionName = "ActivityCrossDocument";
+                boolProps = new[] { "NumberOfDaysMatches" };
+                break;
+
+            case DocumentType.TeamPhoto:
+                sectionName = "PhotoCrossDocument";
+                boolProps = new[] { "PhotoCountMatchesManDays", "ManDaysWithinCostSummaryDays" };
+                break;
+
+            default:
+                return null;
+        }
+
+        if (!SafeSectionExists(json, sectionName))
+            return null;
+
+        var section = SafeGetSection(json, sectionName);
+        var issues = SafeGetStringList(json, sectionName, "Issues");
+        var allPass = SafeGetBoolProp(section, "AllChecksPass");
+
+        var dto = new CrossDocumentDto
+        {
+            AllChecksPass = allPass == true,
+            Issues = issues
+        };
+
+        foreach (var prop in boolProps)
+        {
+            var val = SafeGetBoolProp(section, prop);
+            if (val.HasValue)
+                dto.CheckResults[prop] = val.Value;
+        }
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Builds flat validation check list for a document from its ValidationDetailsJson.
+    /// Reuses the same parsing logic as BuildValidationDetails but outputs structured DTOs.
+    /// </summary>
+    private static void BuildChecksForDocument(
+        List<ValidationCheckDto> checks,
+        JsonElement json,
+        DocumentType docType,
+        string docTypeStr,
+        string? fileName)
+    {
+        switch (docType)
+        {
+            case DocumentType.Invoice:
+                BuildInvoiceChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.CostSummary:
+                BuildCostSummaryChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.ActivitySummary:
+                BuildActivityChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.TeamPhoto:
+                BuildPhotoChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.EnquiryDocument:
+                BuildEnquiryDumpChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.PO:
+                BuildPOChecks(checks, json, docTypeStr, fileName);
+                break;
+        }
+    }
+
+    private static void BuildPOChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (SafeSectionExists(json, "SAPVerification"))
+        {
+            var sec = SafeGetSection(json, "SAPVerification");
+            var verified = SafeGetBoolProp(sec, "IsVerified");
+            var connFailed = SafeGetBoolProp(sec, "SAPConnectionFailed");
+            var passed = verified == true || connFailed == true;
+            checks.Add(new ValidationCheckDto
+            {
+                DocumentType = docType, FileName = fileName, Category = "CrossDocument",
+                CheckName = "SAP Verification", Passed = passed,
+                Description = passed ? "PO verified against SAP records" : "PO could not be verified in SAP"
+            });
+        }
+        if (SafeSectionExists(json, "DateValidation"))
+        {
+            var sec = SafeGetSection(json, "DateValidation");
+            var valid = SafeGetBoolProp(sec, "IsValid") == true;
+            checks.Add(new ValidationCheckDto
+            {
+                DocumentType = docType, FileName = fileName, Category = "CrossDocument",
+                CheckName = "Date Validation", Passed = valid,
+                Description = valid ? "All dates are valid and consistent" : string.Join("; ", SafeGetStringList(json, "DateValidation", "DateIssues"))
+            });
+        }
+    }
+
+    private static void BuildInvoiceChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        // Field presence checks
+        if (SafeSectionExists(json, "InvoiceFieldPresence"))
+        {
+            var mf = SafeGetStringList(json, "InvoiceFieldPresence", "MissingFields");
+            var fields = new[] { "Agency Name", "Agency Address", "Billing Name", "Billing Address", "State Name/Code",
+                "Invoice Number", "Invoice Date", "Vendor Code", "PO Number", "GST Number", "GST Percentage", "HSN/SAC Code", "Invoice Amount" };
+            foreach (var field in fields)
+            {
+                var passed = !mf.Contains(field);
+                checks.Add(new ValidationCheckDto
+                {
+                    DocumentType = docType, FileName = fileName, Category = "FieldPresence",
+                    CheckName = field, Passed = passed,
+                    Description = passed ? "Present" : "Missing"
+                });
+            }
+        }
+
+        // Cross-document checks
+        if (SafeSectionExists(json, "InvoiceCrossDocument"))
+        {
+            var sec = SafeGetSection(json, "InvoiceCrossDocument");
+            var issues = SafeGetStringList(json, "InvoiceCrossDocument", "Issues");
+
+            AddCrossCheck(checks, docType, fileName, "Agency Code match with PO", SafeGetBoolProp(sec, "AgencyCodeMatches"), issues, "Agency Code");
+            AddCrossCheck(checks, docType, fileName, "PO Number match with PO", SafeGetBoolProp(sec, "PONumberMatches"), issues, "PO Number");
+            AddCrossCheck(checks, docType, fileName, "GST Number match with State", SafeGetBoolProp(sec, "GSTStateMatches"), issues, "GST");
+            AddCrossCheck(checks, docType, fileName, "HSN/SAC Code valid", SafeGetBoolProp(sec, "HSNSACCodeValid"), issues, "HSN");
+            AddCrossCheck(checks, docType, fileName, "Amount <= PO Amount", SafeGetBoolProp(sec, "InvoiceAmountValid"), issues, "Invoice amount");
+            AddCrossCheck(checks, docType, fileName, "GST% match with State", SafeGetBoolProp(sec, "GSTPercentageValid"), issues, "GST Percentage");
+        }
+    }
+
+    private static void BuildCostSummaryChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (SafeSectionExists(json, "CostSummaryFieldPresence"))
+        {
+            var mf = SafeGetStringList(json, "CostSummaryFieldPresence", "MissingFields");
+            AddFieldCheck(checks, docType, fileName, "State/Place of Supply", !mf.Any(f => f.Contains("Place of Supply") || f.Contains("State")));
+            AddFieldCheck(checks, docType, fileName, "Element wise Cost", !mf.Any(f => f.StartsWith("Element wise Cost")));
+            AddFieldCheck(checks, docType, fileName, "No of Days", !mf.Contains("Number of Days"));
+            AddFieldCheck(checks, docType, fileName, "No of Activations", !mf.Contains("Number of Activations"));
+            AddFieldCheck(checks, docType, fileName, "No of Teams", !mf.Contains("Number of Teams"));
+            AddFieldCheck(checks, docType, fileName, "Element wise Quantity", !mf.Any(f => f.StartsWith("Element wise Quantity")));
+            AddFieldCheck(checks, docType, fileName, "Total Cost", !mf.Contains("Total Cost"));
+        }
+
+        if (SafeSectionExists(json, "CostSummaryCrossDocument"))
+        {
+            var sec = SafeGetSection(json, "CostSummaryCrossDocument");
+            var issues = SafeGetStringList(json, "CostSummaryCrossDocument", "Issues");
+            AddCrossCheck(checks, docType, fileName, "Total Cost <= Invoice Amount", SafeGetBoolProp(sec, "TotalCostValid"), issues, "total");
+            AddCrossCheck(checks, docType, fileName, "Element wise Cost match State rates", SafeGetBoolProp(sec, "ElementCostsValid"), issues, "Element");
+            AddCrossCheck(checks, docType, fileName, "Fixed Cost Limits", SafeGetBoolProp(sec, "FixedCostsValid"), issues, "Fixed");
+            AddCrossCheck(checks, docType, fileName, "Variable Cost Limits", SafeGetBoolProp(sec, "VariableCostsValid"), issues, "Variable");
+        }
+    }
+
+    private static void BuildActivityChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (SafeSectionExists(json, "ActivityFieldPresence"))
+        {
+            var mf = SafeGetStringList(json, "ActivityFieldPresence", "MissingFields");
+            AddFieldCheck(checks, docType, fileName, "Dealer and Location details", !mf.Any(f => f.Contains("Dealer") || f.Contains("Location")));
+            AddFieldCheck(checks, docType, fileName, "No of days in each Location", !mf.Any(f => f.Contains("days") || f.Contains("Day")));
+        }
+
+        if (SafeSectionExists(json, "ActivityCrossDocument"))
+        {
+            var sec = SafeGetSection(json, "ActivityCrossDocument");
+            var issues = SafeGetStringList(json, "ActivityCrossDocument", "Issues");
+            AddCrossCheck(checks, docType, fileName, "No of days match with Cost Summary", SafeGetBoolProp(sec, "NumberOfDaysMatches"), issues, "days");
+        }
+    }
+
+    private static void BuildPhotoChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (SafeSectionExists(json, "PhotoFieldPresence"))
+        {
+            var mf = SafeGetStringList(json, "PhotoFieldPresence", "MissingFields");
+            AddFieldCheck(checks, docType, fileName, "Date", !mf.Any(f => f.Contains("Date")));
+            AddFieldCheck(checks, docType, fileName, "Lat Long", !mf.Any(f => f.Contains("Location") || f.Contains("coordinates")));
+            AddFieldCheck(checks, docType, fileName, "Person with Blue T-shirt", !mf.Any(f => f.Contains("blue t-shirt")));
+            AddFieldCheck(checks, docType, fileName, "3W Vehicle", !mf.Any(f => f.Contains("Bajaj vehicle") || f.Contains("3W")));
+        }
+
+        if (SafeSectionExists(json, "PhotoCrossDocument"))
+        {
+            var sec = SafeGetSection(json, "PhotoCrossDocument");
+            var issues = SafeGetStringList(json, "PhotoCrossDocument", "Issues");
+            AddCrossCheck(checks, docType, fileName, "Photo count matches man-days", SafeGetBoolProp(sec, "PhotoCountMatchesManDays"), issues, "Photo count");
+        }
+    }
+
+    private static void BuildEnquiryDumpChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (!SafeSectionExists(json, "EnquiryDumpFieldPresence")) return;
+
+        var mf = SafeGetStringList(json, "EnquiryDumpFieldPresence", "MissingFields");
+        var fields = new[] { "State", "Date", "Dealer Code", "Dealer Name", "District", "Pincode", "Customer Name", "Customer Number", "Test Ride" };
+        foreach (var field in fields)
+        {
+            AddFieldCheck(checks, docType, fileName, field, !mf.Any(f => f.StartsWith(field)));
+        }
+    }
+
+    private static void AddFieldCheck(List<ValidationCheckDto> checks, string docType, string? fileName, string checkName, bool passed)
+    {
+        checks.Add(new ValidationCheckDto
+        {
+            DocumentType = docType, FileName = fileName, Category = "FieldPresence",
+            CheckName = checkName, Passed = passed,
+            Description = passed ? "Present" : "Missing"
+        });
+    }
+
+    private static void AddCrossCheck(List<ValidationCheckDto> checks, string docType, string? fileName, string checkName, bool? passed, List<string> issues, string issueKeyword)
+    {
+        var isPass = passed == true;
+        var desc = isPass ? "Pass" : (FindIssue(issues, issueKeyword) ?? "Failed");
+        checks.Add(new ValidationCheckDto
+        {
+            DocumentType = docType, FileName = fileName, Category = "CrossDocument",
+            CheckName = checkName, Passed = isPass,
+            Description = desc
+        });
     }
 }
 

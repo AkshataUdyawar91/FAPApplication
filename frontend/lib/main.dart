@@ -4,6 +4,7 @@ import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/pages/new_login_page.dart';
 import 'features/submission/presentation/pages/agency_dashboard_page.dart';
 import 'features/submission/presentation/pages/agency_upload_page.dart';
+import 'features/submission/presentation/pages/agency_submission_detail_page.dart';
 import 'features/conversational_submission/presentation/pages/conversational_submission_page.dart';
 import 'features/assistant/presentation/pages/chat_screen.dart';
 import 'core/network/dio_client.dart';
@@ -52,6 +53,18 @@ class MyApp extends StatelessWidget {
                   token: args?['token'] ?? '',
                   userName: args?['userName'] ?? '',
                   submissionId: args?['submissionId']?.toString(),
+                ),
+              ),
+            );
+          case '/agency/submission-detail':
+            final args = settings.arguments as Map<String, dynamic>?;
+            return MaterialPageRoute(
+              builder: (context) => _AuthWrapper(
+                token: args?['token'] ?? '',
+                child: AgencySubmissionDetailPage(
+                  submissionId: args?['submissionId']?.toString() ?? '',
+                  token: args?['token'] ?? '',
+                  userName: args?['userName'] ?? '',
                 ),
               ),
             );

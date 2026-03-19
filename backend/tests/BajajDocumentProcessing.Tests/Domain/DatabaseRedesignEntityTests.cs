@@ -43,8 +43,9 @@ public class DatabaseRedesignEntityTests
         Assert.Equal(5, (int)PackageState.ASMRejected);
         Assert.Equal(6, (int)PackageState.PendingRA);
         Assert.Equal(7, (int)PackageState.RARejected);
+        Assert.Equal(0, (int)PackageState.Draft);
         Assert.Equal(8, (int)PackageState.Approved);
-        Assert.Equal(8, Enum.GetValues<PackageState>().Length);
+        Assert.Equal(9, Enum.GetValues<PackageState>().Length);
     }
 
     [Fact]
