@@ -408,6 +408,33 @@ public class CampaignDto
     
     [JsonPropertyName("photos")]
     public List<CampaignPhotoDto> Photos { get; init; } = new();
+
+    [JsonPropertyName("invoices")]
+    public List<CampaignInvoiceDto> Invoices { get; init; } = new();
+}
+
+/// <summary>
+/// Invoice data within a campaign response
+/// </summary>
+public class CampaignInvoiceDto
+{
+    [JsonPropertyName("id")]
+    public Guid Id { get; init; }
+
+    [JsonPropertyName("invoiceNumber")]
+    public string? InvoiceNumber { get; init; }
+
+    [JsonPropertyName("vendorName")]
+    public string? VendorName { get; init; }
+
+    [JsonPropertyName("totalAmount")]
+    public decimal? TotalAmount { get; init; }
+
+    [JsonPropertyName("fileName")]
+    public string FileName { get; init; } = "";
+
+    [JsonPropertyName("blobUrl")]
+    public string BlobUrl { get; init; } = "";
 }
 
 /// <summary>

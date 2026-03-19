@@ -2032,6 +2032,461 @@ class _AgencySubmissionDetailPageState
     );
   }
 
+  Widget _buildCampaignsSection() {
+    if (_submission == null) return const SizedBox();
+    final campaigns = _submission!['campaigns'] as List? ?? [];
+    if (campaigns.isEmpty) return const SizedBox();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                const Icon(Icons.campaign, color: Color(0xFF3B82F6), size: 28),
+                const SizedBox(width: 12),
+                Text('Campaigns (${campaigns.length})',
+                    style: AppTextStyles.h3),
+              ],
+            ),
+          ),
+          ...campaigns.asMap().entries.map((entry) {
+            final campaign = entry.value as Map<String, dynamic>;
+            return _buildCampaignTile(campaign, entry.key);
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCampaignTile(Map<String, dynamic> campaign, int index) {
+    final name =
+        campaign['campaignName']?.toString() ?? 'Campaign ${index + 1}';
+    final teamCode = campaign['teamCode']?.toString() ?? '';
+    final dealership = campaign['dealershipName']?.toString() ?? '';
+    final startDate = _formatDate(campaign['startDate']);
+    final endDate = _formatDate(campaign['endDate']);
+    final workingDays = campaign['workingDays']?.toString() ?? '';
+    final totalCost = campaign['totalCost'];
+    final invoices = campaign['invoices'] as List? ?? [];
+    final photos = campaign['photos'] as List? ?? [];
+    final costSummaryUrl = campaign['costSummaryBlobUrl']?.toString();
+    final costSummaryFile = campaign['costSummaryFileName']?.toString();
+    final activitySummaryUrl = campaign['activitySummaryBlobUrl']?.toString();
+    final activitySummaryFile = campaign['activitySummaryFileName']?.toString();
+    final campaignId =
+        campaign['id']?.toString() ?? campaign['campaignId']?.toString() ?? '';
+
+    return ExpansionTile(
+      leading: CircleAvatar(
+        backgroundColor: const Color(0xFF3B82F6).withOpacity(0.1),
+        child: Text('${index + 1}',
+            style: const TextStyle(
+                color: Color(0xFF3B82F6), fontWeight: FontWeight.bold)),
+      ),
+      title: Text(name,
+          style:
+              AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+      subtitle: Text(
+        [
+          if (teamCode.isNotEmpty) 'Team: $teamCode',
+          if (dealership.isNotEmpty) dealership
+        ].join(' • '),
+        style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
+      ),
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Campaign details row
+              Wrap(
+                spacing: 24,
+                runSpacing: 12,
+                children: [
+                  if (startDate != 'N/A') _buildDetailChip('Start', startDate),
+                  if (endDate != 'N/A') _buildDetailChip('End', endDate),
+                  if (workingDays.isNotEmpty)
+                    _buildDetailChip('Working Days', workingDays),
+                  if (totalCost != null)
+                    _buildDetailChip('Total Cost', '₹$totalCost'),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Cost Summary
+              if (costSummaryUrl != null && costSummaryUrl.isNotEmpty)
+                _buildDocumentRow(
+                  Icons.summarize,
+                  costSummaryFile ?? 'Cost Summary',
+                  costSummaryUrl,
+                ),
+
+              // Activity Summary
+              if (activitySummaryUrl != null && activitySummaryUrl.isNotEmpty)
+                _buildDocumentRow(
+                  Icons.assignment,
+                  activitySummaryFile ?? 'Activity Summary',
+                  activitySummaryUrl,
+                ),
+
+              // Invoices
+              if (invoices.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('Invoices (${invoices.length})',
+                    style: AppTextStyles.bodyMedium
+                        .copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                ...invoices.map((inv) {
+                  final invMap = inv as Map<String, dynamic>;
+                  final invNum = invMap['invoiceNumber']?.toString() ?? '';
+                  final vendor = invMap['vendorName']?.toString() ?? '';
+                  final amount = invMap['totalAmount'];
+                  final fileName = invMap['fileName']?.toString() ?? 'Invoice';
+                  final blobUrl = invMap['blobUrl']?.toString() ?? '';
+                  final label = [
+                    fileName,
+                    if (invNum.isNotEmpty) '(#$invNum)',
+                    if (vendor.isNotEmpty) '- $vendor',
+                    if (amount != null) '- ₹$amount',
+                  ].join(' ');
+                  return _buildDocumentRow(Icons.receipt, label, blobUrl);
+                }),
+              ],
+
+              // Photos
+              if (photos.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('Photos (${photos.length})',
+                    style: AppTextStyles.bodyMedium
+                        .copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                ...photos.map((photo) {
+                  final photoMap = photo as Map<String, dynamic>;
+                  final fileName = photoMap['fileName']?.toString() ?? 'Photo';
+                  final blobUrl = photoMap['blobUrl']?.toString() ?? '';
+                  final caption = photoMap['caption']?.toString() ?? '';
+                  final label =
+                      caption.isNotEmpty ? '$fileName - $caption' : fileName;
+                  return _buildDocumentRow(Icons.image, label, blobUrl);
+                }),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEditableDocumentRow(IconData icon, String label, String? blobUrl,
+      {VoidCallback? onDelete}) {
+    final hasUrl = blobUrl != null && blobUrl.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon,
+              size: 18,
+              color: hasUrl ? AppColors.primary : AppColors.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(label,
+                style: AppTextStyles.bodyMedium,
+                overflow: TextOverflow.ellipsis),
+          ),
+          if (hasUrl)
+            IconButton(
+              icon: const Icon(Icons.download, size: 18),
+              onPressed: () => _downloadDocument(blobUrl, label),
+              tooltip: 'Download',
+              color: AppColors.primary,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          if (onDelete != null)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, size: 18),
+              onPressed: onDelete,
+              tooltip: 'Delete',
+              color: AppColors.rejectedText,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUploadButton(String label, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        icon: const Icon(Icons.upload_file, size: 16),
+        label: Text(label, style: const TextStyle(fontSize: 12)),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.primary,
+          side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailChip(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: AppTextStyles.bodySmall
+                .copyWith(color: AppColors.textSecondary, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text(value,
+            style:
+                AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+
+  Widget _buildDocumentRow(IconData icon, String label, String? blobUrl) {
+    final hasUrl = blobUrl != null && blobUrl.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon,
+              size: 18,
+              color: hasUrl ? AppColors.primary : AppColors.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: AppTextStyles.bodyMedium,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (hasUrl)
+            IconButton(
+              icon: const Icon(Icons.download, size: 18),
+              onPressed: () => _downloadDocument(blobUrl, label),
+              tooltip: 'Download',
+              color: AppColors.primary,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildApprovalTimeline() {
+    final state = _submission!['state']?.toString().toLowerCase() ?? '';
+    final createdAt = _submission!['createdAt'];
+    final asmReviewedAt = _submission!['asmReviewedAt'];
+    final asmReviewNotes = _submission!['asmReviewNotes']?.toString();
+    final hqReviewedAt = _submission!['hqReviewedAt'];
+    final hqReviewNotes = _submission!['hqReviewNotes']?.toString();
+
+    // Determine ASM status
+    String asmStatus = 'pending';
+    if (state.contains('rejectedbyasm')) {
+      asmStatus = 'rejected';
+    } else if (state.contains('approved') ||
+        state.contains('pendinghq') ||
+        state.contains('rejectedbyhq')) {
+      asmStatus = 'approved';
+    } else if (asmReviewedAt != null) {
+      asmStatus = asmReviewNotes != null && asmReviewNotes.isNotEmpty
+          ? 'rejected'
+          : 'approved';
+    }
+
+    // Determine HQ/RA status
+    String hqStatus = 'pending';
+    if (state == 'approved') {
+      hqStatus = 'approved';
+    } else if (state.contains('rejectedbyhq')) {
+      hqStatus = 'rejected';
+    } else if (hqReviewedAt != null) {
+      hqStatus = hqReviewNotes != null && hqReviewNotes.isNotEmpty
+          ? 'rejected'
+          : 'approved';
+    }
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppColors.border)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Approval Flow', style: AppTextStyles.h3),
+            const SizedBox(height: 20),
+            // Step 1: Submitted
+            _buildTimelineStep(
+              icon: Icons.upload_file,
+              color: const Color(0xFF3B82F6),
+              title: 'Submitted',
+              date: _formatDate(createdAt),
+              comment: null,
+              isCompleted: true,
+              isLast: false,
+            ),
+            // Step 2: ASM Review
+            _buildTimelineStep(
+              icon: asmStatus == 'approved'
+                  ? Icons.check_circle
+                  : asmStatus == 'rejected'
+                      ? Icons.cancel
+                      : Icons.schedule,
+              color: asmStatus == 'approved'
+                  ? const Color(0xFF10B981)
+                  : asmStatus == 'rejected'
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF9CA3AF),
+              title: asmStatus == 'approved'
+                  ? 'Approved by CH'
+                  : asmStatus == 'rejected'
+                      ? 'Rejected by CH'
+                      : 'Pending CH Review',
+              date: asmReviewedAt != null ? _formatDate(asmReviewedAt) : null,
+              comment: asmReviewNotes,
+              isCompleted: asmStatus != 'pending',
+              isLast: false,
+            ),
+            // Step 3: HQ/RA Review
+            _buildTimelineStep(
+              icon: hqStatus == 'approved'
+                  ? Icons.check_circle
+                  : hqStatus == 'rejected'
+                      ? Icons.cancel
+                      : Icons.schedule,
+              color: hqStatus == 'approved'
+                  ? const Color(0xFF10B981)
+                  : hqStatus == 'rejected'
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF9CA3AF),
+              title: hqStatus == 'approved'
+                  ? 'Approved by HQ/RA'
+                  : hqStatus == 'rejected'
+                      ? 'Rejected by HQ/RA'
+                      : 'Pending HQ/RA Review',
+              date: hqReviewedAt != null ? _formatDate(hqReviewedAt) : null,
+              comment: hqReviewNotes,
+              isCompleted: hqStatus != 'pending',
+              isLast: true,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimelineStep({
+    required IconData icon,
+    required Color color,
+    required String title,
+    String? date,
+    String? comment,
+    required bool isCompleted,
+    required bool isLast,
+  }) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Timeline line + dot
+          SizedBox(
+            width: 32,
+            child: Column(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: isCompleted
+                        ? color.withOpacity(0.15)
+                        : const Color(0xFFF3F4F6),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: isCompleted ? color : const Color(0xFFD1D5DB),
+                        width: 2),
+                  ),
+                  child: Icon(icon,
+                      size: 14,
+                      color: isCompleted ? color : const Color(0xFF9CA3AF)),
+                ),
+                if (!isLast)
+                  Expanded(
+                    child: Container(
+                      width: 2,
+                      color: isCompleted
+                          ? color.withOpacity(0.3)
+                          : const Color(0xFFE5E7EB),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Content
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: isLast ? 0 : 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: isCompleted
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF9CA3AF),
+                    ),
+                  ),
+                  if (date != null) ...[
+                    const SizedBox(height: 2),
+                    Text(date,
+                        style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary, fontSize: 11)),
+                  ],
+                  if (comment != null && comment.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF9FAFB),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                      ),
+                      child: Text(
+                        comment,
+                        style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFF4B5563), height: 1.4),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Map<String, dynamic> _getStatusInfo(String state) {
     final stateLower = state.toLowerCase();
     if (stateLower.contains('approved') && !stateLower.contains('pending')) {
@@ -2044,7 +2499,7 @@ class _AgencySubmissionDetailPageState
       };
     } else if (stateLower == 'rejectedbyasm') {
       return {
-        'label': 'Rejected by ASM',
+        'label': 'Rejected by CH',
         'color': const Color(0xFFDC2626),
         'bgColor': const Color(0xFFFEE2E2),
         'borderColor': const Color(0xFFFCA5A5),
@@ -2083,10 +2538,10 @@ class _AgencySubmissionDetailPageState
         'borderColor': const Color(0xFFFCD34D),
         'icon': Icons.warning_amber,
       };
-    } else if (stateLower.contains('pendingasm') ||
+    } else if (stateLower.contains('pendingch') ||
         stateLower.contains('pendingapproval')) {
       return {
-        'label': 'Pending with ASM',
+        'label': 'Pending with CH',
         'color': const Color(0xFFF59E0B),
         'bgColor': const Color(0xFFFEF3C7),
         'borderColor': const Color(0xFFFCD34D),

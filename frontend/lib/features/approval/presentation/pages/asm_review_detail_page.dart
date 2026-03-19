@@ -713,7 +713,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     String displayText;
 
     if (normalizedState == 'pendingapproval' ||
-        normalizedState == 'pendingasmapproval') {
+        normalizedState == 'pendingchapproval') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending';

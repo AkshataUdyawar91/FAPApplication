@@ -22,6 +22,7 @@ class AssistantResponseModel {
   final int? totalRecords;
   final int? missingPhoneCount;
   final List<FinalReviewSectionModel>? reviewSections;
+  final String? fileName;
 
   const AssistantResponseModel({
     required this.type,
@@ -46,6 +47,7 @@ class AssistantResponseModel {
     this.totalRecords,
     this.missingPhoneCount,
     this.reviewSections,
+    this.fileName,
   });
 
   factory AssistantResponseModel.fromJson(Map<String, dynamic> json) {
@@ -94,6 +96,7 @@ class AssistantResponseModel {
       reviewSections: (json['reviewSections'] as List<dynamic>?)
           ?.map((e) => FinalReviewSectionModel.fromJson(e as Map<String, dynamic>))
           .toList(),
+      fileName: json['fileName'] as String?,
     );
   }
 }
@@ -214,13 +217,15 @@ class DealerItemModel {
 class TeamContextModel {
   final int currentTeam;
   final int totalTeams;
+  final String? teamName;
 
-  const TeamContextModel({required this.currentTeam, required this.totalTeams});
+  const TeamContextModel({required this.currentTeam, required this.totalTeams, this.teamName});
 
   factory TeamContextModel.fromJson(Map<String, dynamic> json) {
     return TeamContextModel(
       currentTeam: json['currentTeam'] as int? ?? 1,
       totalTeams: json['totalTeams'] as int? ?? 1,
+      teamName: json['teamName'] as String?,
     );
   }
 }

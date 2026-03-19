@@ -14,6 +14,7 @@ import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
+import '../../../../core/widgets/pagination_bar.dart';
 
 class AgencyDashboardPage extends ConsumerStatefulWidget {
   final String token;
@@ -42,6 +43,12 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   bool _isSidebarCollapsed = true;
   bool _isChatbotOpen = true;
 
+  // Pagination state
+  int _currentPage = 1;
+  int _totalItems = 0;
+  int _totalPages = 1;
+  static const int _pageSize = 20;
+
   @override
   void initState() {
     super.initState();
@@ -54,10 +61,12 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     super.dispose();
   }
 
-  Future<void> _loadRequests() async {
+  Future<void> _loadRequests({int page = 1}) async {
+    setState(() => _isLoading = true);
     try {
       final response = await _dio.get(
         '/submissions',
+        queryParameters: {'page': page, 'pageSize': _pageSize},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
@@ -66,6 +75,9 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           _requests = data is Map && data.containsKey('items')
               ? List<Map<String, dynamic>>.from(data['items'])
               : [];
+          _totalItems = data is Map ? (data['total'] ?? 0) : 0;
+          _totalPages = data is Map ? (data['totalPages'] ?? 1) : 1;
+          _currentPage = page;
           _isLoading = false;
 
           // Reset filter to 'all' if current filter is not available in the new data
@@ -103,7 +115,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         'recommending'
       ].contains(state)) {
         statuses.add('extracting');
-      } else if (['pendingapproval', 'pendingasmapproval'].contains(state)) {
+      } else if (['pendingapproval', 'pendingchapproval'].contains(state)) {
         statuses.add('pending_with_asm');
       } else if (['asmapproved', 'pendinghqapproval'].contains(state)) {
         statuses.add('pending_with_ra');
@@ -126,10 +138,10 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       'all': 'All Status',
       'uploaded': 'Submitted',
       'extracting': 'Extracting',
-      'pending_with_asm': 'Pending with ASM',
+      'pending_with_asm': 'Pending with CH',
       'pending_with_ra': 'Pending with RA',
       'approved': 'Approved',
-      'rejected_by_asm': 'Rejected by ASM',
+      'rejected_by_asm': 'Rejected by CH',
       'rejected_by_ra': 'Rejected by RA',
     };
 
@@ -179,7 +191,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           break;
         case 'pending_with_asm':
           matchesStatus =
-              ['pendingapproval', 'pendingasmapproval'].contains(state);
+              ['pendingapproval', 'pendingchapproval'].contains(state);
           break;
         case 'pending_with_ra':
           matchesStatus = ['asmapproved', 'pendinghqapproval'].contains(state);
@@ -201,7 +213,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
 
   Map<String, int> get _stats {
     return {
-      'total': _requests.length,
+      'total': _totalItems,
       'uploaded': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
         return ['uploaded', 'draft'].contains(s);
@@ -218,7 +230,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       }).length,
       'pendingWithASM': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['pendingapproval', 'pendingasmapproval'].contains(s);
+        return ['pendingapproval', 'pendingchapproval'].contains(s);
       }).length,
       'pendingWithRA': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
@@ -494,7 +506,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
         mobile: 12, tablet: 16, desktop: 24);
     return RefreshIndicator(
-      onRefresh: _loadRequests,
+      onRefresh: () => _loadRequests(page: 1),
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(hPad),
@@ -524,7 +536,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   Widget _buildStatsCards(DeviceType device) {
     final stats = _stats;
     final cards = [
-      _StatData('Pending with ASM', stats['pendingWithASM']!.toString(),
+      _StatData('Pending with CH', stats['pendingWithASM']!.toString(),
           Icons.schedule, const Color(0xFF3B82F6), 'pending_with_asm'),
       _StatData('Approved', stats['approved']!.toString(), Icons.check_circle,
           const Color(0xFF10B981), 'approved'),
@@ -770,14 +782,25 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   Widget _buildRequestsList(DeviceType device) {
     final filtered = _filteredRequests;
     if (filtered.isEmpty) return _buildEmptyState();
-    if (device == DeviceType.mobile) return _buildMobileCards(filtered);
-    return _buildTable(filtered);
+    return Column(
+      children: [
+        if (device == DeviceType.mobile)
+          ..._buildMobileCards(filtered)
+        else
+          _buildTable(filtered),
+        PaginationBar(
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          totalItems: _totalItems,
+          pageSize: _pageSize,
+          onPageChanged: (page) => _loadRequests(page: page),
+        ),
+      ],
+    );
   }
 
-  Widget _buildMobileCards(List<Map<String, dynamic>> requests) {
-    return Column(
-      children: requests.map((r) => _buildMobileCard(r)).toList(),
-    );
+  List<Widget> _buildMobileCards(List<Map<String, dynamic>> requests) {
+    return requests.map((r) => _buildMobileCard(r)).toList();
   }
 
   Widget _buildMobileCard(Map<String, dynamic> request) {
@@ -1059,7 +1082,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       case 'rejectedbyasm':
         bgColor = const Color(0xFFFEE2E2);
         textColor = const Color(0xFF991B1B);
-        label = 'Rejected by ASM';
+        label = 'Rejected by CH';
         break;
       case 'rejectedbyhq':
       case 'rejectedbyra':
@@ -1074,18 +1097,18 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         bgColor = const Color(0xFFDBEAFE);
         textColor = const Color(0xFF1E40AF);
         label = state == 'pendingapproval'
-            ? 'Pending with ASM'
+            ? 'Pending with CH'
             : state == 'recommending'
                 ? 'Recommending'
                 : state == 'submitted'
                     ? 'Submitted'
                     : 'Validated';
         break;
-      case 'pendingasmapproval':
-      case 'pendingwithasm':
+      case 'pendingchapproval':
+      case 'pendingwithch':
         bgColor = const Color(0xFFDBEAFE);
         textColor = const Color(0xFF1E40AF);
-        label = 'Pending with ASM';
+        label = 'Pending with CH';
         break;
       case 'pendinghqapproval':
       case 'pendingwithra':
@@ -1144,11 +1167,11 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       case 'rejected':
         return 'Rejected';
       case 'rejected_by_asm':
-        return 'Rejected by ASM';
+        return 'Rejected by CH';
       case 'rejected_by_hq':
         return 'Rejected by HQ/RA';
       case 'pending_asm':
-        return 'Pending ASM Approval';
+        return 'Pending CH Approval';
       case 'pending_hq':
         return 'Pending HQ/RA Approval';
       case 'under_review':
@@ -1175,13 +1198,13 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     if (['uploaded', 'extracting', 'validating'].contains(state))
       return 'pending';
     if (['validated', 'recommending'].contains(state)) return 'pending';
-    if (['pendingasmapproval', 'pendingapproval', 'pendingwithasm']
+    if (['pendingch', 'pendingchapproval', 'pendingapproval', 'pendingwithch']
         .contains(state)) return 'pending_asm';
-    if (['pendinghqapproval', 'pendingwithra'].contains(state))
+    if (['pendingra', 'pendinghqapproval', 'pendingwithra'].contains(state))
       return 'pending_hq';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyasm') return 'rejected_by_asm';
-    if (['rejectedbyhq', 'rejectedbyra'].contains(state))
+    if (['chrejected', 'rejectedbyasm'].contains(state)) return 'rejected_by_asm';
+    if (['rarejected', 'rejectedbyhq', 'rejectedbyra'].contains(state))
       return 'rejected_by_hq';
     if (['rejected', 'validationfailed', 'reuploadrequested'].contains(state))
       return 'rejected';
@@ -1230,7 +1253,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
               _buildDetailRow(
                   'Documents', '${request['documentCount'] ?? 0} files'),
 
-              // Show ASM rejection notes if rejected by ASM
+              // Show CH rejection notes if rejected by CH
               if (status == 'rejected_by_asm' &&
                   asmReviewNotes != null &&
                   asmReviewNotes.toString().isNotEmpty) ...[
@@ -1251,7 +1274,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                               color: Color(0xFFDC2626), size: 20),
                           const SizedBox(width: 8),
                           Text(
-                            'Rejected by ASM',
+                            'Rejected by CH',
                             style: AppTextStyles.bodyMedium.copyWith(
                               fontWeight: FontWeight.bold,
                               color: const Color(0xFFB91C1C),
@@ -1331,7 +1354,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           ),
         ),
         actions: [
-          // Show Resubmit button if rejected by ASM
+          // Show Resubmit button if rejected by CH
           if (status == 'rejected_by_asm')
             ElevatedButton.icon(
               onPressed: () {

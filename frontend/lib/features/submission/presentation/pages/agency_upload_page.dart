@@ -687,9 +687,11 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
         if (_selectedPO != null) {
           final createResp = await _dio.post(
             '/submissions',
-            data: {'selectedPoId': _selectedPO!['id']?.toString()},
-            options:
-                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            data: {
+              'selectedPoId': _selectedPO!['id']?.toString(),
+              'activityState': _selectedActivationState,
+            },
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
           if (createResp.statusCode == 200 || createResp.statusCode == 201) {
             packageId = (createResp.data['id'] ?? createResp.data['packageId'])
@@ -763,17 +765,13 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             '/hierarchical/$packageId/campaigns',
             data: {
               'campaignName': campaign.campaignName,
-              'startDate': campaign.startDate.isNotEmpty
-                  ? _parseDate(campaign.startDate)?.toIso8601String()
-                  : null,
-              'endDate': campaign.endDate.isNotEmpty
-                  ? _parseDate(campaign.endDate)?.toIso8601String()
-                  : null,
-              'workingDays': campaign.workingDays.isNotEmpty
-                  ? int.tryParse(campaign.workingDays)
-                  : null,
+              'teamCode': campaign.campaignName,
+              'startDate': campaign.startDate.isNotEmpty ? _parseDate(campaign.startDate)?.toIso8601String() : null,
+              'endDate': campaign.endDate.isNotEmpty ? _parseDate(campaign.endDate)?.toIso8601String() : null,
+              'workingDays': campaign.workingDays.isNotEmpty ? int.tryParse(campaign.workingDays) : null,
               'dealershipName': campaign.dealershipName,
               'dealershipAddress': campaign.dealershipAddress,
+              'state': _selectedActivationState,
             },
             options:
                 Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
@@ -891,8 +889,8 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
       } else {
         await _dio.post(
           '/submissions/$packageId/process-async',
-          options:
-              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          data: {'activityState': _selectedActivationState},
+          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
         _showSuccess('Submission complete! Processing in background...');
       }
