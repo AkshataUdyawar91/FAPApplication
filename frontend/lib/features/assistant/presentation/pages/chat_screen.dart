@@ -1039,27 +1039,129 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget _invoiceValidationCard(AssistantResponseModel r) {
     final rules = r.validationRules ?? [];
     final passed = r.passedCount ?? 0;
+    final total = rules.length;
     final failed = r.failedCount ?? 0;
     final warned = r.warningCount ?? 0;
-    final hasIssues = failed > 0 || warned > 0;
+    final issues = failed + warned;
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
+    final hasIssues = issues > 0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          _validationChip('$passed passed', Colors.green.shade600, Colors.green.shade50),
-          if (failed > 0) ...[
-            const SizedBox(width: 6),
-            _validationChip('$failed failed', Colors.red.shade600, Colors.red.shade50),
-          ],
-          if (warned > 0) ...[
-            const SizedBox(width: 6),
-            _validationChip('$warned warning${warned > 1 ? 's' : ''}', Colors.orange.shade700, Colors.orange.shade50),
-          ],
-        ]),
-        const SizedBox(height: 10),
-        ...rules.map(_validationRuleRow),
+        // Card container
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header row
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Invoice',
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                          if (r.fileName != null)
+                            Text(r.fileName!,
+                                style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                        ],
+                      ),
+                    ),
+                    Row(children: [
+                      Text('$passed/$total passed',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF16A34A))),
+                      if (issues > 0) ...[
+                        const SizedBox(width: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text('$issues Issue${issues > 1 ? 's' : ''}',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.red.shade700)),
+                        ),
+                      ],
+                    ]),
+                  ],
+                ),
+              ),
+              // Column headers
+              Container(
+                color: const Color(0xFFF9FAFB),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                child: Row(children: [
+                  const SizedBox(width: 24, child: Text('#', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  const Expanded(flex: 3, child: Text('WHAT WAS CHECKED', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  const SizedBox(width: 56, child: Text('RESULT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  const Expanded(flex: 3, child: Text('WHAT WAS FOUND', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                ]),
+              ),
+              const Divider(height: 1, color: Color(0xFFE5E7EB)),
+              // Rule rows
+              ...rules.asMap().entries.map((entry) {
+                final i = entry.key;
+                final rule = entry.value;
+                final isPass = rule.passed;
+                final isWarn = rule.isWarning;
+                final resultColor = isPass ? const Color(0xFF16A34A) : (isWarn ? Color(0xFFD97706) : const Color(0xFFDC2626));
+                final resultBg = isPass ? const Color(0xFFDCFCE7) : (isWarn ? const Color(0xFFFEF3C7) : const Color(0xFFFEE2E2));
+                final resultLabel = isPass ? 'PASS' : (isWarn ? 'WARN' : 'FAIL');
+                final foundText = isPass
+                    ? (rule.extractedValue ?? '—')
+                    : (rule.message ?? rule.extractedValue ?? '—');
+                final foundColor = isPass ? const Color(0xFF111827) : resultColor;
+
+                return Container(
+                  decoration: BoxDecoration(
+                    color: i.isEven ? Colors.white : const Color(0xFFFAFAFA),
+                    border: const Border(bottom: BorderSide(color: Color(0xFFE5E7EB), width: 0.5)),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    SizedBox(
+                      width: 24,
+                      child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280), fontWeight: FontWeight.w500)),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Text(rule.label, style: const TextStyle(fontSize: 13, color: Color(0xFF111827))),
+                    ),
+                    SizedBox(
+                      width: 56,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(resultLabel,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Text(foundText,
+                          style: TextStyle(fontSize: 12, color: foundColor,
+                              fontWeight: isPass ? FontWeight.w400 : FontWeight.w500)),
+                    ),
+                  ]),
+                );
+              }),
+            ],
+          ),
+        ),
         const SizedBox(height: 12),
+        // Action buttons
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(

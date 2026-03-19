@@ -217,8 +217,6 @@ public static class ApplicationDbContextSeed
                 {
                     Id = Guid.NewGuid(),
                     State = stateName,
-                    DealerCode = $"MOCK-{stateName[..3].ToUpper()}",
-                    DealerName = $"Mock Dealer - {stateName}",
                     CircleHeadUserId = asmUser?.Id,
                     RAUserId = raId,
                     IsActive = true,

@@ -141,13 +141,17 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             }
 
             // Step 5: Final state transition
-            // Safety net: ensure SubmissionNumber and CircleHead are assigned
+            // Only move to PendingASM if the package was explicitly submitted (has a SubmissionNumber).
+            // Partial uploads (chatbot in-progress) should stay as Uploaded until the user submits.
             if (string.IsNullOrEmpty(package.SubmissionNumber))
             {
-                package.SubmissionNumber = await _submissionNumberService.GenerateAsync(cancellationToken);
-                _logger.LogInformation("Safety net: generated SubmissionNumber {Number} for package {PackageId}", package.SubmissionNumber, package.Id);
+                _logger.LogInformation("Package {PackageId} has no SubmissionNumber — keeping Uploaded state (not yet submitted)", package.Id);
+                package.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync(cancellationToken);
+                return true;
             }
 
+            // Safety net: ensure CircleHead is assigned before advancing to PendingASM
             if (!package.AssignedCircleHeadUserId.HasValue && !string.IsNullOrEmpty(package.ActivityState))
             {
                 var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, cancellationToken);

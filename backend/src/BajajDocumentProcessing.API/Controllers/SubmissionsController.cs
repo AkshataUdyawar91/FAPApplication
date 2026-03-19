@@ -26,7 +26,6 @@ public class SubmissionsController : ControllerBase
     private readonly ILogger<SubmissionsController> _logger;
     private readonly ISubmissionNumberService _submissionNumberService;
     private readonly ICircleHeadAssignmentService _circleHeadAssignmentService;
-    private readonly IRAAssignmentService _raAssignmentService;
     private readonly ISubmissionNotificationService _submissionNotificationService;
     private readonly IEmailAgent _emailAgent;
 
@@ -47,7 +46,6 @@ public class SubmissionsController : ControllerBase
         _logger = logger;
         _submissionNumberService = submissionNumberService;
         _circleHeadAssignmentService = circleHeadAssignmentService;
-        _raAssignmentService = raAssignmentService;
         _submissionNotificationService = submissionNotificationService;
         _emailAgent = emailAgent;
     }
@@ -881,7 +879,10 @@ public class SubmissionsController : ControllerBase
             package.State = PackageState.PendingRA;
 
             // Auto-assign RA user based on submission's activity state
-            var raUserId = await _raAssignmentService.AssignAsync(package.ActivityState ?? string.Empty, cancellationToken);
+            var raUserId = await _context.StateMappings
+                .Where(sm => sm.State == (package.ActivityState ?? string.Empty) && sm.IsActive && !sm.IsDeleted && sm.RAUserId != null)
+                .Select(sm => sm.RAUserId)
+                .FirstOrDefaultAsync(cancellationToken);
             package.AssignedRAUserId = raUserId;
             if (raUserId == null)
             {
