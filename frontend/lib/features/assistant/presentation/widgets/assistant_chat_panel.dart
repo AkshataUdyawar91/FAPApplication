@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:js_interop';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:web/web.dart' as web;
 import '../providers/assistant_notifier.dart';
 import '../providers/assistant_providers.dart';
 import 'assistant_bubble.dart';
@@ -110,6 +114,130 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       }
       ref.read(assistantNotifierProvider.notifier).uploadInvoice(file.bytes!, file.name);
     }
+  }
+
+  Future<void> _captureInvoiceFromCamera() async {
+    final bytes = await _openWebCamera();
+    if (bytes == null) return;
+    ref.read(assistantNotifierProvider.notifier).uploadInvoice(bytes, 'camera_invoice.jpg');
+  }
+
+  Future<void> _captureTeamPhotoFromCamera(String payloadJson) async {
+    final bytes = await _openWebCamera();
+    if (bytes == null) return;
+    ref.read(assistantNotifierProvider.notifier).uploadTeamPhotos([bytes], ['camera_photo.jpg'], payloadJson);
+  }
+
+  Future<Uint8List?> _openWebCamera() async {
+    if (!kIsWeb) {
+      final picker = ImagePicker();
+      final photo = await picker.pickImage(source: ImageSource.camera);
+      if (photo == null) return null;
+      return await photo.readAsBytes();
+    }
+
+    // Web: use getUserMedia to access camera, show preview, capture snapshot
+    final completer = Completer<Uint8List?>();
+
+    // Create overlay UI
+    final overlay = web.HTMLDivElement()
+      ..setAttribute('style',
+          'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;');
+
+    final video = web.HTMLVideoElement()
+      ..setAttribute('autoplay', '')
+      ..setAttribute('playsinline', '')
+      ..setAttribute('style', 'width:100%;max-width:480px;border-radius:8px;');
+
+    final btnRow = web.HTMLDivElement()
+      ..setAttribute('style', 'display:flex;gap:12px;margin-top:16px;');
+
+    final captureBtn = web.HTMLButtonElement()
+      ..textContent = 'Capture'
+      ..setAttribute('style',
+          'padding:12px 32px;background:#003087;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;');
+
+    final cancelBtn = web.HTMLButtonElement()
+      ..textContent = 'Cancel'
+      ..setAttribute('style',
+          'padding:12px 32px;background:#666;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;');
+
+    btnRow.append(captureBtn);
+    btnRow.append(cancelBtn);
+    overlay.append(video);
+    overlay.append(btnRow);
+    web.document.body!.append(overlay);
+
+    web.MediaStream? stream;
+
+    try {
+      // Request front camera
+      final constraints = {
+        'video': {'facingMode': 'user'},
+        'audio': false,
+      }.jsify();
+
+      stream = await web.window.navigator.mediaDevices
+          .getUserMedia(constraints as web.MediaStreamConstraints)
+          .toDart;
+
+      video.srcObject = stream;
+    } catch (e) {
+      overlay.remove();
+      if (!completer.isCompleted) completer.complete(null);
+      return completer.future;
+    }
+
+    void stopStream() {
+      final tracks = stream?.getTracks();
+      if (tracks != null) {
+        for (var i = 0; i < tracks.toDart.length; i++) {
+          tracks.toDart[i].stop();
+        }
+      }
+      overlay.remove();
+    }
+
+    captureBtn.addEventListener(
+      'click',
+      (web.Event _) {
+        final canvas = web.HTMLCanvasElement()
+          ..width = video.videoWidth
+          ..height = video.videoHeight;
+        final ctx = canvas.getContext('2d') as web.CanvasRenderingContext2D?;
+        ctx?.drawImage(video, 0, 0);
+        // Specify image/jpeg so magic bytes match the .jpg filename
+        canvas.toBlob((web.Blob blob) {
+          final reader = web.FileReader();
+          reader.addEventListener(
+            'loadend',
+            (web.Event _) {
+              stopStream();
+              final result = reader.result;
+              if (!completer.isCompleted) {
+                if (result != null) {
+                  final bytes = (result as JSArrayBuffer).toDart.asUint8List();
+                  completer.complete(bytes);
+                } else {
+                  completer.complete(null);
+                }
+              }
+            }.toJS,
+          );
+          reader.readAsArrayBuffer(blob);
+        }.toJS, 'image/jpeg', 0.92.toJS);
+      }.toJS,
+    );
+
+    cancelBtn.addEventListener(
+      'click',
+      (web.Event _) {
+        stopStream();
+        if (!completer.isCompleted) completer.complete(null);
+      }.toJS,
+    );
+
+    return completer.future;
   }
 
   Future<void> _pickCostSummaryFile() async {
@@ -474,7 +602,31 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 padding: EdgeInsets.only(bottom: 8),
                 child: Text('Upload Invoice', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
               ),
-              _uploadButton('Upload from device', Icons.upload_file, _pickInvoiceFile),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _pickInvoiceFile,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      side: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    child: const Text('Upload from device', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _captureInvoiceFromCamera,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      side: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    child: const Text('Use Camera', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                  ),
+                ),
+              ]),
               if (ref.watch(assistantNotifierProvider).isLoading && isLast)
                 const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
               Padding(
@@ -615,22 +767,37 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams),
                 ),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: ref.watch(assistantNotifierProvider).isLoading
-                      ? null
-                      : () => _pickMultiplePhotoFiles(r.payloadJson ?? _currentTeamPayload),
-                  icon: const Icon(Icons.photo_library, size: 18),
-                  label: const Text('Choose from gallery'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF003087),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              Row(children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading
+                        ? null
+                        : () => _pickMultiplePhotoFiles(r.payloadJson ?? _currentTeamPayload),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF003087),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Choose from gallery', style: TextStyle(fontSize: 13)),
                   ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading
+                        ? null
+                        : () => _captureTeamPhotoFromCamera(r.payloadJson ?? _currentTeamPayload),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF003087),
+                      side: const BorderSide(color: Color(0xFF003087)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Use Camera', style: TextStyle(fontSize: 13)),
+                  ),
+                ),
+              ]),
               if (ref.watch(assistantNotifierProvider).isLoading && isLast)
                 const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
               Padding(

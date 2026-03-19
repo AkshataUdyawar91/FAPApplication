@@ -465,21 +465,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
             icon: const Icon(Icons.add, size: 20),
             label: const Text('New Request'),
           ),
-          SizedBox(
-            width: 8,
-          ),
-          OutlinedButton.icon(
-            onPressed: _navigateToChatbot,
-            icon: Icon(
-              _isChatbotOpen ? Icons.close : Icons.smart_toy,
-              size: 18,
-            ),
-            label: Text(_isChatbotOpen ? 'Close Chat' : 'New Submission'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.primary,
-              side: const BorderSide(color: AppColors.primary),
-            ),
-          ),
+
         ],
       ),
     );

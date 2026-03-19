@@ -95,11 +95,16 @@ Copilot-style assistant UI that opens as the main chat experience after login.
 
 ### Requirement P4.1: Invoice Document Upload
 - After state confirmation → `invoice_upload` type
-- "Upload from device" button only (camera button removed)
+- Two side-by-side buttons: "Upload from device" and "Use Camera"
 - Accepted: PDF, JPG, PNG (max 10 MB)
 - Upload to `POST /api/documents/upload` with `documentType=Invoice`, `submissionId`
 - `LinearProgressIndicator` during upload (only on last bot message)
 - On success → `invoice_uploaded` action → `invoice_validation` type
+
+#### Camera Upload (Web)
+- On desktop Chrome/Edge: opens full-screen overlay using `getUserMedia` with `facingMode: user` (front camera). User sees live preview, clicks "Capture" or "Cancel".
+- Captured image encoded as JPEG (92% quality) — satisfies backend extension + magic bytes validation.
+- On mobile: uses `ImagePicker` with `ImageSource.camera`.
 
 #### Key Rules
 - Each invoice upload creates a new `Invoices` row (never replaced)
@@ -213,6 +218,11 @@ Per team:
 
 ### Flow
 After all teams confirmed → photo upload per team. Min 3, max 10 photos per team.
+
+#### Upload Options
+- Two side-by-side buttons: "Choose from gallery" and "Use Camera"
+- Camera (web): opens full-screen overlay using `getUserMedia` with `facingMode: user`. User sees live preview, clicks "Capture" or "Cancel". Image encoded as JPEG (92% quality).
+- Camera (mobile): uses `ImagePicker` with `ImageSource.camera`.
 
 ### AI Validation (4 rules per photo)
 
@@ -381,3 +391,5 @@ Shows 6 sections, each with a ✅ (all validations passed) or ⚠️ (some faile
 | `TeamPhotos` | `Latitude`, `Longitude`, `BlueTshirtPresent`, `ThreeWheelerPresent`, `DateVisible`, `ExtractedMetadataJson` |
 | `EnquiryDocuments` | `ExtractedDataJson` (list of `EnquiryRecord`) |
 | `ValidationResults` | `DocumentId`, `DocumentType`, `AllValidationsPassed`, `RuleResultsJson`, `FailureReason` |
+
+
