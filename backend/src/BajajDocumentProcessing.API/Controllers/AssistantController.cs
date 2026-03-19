@@ -2350,7 +2350,7 @@ public class AssistantController : ControllerBase
         var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
         package.SubmissionNumber = submissionNumber;
 
-        package.State = Domain.Enums.PackageState.Uploaded;
+        package.State = Domain.Enums.PackageState.PendingASM;
         package.CurrentStep = 10;
         package.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
