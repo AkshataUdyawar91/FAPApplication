@@ -479,7 +479,7 @@ public class AssistantController : ControllerBase
         if (failCount == 0 && warnCount == 0)
             botMessage = $"Invoice analysed. All {totalChecks} checks passed!";
         else
-            botMessage = $"Invoice analysed. {passCount} of {totalChecks} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")}{(warnCount > 0 ? $" {warnCount} warning(s)." : "")} Review below and continue or re-upload.";
+            botMessage = $"Invoice analysed. {passCount} of {totalChecks} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")} Review below and continue or re-upload.";
 
         // Always persist validation results to ValidationResults table — regardless of pass/fail
         try
@@ -572,6 +572,7 @@ public class AssistantController : ControllerBase
             FailedCount = failCount,
             WarningCount = warnCount,
             SubmissionId = submissionIdFromPayload ?? invoice.PackageId,
+            FileName = invoice.FileName,
         };
     }
 
@@ -863,7 +864,7 @@ public class AssistantController : ControllerBase
 
         string botMessage = failCount == 0 && warnCount == 0
             ? $"Activity Summary analysed. All {rules.Count} checks passed!"
-            : $"Activity Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")}{(warnCount > 0 ? $" {warnCount} warning(s)." : "")} Review below and continue or re-upload.";
+            : $"Activity Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")} Review below and continue or re-upload.";
 
         // Persist to ValidationResults table
         try
@@ -1222,12 +1223,12 @@ public class AssistantController : ControllerBase
 
         var q = query.ToLower();
         var dealers = await _context.StateMappings
-            .Where(s => s.IsActive && !s.IsDeleted && s.DealerName.ToLower().Contains(q))
+            .Where(s => s.IsActive && !s.IsDeleted && s.DealerName != null && s.DealerName.ToLower().Contains(q))
             .Take(10)
             .Select(s => new DealerItem
             {
-                DealerCode = s.DealerCode,
-                DealerName = s.DealerName,
+                DealerCode = s.DealerCode ?? "",
+                DealerName = s.DealerName ?? "",
                 City = s.City ?? "",
                 State = s.State,
             })
@@ -1267,7 +1268,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "date_picker_start",
-            Message = $"✅ Dealer: {dealerName}, {city}\n\nActivity period for Team {teamName}?\nPick start date:",
+            Message = $"Dealer: {dealerName}, {city}\n\nActivity period for Team {teamName}?\nPick start date:",
             TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
         };
@@ -1411,7 +1412,7 @@ public class AssistantController : ControllerBase
             return new AssistantResponse
             {
                 Type = "team_name_input",
-                Message = $"✅ Team {teamName} details saved!\n\nNow let's add details for Team {nextTeam} of {totalTeams}.\n\nPlease enter Team {nextTeam} name:",
+                Message = $"Team {teamName} details saved!\n\nNow let's add details for Team {nextTeam} of {totalTeams}.\n\nPlease enter Team {nextTeam} name:",
                 TeamContext = new TeamContextDto { CurrentTeam = nextTeam, TotalTeams = totalTeams },
                 PayloadJson = nextPayload,
                 SubmissionId = submissionId,
@@ -1530,7 +1531,7 @@ public class AssistantController : ControllerBase
             {
                 Type = "photo_validation_results",
                 Message = $"Maximum 10 photos per team. You already have {existingCount} photo(s). Remove a photo first or proceed with current set.",
-                TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams },
+                TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams, TeamName = teamName },
                 PayloadJson = request.PayloadJson,
                 SubmissionId = submissionId,
             };
@@ -1621,11 +1622,11 @@ public class AssistantController : ControllerBase
             : photoResults.Count;
 
         int fullyPassed = photoResults.Count(p => p.AllPassed);
-        int withWarnings = photoResults.Count(p => !p.AllPassed);
+        int withIssues = photoResults.Count(p => !p.AllPassed);
 
         string summary = $"{totalPhotos} photo(s) uploaded for {teamName}.\n";
-        if (withWarnings > 0)
-            summary += $"{fullyPassed} of {photoResults.Count} fully passed. {withWarnings} have warnings.";
+        if (withIssues > 0)
+            summary += $"{fullyPassed} of {photoResults.Count} passed. {withIssues} failed checks.";
         else
             summary += $"All {fullyPassed} passed AI analysis.";
 
@@ -1641,7 +1642,7 @@ public class AssistantController : ControllerBase
         {
             Type = "photo_validation_results",
             Message = summary,
-            TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams },
+            TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams, TeamName = teamName },
             PhotoResults = photoResults,
             PayloadJson = newPayload,
             SubmissionId = submissionId,
@@ -1762,10 +1763,10 @@ public class AssistantController : ControllerBase
 
         int totalPhotos = photoResults.Count;
         int fullyPassed = photoResults.Count(p => p.AllPassed);
-        int withWarnings = photoResults.Count(p => !p.AllPassed);
+        int withIssues = photoResults.Count(p => !p.AllPassed);
         string summary = $"{totalPhotos} photo(s) for Team {currentPhotoTeam}. Photo {photoNumber} replaced.\n";
-        if (withWarnings > 0)
-            summary += $"{fullyPassed} of {totalPhotos} fully passed. {withWarnings} have warnings.";
+        if (withIssues > 0)
+            summary += $"{fullyPassed} of {totalPhotos} passed. {withIssues} failed checks.";
         else
             summary += $"All {fullyPassed} passed AI analysis.";
 
@@ -1781,7 +1782,7 @@ public class AssistantController : ControllerBase
         {
             Type = "photo_validation_results",
             Message = summary,
-            TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams },
+            TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams, TeamName = $"Team {currentPhotoTeam}" },
             PhotoResults = photoResults,
             PayloadJson = newPayload,
             SubmissionId = submissionId,
@@ -1837,7 +1838,7 @@ public class AssistantController : ControllerBase
             {
                 Type = "photo_validation_results",
                 Message = $"Minimum 3 photos required per team. Please upload at least {3 - photoCount} more photo(s).",
-                TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams },
+                TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams, TeamName = $"Team {currentPhotoTeam}" },
                 PayloadJson = request.PayloadJson,
                 SubmissionId = submissionId,
             };
@@ -1903,7 +1904,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "team_summary",
-            Message = $"✅ All {totalTeams} team(s) and photo proofs submitted successfully!\n\nHere's a summary of all teams:",
+            Message = $"All {totalTeams} team(s) and photo proofs submitted successfully!\n\nHere's a summary of all teams:",
             TeamSummaries = teamSummaries,
             SubmissionId = submissionId,
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { submissionId = submissionId?.ToString() }),
@@ -2640,7 +2641,7 @@ public class AssistantController : ControllerBase
 
         string botMessage = failCount == 0 && warnCount == 0
             ? $"Cost Summary analysed. All {rules.Count} checks passed!"
-            : $"Cost Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")}{(warnCount > 0 ? $" {warnCount} warning(s)." : "")} Review below and continue or re-upload.";
+            : $"Cost Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")} Review below and continue or re-upload.";
 
         // Persist to ValidationResults
         try
@@ -3390,6 +3391,9 @@ public class AssistantResponse
 
     [JsonPropertyName("reviewSections")]
     public List<FinalReviewSection>? ReviewSections { get; init; }
+
+    [JsonPropertyName("fileName")]
+    public string? FileName { get; init; }
 }
 
 public class PhotoValidationResult
@@ -3507,6 +3511,9 @@ public class TeamContextDto
 
     [JsonPropertyName("totalTeams")]
     public int TotalTeams { get; init; }
+
+    [JsonPropertyName("teamName")]
+    public string? TeamName { get; init; }
 }
 
 public class FinalReviewSection

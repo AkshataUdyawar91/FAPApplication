@@ -21,6 +21,7 @@ public class HierarchicalSubmissionController : ControllerBase
     private readonly IApplicationDbContext _context;
     private readonly IFileStorageService _fileStorage;
     private readonly IDocumentAgent _documentAgent;
+    private readonly IDocumentService _documentService;
     private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly ILogger<HierarchicalSubmissionController> _logger;
 
@@ -28,12 +29,14 @@ public class HierarchicalSubmissionController : ControllerBase
         IApplicationDbContext context,
         IFileStorageService fileStorage,
         IDocumentAgent documentAgent,
+        IDocumentService documentService,
         IServiceScopeFactory serviceScopeFactory,
         ILogger<HierarchicalSubmissionController> logger)
     {
         _context = context;
         _fileStorage = fileStorage;
         _documentAgent = documentAgent;
+        _documentService = documentService;
         _serviceScopeFactory = serviceScopeFactory;
         _logger = logger;
     }
@@ -58,6 +61,10 @@ public class HierarchicalSubmissionController : ControllerBase
             if (package == null)
                 return NotFound(new { error = "Package not found" });
 
+            // Auto-assign TeamNumber based on existing teams in this package
+            var existingTeamCount = await _context.Campaigns
+                .CountAsync(t => t.PackageId == packageId && !t.IsDeleted, cancellationToken);
+
             var campaign = new Teams
             {
                 Id = Guid.NewGuid(),
@@ -71,6 +78,7 @@ public class HierarchicalSubmissionController : ControllerBase
                 DealershipAddress = request.DealershipAddress,
                 GPSLocation = request.GPSLocation,
                 State = request.State,
+                TeamNumber = existingTeamCount + 1,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -251,29 +259,25 @@ public class HierarchicalSubmissionController : ControllerBase
 
             foreach (var file in files)
             {
-                var blobUrl = await _fileStorage.UploadFileAsync(file, "photos", $"{Guid.NewGuid()}_{file.FileName}");
+                // Route through DocumentService for blob upload + background EXIF/AI extraction
+                var uploadResult = await _documentService.UploadDocumentAsync(
+                    file, DocumentType.TeamPhoto, packageId, userId);
 
-                var photo = new TeamPhotos
+                // Link to the correct team and set display order
+                var photo = await _context.TeamPhotos.FindAsync(uploadResult.DocumentId);
+                if (photo != null)
                 {
-                    Id = Guid.NewGuid(),
-                    TeamId = campaignId,
-                    PackageId = packageId,
-                    FileName = file.FileName,
-                    BlobUrl = blobUrl,
-                    FileSizeBytes = file.Length,
-                    ContentType = file.ContentType,
-                    DisplayOrder = displayOrder++,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
+                    photo.TeamId = campaignId;
+                    photo.DisplayOrder = displayOrder++;
+                    photo.UpdatedAt = DateTime.UtcNow;
+                }
 
-                _context.CampaignPhotos.Add(photo);
-                photoIds.Add(photo.Id);
+                photoIds.Add(uploadResult.DocumentId);
             }
 
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("{Count} photos added to campaign {CampaignId}", files.Count, campaignId);
+            _logger.LogInformation("{Count} photos added to campaign {CampaignId} via DocumentService", files.Count, campaignId);
 
             return Ok(new { photoIds, message = $"{files.Count} photos added successfully" });
         }
@@ -281,6 +285,42 @@ public class HierarchicalSubmissionController : ControllerBase
         {
             _logger.LogError(ex, "Error adding photos to campaign {CampaignId}", campaignId);
             return StatusCode(500, new { error = "Failed to add photos" });
+        }
+    }
+
+    /// <summary>
+    /// Backfill EXIF + AI metadata for photos that were uploaded without extraction.
+    /// Finds all TeamPhotos in the given package with NULL ExtractedMetadataJson and triggers extraction.
+    /// </summary>
+    [HttpPost("{packageId}/photos/backfill-extraction")]
+    [Authorize(Roles = "Agency,ASM,HQ")]
+    public async Task<IActionResult> BackfillPhotoExtraction(
+        Guid packageId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var photos = await _context.TeamPhotos
+                .Where(p => p.PackageId == packageId && !p.IsDeleted && p.ExtractedMetadataJson == null)
+                .Select(p => new { p.Id, p.BlobUrl })
+                .ToListAsync(cancellationToken);
+
+            if (photos.Count == 0)
+                return Ok(new { message = "No photos need extraction backfill.", count = 0 });
+
+            foreach (var photo in photos)
+            {
+                await _documentService.TriggerPhotoExtractionAsync(photo.Id, photo.BlobUrl);
+            }
+
+            _logger.LogInformation("Triggered extraction backfill for {Count} photos in package {PackageId}", photos.Count, packageId);
+
+            return Ok(new { message = $"Extraction triggered for {photos.Count} photos.", count = photos.Count });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error backfilling photo extraction for package {PackageId}", packageId);
+            return StatusCode(500, new { error = "Failed to trigger photo extraction backfill." });
         }
     }
 
@@ -383,6 +423,9 @@ public class HierarchicalSubmissionController : ControllerBase
                                     parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount }));
                                 entity.ElementWiseQuantityJson = System.Text.Json.JsonSerializer.Serialize(
                                     parsed.CostBreakdowns.Select(b => new { b.Category, b.Quantity, b.Unit }));
+                                // Full breakdown with all fields (cost type flags included)
+                                entity.CostBreakdownJson = System.Text.Json.JsonSerializer.Serialize(
+                                    parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount, b.Quantity, b.Unit, b.IsFixedCost, b.IsVariableCost }));
                             }
                         }
                         await ctx.SaveChangesAsync(CancellationToken.None);
@@ -445,7 +488,9 @@ public class HierarchicalSubmissionController : ControllerBase
                     FileSizeBytes = file.Length,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
+                    UpdatedAt = DateTime.UtcNow,
+                    CreatedBy = userId.ToString(),
+                    UpdatedBy = userId.ToString()
                 };
                 _context.ActivitySummaries.Add(activitySummary);
             }
@@ -456,6 +501,7 @@ public class HierarchicalSubmissionController : ControllerBase
                 package.ActivitySummary.ContentType = file.ContentType;
                 package.ActivitySummary.FileSizeBytes = file.Length;
                 package.ActivitySummary.UpdatedAt = DateTime.UtcNow;
+                package.ActivitySummary.UpdatedBy = userId.ToString();
             }
 
             package.UpdatedAt = DateTime.UtcNow;
@@ -485,6 +531,7 @@ public class HierarchicalSubmissionController : ControllerBase
                     {
                         entity.ExtractedDataJson = json;
                         entity.ExtractionConfidence = confidence;
+                        entity.IsFlaggedForReview = activityData.IsFlaggedForReview;
                         entity.UpdatedAt = DateTime.UtcNow;
 
                         var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -494,6 +541,16 @@ public class HierarchicalSubmissionController : ControllerBase
                             entity.DealerName = parsed.Rows[0].DealerName;
                             entity.TotalDays = parsed.Rows.Sum(r => r.Day);
                             entity.TotalWorkingDays = parsed.Rows.Sum(r => r.WorkingDay);
+                            // Build a brief activity description from extracted locations
+                            var locations = parsed.Rows
+                                .Where(r => !string.IsNullOrWhiteSpace(r.Location))
+                                .Select(r => r.Location)
+                                .Distinct()
+                                .ToList();
+                            if (locations.Any())
+                            {
+                                entity.ActivityDescription = $"Activity across {locations.Count} location(s): {string.Join(", ", locations)}";
+                            }
                         }
                         await ctx.SaveChangesAsync(CancellationToken.None);
                     }
@@ -547,8 +604,11 @@ public class HierarchicalSubmissionController : ControllerBase
                     BlobUrl = blobUrl,
                     ContentType = file.ContentType,
                     FileSizeBytes = file.Length,
+                    VersionNumber = package.VersionNumber,
                     CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
+                    UpdatedAt = DateTime.UtcNow,
+                    CreatedBy = userId.ToString(),
+                    UpdatedBy = userId.ToString()
                 };
                 _context.EnquiryDocuments.Add(enquiryDoc);
             }
@@ -559,6 +619,7 @@ public class HierarchicalSubmissionController : ControllerBase
                 package.EnquiryDocument.ContentType = file.ContentType;
                 package.EnquiryDocument.FileSizeBytes = file.Length;
                 package.EnquiryDocument.UpdatedAt = DateTime.UtcNow;
+                package.EnquiryDocument.UpdatedBy = userId.ToString();
             }
 
             package.UpdatedAt = DateTime.UtcNow;
@@ -588,6 +649,7 @@ public class HierarchicalSubmissionController : ControllerBase
                     {
                         entity.ExtractedDataJson = json;
                         entity.ExtractionConfidence = confidence;
+                        entity.IsFlaggedForReview = enquiryData.IsFlaggedForReview;
                         entity.UpdatedAt = DateTime.UtcNow;
                         await ctx.SaveChangesAsync(CancellationToken.None);
                     }

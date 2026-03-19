@@ -58,6 +58,10 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<StateMapping> StateMappings => Set<StateMapping>();
     public DbSet<SubmissionSequence> SubmissionSequences => Set<SubmissionSequence>();
 
+    // Dealer and state/city master data
+    public DbSet<Dealer> Dealers => Set<Dealer>();
+    public DbSet<StateCity> StateCities => Set<StateCity>();
+
     // Reference data
     public DbSet<StateGstMaster> StateGstMasters => Set<StateGstMaster>();
     public DbSet<HsnMaster> HsnMasters => Set<HsnMaster>();
