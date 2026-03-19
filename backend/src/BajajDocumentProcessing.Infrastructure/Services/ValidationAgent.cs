@@ -1652,7 +1652,7 @@ public class ValidationAgent : IValidationAgent
         var items = new List<(DocumentType, Guid, bool, string?)>();
 
         // PO: SAP verification + date validation
-        if (package.PO != null && (result.SAPVerification != null || result.DateValidation != null))
+        if (package.PO != null)
         {
             var passed = (result.SAPVerification?.IsVerified ?? true || result.SAPVerification?.SAPConnectionFailed == true)
                          && (result.DateValidation?.IsValid ?? true);
@@ -1668,7 +1668,7 @@ public class ValidationAgent : IValidationAgent
 
         // Invoice: field presence + cross-document
         var invoiceDoc = package.Invoices.FirstOrDefault();
-        if (invoiceDoc != null && (result.InvoiceFieldPresence != null || result.InvoiceCrossDocument != null))
+        if (invoiceDoc != null)
         {
             var invPassed = (result.InvoiceFieldPresence?.AllFieldsPresent ?? true)
                             && (result.InvoiceCrossDocument?.AllChecksPass ?? true);
@@ -1683,7 +1683,7 @@ public class ValidationAgent : IValidationAgent
         }
 
         // CostSummary: field presence + cross-document
-        if (package.CostSummary != null && (result.CostSummaryFieldPresence != null || result.CostSummaryCrossDocument != null))
+        if (package.CostSummary != null)
         {
             var passed = (result.CostSummaryFieldPresence?.AllFieldsPresent ?? true)
                          && (result.CostSummaryCrossDocument?.AllChecksPass ?? true);
@@ -1698,7 +1698,7 @@ public class ValidationAgent : IValidationAgent
         }
 
         // ActivitySummary: field presence + cross-document
-        if (package.ActivitySummary != null && (result.ActivityFieldPresence != null || result.ActivityCrossDocument != null))
+        if (package.ActivitySummary != null)
         {
             var passed = (result.ActivityFieldPresence?.AllFieldsPresent ?? true)
                          && (result.ActivityCrossDocument?.AllChecksPass ?? true);
@@ -1713,12 +1713,12 @@ public class ValidationAgent : IValidationAgent
         }
 
         // EnquiryDocument: field presence only
-        if (package.EnquiryDocument != null && result.EnquiryDumpFieldPresence != null)
+        if (package.EnquiryDocument != null)
         {
-            var passed = result.EnquiryDumpFieldPresence.AllFieldsPresent;
-            var issues = result.EnquiryDumpFieldPresence.AllFieldsPresent
-                ? null
-                : string.Join("; ", result.EnquiryDumpFieldPresence.MissingFields);
+            var passed = result.EnquiryDumpFieldPresence?.AllFieldsPresent ?? true;
+            var issues = (result.EnquiryDumpFieldPresence != null && !result.EnquiryDumpFieldPresence.AllFieldsPresent)
+                ? string.Join("; ", result.EnquiryDumpFieldPresence.MissingFields)
+                : null;
 
             items.Add((DocumentType.EnquiryDocument, package.EnquiryDocument.Id, passed, issues));
         }

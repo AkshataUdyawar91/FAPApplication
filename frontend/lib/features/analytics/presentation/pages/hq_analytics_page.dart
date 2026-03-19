@@ -1,3 +1,4 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -19,7 +20,7 @@ class HQAnalyticsPage extends StatefulWidget {
 }
 
 class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
   
   bool _isLoading = true;
   Map<String, dynamic> _analytics = {};

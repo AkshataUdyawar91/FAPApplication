@@ -1,3 +1,4 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../constants/api_constants.dart';
@@ -17,7 +18,7 @@ final dioProvider = Provider<Dio>((ref) {
         'Accept': 'application/json',
       },
     ),
-  );
+  )..interceptors.add(PrettyDioLogger());
 
   // Add auth interceptor
   dio.interceptors.add(InterceptorsWrapper(
