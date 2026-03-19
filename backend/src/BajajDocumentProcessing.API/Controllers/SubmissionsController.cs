@@ -37,6 +37,7 @@ public class SubmissionsController : ControllerBase
         ILogger<SubmissionsController> logger,
         ISubmissionNumberService submissionNumberService,
         ICircleHeadAssignmentService circleHeadAssignmentService,
+        IRAAssignmentService raAssignmentService,
         ISubmissionNotificationService submissionNotificationService,
         IEmailAgent emailAgent)
     {
