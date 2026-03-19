@@ -83,6 +83,10 @@ class FileUploadNotifier extends StateNotifier<FileUploadState> {
   /// Called when extraction completes (either via polling or SignalR push).
   void Function(String documentId)? onExtractionComplete;
 
+  /// Called immediately after upload succeeds and a documentId is returned.
+  /// Use this to send upload_confirmed to the conversation without waiting for extraction.
+  void Function(String documentId)? onUploadSuccess;
+
   /// Called when polling times out and SignalR fallback should be used.
   void Function(String documentId)? onPollTimeout;
 
@@ -125,6 +129,10 @@ class FileUploadNotifier extends StateNotifier<FileUploadState> {
         documentId: documentId,
         extractionStatus: ExtractionStatus.pending,
       );
+
+      // Notify immediately so the conversation can advance to the next step
+      // without waiting for extraction to complete.
+      onUploadSuccess?.call(documentId);
 
       _startPolling(documentId);
     } catch (e) {
