@@ -66,6 +66,10 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   List<InvoiceDocumentRow> _invoiceDocuments = [];
   List<CampaignDetailRow> _campaignDetails = [];
 
+  // Validation data from submission response
+  List<dynamic> _invoiceValidations = [];
+  List<dynamic> _photoValidations = [];
+
   @override
   void initState() {
     super.initState();
@@ -128,11 +132,19 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         final allCampaignDetails =
             _mergeCampaignDetails(campaignDetails, hierRows);
 
+        // Extract validation data from submission response
+        final invoiceValidations =
+            submissionData['invoiceValidations'] as List<dynamic>? ?? [];
+        final photoValidations =
+            submissionData['photoValidations'] as List<dynamic>? ?? [];
+
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
           _invoiceDocuments = invoiceDocuments;
           _campaignDetails = allCampaignDetails;
+          _invoiceValidations = invoiceValidations;
+          _photoValidations = photoValidations;
           _isLoading = false;
         });
       }
@@ -457,6 +469,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                                           }
                                         },
                                       ),
+                                      const SizedBox(height: 24),
+                                      _buildValidationReportSection(),
                                       const SizedBox(height: 80),
                                     ],
                                   ),
@@ -1173,6 +1187,584 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           iframe.style.height = '100%';
         },
       ),
+    );
+  }
+
+  Widget _buildValidationReportSection() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.verified_user,
+                    color: AppColors.primary, size: 24),
+                const SizedBox(width: 12),
+                const Text('Document Validations', style: AppTextStyles.h3),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 16),
+
+            // Invoice Validations
+            if (_invoiceValidations.isNotEmpty) ...[
+              _buildInvoiceValidationsSection(_invoiceValidations),
+              const SizedBox(height: 24),
+            ],
+
+            // Photo Validations
+            if (_photoValidations.isNotEmpty)
+              _buildPhotoValidationsSection(_photoValidations),
+
+            // No validations message
+            if (_invoiceValidations.isEmpty && _photoValidations.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF9FAFB),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'No validation data available for this submission',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _getConfidenceColor(double confidence) {
+    if (confidence >= 80) return const Color(0xFF16A34A);
+    if (confidence >= 60) return const Color(0xFFF59E0B);
+    return const Color(0xFFDC2626);
+  }
+
+  Widget _buildInvoiceValidationsSection(List<dynamic> invoiceValidations) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...invoiceValidations.map((invoice) {
+          final invoiceData = invoice as Map<String, dynamic>;
+          return _buildInvoiceValidationCard(invoiceData);
+        }),
+      ],
+    );
+  }
+
+  Widget _buildInvoiceValidationCard(Map<String, dynamic> invoice) {
+    final fileName = invoice['fileName'] ?? 'Unknown';
+    final allPassed = invoice['allPassed'] ?? false;
+    final failureReason = invoice['failureReason'];
+    final validationDetailsJson = invoice['validationDetailsJson'] as String?;
+
+    Map<String, dynamic>? validationDetails;
+    int passedCount = 0;
+    int totalCount = 0;
+
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+      try {
+        validationDetails =
+            jsonDecode(validationDetailsJson) as Map<String, dynamic>;
+
+        // Count passed and total validations
+        if (validationDetails != null) {
+          // Count proactive validations
+          if (validationDetails['proactive'] != null) {
+            final proactive = validationDetails['proactive'] as List<dynamic>;
+            totalCount += proactive.length;
+            passedCount += proactive.where((v) => v['passed'] == true).length;
+          }
+
+          // Count reactive validations
+          if (validationDetails['reactive'] != null) {
+            final reactive = validationDetails['reactive'] as List<dynamic>;
+            totalCount += reactive.length;
+            passedCount += reactive.where((v) => v['passed'] == true).length;
+          }
+
+          // Count checks
+          if (validationDetails['checks'] != null) {
+            final checks = validationDetails['checks'] as List<dynamic>;
+            totalCount += checks.length;
+            passedCount += checks.where((v) => v['passed'] == true).length;
+          }
+        }
+      } catch (e) {
+        print('Error parsing validation details: $e');
+      }
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(
+          color: Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color.fromARGB(255, 240, 237, 237),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Invoice Validations',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        fileName,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                RichText(
+                  text: TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '$passedCount/$totalCount ',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                      TextSpan(
+                        text: 'Passed',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: const Color(0xFF16A34A),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Failure Reason
+          if (failureReason != null && failureReason.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: const Color(0xFFFEF2F2),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning, color: Color(0xFFDC2626), size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      failureReason,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: const Color(0xFFDC2626),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Validation Details - Single unified table
+          if (validationDetails != null)
+            _buildUnifiedValidationTable(validationDetails),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhotoValidationsSection(List<dynamic> photoValidations) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...photoValidations.map((photo) {
+          final photoData = photo as Map<String, dynamic>;
+          return _buildPhotoValidationCard(photoData);
+        }),
+      ],
+    );
+  }
+
+  Widget _buildPhotoValidationCard(Map<String, dynamic> photo) {
+    final fileName = photo['fileName'] ?? 'Unknown';
+    final allPassed = photo['allPassed'] ?? false;
+    final failureReason = photo['failureReason'];
+    final validationDetailsJson = photo['validationDetailsJson'] as String?;
+
+    Map<String, dynamic>? validationDetails;
+    int passedCount = 0;
+    int totalCount = 0;
+
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+      try {
+        validationDetails =
+            jsonDecode(validationDetailsJson) as Map<String, dynamic>;
+
+        // Count passed and total validations
+        if (validationDetails != null) {
+          // Count required items (for photos)
+          if (validationDetails['requiredItems'] != null) {
+            final items = validationDetails['requiredItems'] as List<dynamic>;
+            totalCount += items.length;
+            passedCount += items.where((v) => v['passed'] == true).length;
+          }
+
+          // Count checks
+          if (validationDetails['checks'] != null) {
+            final checks = validationDetails['checks'] as List<dynamic>;
+            totalCount += checks.length;
+            passedCount += checks.where((v) => v['passed'] == true).length;
+          }
+        }
+      } catch (e) {
+        print('Error parsing validation details: $e');
+      }
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(
+          color: Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: const BoxDecoration(
+              color: Color.fromARGB(255, 240, 237, 237),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Photo Validations',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        fileName,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                RichText(
+                  text: TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '$passedCount/$totalCount ',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                      TextSpan(
+                        text: 'Passed',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: const Color(0xFF16A34A),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Validation Details - Single unified table
+          if (validationDetails != null)
+            _buildUnifiedValidationTable(validationDetails),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUnifiedValidationTable(Map<String, dynamic> validationDetails) {
+    // Collect all validations into a single list
+    List<Map<String, dynamic>> allValidations = [];
+
+    // Add proactive validations
+    if (validationDetails['proactive'] != null) {
+      final proactive = validationDetails['proactive'] as List<dynamic>;
+      allValidations.addAll(proactive.map((v) => v as Map<String, dynamic>));
+    }
+
+    // Add reactive validations
+    if (validationDetails['reactive'] != null) {
+      final reactive = validationDetails['reactive'] as List<dynamic>;
+      allValidations.addAll(reactive.map((v) => v as Map<String, dynamic>));
+    }
+
+    // Add checks
+    if (validationDetails['checks'] != null) {
+      final checks = validationDetails['checks'] as List<dynamic>;
+      allValidations.addAll(checks.map((v) => v as Map<String, dynamic>));
+    }
+
+    // Add required items (for photos)
+    if (validationDetails['requiredItems'] != null) {
+      final items = validationDetails['requiredItems'] as List<dynamic>;
+      allValidations.addAll(items.map((v) => v as Map<String, dynamic>));
+    }
+
+    if (allValidations.isEmpty) {
+      return const SizedBox();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'STATUS',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...allValidations.asMap().entries.map((entry) {
+          final index = entry.key;
+          final validation = entry.value;
+          final isLast = index == allValidations.length - 1;
+
+          final field = validation['field'] ?? validation['item'] ?? 'Unknown';
+          final passed = validation['passed'] ?? false;
+          final value = validation['value'];
+          final message = validation['message'];
+          final label = validation['label'];
+          final confidence = validation['confidence'];
+          final present = validation['present'];
+
+          final statusColor =
+              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    label ?? field,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Status
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    passed ? 'Pass' : 'Fail',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: statusColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found
+                Expanded(
+                  flex: 3,
+                  child: _buildWhatWasFoundColumn(
+                    value: value,
+                    message: message,
+                    confidence: confidence,
+                    present: present,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildWhatWasFoundColumn({
+    dynamic value,
+    dynamic message,
+    dynamic confidence,
+    dynamic present,
+  }) {
+    // Handle required items with confidence
+    if (confidence != null) {
+      final isPresent = present ?? false;
+      return Row(
+        children: [
+          Text(
+            isPresent ? 'Detected with ' : 'Not detected, ',
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textPrimary,
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: _getConfidenceColor((confidence as num).toDouble() * 100)
+                  .withOpacity(0.1),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color:
+                    _getConfidenceColor((confidence as num).toDouble() * 100),
+                width: 0.5,
+              ),
+            ),
+            child: Text(
+              '${((confidence as num) * 100).toStringAsFixed(0)}% confidence',
+              style: AppTextStyles.bodySmall.copyWith(
+                color:
+                    _getConfidenceColor((confidence as num).toDouble() * 100),
+                fontWeight: FontWeight.w600,
+                fontSize: 10,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Handle regular validations
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (value != null)
+          Text(
+            value.toString(),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textPrimary,
+            ),
+          ),
+        if (message != null)
+          Text(
+            message.toString(),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: const Color(0xFFDC2626),
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        if (value == null && message == null)
+          Text(
+            '-',
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+      ],
     );
   }
 }
