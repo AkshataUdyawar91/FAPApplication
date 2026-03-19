@@ -856,26 +856,102 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   Widget _invoiceValidationCard(AssistantResponseModel r) {
     final rules = r.validationRules ?? [];
     final passed = r.passedCount ?? 0;
+    final total = rules.length;
     final failed = r.failedCount ?? 0;
     final warned = r.warningCount ?? 0;
-    final hasIssues = failed > 0 || warned > 0;
+    final issues = failed + warned;
+    final hasIssues = issues > 0;
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          _validationChip('$passed passed', Colors.green.shade600, Colors.green.shade50),
-          if (failed > 0) ...[
-            const SizedBox(width: 6),
-            _validationChip('$failed failed', Colors.red.shade600, Colors.red.shade50),
-          ],
-          if (warned > 0) ...[
-            const SizedBox(width: 6),
-            _validationChip('$warned warning${warned > 1 ? "s" : ""}', Colors.orange.shade700, Colors.orange.shade50),
-          ],
-        ]),
-        const SizedBox(height: 10),
-        ...rules.map(_validationRuleRow),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Invoice',
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                        ],
+                      ),
+                    ),
+                    Text('$passed/$total passed',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF16A34A))),
+                  ],
+                ),
+              ),
+              // Column headers
+              Container(
+                color: const Color(0xFFF9FAFB),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                child: Row(children: const [
+                  SizedBox(width: 28, child: Text('#', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  SizedBox(width: 68, child: Text('Result', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  Expanded(flex: 3, child: Padding(
+                    padding: EdgeInsets.only(left: 10),
+                    child: Text('Evidence', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
+                  )),
+                ]),
+              ),
+              const Divider(height: 1, color: Color(0xFFE5E7EB)),
+              ...rules.asMap().entries.map((entry) {
+                final i = entry.key;
+                final rule = entry.value;
+                final isPass = rule.passed;
+                final resultColor = isPass ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+                final resultBg = isPass ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2);
+                final resultLabel = isPass ? 'PASS' : 'FAIL';
+                final foundText = isPass ? (rule.extractedValue ?? '—') : (rule.message ?? rule.extractedValue ?? '—');
+
+                return Container(
+                  decoration: BoxDecoration(
+                    color: i.isEven ? Colors.white : const Color(0xFFFAFAFA),
+                    border: const Border(bottom: BorderSide(color: Color(0xFFE5E7EB), width: 0.5)),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    SizedBox(width: 28, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
+                    Expanded(flex: 4, child: Text(rule.label, style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
+                    SizedBox(
+                      width: 68,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(resultLabel,
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 10),
+                        child: Text(foundText,
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
+                      ),
+                    ),
+                  ]),
+                );
+              }),
+            ],
+          ),
+        ),
         const SizedBox(height: 12),
         Row(children: [
           Expanded(
@@ -911,50 +987,12 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     );
   }
 
-  Widget _validationChip(String label, Color fg, Color bg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-      child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
-    );
-  }
-
-  Widget _validationRuleRow(ValidationRuleResultModel rule) {
-    final Color iconColor;
-    final IconData icon;
-    if (rule.passed) {
-      icon = Icons.check_circle;
-      iconColor = Colors.green.shade600;
-    } else if (rule.isWarning) {
-      icon = Icons.warning_amber_rounded;
-      iconColor = Colors.orange.shade700;
-    } else {
-      icon = Icons.cancel;
-      iconColor = Colors.red.shade600;
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Icon(icon, size: 16, color: iconColor),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(rule.label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-            if (rule.extractedValue != null)
-              Text(rule.extractedValue!, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-            if (rule.message != null && !rule.passed)
-              Text(rule.message!,
-                  style: TextStyle(fontSize: 12, color: rule.isWarning ? Colors.orange.shade700 : Colors.red.shade600)),
-          ]),
-        ),
-      ]),
-    );
-  }
 
   Widget _photoValidationCard(AssistantResponseModel r, bool isLast) {
     final photos = r.photoResults ?? [];
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
     final payloadJson = r.payloadJson ?? _currentTeamPayload;
+    final teamLabel = r.teamContext?.teamName ?? 'Team ${r.teamContext?.currentTeam ?? 1}';
     final teamName = r.teamContext != null ? 'Team ${r.teamContext!.currentTeam}' : 'this team';
 
     return Column(
@@ -962,9 +1000,17 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       children: [
         if (r.teamContext != null)
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: 6),
             child: _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams),
           ),
+        // Team name header
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            teamLabel,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+          ),
+        ),
         if (photos.isEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1048,7 +1094,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
-              child: Text('Done $teamName ✓',
+              child: Text('Done $teamName',
                   style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
             ),
           ),
@@ -1058,21 +1104,39 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   }
 
   Widget _photoTable(List<PhotoValidationResultModel> photos) {
-    String _ruleIcon(PhotoValidationResultModel photo, String keyword) {
+    bool _rulePassed(PhotoValidationResultModel photo, String keyword) {
       final rule = photo.rules.firstWhere(
         (r) => r.label.toLowerCase().contains(keyword),
         orElse: () => ValidationRuleResultModel(ruleCode: '', type: '', passed: false, isWarning: false, label: ''),
       );
-      return rule.passed ? '✅' : '❌';
+      return rule.passed;
+    }
+
+    Widget _badge(bool passed) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        decoration: BoxDecoration(
+          color: passed ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          passed ? 'PASS' : 'FAIL',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+          ),
+        ),
+      );
     }
 
     const headerStyle = TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF374151));
-    const cellStyle = TextStyle(fontSize: 13);
 
     return Table(
       border: TableBorder.all(color: const Color(0xFFE5E7EB), borderRadius: BorderRadius.circular(6)),
       columnWidths: const {
-        0: FixedColumnWidth(48),
+        0: FixedColumnWidth(44),
         1: FlexColumnWidth(),
         2: FlexColumnWidth(),
         3: FlexColumnWidth(),
@@ -1091,14 +1155,22 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         ),
         ...photos.map((photo) => TableRow(
           children: [
-            _tableCell('${photo.displayOrder}', cellStyle.copyWith(fontWeight: FontWeight.w600)),
-            _tableCell(_ruleIcon(photo, 'date'), cellStyle),
-            _tableCell(_ruleIcon(photo, 'gps'), cellStyle),
-            _tableCell(_ruleIcon(photo, 'blue'), cellStyle),
-            _tableCell(_ruleIcon(photo, 'vehicle'), cellStyle),
+            _tableCell('${photo.displayOrder}',
+                const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
+            _tableBadgeCell(_badge(_rulePassed(photo, 'date'))),
+            _tableBadgeCell(_badge(_rulePassed(photo, 'gps'))),
+            _tableBadgeCell(_badge(_rulePassed(photo, 'blue'))),
+            _tableBadgeCell(_badge(_rulePassed(photo, 'vehicle'))),
           ],
         )),
       ],
+    );
+  }
+
+  Widget _tableBadgeCell(Widget badge) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: Center(child: badge),
     );
   }
 
@@ -1211,10 +1283,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         Text('📅 ${team.startDate} → ${team.endDate} (${team.workingDays} working days)',
             style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
         Text('📸 ${team.photoCount} photos · ${team.photosPassed} passed AI checks',
-            style: TextStyle(
-              fontSize: 12,
-              color: team.photosPassed == team.photoCount ? Colors.green.shade700 : Colors.orange.shade700,
-            )),
+            style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
       ]),
     );
   }
@@ -1222,20 +1291,94 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   Widget _costSummaryValidationCard(AssistantResponseModel r) {
     final rules = r.validationRules ?? [];
     final passed = r.passedCount ?? 0;
+    final total = rules.length;
     final failed = r.failedCount ?? 0;
     final warned = r.warningCount ?? 0;
-    final hasIssues = failed > 0 || warned > 0;
+    final issues = failed + warned;
+    final hasIssues = issues > 0;
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          _validationChip('$passed passed', Colors.green.shade600, Colors.green.shade50),
-          if (failed > 0) ...[const SizedBox(width: 6), _validationChip('$failed failed', Colors.red.shade600, Colors.red.shade50)],
-          if (warned > 0) ...[const SizedBox(width: 6), _validationChip('$warned warning${warned > 1 ? "s" : ""}', Colors.orange.shade700, Colors.orange.shade50)],
-        ]),
-        const SizedBox(height: 10),
-        ...rules.map(_validationRuleRow),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Expanded(
+                      child: Text('Cost Summary',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                    ),
+                    Text('$passed/$total passed',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF16A34A))),
+                  ],
+                ),
+              ),
+              Container(
+                color: const Color(0xFFF9FAFB),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                child: Row(children: const [
+                  SizedBox(width: 28, child: Text('#', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  SizedBox(width: 68, child: Text('Result', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  Expanded(flex: 3, child: Padding(
+                    padding: EdgeInsets.only(left: 10),
+                    child: Text('Evidence', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
+                  )),
+                ]),
+              ),
+              const Divider(height: 1, color: Color(0xFFE5E7EB)),
+              ...rules.asMap().entries.map((entry) {
+                final i = entry.key;
+                final rule = entry.value;
+                final isPass = rule.passed;
+                final resultColor = isPass ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+                final resultBg = isPass ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2);
+                final resultLabel = isPass ? 'PASS' : 'FAIL';
+                final foundText = isPass ? (rule.extractedValue ?? '—') : (rule.message ?? rule.extractedValue ?? '—');
+                return Container(
+                  decoration: BoxDecoration(
+                    color: i.isEven ? Colors.white : const Color(0xFFFAFAFA),
+                    border: const Border(bottom: BorderSide(color: Color(0xFFE5E7EB), width: 0.5)),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    SizedBox(width: 28, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
+                    Expanded(flex: 4, child: Text(rule.label, style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
+                    SizedBox(
+                      width: 68,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(resultLabel,
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 10),
+                        child: Text(foundText,
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
+                      ),
+                    ),
+                  ]),
+                );
+              }),
+            ],
+          ),
+        ),
         const SizedBox(height: 12),
         Row(children: [
           Expanded(
@@ -1274,20 +1417,94 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   Widget _activitySummaryValidationCard(AssistantResponseModel r) {
     final rules = r.validationRules ?? [];
     final passed = r.passedCount ?? 0;
+    final total = rules.length;
     final failed = r.failedCount ?? 0;
     final warned = r.warningCount ?? 0;
-    final hasIssues = failed > 0 || warned > 0;
+    final issues = failed + warned;
+    final hasIssues = issues > 0;
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          _validationChip('$passed passed', Colors.green.shade600, Colors.green.shade50),
-          if (failed > 0) ...[const SizedBox(width: 6), _validationChip('$failed failed', Colors.red.shade600, Colors.red.shade50)],
-          if (warned > 0) ...[const SizedBox(width: 6), _validationChip('$warned warning${warned > 1 ? "s" : ""}', Colors.orange.shade700, Colors.orange.shade50)],
-        ]),
-        const SizedBox(height: 10),
-        ...rules.map(_validationRuleRow),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Expanded(
+                      child: Text('Activity Summary',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                    ),
+                    Text('$passed/$total passed',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF16A34A))),
+                  ],
+                ),
+              ),
+              Container(
+                color: const Color(0xFFF9FAFB),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                child: Row(children: const [
+                  SizedBox(width: 28, child: Text('#', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  SizedBox(width: 68, child: Text('Result', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  Expanded(flex: 3, child: Padding(
+                    padding: EdgeInsets.only(left: 10),
+                    child: Text('Evidence', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
+                  )),
+                ]),
+              ),
+              const Divider(height: 1, color: Color(0xFFE5E7EB)),
+              ...rules.asMap().entries.map((entry) {
+                final i = entry.key;
+                final rule = entry.value;
+                final isPass = rule.passed;
+                final resultColor = isPass ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+                final resultBg = isPass ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2);
+                final resultLabel = isPass ? 'PASS' : 'FAIL';
+                final foundText = isPass ? (rule.extractedValue ?? '—') : (rule.message ?? rule.extractedValue ?? '—');
+                return Container(
+                  decoration: BoxDecoration(
+                    color: i.isEven ? Colors.white : const Color(0xFFFAFAFA),
+                    border: const Border(bottom: BorderSide(color: Color(0xFFE5E7EB), width: 0.5)),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    SizedBox(width: 28, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
+                    Expanded(flex: 4, child: Text(rule.label, style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
+                    SizedBox(
+                      width: 68,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(resultLabel,
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 10),
+                        child: Text(foundText,
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
+                      ),
+                    ),
+                  ]),
+                );
+              }),
+            ],
+          ),
+        ),
         const SizedBox(height: 12),
         Row(children: [
           Expanded(
@@ -1326,20 +1543,92 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   Widget _enquiryValidationCard(AssistantResponseModel r) {
     final rules = r.validationRules ?? [];
     final passed = r.passedCount ?? 0;
+    final total = rules.length;
     final failed = r.failedCount ?? 0;
+    final hasIssues = failed > 0;
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          _validationChip('$passed passed', Colors.green.shade600, Colors.green.shade50),
-          if (failed > 0) ...[
-            const SizedBox(width: 6),
-            _validationChip('$failed failed', Colors.red.shade600, Colors.red.shade50),
-          ],
-        ]),
-        const SizedBox(height: 10),
-        ...rules.map(_validationRuleRow),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Expanded(
+                      child: Text('Enquiry Dump',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                    ),
+                    Text('$passed/$total passed',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF16A34A))),
+                  ],
+                ),
+              ),
+              Container(
+                color: const Color(0xFFF9FAFB),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                child: Row(children: const [
+                  SizedBox(width: 28, child: Text('#', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  SizedBox(width: 68, child: Text('Result', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
+                  Expanded(flex: 3, child: Padding(
+                    padding: EdgeInsets.only(left: 10),
+                    child: Text('Evidence', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
+                  )),
+                ]),
+              ),
+              const Divider(height: 1, color: Color(0xFFE5E7EB)),
+              ...rules.asMap().entries.map((entry) {
+                final i = entry.key;
+                final rule = entry.value;
+                final isPass = rule.passed;
+                final resultColor = isPass ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+                final resultBg = isPass ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2);
+                final resultLabel = isPass ? 'PASS' : 'FAIL';
+                final foundText = isPass ? (rule.extractedValue ?? '—') : (rule.message ?? rule.extractedValue ?? '—');
+                return Container(
+                  decoration: BoxDecoration(
+                    color: i.isEven ? Colors.white : const Color(0xFFFAFAFA),
+                    border: const Border(bottom: BorderSide(color: Color(0xFFE5E7EB), width: 0.5)),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    SizedBox(width: 28, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
+                    Expanded(flex: 4, child: Text(rule.label, style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
+                    SizedBox(
+                      width: 68,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(resultLabel,
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 10),
+                        child: Text(foundText,
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
+                      ),
+                    ),
+                  ]),
+                );
+              }),
+            ],
+          ),
+        ),
         const SizedBox(height: 12),
         Row(children: [
           Expanded(
@@ -1364,7 +1653,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                   ? null
                   : () => ref.read(assistantNotifierProvider.notifier).continueAfterEnquiry(),
               icon: const Icon(Icons.arrow_forward, size: 14),
-              label: const Text('Continue →', style: TextStyle(fontSize: 12)),
+              label: Text(hasIssues ? 'Continue with warings' : 'Continue →',
+                  style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF003087),
                 foregroundColor: Colors.white,
@@ -1427,35 +1717,40 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade200),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 4, offset: const Offset(0, 1))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: section.passed ? Colors.green.shade50 : Colors.orange.shade50,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-            ),
+          // Section header with PASS/FAIL badge
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
             child: Row(children: [
-              Icon(
-                section.passed ? Icons.check_circle : Icons.warning_amber_rounded,
-                size: 16,
-                color: section.passed ? Colors.green.shade700 : Colors.orange.shade700,
+              Expanded(
+                child: Text(section.title,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
               ),
-              const SizedBox(width: 6),
-              Text(
-                section.title,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: section.passed ? Colors.green.shade800 : Colors.orange.shade800,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: section.passed ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  section.passed ? 'PASS' : 'FAIL',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: section.passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                  ),
                 ),
               ),
             ]),
           ),
+          const Divider(height: 1, color: Color(0xFFE5E7EB)),
           Padding(
             padding: const EdgeInsets.all(10),
             child: Column(
@@ -1471,7 +1766,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                     ),
                     Expanded(
                       child: Text(f.value,
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF111827))),
                     ),
                   ],
                 ),
@@ -1515,7 +1810,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     });
 
     return Container(
-      width: 420,
+      width: 520,
       decoration: BoxDecoration(
         color: Colors.white,
         border: const Border(left: BorderSide(color: Color(0xFFE5E7EB))),

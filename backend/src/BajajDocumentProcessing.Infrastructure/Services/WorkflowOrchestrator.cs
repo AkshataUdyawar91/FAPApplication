@@ -135,6 +135,16 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             }
 
             // Step 5: Final state transition
+            // Only move to PendingASM if the package was explicitly submitted (has a SubmissionNumber).
+            // Partial uploads (chatbot in-progress) should stay as Uploaded until the user submits.
+            if (string.IsNullOrEmpty(package.SubmissionNumber))
+            {
+                _logger.LogInformation("Package {PackageId} has no SubmissionNumber — keeping Uploaded state (not yet submitted)", package.Id);
+                package.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync(cancellationToken);
+                return true;
+            }
+
             package.State = PackageState.PendingASM;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
