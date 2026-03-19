@@ -2361,7 +2361,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "submit_success",
-            Message = $"Your submission has been submitted successfully!\nFAP Number: {submissionNumber}",
+            Message = "Your submission has been submitted successfully!",
             SubmissionId = submissionId,
         };
     }
@@ -2371,7 +2371,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "draft_saved",
-            Message = "Your submission has been saved as a draft. You can resume it anytime from 'View My Requests'.",
+            Message = "Your submission has been saved as a draft.",
         };
     }
 
