@@ -14,6 +14,14 @@ class AssistantResponseModel {
   final int? passedCount;
   final int? failedCount;
   final int? warningCount;
+  final List<DealerItemModel>? dealers;
+  final TeamContextModel? teamContext;
+  final String? payloadJson;
+  final List<PhotoValidationResultModel>? photoResults;
+  final List<TeamSummaryItemModel>? teamSummaries;
+  final int? totalRecords;
+  final int? missingPhoneCount;
+  final List<FinalReviewSectionModel>? reviewSections;
 
   const AssistantResponseModel({
     required this.type,
@@ -30,6 +38,14 @@ class AssistantResponseModel {
     this.passedCount,
     this.failedCount,
     this.warningCount,
+    this.dealers,
+    this.teamContext,
+    this.payloadJson,
+    this.photoResults,
+    this.teamSummaries,
+    this.totalRecords,
+    this.missingPhoneCount,
+    this.reviewSections,
   });
 
   factory AssistantResponseModel.fromJson(Map<String, dynamic> json) {
@@ -60,6 +76,24 @@ class AssistantResponseModel {
       passedCount: json['passedCount'] as int?,
       failedCount: json['failedCount'] as int?,
       warningCount: json['warningCount'] as int?,
+      dealers: (json['dealers'] as List<dynamic>?)
+          ?.map((e) => DealerItemModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      teamContext: json['teamContext'] != null
+          ? TeamContextModel.fromJson(json['teamContext'] as Map<String, dynamic>)
+          : null,
+      payloadJson: json['payloadJson'] as String?,
+      photoResults: (json['photoResults'] as List<dynamic>?)
+          ?.map((e) => PhotoValidationResultModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      teamSummaries: (json['teamSummaries'] as List<dynamic>?)
+          ?.map((e) => TeamSummaryItemModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      totalRecords: json['totalRecords'] as int?,
+      missingPhoneCount: json['missingPhoneCount'] as int?,
+      reviewSections: (json['reviewSections'] as List<dynamic>?)
+          ?.map((e) => FinalReviewSectionModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
   }
 }
@@ -150,6 +184,153 @@ class ValidationRuleResultModel {
       label: json['label'] as String? ?? '',
       extractedValue: json['extractedValue'] as String?,
       message: json['message'] as String?,
+    );
+  }
+}
+
+class DealerItemModel {
+  final String dealerCode;
+  final String dealerName;
+  final String city;
+  final String state;
+
+  const DealerItemModel({
+    required this.dealerCode,
+    required this.dealerName,
+    required this.city,
+    required this.state,
+  });
+
+  factory DealerItemModel.fromJson(Map<String, dynamic> json) {
+    return DealerItemModel(
+      dealerCode: json['dealerCode'] as String? ?? '',
+      dealerName: json['dealerName'] as String? ?? '',
+      city: json['city'] as String? ?? '',
+      state: json['state'] as String? ?? '',
+    );
+  }
+}
+
+class TeamContextModel {
+  final int currentTeam;
+  final int totalTeams;
+
+  const TeamContextModel({required this.currentTeam, required this.totalTeams});
+
+  factory TeamContextModel.fromJson(Map<String, dynamic> json) {
+    return TeamContextModel(
+      currentTeam: json['currentTeam'] as int? ?? 1,
+      totalTeams: json['totalTeams'] as int? ?? 1,
+    );
+  }
+}
+
+class PhotoValidationResultModel {
+  final String photoId;
+  final int displayOrder;
+  final String fileName;
+  final List<ValidationRuleResultModel> rules;
+  final bool allPassed;
+
+  const PhotoValidationResultModel({
+    required this.photoId,
+    required this.displayOrder,
+    required this.fileName,
+    required this.rules,
+    required this.allPassed,
+  });
+
+  factory PhotoValidationResultModel.fromJson(Map<String, dynamic> json) {
+    return PhotoValidationResultModel(
+      photoId: json['photoId'] as String? ?? '',
+      displayOrder: json['displayOrder'] as int? ?? 0,
+      fileName: json['fileName'] as String? ?? '',
+      rules: (json['rules'] as List<dynamic>?)
+              ?.map((e) => ValidationRuleResultModel.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+      allPassed: json['allPassed'] as bool? ?? false,
+    );
+  }
+}
+
+class TeamSummaryItemModel {
+  final int teamNumber;
+  final String teamName;
+  final String dealerName;
+  final String city;
+  final String state;
+  final String startDate;
+  final String endDate;
+  final int workingDays;
+  final int photoCount;
+  final int photosPassed;
+
+  const TeamSummaryItemModel({
+    required this.teamNumber,
+    required this.teamName,
+    required this.dealerName,
+    required this.city,
+    required this.state,
+    required this.startDate,
+    required this.endDate,
+    required this.workingDays,
+    required this.photoCount,
+    required this.photosPassed,
+  });
+
+  factory TeamSummaryItemModel.fromJson(Map<String, dynamic> json) {
+    return TeamSummaryItemModel(
+      teamNumber: json['teamNumber'] as int? ?? 0,
+      teamName: json['teamName'] as String? ?? '',
+      dealerName: json['dealerName'] as String? ?? '',
+      city: json['city'] as String? ?? '',
+      state: json['state'] as String? ?? '',
+      startDate: json['startDate'] as String? ?? '',
+      endDate: json['endDate'] as String? ?? '',
+      workingDays: json['workingDays'] as int? ?? 0,
+      photoCount: json['photoCount'] as int? ?? 0,
+      photosPassed: json['photosPassed'] as int? ?? 0,
+    );
+  }
+}
+
+class FinalReviewSectionModel {
+  final String title;
+  final String icon;
+  final bool passed;
+  final List<FinalReviewFieldModel> fields;
+
+  const FinalReviewSectionModel({
+    required this.title,
+    required this.icon,
+    required this.passed,
+    required this.fields,
+  });
+
+  factory FinalReviewSectionModel.fromJson(Map<String, dynamic> json) {
+    return FinalReviewSectionModel(
+      title: json['title'] as String? ?? '',
+      icon: json['icon'] as String? ?? 'info',
+      passed: json['passed'] as bool? ?? true,
+      fields: (json['fields'] as List<dynamic>?)
+              ?.map((e) => FinalReviewFieldModel.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+    );
+  }
+}
+
+class FinalReviewFieldModel {
+  final String label;
+  final String value;
+
+  const FinalReviewFieldModel({required this.label, required this.value});
+
+  factory FinalReviewFieldModel.fromJson(Map<String, dynamic> json) {
+    return FinalReviewFieldModel(
+      label: json['label'] as String? ?? '',
+      value: json['value'] as String? ?? '—',
     );
   }
 }
