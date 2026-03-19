@@ -28,6 +28,7 @@ public class SubmissionsController : ControllerBase
     private readonly ICircleHeadAssignmentService _circleHeadAssignmentService;
     private readonly IRAAssignmentService _raAssignmentService;
     private readonly ISubmissionNotificationService _submissionNotificationService;
+    private readonly IEmailAgent _emailAgent;
 
     public SubmissionsController(
         IApplicationDbContext context,
@@ -37,7 +38,8 @@ public class SubmissionsController : ControllerBase
         ISubmissionNumberService submissionNumberService,
         ICircleHeadAssignmentService circleHeadAssignmentService,
         IRAAssignmentService raAssignmentService,
-        ISubmissionNotificationService submissionNotificationService)
+        ISubmissionNotificationService submissionNotificationService,
+        IEmailAgent emailAgent)
     {
         _context = context;
         _orchestrator = orchestrator;
@@ -47,6 +49,7 @@ public class SubmissionsController : ControllerBase
         _circleHeadAssignmentService = circleHeadAssignmentService;
         _raAssignmentService = raAssignmentService;
         _submissionNotificationService = submissionNotificationService;
+        _emailAgent = emailAgent;
     }
 
     /// <summary>
@@ -103,6 +106,47 @@ public class SubmissionsController : ControllerBase
 
             _context.DocumentPackages.Add(package);
             await _context.SaveChangesAsync(cancellationToken);
+
+            // If a PO was selected, clone it into a new PO record linked to this package
+            if (request.SelectedPoId.HasValue)
+            {
+                var sourcePo = await _context.POs
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(po => po.Id == request.SelectedPoId.Value, cancellationToken);
+
+                if (sourcePo != null)
+                {
+                    var newPo = new Domain.Entities.PO
+                    {
+                        Id = Guid.NewGuid(),
+                        PackageId = package.Id,
+                        AgencyId = user.AgencyId.Value,
+                        PONumber = sourcePo.PONumber,
+                        PODate = sourcePo.PODate,
+                        VendorName = sourcePo.VendorName,
+                        VendorCode = sourcePo.VendorCode,
+                        TotalAmount = sourcePo.TotalAmount,
+                        RemainingBalance = sourcePo.RemainingBalance,
+                        POStatus = sourcePo.POStatus,
+                        FileName = sourcePo.FileName,
+                        BlobUrl = sourcePo.BlobUrl,
+                        FileSizeBytes = sourcePo.FileSizeBytes,
+                        ContentType = sourcePo.ContentType,
+                        ExtractedDataJson = sourcePo.ExtractedDataJson,
+                        ExtractionConfidence = sourcePo.ExtractionConfidence,
+                        RefreshedAt = sourcePo.RefreshedAt,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    _context.POs.Add(newPo);
+                    await _context.SaveChangesAsync(cancellationToken);
+                    _logger.LogInformation("PO {POId} cloned from {SourcePOId} for package {PackageId}", newPo.Id, sourcePo.Id, package.Id);
+                }
+                else
+                {
+                    _logger.LogWarning("Selected PO {SelectedPOId} not found — package created without PO", request.SelectedPoId);
+                }
+            }
 
             // Queue workflow for background processing (non-blocking)
             await _backgroundQueue.QueueWorkflowAsync(package.Id);
@@ -340,6 +384,10 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
+            // Load ValidationResult separately — it uses polymorphic DocumentType+DocumentId, not a direct FK
+            var validationResult = await _context.ValidationResults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(v => v.DocumentId == package.Id, cancellationToken);
             _logger.LogInformation("Retrieved submission {Id} successfully", id);
 
             // Get approval history for review fields
@@ -388,10 +436,10 @@ public class SubmissionsController : ControllerBase
                         Caption = p2.Caption
                     }).ToList()
                 }).ToList(),
-                ValidationResult = package.ValidationResult != null ? new ValidationResultDto
+                ValidationResult = validationResult != null ? new ValidationResultDto
                 {
-                    AllValidationsPassed = package.ValidationResult.AllValidationsPassed,
-                    FailureReason = package.ValidationResult.FailureReason
+                    AllValidationsPassed = validationResult.AllValidationsPassed,
+                    FailureReason = validationResult.FailureReason
                 } : null,
                 ConfidenceScore = package.ConfidenceScore != null ? new ConfidenceScoreDto
                 {
@@ -469,6 +517,116 @@ public class SubmissionsController : ControllerBase
         {
             _logger.LogError(ex, "Error generating validation report for package {PackageId}", id);
             return StatusCode(500, new { error = "An error occurred while generating the validation report" });
+        }
+    }
+
+    /// <summary>
+    /// Get per-document validation results for a submission.
+    /// Returns field-presence and cross-document checks for Invoice, Cost Summary, Activity Summary, etc.
+    /// Data is read from the ValidationResults table (populated by the workflow pipeline).
+    /// </summary>
+    /// <param name="id">Submission package ID</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Structured validation results per document type with individual check details</returns>
+    /// <response code="200">Returns validation results</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="404">Not found - submission does not exist or has no validation results</response>
+    /// <response code="500">Internal server error</response>
+    [HttpGet("{id}/validations")]
+    [ProducesResponseType(typeof(SubmissionValidationsResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetValidations(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+                return Unauthorized(new { error = "User ID not found in token" });
+
+            var userId = Guid.Parse(userIdClaim);
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+
+            // Load package with document navigations to get document IDs
+            var package = await _context.DocumentPackages
+                .Include(p => p.PO)
+                .Include(p => p.Invoices)
+                .Include(p => p.CostSummary)
+                .Include(p => p.ActivitySummary)
+                .Include(p => p.EnquiryDocument)
+                .Include(p => p.Teams).ThenInclude(c => c.Photos)
+                .AsSplitQuery()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+                return NotFound(new { error = "Submission not found" });
+
+            // Agency users can only see their own submissions
+            if (userRole == "Agency" && package.SubmittedByUserId != userId)
+                return NotFound(new { error = "Submission not found" });
+
+            // Collect all document IDs that could have validation results
+            var documentIds = new List<Guid>();
+            if (package.PO != null) documentIds.Add(package.PO.Id);
+            foreach (var inv in package.Invoices.Where(i => !i.IsDeleted))
+                documentIds.Add(inv.Id);
+            if (package.CostSummary != null) documentIds.Add(package.CostSummary.Id);
+            if (package.ActivitySummary != null) documentIds.Add(package.ActivitySummary.Id);
+            if (package.EnquiryDocument != null) documentIds.Add(package.EnquiryDocument.Id);
+            // TeamPhoto uses package.Id as DocumentId
+            documentIds.Add(package.Id);
+
+            // Query all validation results for these document IDs
+            var validationResults = await _context.ValidationResults
+                .Where(vr => documentIds.Contains(vr.DocumentId))
+                .AsNoTracking()
+                .ToListAsync(cancellationToken);
+
+            if (!validationResults.Any())
+                return NotFound(new { error = "No validation results found. The submission may not have been processed yet." });
+
+            // Build filename lookup
+            var fileNames = new Dictionary<string, string>();
+            if (package.PO != null) fileNames["PO"] = package.PO.FileName ?? "PO document";
+            if (package.Invoices.Any(i => !i.IsDeleted)) fileNames["Invoice"] = package.Invoices.First(i => !i.IsDeleted).FileName ?? "Invoice document";
+            if (package.CostSummary != null) fileNames["CostSummary"] = package.CostSummary.FileName ?? "Cost Summary document";
+            if (package.ActivitySummary != null) fileNames["ActivitySummary"] = package.ActivitySummary.FileName ?? "Activity Summary document";
+            if (package.EnquiryDocument != null) fileNames["EnquiryDocument"] = package.EnquiryDocument.FileName ?? "Enquiry Dump document";
+
+            var response = new SubmissionValidationsResponse
+            {
+                PackageId = id,
+                AllPassed = validationResults.All(vr => vr.AllValidationsPassed)
+            };
+
+            foreach (var vr in validationResults)
+            {
+                var docTypeStr = vr.DocumentType.ToString();
+                var fileName = fileNames.GetValueOrDefault(docTypeStr);
+
+                var docDto = new DocumentValidationDto
+                {
+                    DocumentType = docTypeStr,
+                    DocumentId = vr.DocumentId,
+                    FileName = fileName,
+                    AllPassed = vr.AllValidationsPassed,
+                    FailureReason = vr.FailureReason,
+                    ValidatedAt = vr.UpdatedAt ?? vr.CreatedAt
+                };
+
+                // Note: ValidationDetailsJson was removed. FieldPresence and CrossDocument
+                // details are no longer stored as JSON. FailureReason contains the summary.
+
+                response.Documents.Add(docDto);
+            }
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting validations for submission {Id}", id);
+            return StatusCode(500, new { error = "An error occurred while retrieving validation results" });
         }
     }
 
@@ -725,6 +883,14 @@ public class SubmissionsController : ControllerBase
                 new { submissionId = id, newStatus = PackageState.PendingRA.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
 
+            // Send circleHead_approved email to agency
+            _ = Task.Run(async () =>
+            {
+                var result = await _emailAgent.SendCircleHeadApprovedEmailAsync(id, CancellationToken.None);
+                if (!result.Success)
+                    _logger.LogWarning("circleHead_approved email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
+            });
+
             _logger.LogInformation("Submission {Id} approved by ASM {UserId}, moved to RA approval", id, userId);
 
             var response = new SubmissionStatusResponse
@@ -807,6 +973,14 @@ public class SubmissionsController : ControllerBase
                 new { submissionId = id, newStatus = PackageState.ASMRejected.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
 
+            // Send circleHead_rejected email to agency
+            _ = Task.Run(async () =>
+            {
+                var result = await _emailAgent.SendCircleHeadRejectedEmailAsync(id, request.Reason, CancellationToken.None);
+                if (!result.Success)
+                    _logger.LogWarning("circleHead_rejected email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
+            });
+
             _logger.LogInformation("Submission {Id} rejected by ASM {UserId} with reason: {Reason}", id, userId, request.Reason);
 
             var response = new SubmissionStatusResponse
@@ -887,6 +1061,14 @@ public class SubmissionsController : ControllerBase
                 new { submissionId = id, newStatus = PackageState.Approved.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
 
+            // Send ra_approved email to agency
+            _ = Task.Run(async () =>
+            {
+                var result = await _emailAgent.SendRaApprovedEmailAsync(id, CancellationToken.None);
+                if (!result.Success)
+                    _logger.LogWarning("ra_approved email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
+            });
+
             _logger.LogInformation("Submission {Id} approved by RA {UserId} - final approval", id, userId);
 
             var response = new SubmissionStatusResponse
@@ -966,6 +1148,14 @@ public class SubmissionsController : ControllerBase
                 id,
                 new { submissionId = id, newStatus = PackageState.RARejected.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
+
+            // Send ra_rejected email to agency
+            _ = Task.Run(async () =>
+            {
+                var result = await _emailAgent.SendRaRejectedEmailAsync(id, request.Reason, CancellationToken.None);
+                if (!result.Success)
+                    _logger.LogWarning("ra_rejected email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
+            });
 
             _logger.LogInformation("Submission {Id} rejected by HQ {UserId} with reason: {Reason}", id, userId, request.Reason);
 
@@ -1755,269 +1945,44 @@ public class SubmissionsController : ControllerBase
     }
 
     // CHANGE: Added BuildValidationDetails to show all validation checks with meaningful messages
-    // CHANGE: Rewritten BuildValidationDetails to show all 43+ checks individually, line by line
+    // CHANGE: Rewritten BuildValidationDetails to use boolean fields only (ValidationDetailsJson removed)
     /// <summary>
-    /// Builds a single string showing ALL individual validation checks (43+) with pass/fail status
+    /// Builds a single string showing the 6 core validation checks with pass/fail status.
+    /// Detailed per-field results are available via RuleResultsJson on each ValidationResult row.
     /// </summary>
     private static string BuildValidationDetails(Domain.Entities.ValidationResult vr)
     {
-        var checks = new List<string>();
-        System.Text.Json.JsonElement json = default;
-        bool hasJson = false;
-
-        if (!string.IsNullOrEmpty(vr.ValidationDetailsJson))
+        var checks = new List<string>
         {
-            try
-            {
-                json = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(vr.ValidationDetailsJson);
-                hasJson = true;
-            }
-            catch { }
-        }
+            vr.SapVerificationPassed
+                ? "SAP Verification: Pass - PO verified against SAP records"
+                : "SAP Verification: Fail - PO could not be verified in SAP",
 
-        // CHANGE: Read FileNames from validation JSON to show which file each check refers to
-        var fileNames = new Dictionary<string, string>();
-        if (hasJson && json.TryGetProperty("FileNames", out var fnEl) && fnEl.ValueKind == System.Text.Json.JsonValueKind.Object)
-        {
-            foreach (var prop in fnEl.EnumerateObject())
-            {
-                var val = prop.Value.GetString();
-                if (!string.IsNullOrEmpty(val)) fileNames[prop.Name] = val;
-            }
-        }
-        // CHANGE: Helper to get filename label like " (Invoice_March.pdf)" for a document type
-        string Fn(string docType) => fileNames.TryGetValue(docType, out var name) ? $" ({name})" : "";
+            vr.AmountConsistencyPassed
+                ? "Amount Consistency: Pass - Invoice and Cost Summary amounts are consistent"
+                : "Amount Consistency: Fail - Invoice and Cost Summary amounts do not match",
 
-        // ===== GENERAL CHECKS (6) =====
-        if (vr.SapVerificationPassed)
-            checks.Add($"SAP Verification{Fn("PO")}: Pass - PO verified against SAP records");
-        else
-            checks.Add($"SAP Verification{Fn("PO")}: Fail - " + (hasJson ? SafeGetString(json, "SAPVerification", "Discrepancies") ?? "PO could not be verified in SAP" : "PO could not be verified in SAP"));
+            vr.LineItemMatchingPassed
+                ? "Line Item Matching: Pass - All PO line items found in Invoice"
+                : "Line Item Matching: Fail - Some PO line items missing in Invoice",
 
-        checks.Add(vr.AmountConsistencyPassed
-            ? "Amount Consistency: Pass - Invoice and Cost Summary amounts are consistent"
-            : "Amount Consistency: Fail - Invoice and Cost Summary amounts do not match");
+            vr.CompletenessCheckPassed
+                ? "Completeness Check: Pass - All required documents are present"
+                : "Completeness Check: Fail - Some required documents are missing",
 
-        if (vr.LineItemMatchingPassed)
-            checks.Add("Line Item Matching: Pass - All PO line items found in Invoice");
-        else
-        {
-            var detail = hasJson ? SafeGetString(json, "LineItemMatching", "MissingItemCodes") : null;
-            checks.Add("Line Item Matching: Fail - " + (detail != null ? $"Missing PO line items in Invoice: {detail}" : "Some PO line items missing in Invoice"));
-        }
+            vr.DateValidationPassed
+                ? "Date Validation: Pass - All dates are valid and consistent"
+                : "Date Validation: Fail - Date inconsistencies found",
 
-        if (vr.CompletenessCheckPassed)
-            checks.Add("Completeness Check: Pass - All required documents are present");
-        else
-            checks.Add("Completeness Check: Fail - " + (hasJson ? SafeGetString(json, "Completeness", "MissingItems") ?? "Some required documents are missing" : "Some required documents are missing"));
+            vr.VendorMatchingPassed
+                ? "Vendor Matching: Pass - Vendor name matches across PO and Invoice"
+                : "Vendor Matching: Fail - Vendor name mismatch between PO and Invoice",
+        };
 
-        if (vr.DateValidationPassed)
-            checks.Add("Date Validation: Pass - All dates are valid and consistent");
-        else
-            checks.Add("Date Validation: Fail - " + (hasJson ? SafeGetString(json, "DateValidation", "DateIssues") ?? "Date inconsistencies found" : "Date inconsistencies found"));
-
-        checks.Add(vr.VendorMatchingPassed
-            ? "Vendor Matching: Pass - Vendor name matches across PO and Invoice"
-            : "Vendor Matching: Fail - Vendor name mismatch between PO and Invoice");
-
-        if (hasJson)
-        {
-            // CHANGE: Use Fn() to prepend filename to each document-specific check
-            var invLabel = $"Invoice{Fn("Invoice")}";
-            var csLabel = $"Cost Summary{Fn("CostSummary")}";
-            var actLabel = $"Activity{Fn("Activity")}";
-            var edLabel = $"Enquiry Dump{Fn("EnquiryDump")}";
-            // CHANGE: For photos, list all photo filenames together
-            var photoFileList = fileNames.Where(kv => kv.Key.StartsWith("Photo_")).Select(kv => kv.Value).ToList();
-            var photoLabel = photoFileList.Any() ? $"Photo ({string.Join(", ", photoFileList)})" : "Photo";
-
-            // ===== INVOICE FIELD PRESENCE — 13 individual checks =====
-            if (SafeSectionExists(json, "InvoiceFieldPresence"))
-            {
-                var mf = SafeGetStringList(json, "InvoiceFieldPresence", "MissingFields");
-                checks.Add(mf.Contains("Agency Name") ? $"{invLabel} - Agency Name: Fail - Missing" : $"{invLabel} - Agency Name: Pass - Present");
-                checks.Add(mf.Contains("Agency Address") ? $"{invLabel} - Agency Address: Fail - Missing" : $"{invLabel} - Agency Address: Pass - Present");
-                checks.Add(mf.Contains("Billing Name") ? $"{invLabel} - Billing Name: Fail - Missing" : $"{invLabel} - Billing Name: Pass - Present");
-                checks.Add(mf.Contains("Billing Address") ? $"{invLabel} - Billing Address: Fail - Missing" : $"{invLabel} - Billing Address: Pass - Present");
-                checks.Add(mf.Contains("State Name/Code") ? $"{invLabel} - State Name/Code: Fail - Missing" : $"{invLabel} - State Name/Code: Pass - Present");
-                checks.Add(mf.Contains("Invoice Number") ? $"{invLabel} - Invoice Number: Fail - Missing" : $"{invLabel} - Invoice Number: Pass - Present");
-                checks.Add(mf.Contains("Invoice Date") ? $"{invLabel} - Invoice Date: Fail - Missing" : $"{invLabel} - Invoice Date: Pass - Present");
-                checks.Add(mf.Contains("Vendor Code") ? $"{invLabel} - Vendor Code: Fail - Missing" : $"{invLabel} - Vendor Code: Pass - Present");
-                checks.Add(mf.Contains("PO Number") ? $"{invLabel} - PO Number: Fail - Missing" : $"{invLabel} - PO Number: Pass - Present");
-                checks.Add(mf.Contains("GST Number") ? $"{invLabel} - GST Number: Fail - Missing" : $"{invLabel} - GST Number: Pass - Present");
-                checks.Add(mf.Contains("GST Percentage") ? $"{invLabel} - GST Percentage: Fail - Missing" : $"{invLabel} - GST Percentage: Pass - Present");
-                checks.Add(mf.Contains("HSN/SAC Code") ? $"{invLabel} - HSN/SAC Code: Fail - Missing" : $"{invLabel} - HSN/SAC Code: Pass - Present");
-                checks.Add(mf.Contains("Invoice Amount") ? $"{invLabel} - Invoice Amount: Fail - Missing" : $"{invLabel} - Invoice Amount: Pass - Present");
-            }
-
-            // ===== INVOICE CROSS-DOCUMENT — 6 individual checks =====
-            if (SafeSectionExists(json, "InvoiceCrossDocument"))
-            {
-                var issues = SafeGetStringList(json, "InvoiceCrossDocument", "Issues");
-                var sec = SafeGetSection(json, "InvoiceCrossDocument");
-
-                var agencyCodeMatch = SafeGetBoolProp(sec, "AgencyCodeMatches");
-                checks.Add(agencyCodeMatch == true ? $"{invLabel} - Agency Code match with PO: Pass - Matches"
-                    : agencyCodeMatch == false ? $"{invLabel} - Agency Code match with PO: Fail - " + (FindIssue(issues, "Agency Code") ?? "Mismatch")
-                    : $"{invLabel} - Agency Code match with PO: Pass - Not applicable (field empty)");
-
-                var poMatch = SafeGetBoolProp(sec, "PONumberMatches");
-                checks.Add(poMatch == true ? $"{invLabel} - PO Number match with PO: Pass - Matches"
-                    : poMatch == false ? $"{invLabel} - PO Number match with PO: Fail - " + (FindIssue(issues, "PO Number") ?? "Mismatch")
-                    : $"{invLabel} - PO Number match with PO: Pass - Not applicable (field empty)");
-
-                var gstMatch = SafeGetBoolProp(sec, "GSTStateMatches");
-                checks.Add(gstMatch == true ? $"{invLabel} - GST Number match with State: Pass - GST matches state code"
-                    : gstMatch == false ? $"{invLabel} - GST Number match with State: Fail - " + (FindIssue(issues, "GST") ?? "GST-State mismatch")
-                    : $"{invLabel} - GST Number match with State: Pass - Not applicable (field empty)");
-
-                var hsnValid = SafeGetBoolProp(sec, "HSNSACCodeValid");
-                checks.Add(hsnValid == true ? $"{invLabel} - HSN/SAC Code valid: Pass - Valid code"
-                    : hsnValid == false ? $"{invLabel} - HSN/SAC Code valid: Fail - " + (FindIssue(issues, "HSN") ?? "Invalid code")
-                    : $"{invLabel} - HSN/SAC Code valid: Pass - Not applicable (field empty)");
-
-                var amtValid = SafeGetBoolProp(sec, "InvoiceAmountValid");
-                checks.Add(amtValid == true ? $"{invLabel} - Amount <= PO Amount: Pass - Invoice amount within PO limit"
-                    : $"{invLabel} - Amount <= PO Amount: Fail - " + (FindIssue(issues, "Invoice amount") ?? "Invoice exceeds PO amount"));
-
-                var gstPctValid = SafeGetBoolProp(sec, "GSTPercentageValid");
-                checks.Add(gstPctValid == true ? $"{invLabel} - GST% match with State: Pass - GST percentage matches state rate"
-                    : gstPctValid == false ? $"{invLabel} - GST% match with State: Fail - " + (FindIssue(issues, "GST Percentage") ?? "GST% mismatch")
-                    : $"{invLabel} - GST% match with State: Pass - Not applicable");
-            }
-
-            // ===== COST SUMMARY FIELD PRESENCE — 6 individual checks =====
-            if (SafeSectionExists(json, "CostSummaryFieldPresence"))
-            {
-                var mf = SafeGetStringList(json, "CostSummaryFieldPresence", "MissingFields");
-                checks.Add(mf.Any(f => f.Contains("Place of Supply") || f.Contains("State")) ? $"{csLabel} - State/Place of Supply: Fail - Missing" : $"{csLabel} - State/Place of Supply: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("Element wise Cost")) ? $"{csLabel} - Element wise Cost: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Element wise Cost")) ?? "Missing") : $"{csLabel} - Element wise Cost: Pass - Present");
-                checks.Add(mf.Contains("Number of Days") ? $"{csLabel} - No of Days: Fail - Missing" : $"{csLabel} - No of Days: Pass - Present");
-                checks.Add(mf.Contains("Number of Activations") ? $"{csLabel} - No of Activations: Fail - Missing" : $"{csLabel} - No of Activations: Pass - Present");
-                checks.Add(mf.Contains("Number of Teams") ? $"{csLabel} - No of Teams: Fail - Missing" : $"{csLabel} - No of Teams: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("Element wise Quantity")) ? $"{csLabel} - Element wise Quantity: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Element wise Quantity")) ?? "Missing") : $"{csLabel} - Element wise Quantity: Pass - Present");
-            }
-
-            // ===== COST SUMMARY CROSS-DOCUMENT — 4 individual checks =====
-            if (SafeSectionExists(json, "CostSummaryCrossDocument"))
-            {
-                var sec = SafeGetSection(json, "CostSummaryCrossDocument");
-                var issues = SafeGetStringList(json, "CostSummaryCrossDocument", "Issues");
-                checks.Add(SafeGetBoolProp(sec, "TotalCostValid") == true ? $"{csLabel} - Total Cost <= Invoice Amount: Pass - Within limit" : $"{csLabel} - Total Cost <= Invoice Amount: Fail - " + (FindIssue(issues, "total") ?? "Exceeds Invoice amount"));
-                checks.Add(SafeGetBoolProp(sec, "ElementCostsValid") == true ? $"{csLabel} - Element wise Cost match State rates: Pass - Matches" : $"{csLabel} - Element wise Cost match State rates: Fail - " + (FindIssue(issues, "Element") ?? "Does not match state rates"));
-                checks.Add(SafeGetBoolProp(sec, "FixedCostsValid") == true ? $"{csLabel} - Fixed Cost Limits: Pass - Within state limits" : $"{csLabel} - Fixed Cost Limits: Fail - " + (FindIssue(issues, "Fixed") ?? "Exceeds state limits"));
-                checks.Add(SafeGetBoolProp(sec, "VariableCostsValid") == true ? $"{csLabel} - Variable Cost Limits: Pass - Within state limits" : $"{csLabel} - Variable Cost Limits: Fail - " + (FindIssue(issues, "Variable") ?? "Exceeds state limits"));
-            }
-
-            // ===== ACTIVITY FIELD PRESENCE — 2 individual checks =====
-            if (SafeSectionExists(json, "ActivityFieldPresence"))
-            {
-                var mf = SafeGetStringList(json, "ActivityFieldPresence", "MissingFields");
-                checks.Add(mf.Any(f => f.Contains("Dealer") || f.Contains("Location")) ? $"{actLabel} - Dealer and Location details: Fail - " + string.Join(", ", mf.Where(f => f.Contains("Dealer") || f.Contains("Location"))) : $"{actLabel} - Dealer and Location details: Pass - Present");
-                checks.Add(mf.Any(f => f.Contains("days") || f.Contains("Day")) ? $"{actLabel} - No of days in each Location: Fail - Missing" : $"{actLabel} - No of days in each Location: Pass - Present");
-            }
-
-            // ===== ACTIVITY CROSS-DOCUMENT — 1 check =====
-            if (SafeSectionExists(json, "ActivityCrossDocument"))
-            {
-                var issues = SafeGetStringList(json, "ActivityCrossDocument", "Issues");
-                var sec = SafeGetSection(json, "ActivityCrossDocument");
-                checks.Add(SafeGetBoolProp(sec, "NumberOfDaysMatches") == true ? $"{actLabel} - No of days match with Cost Summary: Pass - Days match" : $"{actLabel} - No of days match with Cost Summary: Fail - " + (issues.FirstOrDefault() ?? "Days mismatch"));
-            }
-
-            // ===== PHOTO FIELD PRESENCE — 4 individual checks =====
-            if (SafeSectionExists(json, "PhotoFieldPresence"))
-            {
-                var mf = SafeGetStringList(json, "PhotoFieldPresence", "MissingFields");
-                checks.Add(mf.Any(f => f.Contains("Date")) ? $"{photoLabel} - Date: Fail - " + (mf.FirstOrDefault(f => f.Contains("Date")) ?? "Missing") : $"{photoLabel} - Date: Pass - Present");
-                checks.Add(mf.Any(f => f.Contains("Location") || f.Contains("coordinates")) ? $"{photoLabel} - Lat Long: Fail - " + (mf.FirstOrDefault(f => f.Contains("Location") || f.Contains("coordinates")) ?? "Missing") : $"{photoLabel} - Lat Long: Pass - Present");
-                checks.Add(mf.Any(f => f.Contains("blue t-shirt")) ? $"{photoLabel} - Person with Blue T-shirt: Fail - Not detected" : $"{photoLabel} - Person with Blue T-shirt: Pass - Detected");
-                checks.Add(mf.Any(f => f.Contains("Bajaj vehicle") || f.Contains("3W")) ? $"{photoLabel} - 3W Vehicle: Fail - Not detected" : $"{photoLabel} - 3W Vehicle: Pass - Detected");
-            }
-
-            // ===== PHOTO CROSS-DOCUMENT — 1 check =====
-            if (SafeSectionExists(json, "PhotoCrossDocument"))
-            {
-                var issues = SafeGetStringList(json, "PhotoCrossDocument", "Issues");
-                checks.Add(SafeGetBoolProp(SafeGetSection(json, "PhotoCrossDocument"), "PhotoCountMatchesManDays") == true ? $"{photoLabel} - No of days match with Cost Summary: Pass - Photo count matches" : $"{photoLabel} - No of days match with Cost Summary: Fail - " + (issues.FirstOrDefault() ?? "Photo count mismatch"));
-            }
-
-            // ===== ENQUIRY DUMP FIELD PRESENCE — 9 individual checks =====
-            if (SafeSectionExists(json, "EnquiryDumpFieldPresence"))
-            {
-                var mf = SafeGetStringList(json, "EnquiryDumpFieldPresence", "MissingFields");
-                checks.Add(mf.Any(f => f.StartsWith("State")) ? $"{edLabel} - State: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("State")) ?? "Missing") : $"{edLabel} - State: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("Date")) ? $"{edLabel} - Date: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Date")) ?? "Missing") : $"{edLabel} - Date: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("Dealer Code")) ? $"{edLabel} - Dealer Code: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Dealer Code")) ?? "Missing") : $"{edLabel} - Dealer Code: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("Dealer Name")) ? $"{edLabel} - Dealer Name: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Dealer Name")) ?? "Missing") : $"{edLabel} - Dealer Name: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("District")) ? $"{edLabel} - District: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("District")) ?? "Missing") : $"{edLabel} - District: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("Pincode")) ? $"{edLabel} - Pincode: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Pincode")) ?? "Missing") : $"{edLabel} - Pincode: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("Customer Name")) ? $"{edLabel} - Customer Name: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Customer Name")) ?? "Missing") : $"{edLabel} - Customer Name: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("Customer Number")) ? $"{edLabel} - Customer Number: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Customer Number")) ?? "Missing") : $"{edLabel} - Customer Number: Pass - Present");
-                checks.Add(mf.Any(f => f.StartsWith("Test Ride")) ? $"{edLabel} - Test Ride Taken: Fail - " + (mf.FirstOrDefault(f => f.StartsWith("Test Ride")) ?? "Missing") : $"{edLabel} - Test Ride Taken: Pass - Present");
-            }
-        }
+        if (!string.IsNullOrWhiteSpace(vr.FailureReason))
+            checks.Add($"Failure Details: {vr.FailureReason}");
 
         return string.Join("; ", checks);
-    }
-
-    private static bool SafeSectionExists(System.Text.Json.JsonElement root, string section)
-    {
-        return root.TryGetProperty(section, out var el) && el.ValueKind != System.Text.Json.JsonValueKind.Null;
-    }
-
-    private static System.Text.Json.JsonElement? SafeGetSection(System.Text.Json.JsonElement root, string section)
-    {
-        if (root.TryGetProperty(section, out var el) && el.ValueKind != System.Text.Json.JsonValueKind.Null)
-            return el;
-        return null;
-    }
-
-    private static bool? SafeGetBoolProp(System.Text.Json.JsonElement? section, string property)
-    {
-        if (section == null) return null;
-        if (section.Value.TryGetProperty(property, out var prop))
-        {
-            if (prop.ValueKind == System.Text.Json.JsonValueKind.True) return true;
-            if (prop.ValueKind == System.Text.Json.JsonValueKind.False) return false;
-        }
-        return null;
-    }
-
-    private static List<string> SafeGetStringList(System.Text.Json.JsonElement root, string section, string arrayProp)
-    {
-        var result = new List<string>();
-        try
-        {
-            if (root.TryGetProperty(section, out var sectionEl) && sectionEl.ValueKind != System.Text.Json.JsonValueKind.Null)
-            {
-                System.Text.Json.JsonElement arrEl;
-                if (sectionEl.TryGetProperty(arrayProp, out arrEl) || sectionEl.TryGetProperty(char.ToLower(arrayProp[0]) + arrayProp.Substring(1), out arrEl))
-                {
-                    if (arrEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                    {
-                        foreach (var item in arrEl.EnumerateArray())
-                        {
-                            var val = item.GetString();
-                            if (!string.IsNullOrEmpty(val)) result.Add(val);
-                        }
-                    }
-                }
-            }
-        }
-        catch { }
-        return result;
-    }
-
-    private static string? SafeGetString(System.Text.Json.JsonElement root, string section, string arrayProp)
-    {
-        var list = SafeGetStringList(root, section, arrayProp);
-        return list.Any() ? string.Join(", ", list) : null;
-    }
-
-    private static string? FindIssue(List<string> issues, string keyword)
-    {
-        return issues.FirstOrDefault(i => i.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -2102,6 +2067,379 @@ public class SubmissionsController : ControllerBase
 
         return docs;
     }
+
+    /// <summary>
+    /// Extracts field presence validation from parsed ValidationDetailsJson
+    /// </summary>
+    private static FieldPresenceDto? ExtractFieldPresence(JsonElement json, DocumentType docType)
+    {
+        var sectionName = docType switch
+        {
+            DocumentType.Invoice => "InvoiceFieldPresence",
+            DocumentType.CostSummary => "CostSummaryFieldPresence",
+            DocumentType.ActivitySummary => "ActivityFieldPresence",
+            DocumentType.TeamPhoto => "PhotoFieldPresence",
+            DocumentType.EnquiryDocument => "EnquiryDumpFieldPresence",
+            _ => null
+        };
+
+        if (sectionName == null || !SafeSectionExists(json, sectionName))
+            return null;
+
+        var missingFields = SafeGetStringList(json, sectionName, "MissingFields");
+        return new FieldPresenceDto
+        {
+            AllFieldsPresent = missingFields.Count == 0,
+            MissingFields = missingFields
+        };
+    }
+
+    /// <summary>
+    /// Extracts cross-document validation from parsed ValidationDetailsJson
+    /// </summary>
+    private static CrossDocumentDto? ExtractCrossDocument(JsonElement json, DocumentType docType)
+    {
+        string? sectionName;
+        string[]? boolProps;
+
+        switch (docType)
+        {
+            case DocumentType.PO:
+                // PO has SAPVerification + DateValidation
+                var hasSap = SafeSectionExists(json, "SAPVerification");
+                var hasDate = SafeSectionExists(json, "DateValidation");
+                if (!hasSap && !hasDate) return null;
+
+                var poDto = new CrossDocumentDto { AllChecksPass = true };
+                if (hasSap)
+                {
+                    var sapVerified = SafeGetBoolProp(SafeGetSection(json, "SAPVerification"), "IsVerified");
+                    var sapFailed = SafeGetBoolProp(SafeGetSection(json, "SAPVerification"), "SAPConnectionFailed");
+                    var sapPass = sapVerified == true || sapFailed == true;
+                    poDto.CheckResults["SAPVerified"] = sapPass;
+                    if (!sapPass)
+                    {
+                        poDto.AllChecksPass = false;
+                        var discrepancies = SafeGetStringList(json, "SAPVerification", "Discrepancies");
+                        poDto.Issues.AddRange(discrepancies);
+                    }
+                }
+                if (hasDate)
+                {
+                    var dateValid = SafeGetBoolProp(SafeGetSection(json, "DateValidation"), "IsValid");
+                    poDto.CheckResults["DateValid"] = dateValid == true;
+                    if (dateValid == false)
+                    {
+                        poDto.AllChecksPass = false;
+                        var dateIssues = SafeGetStringList(json, "DateValidation", "DateIssues");
+                        poDto.Issues.AddRange(dateIssues);
+                    }
+                }
+                return poDto;
+
+            case DocumentType.Invoice:
+                sectionName = "InvoiceCrossDocument";
+                boolProps = new[] { "AgencyCodeMatches", "PONumberMatches", "GSTStateMatches", "HSNSACCodeValid", "InvoiceAmountValid", "GSTPercentageValid" };
+                break;
+
+            case DocumentType.CostSummary:
+                sectionName = "CostSummaryCrossDocument";
+                boolProps = new[] { "TotalCostValid", "ElementCostsValid", "FixedCostsValid", "VariableCostsValid" };
+                break;
+
+            case DocumentType.ActivitySummary:
+                sectionName = "ActivityCrossDocument";
+                boolProps = new[] { "NumberOfDaysMatches" };
+                break;
+
+            case DocumentType.TeamPhoto:
+                sectionName = "PhotoCrossDocument";
+                boolProps = new[] { "PhotoCountMatchesManDays", "ManDaysWithinCostSummaryDays" };
+                break;
+
+            default:
+                return null;
+        }
+
+        if (!SafeSectionExists(json, sectionName))
+            return null;
+
+        var section = SafeGetSection(json, sectionName);
+        var issues = SafeGetStringList(json, sectionName, "Issues");
+        var allPass = SafeGetBoolProp(section, "AllChecksPass");
+
+        var dto = new CrossDocumentDto
+        {
+            AllChecksPass = allPass == true,
+            Issues = issues
+        };
+
+        foreach (var prop in boolProps)
+        {
+            var val = SafeGetBoolProp(section, prop);
+            if (val.HasValue)
+                dto.CheckResults[prop] = val.Value;
+        }
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Builds flat validation check list for a document from its ValidationDetailsJson.
+    /// Reuses the same parsing logic as BuildValidationDetails but outputs structured DTOs.
+    /// </summary>
+    private static void BuildChecksForDocument(
+        List<ValidationCheckDto> checks,
+        JsonElement json,
+        DocumentType docType,
+        string docTypeStr,
+        string? fileName)
+    {
+        switch (docType)
+        {
+            case DocumentType.Invoice:
+                BuildInvoiceChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.CostSummary:
+                BuildCostSummaryChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.ActivitySummary:
+                BuildActivityChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.TeamPhoto:
+                BuildPhotoChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.EnquiryDocument:
+                BuildEnquiryDumpChecks(checks, json, docTypeStr, fileName);
+                break;
+            case DocumentType.PO:
+                BuildPOChecks(checks, json, docTypeStr, fileName);
+                break;
+        }
+    }
+
+    private static void BuildPOChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (SafeSectionExists(json, "SAPVerification"))
+        {
+            var sec = SafeGetSection(json, "SAPVerification");
+            var verified = SafeGetBoolProp(sec, "IsVerified");
+            var connFailed = SafeGetBoolProp(sec, "SAPConnectionFailed");
+            var passed = verified == true || connFailed == true;
+            checks.Add(new ValidationCheckDto
+            {
+                DocumentType = docType, FileName = fileName, Category = "CrossDocument",
+                CheckName = "SAP Verification", Passed = passed,
+                Description = passed ? "PO verified against SAP records" : "PO could not be verified in SAP"
+            });
+        }
+        if (SafeSectionExists(json, "DateValidation"))
+        {
+            var sec = SafeGetSection(json, "DateValidation");
+            var valid = SafeGetBoolProp(sec, "IsValid") == true;
+            checks.Add(new ValidationCheckDto
+            {
+                DocumentType = docType, FileName = fileName, Category = "CrossDocument",
+                CheckName = "Date Validation", Passed = valid,
+                Description = valid ? "All dates are valid and consistent" : string.Join("; ", SafeGetStringList(json, "DateValidation", "DateIssues"))
+            });
+        }
+    }
+
+    private static void BuildInvoiceChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        // Field presence checks
+        if (SafeSectionExists(json, "InvoiceFieldPresence"))
+        {
+            var mf = SafeGetStringList(json, "InvoiceFieldPresence", "MissingFields");
+            var fields = new[] { "Agency Name", "Agency Address", "Billing Name", "Billing Address", "State Name/Code",
+                "Invoice Number", "Invoice Date", "Vendor Code", "PO Number", "GST Number", "GST Percentage", "HSN/SAC Code", "Invoice Amount" };
+            foreach (var field in fields)
+            {
+                var passed = !mf.Contains(field);
+                checks.Add(new ValidationCheckDto
+                {
+                    DocumentType = docType, FileName = fileName, Category = "FieldPresence",
+                    CheckName = field, Passed = passed,
+                    Description = passed ? "Present" : "Missing"
+                });
+            }
+        }
+
+        // Cross-document checks
+        if (SafeSectionExists(json, "InvoiceCrossDocument"))
+        {
+            var sec = SafeGetSection(json, "InvoiceCrossDocument");
+            var issues = SafeGetStringList(json, "InvoiceCrossDocument", "Issues");
+
+            AddCrossCheck(checks, docType, fileName, "Agency Code match with PO", SafeGetBoolProp(sec, "AgencyCodeMatches"), issues, "Agency Code");
+            AddCrossCheck(checks, docType, fileName, "PO Number match with PO", SafeGetBoolProp(sec, "PONumberMatches"), issues, "PO Number");
+            AddCrossCheck(checks, docType, fileName, "GST Number match with State", SafeGetBoolProp(sec, "GSTStateMatches"), issues, "GST");
+            AddCrossCheck(checks, docType, fileName, "HSN/SAC Code valid", SafeGetBoolProp(sec, "HSNSACCodeValid"), issues, "HSN");
+            AddCrossCheck(checks, docType, fileName, "Amount <= PO Amount", SafeGetBoolProp(sec, "InvoiceAmountValid"), issues, "Invoice amount");
+            AddCrossCheck(checks, docType, fileName, "GST% match with State", SafeGetBoolProp(sec, "GSTPercentageValid"), issues, "GST Percentage");
+        }
+    }
+
+    private static void BuildCostSummaryChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (SafeSectionExists(json, "CostSummaryFieldPresence"))
+        {
+            var mf = SafeGetStringList(json, "CostSummaryFieldPresence", "MissingFields");
+            AddFieldCheck(checks, docType, fileName, "State/Place of Supply", !mf.Any(f => f.Contains("Place of Supply") || f.Contains("State")));
+            AddFieldCheck(checks, docType, fileName, "Element wise Cost", !mf.Any(f => f.StartsWith("Element wise Cost")));
+            AddFieldCheck(checks, docType, fileName, "No of Days", !mf.Contains("Number of Days"));
+            AddFieldCheck(checks, docType, fileName, "No of Activations", !mf.Contains("Number of Activations"));
+            AddFieldCheck(checks, docType, fileName, "No of Teams", !mf.Contains("Number of Teams"));
+            AddFieldCheck(checks, docType, fileName, "Element wise Quantity", !mf.Any(f => f.StartsWith("Element wise Quantity")));
+            AddFieldCheck(checks, docType, fileName, "Total Cost", !mf.Contains("Total Cost"));
+        }
+
+        if (SafeSectionExists(json, "CostSummaryCrossDocument"))
+        {
+            var sec = SafeGetSection(json, "CostSummaryCrossDocument");
+            var issues = SafeGetStringList(json, "CostSummaryCrossDocument", "Issues");
+            AddCrossCheck(checks, docType, fileName, "Total Cost <= Invoice Amount", SafeGetBoolProp(sec, "TotalCostValid"), issues, "total");
+            AddCrossCheck(checks, docType, fileName, "Element wise Cost match State rates", SafeGetBoolProp(sec, "ElementCostsValid"), issues, "Element");
+            AddCrossCheck(checks, docType, fileName, "Fixed Cost Limits", SafeGetBoolProp(sec, "FixedCostsValid"), issues, "Fixed");
+            AddCrossCheck(checks, docType, fileName, "Variable Cost Limits", SafeGetBoolProp(sec, "VariableCostsValid"), issues, "Variable");
+        }
+    }
+
+    private static void BuildActivityChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (SafeSectionExists(json, "ActivityFieldPresence"))
+        {
+            var mf = SafeGetStringList(json, "ActivityFieldPresence", "MissingFields");
+            AddFieldCheck(checks, docType, fileName, "Dealer and Location details", !mf.Any(f => f.Contains("Dealer") || f.Contains("Location")));
+            AddFieldCheck(checks, docType, fileName, "No of days in each Location", !mf.Any(f => f.Contains("days") || f.Contains("Day")));
+        }
+
+        if (SafeSectionExists(json, "ActivityCrossDocument"))
+        {
+            var sec = SafeGetSection(json, "ActivityCrossDocument");
+            var issues = SafeGetStringList(json, "ActivityCrossDocument", "Issues");
+            AddCrossCheck(checks, docType, fileName, "No of days match with Cost Summary", SafeGetBoolProp(sec, "NumberOfDaysMatches"), issues, "days");
+        }
+    }
+
+    private static void BuildPhotoChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (SafeSectionExists(json, "PhotoFieldPresence"))
+        {
+            var mf = SafeGetStringList(json, "PhotoFieldPresence", "MissingFields");
+            AddFieldCheck(checks, docType, fileName, "Date", !mf.Any(f => f.Contains("Date")));
+            AddFieldCheck(checks, docType, fileName, "Lat Long", !mf.Any(f => f.Contains("Location") || f.Contains("coordinates")));
+            AddFieldCheck(checks, docType, fileName, "Person with Blue T-shirt", !mf.Any(f => f.Contains("blue t-shirt")));
+            AddFieldCheck(checks, docType, fileName, "3W Vehicle", !mf.Any(f => f.Contains("Bajaj vehicle") || f.Contains("3W")));
+        }
+
+        if (SafeSectionExists(json, "PhotoCrossDocument"))
+        {
+            var sec = SafeGetSection(json, "PhotoCrossDocument");
+            var issues = SafeGetStringList(json, "PhotoCrossDocument", "Issues");
+            AddCrossCheck(checks, docType, fileName, "Photo count matches man-days", SafeGetBoolProp(sec, "PhotoCountMatchesManDays"), issues, "Photo count");
+        }
+    }
+
+    private static void BuildEnquiryDumpChecks(List<ValidationCheckDto> checks, JsonElement json, string docType, string? fileName)
+    {
+        if (!SafeSectionExists(json, "EnquiryDumpFieldPresence")) return;
+
+        var mf = SafeGetStringList(json, "EnquiryDumpFieldPresence", "MissingFields");
+        var fields = new[] { "State", "Date", "Dealer Code", "Dealer Name", "District", "Pincode", "Customer Name", "Customer Number", "Test Ride" };
+        foreach (var field in fields)
+        {
+            AddFieldCheck(checks, docType, fileName, field, !mf.Any(f => f.StartsWith(field)));
+        }
+    }
+
+    private static void AddFieldCheck(List<ValidationCheckDto> checks, string docType, string? fileName, string checkName, bool passed)
+    {
+        checks.Add(new ValidationCheckDto
+        {
+            DocumentType = docType, FileName = fileName, Category = "FieldPresence",
+            CheckName = checkName, Passed = passed,
+            Description = passed ? "Present" : "Missing"
+        });
+    }
+
+    private static void AddCrossCheck(List<ValidationCheckDto> checks, string docType, string? fileName, string checkName, bool? passed, List<string> issues, string issueKeyword)
+    {
+        var isPass = passed == true;
+        var desc = isPass ? "Pass" : (FindIssue(issues, issueKeyword) ?? "Failed");
+        checks.Add(new ValidationCheckDto
+        {
+            DocumentType = docType, FileName = fileName, Category = "CrossDocument",
+            CheckName = checkName, Passed = isPass,
+            Description = desc
+        });
+    }
+
+    /// <summary>
+    /// Checks whether a named section exists in a JsonElement object.
+    /// </summary>
+    private static bool SafeSectionExists(JsonElement json, string sectionName)
+    {
+        return json.ValueKind == JsonValueKind.Object && json.TryGetProperty(sectionName, out _);
+    }
+
+    /// <summary>
+    /// Safely retrieves a named section from a JsonElement object.
+    /// Returns a default (Undefined) JsonElement if the section does not exist.
+    /// </summary>
+    private static JsonElement SafeGetSection(JsonElement json, string sectionName)
+    {
+        if (json.ValueKind == JsonValueKind.Object && json.TryGetProperty(sectionName, out var section))
+            return section;
+        return default;
+    }
+
+    /// <summary>
+    /// Safely retrieves a boolean property from a JsonElement.
+    /// Returns null if the property does not exist or is not a boolean.
+    /// </summary>
+    private static bool? SafeGetBoolProp(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(propertyName, out var prop))
+        {
+            if (prop.ValueKind == JsonValueKind.True) return true;
+            if (prop.ValueKind == JsonValueKind.False) return false;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Safely retrieves a string list from a nested array property within a named section.
+    /// Returns an empty list if the section or property does not exist.
+    /// </summary>
+    private static List<string> SafeGetStringList(JsonElement json, string sectionName, string arrayPropertyName)
+    {
+        var result = new List<string>();
+        if (json.ValueKind != JsonValueKind.Object || !json.TryGetProperty(sectionName, out var section))
+            return result;
+        if (section.ValueKind != JsonValueKind.Object || !section.TryGetProperty(arrayPropertyName, out var array))
+            return result;
+        if (array.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var item in array.EnumerateArray())
+        {
+            var str = item.GetString();
+            if (!string.IsNullOrEmpty(str))
+                result.Add(str);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Finds the first issue string that contains the given keyword (case-insensitive).
+    /// Returns null if no matching issue is found.
+    /// </summary>
+    private static string? FindIssue(List<string> issues, string keyword)
+    {
+        return issues.FirstOrDefault(i => i.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+    }
 }
 
 /// <summary>
@@ -2165,13 +2503,11 @@ public record RequestReuploadRequest(
 /// <param name="DealershipName">Dealership/dealer name</param>
 /// <param name="DealershipAddress">Full address of the dealership</param>
 /// <param name="GpsLocation">GPS coordinates of the location</param>
-/// <param name="TeamsJson">JSON string containing teams/campaign members data</param>
 public record UpdateCampaignDataRequest(
     DateTime? CampaignStartDate = null,
     DateTime? CampaignEndDate = null,
     int? CampaignWorkingDays = null,
     string? DealershipName = null,
     string? DealershipAddress = null,
-    string? GpsLocation = null,
-    string? TeamsJson = null
+    string? GpsLocation = null
 );

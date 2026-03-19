@@ -104,7 +104,7 @@ public class RecommendationAgent : IRecommendationAgent
             _logger.LogInformation("Determining recommendation type for package {PackageId}", packageId);
             var recommendationType = DetermineRecommendationType(
                 confidenceScore.OverallConfidence,
-                validationResult?.AllValidationsPassed ?? false);
+                validationResult?.AllValidationsPassed ?? true);
             _logger.LogInformation("Recommendation type determined: {RecommendationType}", recommendationType);
 
             // Generate evidence summary with AI

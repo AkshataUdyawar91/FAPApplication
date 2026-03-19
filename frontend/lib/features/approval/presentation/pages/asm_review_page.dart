@@ -1,3 +1,4 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -28,7 +29,7 @@ class ASMReviewPage extends StatefulWidget {
 }
 
 class _ASMReviewPageState extends State<ASMReviewPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
   final _searchController = TextEditingController();
 
   String _statusFilter = 'all';

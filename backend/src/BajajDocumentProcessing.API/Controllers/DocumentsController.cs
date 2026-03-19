@@ -66,8 +66,7 @@ public class DocumentsController : ControllerBase
         [FromForm] int? campaignWorkingDays = null,
         [FromForm] string? dealershipName = null,
         [FromForm] string? dealershipAddress = null,
-        [FromForm] string? gpsLocation = null,
-        [FromForm] string? teamsJson = null)
+        [FromForm] string? gpsLocation = null)
     {
         try
         {
@@ -134,9 +133,6 @@ public class DocumentsController : ControllerBase
                     if (!string.IsNullOrEmpty(dealershipAddress)) team.DealershipAddress = dealershipAddress;
                     if (!string.IsNullOrEmpty(gpsLocation)) team.GPSLocation = gpsLocation;
                     
-                    // Note: TeamsJson is now stored at Team level
-                    if (!string.IsNullOrEmpty(teamsJson)) team.TeamsJson = teamsJson;
-                    
                     team.UpdatedAt = DateTime.UtcNow;
                     package.UpdatedAt = DateTime.UtcNow;
                     
@@ -190,6 +186,84 @@ public class DocumentsController : ControllerBase
         {
             _logger.LogError(ex, "Error uploading document");
             return StatusCode(500, new { message = "An error occurred while uploading the document" });
+        }
+    }
+
+    /// <summary>
+    /// Extract data from a document without creating any DB entities.
+    /// Uploads the file to a temp blob, runs AI extraction, and returns the extracted fields.
+    /// Used by the upload form to auto-populate fields before the submission is created.
+    /// </summary>
+    /// <param name="file">Document file to extract data from</param>
+    /// <param name="documentType">Type of document (Invoice, CostSummary, etc.)</param>
+    /// <param name="documentAgent">Document agent for AI extraction</param>
+    /// <returns>Extracted data as JSON</returns>
+    /// <response code="200">Extraction successful</response>
+    /// <response code="400">Bad request - no file or unsupported type</response>
+    /// <response code="500">Extraction failed</response>
+    [HttpPost("extract")]
+    [Authorize]
+    [RequestSizeLimit(52428800)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ExtractDocument(
+        [FromForm] IFormFile file,
+        [FromForm] string documentType,
+        [FromServices] IDocumentAgent documentAgent,
+        CancellationToken cancellationToken)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { error = "No file provided" });
+
+        string? blobUrl = null;
+        try
+        {
+            // Upload to temp blob for extraction
+            var ext = Path.GetExtension(file.FileName);
+            var tempName = $"temp-extract/{Guid.NewGuid()}{ext}";
+            blobUrl = await _fileStorageService.UploadFileAsync(file, "documents", tempName);
+
+            _logger.LogInformation("Extract-only: uploaded temp blob {BlobUrl} for {DocType}", blobUrl, documentType);
+
+            object? extracted = null;
+            var docTypeLower = documentType.Trim().ToLowerInvariant();
+
+            if (docTypeLower == "invoice")
+            {
+                extracted = await documentAgent.ExtractInvoiceAsync(blobUrl, cancellationToken);
+            }
+            else if (docTypeLower == "costsummary")
+            {
+                extracted = await documentAgent.ExtractCostSummaryAsync(blobUrl, cancellationToken);
+            }
+            else if (docTypeLower == "activitysummary")
+            {
+                extracted = await documentAgent.ExtractActivityAsync(blobUrl, cancellationToken);
+            }
+            else if (docTypeLower == "po")
+            {
+                extracted = await documentAgent.ExtractPOAsync(blobUrl, cancellationToken);
+            }
+            else
+            {
+                return BadRequest(new { error = $"Extraction not supported for document type: {documentType}" });
+            }
+
+            return Ok(new { extractedData = extracted });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Extract-only failed for {DocType}: {Error}", documentType, ex.Message);
+            return StatusCode(500, new { error = "Extraction failed. You can enter details manually." });
+        }
+        finally
+        {
+            // Clean up temp blob
+            if (blobUrl != null)
+            {
+                try { await _fileStorageService.DeleteFileAsync(blobUrl); }
+                catch (Exception delEx) { _logger.LogWarning(delEx, "Failed to delete temp blob {BlobUrl}", blobUrl); }
+            }
         }
     }
 

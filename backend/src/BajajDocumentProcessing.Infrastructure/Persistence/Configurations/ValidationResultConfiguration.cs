@@ -22,9 +22,6 @@ public class ValidationResultConfiguration : IEntityTypeConfiguration<Validation
         builder.Property(v => v.DocumentId)
             .IsRequired();
 
-        builder.Property(v => v.ValidationDetailsJson)
-            .HasColumnType("nvarchar(max)");
-
         builder.Property(v => v.FailureReason)
             .HasMaxLength(2000);
 

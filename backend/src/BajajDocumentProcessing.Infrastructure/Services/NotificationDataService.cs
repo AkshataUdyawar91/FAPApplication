@@ -319,8 +319,8 @@ public class NotificationDataService : INotificationDataService
             (vr.VendorMatchingPassed, "Vendor Matching")
         };
 
-        // Parse ValidationDetailsJson for detailed descriptions
-        var detailDescriptions = ParseValidationDetailsJson(vr.ValidationDetailsJson);
+        // Parse RuleResultsJson for detailed descriptions
+        var detailDescriptions = ParseValidationDetailsJson(vr.RuleResultsJson);
 
         var issues = new List<ValidationIssueItem>();
 
@@ -677,7 +677,7 @@ public class NotificationDataService : INotificationDataService
             };
         }
 
-        var detailDescriptions = ParseValidationDetailsJson(vr.ValidationDetailsJson);
+        var detailDescriptions = ParseValidationDetailsJson(vr.RuleResultsJson);
 
         var checks = new (string GroupName, bool Passed, string DetailKey)[]
         {

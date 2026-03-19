@@ -88,6 +88,7 @@ public class DatabaseRedesignProperties
 
     private static readonly Dictionary<PackageState, PackageState[]> ValidTransitions = new()
     {
+        { PackageState.Draft, new[] { PackageState.Uploaded } },
         { PackageState.Uploaded, new[] { PackageState.Extracting } },
         { PackageState.Extracting, new[] { PackageState.Validating } },
         { PackageState.Validating, new[] { PackageState.PendingASM } },
