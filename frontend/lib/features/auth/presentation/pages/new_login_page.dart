@@ -42,10 +42,16 @@ class _NewLoginPageState extends State<NewLoginPage> {
         'password': _passwordController.text,
       });
       if (response.statusCode == 200 && mounted) {
-        Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: {
+        final role = (response.data['role'] ?? '').toString().toLowerCase();
+        final args = {
           'token': response.data['token'],
           'userName': response.data['email'] ?? '',
-        });
+        };
+        if (role == 'admin') {
+          Navigator.pushReplacementNamed(context, '/admin/dashboard', arguments: args);
+        } else {
+          Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: args);
+        }
       }
     } on DioException catch (e) {
       debugPrint('Login DioException: type=${e.type}, message=${e.message}, statusCode=${e.response?.statusCode}, responseData=${e.response?.data}');

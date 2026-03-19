@@ -7,6 +7,7 @@ import 'features/submission/presentation/pages/agency_upload_page.dart';
 import 'features/submission/presentation/pages/agency_submission_detail_page.dart';
 import 'features/conversational_submission/presentation/pages/conversational_submission_page.dart';
 import 'features/assistant/presentation/pages/chat_screen.dart';
+import 'features/admin/presentation/pages/admin_dashboard_page.dart';
 import 'core/network/dio_client.dart';
 
 void main() {
@@ -75,6 +76,17 @@ class MyApp extends StatelessWidget {
               builder: (context) => _AuthWrapper(
                 token: args?['token'] ?? '',
                 child: const ChatScreen(),
+              ),
+            );
+          case '/admin/dashboard':
+            final args = settings.arguments as Map<String, dynamic>?;
+            return MaterialPageRoute(
+              builder: (context) => _AuthWrapper(
+                token: args?['token'] ?? '',
+                child: AdminDashboardPage(
+                  token: args?['token'] ?? '',
+                  userName: args?['userName'] ?? '',
+                ),
               ),
             );
           case '/agency/conversational-submission':
