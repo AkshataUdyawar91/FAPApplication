@@ -9,7 +9,7 @@ namespace BajajDocumentProcessing.API.Controllers;
 
 /// <summary>
 /// State controller for dealer typeahead within a state.
-/// Queries the StateMappings table for active dealers.
+/// Queries the Dealers table for active dealers filtered by state.
 /// </summary>
 [ApiController]
 [Route("api/state")]
@@ -29,7 +29,7 @@ public class StateController : ControllerBase
 
     /// <summary>
     /// Dealer typeahead search within a state.
-    /// Returns matching dealers from the StateMappings table filtered by state and partial dealer name/code.
+    /// Returns matching dealers from the Dealers table filtered by state and partial dealer name/code.
     /// </summary>
     /// <param name="state">State to filter dealers by (required)</param>
     /// <param name="q">Partial dealer name or code for LIKE search</param>
@@ -58,26 +58,25 @@ public class StateController : ControllerBase
 
             size = Math.Clamp(size, 1, 50);
 
-            var query = _context.StateMappings
-                .Where(sm => sm.IsActive && !sm.IsDeleted && sm.State == state)
+            var query = _context.Dealers
+                .Where(d => d.IsActive && !d.IsDeleted && d.State == state)
                 .AsQueryable();
 
-            // LIKE search on DealerName or DealerCode
             if (!string.IsNullOrWhiteSpace(q))
             {
-                query = query.Where(sm =>
-                    sm.DealerName.Contains(q) || sm.DealerCode.Contains(q));
+                query = query.Where(d =>
+                    d.DealerName.Contains(q) || d.DealerCode.Contains(q));
             }
 
             var results = await query
-                .OrderBy(sm => sm.DealerName)
+                .OrderBy(d => d.DealerName)
                 .Take(size)
-                .Select(sm => new DealerResult
+                .Select(d => new DealerResult
                 {
-                    DealerCode = sm.DealerCode,
-                    DealerName = sm.DealerName,
-                    City = sm.City ?? string.Empty,
-                    State = sm.State
+                    DealerCode = d.DealerCode,
+                    DealerName = d.DealerName,
+                    City = d.City ?? string.Empty,
+                    State = d.State
                 })
                 .ToListAsync(cancellationToken);
 
