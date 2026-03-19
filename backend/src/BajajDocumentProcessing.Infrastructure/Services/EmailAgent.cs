@@ -119,7 +119,7 @@ public class EmailAgent : IEmailAgent
         var package = await LoadPackageWithUserAsync(packageId, cancellationToken);
         if (package is null) return PackageNotFound();
 
-        var fapId = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();
+        var fapId = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();    
 
         // Build issue text for the reason box
         var issueText = new StringBuilder();

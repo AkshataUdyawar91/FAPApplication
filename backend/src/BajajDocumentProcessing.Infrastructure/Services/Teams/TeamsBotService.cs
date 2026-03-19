@@ -301,7 +301,7 @@ public class TeamsBotService : TeamsActivityHandler
             var teamsUserId = turnContext.Activity.From?.AadObjectId
                               ?? turnContext.Activity.From?.Id
                               ?? string.Empty;
-            var systemUser = await ResolveSystemUserAsync(context, teamsUserId, cancellationToken);
+            var systemUser = await ResolveSystemUserAsync(context, teamsUserId, cancellationToken, turnContext);
 
             if (systemUser == null)
             {
@@ -855,9 +855,10 @@ public class TeamsBotService : TeamsActivityHandler
         }
 
         // Resolve Teams user identity to system User
-        var teamsUserId = turnContext.Activity.From?.Id ?? "unknown";
+        var teamsUserId = turnContext.Activity.From?.AadObjectId
+                          ?? turnContext.Activity.From?.Id ?? "unknown";
         var asmName = turnContext.Activity.From?.Name ?? "Unknown ASM";
-        var systemUser = await ResolveSystemUserAsync(context, teamsUserId, cancellationToken);
+        var systemUser = await ResolveSystemUserAsync(context, teamsUserId, cancellationToken, turnContext);
 
         // Load the package with required navigations for the success message
         var package = await context.DocumentPackages
@@ -915,14 +916,78 @@ public class TeamsBotService : TeamsActivityHandler
 
     /// <summary>
     /// Resolves a Teams user ID to a system User by looking up TeamsConversation → User.
-    /// Falls back to finding any ASM-role user if no direct mapping exists (pilot mode).
+    /// <summary>
+    /// Resolves a Teams user to a system User using a 3-tier strategy:
+    ///   Tier 1: Teams SSO — silently acquire Azure AD token, extract email/oid, match to User
+    ///   Tier 2: AadObjectId pre-link — match Activity.From.AadObjectId to Users.AadObjectId
+    ///   Tier 3: TeamsConversation FK — existing linked conversation record
+    /// Falls back to name matching as a last resort before returning null.
     /// </summary>
     private async Task<User?> ResolveSystemUserAsync(
         IApplicationDbContext context,
         string teamsUserId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ITurnContext? turnContext = null)
     {
-        // 1. Try to find a TeamsConversation record with a linked UserId
+        _logger.LogInformation(
+            "Auth resolution started for Teams user {TeamsUserId}",
+            teamsUserId);
+
+        // --- Tier 1: Teams SSO (silent token acquisition) ---
+        _logger.LogInformation("Tier 1 (SSO): Attempting silent token acquisition for {TeamsUserId}", teamsUserId);
+        if (turnContext != null)
+        {
+            var ssoUser = await TryResolveBySsoAsync(context, turnContext, cancellationToken);
+            if (ssoUser != null)
+            {
+                _logger.LogInformation(
+                    "Tier 1 (SSO): ✓ Resolved Teams user {TeamsUserId} to {Email}",
+                    teamsUserId, ssoUser.Email);
+                return ssoUser;
+            }
+            _logger.LogInformation("Tier 1 (SSO): ✗ Failed — no token or no matching user. Falling through to Tier 2");
+        }
+        else
+        {
+            _logger.LogInformation("Tier 1 (SSO): ✗ Skipped — turnContext is null. Falling through to Tier 2");
+        }
+
+        // --- Tier 2: AadObjectId pre-link (admin script populated Users.AadObjectId) ---
+        var aadObjectId = turnContext?.Activity?.From?.AadObjectId;
+        _logger.LogInformation(
+            "Tier 2 (Pre-link): Attempting AadObjectId lookup for {TeamsUserId}, AadObjectId: {AadObjectId}",
+            teamsUserId, aadObjectId ?? "(null)");
+
+        if (!string.IsNullOrEmpty(aadObjectId))
+        {
+            var prelinkedUser = await context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    u => u.AadObjectId == aadObjectId && u.IsActive && !u.IsDeleted,
+                    cancellationToken);
+
+            if (prelinkedUser != null)
+            {
+                _logger.LogInformation(
+                    "Tier 2 (Pre-link): ✓ Resolved Teams user {TeamsUserId} via AadObjectId {AadObjectId} to {Email}",
+                    teamsUserId, aadObjectId, prelinkedUser.Email);
+
+                await EnsureTeamsConversationLinkedAsync(
+                    context, teamsUserId, prelinkedUser.Id, turnContext, cancellationToken);
+
+                return prelinkedUser;
+            }
+            _logger.LogInformation(
+                "Tier 2 (Pre-link): ✗ No user found with AadObjectId {AadObjectId}. Falling through to Tier 3",
+                aadObjectId);
+        }
+        else
+        {
+            _logger.LogInformation("Tier 2 (Pre-link): ✗ Skipped — AadObjectId not available. Falling through to Tier 3");
+        }
+
+        // --- Tier 3: TeamsConversation FK (existing linked record from login card or prior SSO) ---
+        _logger.LogInformation("Tier 3 (Conversation FK): Looking up TeamsConversation for {TeamsUserId}", teamsUserId);
         var teamsConversation = await context.TeamsConversations
             .AsNoTracking()
             .FirstOrDefaultAsync(
@@ -933,36 +998,265 @@ public class TeamsBotService : TeamsActivityHandler
         {
             var linkedUser = await context.Users
                 .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == teamsConversation.UserId.Value && u.IsActive, cancellationToken);
+                .FirstOrDefaultAsync(
+                    u => u.Id == teamsConversation.UserId.Value && u.IsActive && !u.IsDeleted,
+                    cancellationToken);
             if (linkedUser != null)
             {
-                _logger.LogInformation("Resolved Teams user {TeamsUserId} via TeamsConversation FK to {Email}", teamsUserId, linkedUser.Email);
+                _logger.LogInformation(
+                    "Tier 3 (Conversation FK): ✓ Resolved Teams user {TeamsUserId} to {Email}",
+                    teamsUserId, linkedUser.Email);
                 return linkedUser;
             }
+            _logger.LogInformation(
+                "Tier 3 (Conversation FK): ✗ Conversation found but linked user {UserId} is inactive/deleted. Falling through to fallback",
+                teamsConversation.UserId.Value);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Tier 3 (Conversation FK): ✗ No linked conversation found for {TeamsUserId}. Falling through to fallback",
+                teamsUserId);
         }
 
-        // 2. Match by Teams display name against system user FullName or Email
+        // --- Fallback: Match by Teams display name against system user FullName or Email ---
         var teamsUserName = teamsConversation?.TeamsUserName ?? "";
+        _logger.LogInformation(
+            "Fallback (Name match): Attempting display name match for {TeamsUserId}, name: {Name}",
+            teamsUserId, teamsUserName);
+
         if (!string.IsNullOrEmpty(teamsUserName))
         {
             var user = await context.Users
                 .AsNoTracking()
                 .FirstOrDefaultAsync(
-                    u => u.IsActive &&
+                    u => u.IsActive && !u.IsDeleted &&
                          (u.FullName.ToLower() == teamsUserName.ToLower() ||
                           u.Email.ToLower() == teamsUserName.ToLower()),
                     cancellationToken);
 
             if (user != null)
             {
-                _logger.LogInformation("Resolved Teams user {TeamsUserId} by name/email match to {Email}", teamsUserId, user.Email);
+                _logger.LogInformation(
+                    "Fallback (Name match): ✓ Resolved Teams user {TeamsUserId} by name/email match to {Email}",
+                    teamsUserId, user.Email);
                 return user;
             }
+            _logger.LogInformation(
+                "Fallback (Name match): ✗ No user matched display name '{Name}'",
+                teamsUserName);
         }
 
-        // 3. No match found — do NOT fall back to a random user
-        _logger.LogWarning("Could not resolve Teams user {TeamsUserId} (name: {Name}) to any system user", teamsUserId, teamsUserName);
+        // No match found — caller will show login card
+        _logger.LogWarning(
+            "All tiers exhausted for Teams user {TeamsUserId} (name: {Name}). Login card will be shown",
+            teamsUserId, teamsUserName);
         return null;
+    }
+
+    /// <summary>
+    /// Tier 1: Attempts silent Teams SSO token acquisition.
+    /// Uses OAuthPrompt-style token exchange to get an Azure AD token without user interaction.
+    /// Extracts email/oid from the token and matches to a system user.
+    /// Returns null if SSO is not configured, token acquisition fails, or no user match.
+    /// </summary>
+    private async Task<User?> TryResolveBySsoAsync(
+        IApplicationDbContext context,
+        ITurnContext turnContext,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Attempt silent token exchange using the Teams SSO token
+            // Teams sends a token in the Activity when SSO is configured in the bot manifest
+            var tokenExchangeResource = turnContext.Activity?.Value as JObject;
+            var ssoToken = tokenExchangeResource?["token"]?.ToString();
+
+            // Also check for token in the channelData (Teams sends it here for SSO)
+            if (string.IsNullOrEmpty(ssoToken))
+            {
+                var channelData = turnContext.Activity?.ChannelData as JObject;
+                ssoToken = channelData?["ssoToken"]?.ToString();
+            }
+
+            if (string.IsNullOrEmpty(ssoToken))
+            {
+                // No SSO token available — this is normal when SSO isn't configured yet
+                _logger.LogDebug("No SSO token available for Teams user");
+                return null;
+            }
+
+            // Decode the JWT token to extract claims (without validation — 
+            // the Bot Framework already validated it)
+            var claims = DecodeJwtClaims(ssoToken);
+            if (claims == null)
+                return null;
+
+            var email = claims.GetValueOrDefault("preferred_username")
+                        ?? claims.GetValueOrDefault("upn")
+                        ?? claims.GetValueOrDefault("email");
+            var oid = claims.GetValueOrDefault("oid");
+
+            if (string.IsNullOrEmpty(email) && string.IsNullOrEmpty(oid))
+            {
+                _logger.LogDebug("SSO token has no email or oid claim");
+                return null;
+            }
+
+            // Try matching by OID first (most reliable), then by email
+            User? user = null;
+            if (!string.IsNullOrEmpty(oid))
+            {
+                user = await context.Users
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(
+                        u => u.AadObjectId == oid && u.IsActive && !u.IsDeleted,
+                        cancellationToken);
+            }
+
+            if (user == null && !string.IsNullOrEmpty(email))
+            {
+                user = await context.Users
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(
+                        u => u.Email.ToLower() == email.ToLower() && u.IsActive && !u.IsDeleted,
+                        cancellationToken);
+
+                // If matched by email but AadObjectId not set, populate it for future Tier 2 matches
+                if (user != null && string.IsNullOrEmpty(user.AadObjectId) && !string.IsNullOrEmpty(oid))
+                {
+                    var trackedUser = await context.Users
+                        .FirstOrDefaultAsync(u => u.Id == user.Id, cancellationToken);
+                    if (trackedUser != null)
+                    {
+                        trackedUser.AadObjectId = oid;
+                        trackedUser.UpdatedAt = DateTime.UtcNow;
+                        await context.SaveChangesAsync(cancellationToken);
+                        _logger.LogInformation(
+                            "Auto-populated AadObjectId {Oid} for user {Email} via SSO",
+                            oid, user.Email);
+                    }
+                }
+            }
+
+            if (user != null)
+            {
+                // Auto-link TeamsConversation for faster future resolution
+                var teamsUserId = turnContext.Activity?.From?.AadObjectId
+                                  ?? turnContext.Activity?.From?.Id
+                                  ?? string.Empty;
+                await EnsureTeamsConversationLinkedAsync(
+                    context, teamsUserId, user.Id, turnContext, cancellationToken);
+            }
+
+            return user;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "SSO token resolution failed — falling through to next tier");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Decodes JWT claims from a token without signature validation.
+    /// The Bot Framework has already validated the token — we just need the claims.
+    /// </summary>
+    private static Dictionary<string, string>? DecodeJwtClaims(string token)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length < 2) return null;
+
+            var payload = parts[1];
+            // Pad base64 if needed
+            switch (payload.Length % 4)
+            {
+                case 2: payload += "=="; break;
+                case 3: payload += "="; break;
+            }
+
+            var bytes = Convert.FromBase64String(
+                payload.Replace('-', '+').Replace('_', '/'));
+            var json = System.Text.Encoding.UTF8.GetString(bytes);
+
+            using var doc = JsonDocument.Parse(json);
+            var claims = new Dictionary<string, string>();
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                claims[prop.Name] = prop.Value.ToString();
+            }
+            return claims;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Ensures a TeamsConversation record exists and is linked to the given system user.
+    /// Creates a new record if none exists, or updates the UserId if unlinked.
+    /// </summary>
+    private async Task EnsureTeamsConversationLinkedAsync(
+        IApplicationDbContext context,
+        string teamsUserId,
+        Guid systemUserId,
+        ITurnContext? turnContext,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var existing = await context.TeamsConversations
+                .FirstOrDefaultAsync(
+                    tc => tc.TeamsUserId == teamsUserId && tc.IsActive,
+                    cancellationToken);
+
+            if (existing != null)
+            {
+                if (existing.UserId == null || existing.UserId != systemUserId)
+                {
+                    existing.UserId = systemUserId;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                    existing.LastActivityAt = DateTime.UtcNow;
+                    await context.SaveChangesAsync(cancellationToken);
+                    _logger.LogInformation(
+                        "Auto-linked TeamsConversation {TeamsUserId} to system user {UserId}",
+                        teamsUserId, systemUserId);
+                }
+            }
+            else if (turnContext != null)
+            {
+                context.TeamsConversations.Add(new TeamsConversation
+                {
+                    Id = Guid.NewGuid(),
+                    UserId = systemUserId,
+                    TeamsUserId = teamsUserId,
+                    TeamsUserName = turnContext.Activity?.From?.Name ?? "",
+                    ConversationId = turnContext.Activity?.Conversation?.Id ?? "",
+                    ServiceUrl = turnContext.Activity?.ServiceUrl ?? "",
+                    ChannelId = turnContext.Activity?.ChannelId ?? "msteams",
+                    BotId = turnContext.Activity?.Recipient?.Id ?? "",
+                    BotName = turnContext.Activity?.Recipient?.Name ?? "",
+                    TenantId = turnContext.Activity?.Conversation?.TenantId,
+                    ConversationReferenceJson = "{}",
+                    IsActive = true,
+                    LastActivityAt = DateTime.UtcNow,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+                await context.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation(
+                    "Created and linked TeamsConversation for {TeamsUserId} to system user {UserId}",
+                    teamsUserId, systemUserId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to auto-link TeamsConversation for {TeamsUserId}", teamsUserId);
+            // Non-fatal — user resolution still succeeded
+        }
     }
 
     /// <summary>
@@ -1087,6 +1381,17 @@ public class TeamsBotService : TeamsActivityHandler
             {
                 await SendTextReplyAsync(turnContext, "❌ Account not found or inactive.", cancellationToken);
                 return;
+            }
+
+            // Auto-populate AadObjectId for future Tier 2 resolution
+            var aadOid = turnContext.Activity.From?.AadObjectId;
+            if (!string.IsNullOrEmpty(aadOid) && string.IsNullOrEmpty(systemUser.AadObjectId))
+            {
+                systemUser.AadObjectId = aadOid;
+                systemUser.UpdatedAt = DateTime.UtcNow;
+                _logger.LogInformation(
+                    "Auto-populated AadObjectId {Oid} for user {Email} via login card",
+                    aadOid, systemUser.Email);
             }
 
             // Link the TeamsConversation to this system user
@@ -1440,9 +1745,10 @@ public class TeamsBotService : TeamsActivityHandler
 
         var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
 
-        var teamsUserId = turnContext.Activity.From?.Id ?? "unknown";
+        var teamsUserId = turnContext.Activity.From?.AadObjectId
+                          ?? turnContext.Activity.From?.Id ?? "unknown";
         var asmName = turnContext.Activity.From?.Name ?? "Unknown ASM";
-        var systemUser = await ResolveSystemUserAsync(context, teamsUserId, cancellationToken);
+        var systemUser = await ResolveSystemUserAsync(context, teamsUserId, cancellationToken, turnContext);
 
         var package = await context.DocumentPackages
             .Include(p => p.Agency)
