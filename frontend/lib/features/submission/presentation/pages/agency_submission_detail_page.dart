@@ -1,6 +1,8 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:go_router/go_router.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:web/web.dart' as web;
@@ -13,13 +15,14 @@ import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
+import '../../../../core/router/app_router.dart';
 import '../../../approval/data/models/invoice_summary_data.dart';
 import '../../../approval/data/models/campaign_detail_row.dart';
 import '../../../approval/presentation/utils/submission_data_transformer.dart';
 import '../../../approval/presentation/widgets/invoice_summary_section.dart';
 import '../../../approval/presentation/widgets/campaign_details_table.dart';
 
-class AgencySubmissionDetailPage extends StatefulWidget {
+class AgencySubmissionDetailPage extends ConsumerStatefulWidget {
   final String submissionId;
   final String token;
   final String userName;
@@ -34,12 +37,12 @@ class AgencySubmissionDetailPage extends StatefulWidget {
   });
 
   @override
-  State<AgencySubmissionDetailPage> createState() =>
+  ConsumerState<AgencySubmissionDetailPage> createState() =>
       _AgencySubmissionDetailPageState();
 }
 
 class _AgencySubmissionDetailPageState
-    extends State<AgencySubmissionDetailPage> {
+    extends ConsumerState<AgencySubmissionDetailPage> {
   final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
     ..interceptors.add(PrettyDioLogger());
 
@@ -1258,14 +1261,11 @@ class _AgencySubmissionDetailPageState
   }
 
   void _navigateToUpload() {
-    Navigator.pushNamed(
-      context,
-      '/agency/upload',
-      arguments: {
-        'token': widget.token,
-        'userName': widget.userName,
-      },
-    );
+    context.pushNamed('agency-upload', extra: {
+      'token': widget.token,
+      'userName': widget.userName,
+      'submissionId': widget.submissionId,
+    });
   }
 
   List<NavItem> _getNavItems(BuildContext context) {
@@ -1385,7 +1385,7 @@ class _AgencySubmissionDetailPageState
                   userName: widget.userName,
                   userRole: 'Agency',
                   navItems: _getNavItems(context),
-                  onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                  onLogout: () => handleLogout(context, ref),
                 )
               : null,
           body: Column(
@@ -1399,8 +1399,7 @@ class _AgencySubmissionDetailPageState
                         userName: widget.userName,
                         userRole: 'Agency',
                         navItems: _getNavItems(context),
-                        onLogout: () =>
-                            Navigator.pushReplacementNamed(context, '/'),
+                        onLogout: () => handleLogout(context, ref),
                         isCollapsed: _isSidebarCollapsed,
                         onToggleCollapse: () => setState(
                             () => _isSidebarCollapsed = !_isSidebarCollapsed),
@@ -1894,15 +1893,11 @@ class _AgencySubmissionDetailPageState
   }
 
   void _enterEditMode() {
-    Navigator.pushNamed(
-      context,
-      '/agency/upload',
-      arguments: {
-        'token': widget.token,
-        'userName': widget.userName,
-        'submissionId': widget.submissionId,
-      },
-    );
+    context.pushNamed('agency-upload', extra: {
+      'token': widget.token,
+      'userName': widget.userName,
+      'submissionId': widget.submissionId,
+    });
   }
 
   Widget _buildRejectionCard(

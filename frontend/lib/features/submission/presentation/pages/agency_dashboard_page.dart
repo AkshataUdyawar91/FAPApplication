@@ -2,6 +2,7 @@ import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/router/app_router.dart';
@@ -338,7 +339,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   }
 
   void _navigateToUpload() {
-    Navigator.pushNamed(context, '/agency/upload', arguments: {
+    context.pushNamed('agency-upload', extra: {
       'token': widget.token,
       'userName': widget.userName,
     });
@@ -837,10 +838,9 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () {
-                  Navigator.pushNamed(
-                    context,
-                    '/agency/submission-detail',
-                    arguments: {
+                  context.pushNamed(
+                    'submission-detail',
+                    extra: {
                       'submissionId': request['id'],
                       'token': widget.token,
                       'userName': widget.userName,
@@ -977,10 +977,9 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                             color: AppColors.primary,
                             onPressed: () {
                               // Navigate to detailed view page
-                              Navigator.pushNamed(
-                                context,
-                                '/agency/submission-detail',
-                                arguments: {
+                              context.pushNamed(
+                                'submission-detail',
+                                extra: {
                                   'submissionId': r['id'],
                                   'token': widget.token,
                                   'userName': widget.userName,
