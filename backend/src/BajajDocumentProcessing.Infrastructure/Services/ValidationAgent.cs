@@ -1598,7 +1598,7 @@ public class ValidationAgent : IValidationAgent
 
         var documentResults = BuildPerDocumentResults(result, package);
 
-        foreach (var (documentType, documentId, allPassed, detailsJson, failureReason) in documentResults)
+        foreach (var (documentType, documentId, allPassed, failureReason) in documentResults)
         {
             try
             {
@@ -1610,7 +1610,6 @@ public class ValidationAgent : IValidationAgent
                 if (existing != null)
                 {
                     existing.AllValidationsPassed = allPassed;
-                    existing.ValidationDetailsJson = detailsJson;
                     existing.FailureReason = failureReason;
                     existing.UpdatedAt = DateTime.UtcNow;
                 }
@@ -1622,7 +1621,6 @@ public class ValidationAgent : IValidationAgent
                         DocumentType = documentType,
                         DocumentId = documentId,
                         AllValidationsPassed = allPassed,
-                        ValidationDetailsJson = detailsJson,
                         FailureReason = failureReason,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
@@ -1648,137 +1646,81 @@ public class ValidationAgent : IValidationAgent
     /// <summary>
     /// Builds a list of per-document-type validation result tuples from the package validation result.
     /// </summary>
-    private static List<(DocumentType Type, Guid DocumentId, bool AllPassed, string DetailsJson, string? FailureReason)>
+    private static List<(DocumentType Type, Guid DocumentId, bool AllPassed, string? FailureReason)>
         BuildPerDocumentResults(PackageValidationResult result, Domain.Entities.DocumentPackage package)
     {
-        var items = new List<(DocumentType, Guid, bool, string, string?)>();
+        var items = new List<(DocumentType, Guid, bool, string?)>();
 
         // PO: SAP verification + date validation
         if (package.PO != null)
         {
-            if (result.SAPVerification != null || result.DateValidation != null)
-            {
-                var passed = (result.SAPVerification?.IsVerified ?? true || result.SAPVerification?.SAPConnectionFailed == true)
-                             && (result.DateValidation?.IsValid ?? true);
-                var details = new { result.SAPVerification, result.DateValidation };
-                var issues = new List<string>();
-                if (result.SAPVerification != null && !result.SAPVerification.IsVerified && !result.SAPVerification.SAPConnectionFailed)
-                    issues.AddRange(result.SAPVerification.Discrepancies);
-                if (result.DateValidation != null && !result.DateValidation.IsValid)
-                    issues.AddRange(result.DateValidation.DateIssues);
+            var passed = (result.SAPVerification?.IsVerified ?? true || result.SAPVerification?.SAPConnectionFailed == true)
+                         && (result.DateValidation?.IsValid ?? true);
+            var issues = new List<string>();
+            if (result.SAPVerification != null && !result.SAPVerification.IsVerified && !result.SAPVerification.SAPConnectionFailed)
+                issues.AddRange(result.SAPVerification.Discrepancies);
+            if (result.DateValidation != null && !result.DateValidation.IsValid)
+                issues.AddRange(result.DateValidation.DateIssues);
 
-                items.Add((DocumentType.PO, package.PO.Id, passed,
-                    JsonSerializer.Serialize(details),
-                    issues.Count > 0 ? string.Join("; ", issues) : null));
-            }
-            else
-            {
-                // No extracted data available — record a placeholder result
-                items.Add((DocumentType.PO, package.PO.Id, false,
-                    JsonSerializer.Serialize(new { Note = "No extracted data available for validation" }),
-                    "Extraction did not produce data for this document"));
-            }
+            items.Add((DocumentType.PO, package.PO.Id, passed,
+                issues.Count > 0 ? string.Join("; ", issues) : null));
         }
 
         // Invoice: field presence + cross-document
         var invoiceDoc = package.Invoices.FirstOrDefault();
         if (invoiceDoc != null)
         {
-            if (result.InvoiceFieldPresence != null || result.InvoiceCrossDocument != null)
-            {
-                var invPassed = (result.InvoiceFieldPresence?.AllFieldsPresent ?? true)
-                                && (result.InvoiceCrossDocument?.AllChecksPass ?? true);
-                var invDetails = new { result.InvoiceFieldPresence, result.InvoiceCrossDocument };
-                var invIssues = new List<string>();
-                if (result.InvoiceFieldPresence != null && !result.InvoiceFieldPresence.AllFieldsPresent)
-                    invIssues.AddRange(result.InvoiceFieldPresence.MissingFields);
-                if (result.InvoiceCrossDocument != null && !result.InvoiceCrossDocument.AllChecksPass)
-                    invIssues.AddRange(result.InvoiceCrossDocument.Issues);
+            var invPassed = (result.InvoiceFieldPresence?.AllFieldsPresent ?? true)
+                            && (result.InvoiceCrossDocument?.AllChecksPass ?? true);
+            var invIssues = new List<string>();
+            if (result.InvoiceFieldPresence != null && !result.InvoiceFieldPresence.AllFieldsPresent)
+                invIssues.AddRange(result.InvoiceFieldPresence.MissingFields);
+            if (result.InvoiceCrossDocument != null && !result.InvoiceCrossDocument.AllChecksPass)
+                invIssues.AddRange(result.InvoiceCrossDocument.Issues);
 
-                items.Add((DocumentType.Invoice, invoiceDoc.Id, invPassed,
-                    JsonSerializer.Serialize(invDetails),
-                    invIssues.Count > 0 ? string.Join("; ", invIssues) : null));
-            }
-            else
-            {
-                items.Add((DocumentType.Invoice, invoiceDoc.Id, false,
-                    JsonSerializer.Serialize(new { Note = "No extracted data available for validation" }),
-                    "Extraction did not produce data for this document"));
-            }
+            items.Add((DocumentType.Invoice, invoiceDoc.Id, invPassed,
+                invIssues.Count > 0 ? string.Join("; ", invIssues) : null));
         }
 
         // CostSummary: field presence + cross-document
         if (package.CostSummary != null)
         {
-            if (result.CostSummaryFieldPresence != null || result.CostSummaryCrossDocument != null)
-            {
-                var passed = (result.CostSummaryFieldPresence?.AllFieldsPresent ?? true)
-                             && (result.CostSummaryCrossDocument?.AllChecksPass ?? true);
-                var details = new { result.CostSummaryFieldPresence, result.CostSummaryCrossDocument };
-                var issues = new List<string>();
-                if (result.CostSummaryFieldPresence != null && !result.CostSummaryFieldPresence.AllFieldsPresent)
-                    issues.AddRange(result.CostSummaryFieldPresence.MissingFields);
-                if (result.CostSummaryCrossDocument != null && !result.CostSummaryCrossDocument.AllChecksPass)
-                    issues.AddRange(result.CostSummaryCrossDocument.Issues);
+            var passed = (result.CostSummaryFieldPresence?.AllFieldsPresent ?? true)
+                         && (result.CostSummaryCrossDocument?.AllChecksPass ?? true);
+            var issues = new List<string>();
+            if (result.CostSummaryFieldPresence != null && !result.CostSummaryFieldPresence.AllFieldsPresent)
+                issues.AddRange(result.CostSummaryFieldPresence.MissingFields);
+            if (result.CostSummaryCrossDocument != null && !result.CostSummaryCrossDocument.AllChecksPass)
+                issues.AddRange(result.CostSummaryCrossDocument.Issues);
 
-                items.Add((DocumentType.CostSummary, package.CostSummary.Id, passed,
-                    JsonSerializer.Serialize(details),
-                    issues.Count > 0 ? string.Join("; ", issues) : null));
-            }
-            else
-            {
-                items.Add((DocumentType.CostSummary, package.CostSummary.Id, false,
-                    JsonSerializer.Serialize(new { Note = "No extracted data available for validation" }),
-                    "Extraction did not produce data for this document"));
-            }
+            items.Add((DocumentType.CostSummary, package.CostSummary.Id, passed,
+                issues.Count > 0 ? string.Join("; ", issues) : null));
         }
 
         // ActivitySummary: field presence + cross-document
         if (package.ActivitySummary != null)
         {
-            if (result.ActivityFieldPresence != null || result.ActivityCrossDocument != null)
-            {
-                var passed = (result.ActivityFieldPresence?.AllFieldsPresent ?? true)
-                             && (result.ActivityCrossDocument?.AllChecksPass ?? true);
-                var details = new { result.ActivityFieldPresence, result.ActivityCrossDocument };
-                var issues = new List<string>();
-                if (result.ActivityFieldPresence != null && !result.ActivityFieldPresence.AllFieldsPresent)
-                    issues.AddRange(result.ActivityFieldPresence.MissingFields);
-                if (result.ActivityCrossDocument != null && !result.ActivityCrossDocument.AllChecksPass)
-                    issues.AddRange(result.ActivityCrossDocument.Issues);
+            var passed = (result.ActivityFieldPresence?.AllFieldsPresent ?? true)
+                         && (result.ActivityCrossDocument?.AllChecksPass ?? true);
+            var issues = new List<string>();
+            if (result.ActivityFieldPresence != null && !result.ActivityFieldPresence.AllFieldsPresent)
+                issues.AddRange(result.ActivityFieldPresence.MissingFields);
+            if (result.ActivityCrossDocument != null && !result.ActivityCrossDocument.AllChecksPass)
+                issues.AddRange(result.ActivityCrossDocument.Issues);
 
-                items.Add((DocumentType.ActivitySummary, package.ActivitySummary.Id, passed,
-                    JsonSerializer.Serialize(details),
-                    issues.Count > 0 ? string.Join("; ", issues) : null));
-            }
-            else
-            {
-                items.Add((DocumentType.ActivitySummary, package.ActivitySummary.Id, false,
-                    JsonSerializer.Serialize(new { Note = "No extracted data available for validation" }),
-                    "Extraction did not produce data for this document"));
-            }
+            items.Add((DocumentType.ActivitySummary, package.ActivitySummary.Id, passed,
+                issues.Count > 0 ? string.Join("; ", issues) : null));
         }
 
         // EnquiryDocument: field presence only
         if (package.EnquiryDocument != null)
         {
-            if (result.EnquiryDumpFieldPresence != null)
-            {
-                var passed = result.EnquiryDumpFieldPresence.AllFieldsPresent;
-                var details = new { result.EnquiryDumpFieldPresence };
-                var issues = result.EnquiryDumpFieldPresence.AllFieldsPresent
-                    ? null
-                    : string.Join("; ", result.EnquiryDumpFieldPresence.MissingFields);
+            var passed = result.EnquiryDumpFieldPresence?.AllFieldsPresent ?? true;
+            var issues = (result.EnquiryDumpFieldPresence != null && !result.EnquiryDumpFieldPresence.AllFieldsPresent)
+                ? string.Join("; ", result.EnquiryDumpFieldPresence.MissingFields)
+                : null;
 
-                items.Add((DocumentType.EnquiryDocument, package.EnquiryDocument.Id, passed,
-                    JsonSerializer.Serialize(details), issues));
-            }
-            else
-            {
-                items.Add((DocumentType.EnquiryDocument, package.EnquiryDocument.Id, false,
-                    JsonSerializer.Serialize(new { Note = "No extracted data available for validation" }),
-                    "Extraction did not produce data for this document"));
-            }
+            items.Add((DocumentType.EnquiryDocument, package.EnquiryDocument.Id, passed, issues));
         }
 
         // TeamPhotos: field presence + cross-document (use package ID as the "document" since photos are a collection)
@@ -1786,7 +1728,6 @@ public class ValidationAgent : IValidationAgent
         {
             var passed = (result.PhotoFieldPresence?.AllFieldsPresent ?? true)
                          && (result.PhotoCrossDocument?.AllChecksPass ?? true);
-            var details = new { result.PhotoFieldPresence, result.PhotoCrossDocument };
             var issues = new List<string>();
             if (result.PhotoFieldPresence != null && !result.PhotoFieldPresence.AllFieldsPresent)
                 issues.AddRange(result.PhotoFieldPresence.MissingFields);
@@ -1794,14 +1735,7 @@ public class ValidationAgent : IValidationAgent
                 issues.AddRange(result.PhotoCrossDocument.Issues);
 
             items.Add((DocumentType.TeamPhoto, package.Id, passed,
-                JsonSerializer.Serialize(details),
                 issues.Count > 0 ? string.Join("; ", issues) : null));
-        }
-        else if (package.Teams.Any(t => t.Photos.Any()))
-        {
-            items.Add((DocumentType.TeamPhoto, package.Id, false,
-                JsonSerializer.Serialize(new { Note = "No extracted data available for validation" }),
-                "Extraction did not produce data for photos"));
         }
 
         return items;

@@ -71,7 +71,6 @@ public class HierarchicalSubmissionController : ControllerBase
                 DealershipAddress = request.DealershipAddress,
                 GPSLocation = request.GPSLocation,
                 State = request.State,
-                TeamsJson = request.TeamsJson,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -1156,7 +1155,6 @@ public class AddCampaignRequest
     public string? GPSLocation { get; set; }
     public string? State { get; set; }
     public decimal? TotalCost { get; set; }
-    public string? TeamsJson { get; set; }
 }
 
 // Response DTOs

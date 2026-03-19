@@ -65,6 +65,7 @@ class MyApp extends StatelessWidget {
                   submissionId: args?['submissionId']?.toString() ?? '',
                   token: args?['token'] ?? '',
                   userName: args?['userName'] ?? '',
+                  poNumber: args?['poNumber'] ?? '',
                 ),
               ),
             );
@@ -92,7 +93,6 @@ class MyApp extends StatelessWidget {
     );
   }
 }
-
 
 /// Wrapper that sets the [authTokenProvider] so the conversational
 /// submission feature (which uses Riverpod Dio client) can authenticate.
@@ -128,7 +128,6 @@ class _ConversationalSubmissionWrapperState
     return const ConversationalSubmissionPage();
   }
 }
-
 
 /// Generic auth wrapper that sets the token before rendering the child.
 class _AuthWrapper extends ConsumerStatefulWidget {

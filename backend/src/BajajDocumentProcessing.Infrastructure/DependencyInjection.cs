@@ -127,6 +127,9 @@ public static class DependencyInjection
         // CIRCLE HEAD Auto-Assignment Service
         services.AddScoped<ICircleHeadAssignmentService, CircleHeadAssignmentService>();
 
+        // RA Auto-Assignment Service
+        services.AddScoped<IRAAssignmentService, RAAssignmentService>();
+
         // Conversational Submission Service (State Machine)
         services.AddScoped<IConversationalSubmissionService, ConversationalSubmissionService>();
 
@@ -144,6 +147,16 @@ public static class DependencyInjection
 
         // PO Balance Service
         services.AddScoped<IPoBalanceService, PoBalanceService>();
+
+        // SAP PO_CREATE sync
+        services.AddHttpClient("SapPoCreate", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(60);
+        });
+        services.AddScoped<IPoSyncService, PoSyncService>();
+
+        // Scheduled daily 11 PM PO sync job
+        services.AddHostedService<PoSyncScheduler>();
 
         // Azure services configuration will be added in subsequent tasks
         
