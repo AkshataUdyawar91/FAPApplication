@@ -282,7 +282,7 @@ public class NotificationAgent : INotificationAgent
                     // ASM notification - data pass scenario
                     if (relatedEntityId.HasValue)
                     {
-                        await _emailAgent.SendDataPassEmailAsync(
+                        await _emailAgent.SendPendingCircleHeadEmailAsync(
                             relatedEntityId.Value,
                             user.Email,
                             cancellationToken);
@@ -300,9 +300,8 @@ public class NotificationAgent : INotificationAgent
                     // Agency notification - approved
                     if (relatedEntityId.HasValue)
                     {
-                        await _emailAgent.SendApprovedEmailAsync(
+                        await _emailAgent.SendRaApprovedEmailAsync(
                             relatedEntityId.Value,
-                            user.Email,
                             cancellationToken);
                     }
                     break;
@@ -311,9 +310,8 @@ public class NotificationAgent : INotificationAgent
                     // Agency notification - rejected
                     if (relatedEntityId.HasValue)
                     {
-                        await _emailAgent.SendRejectedEmailAsync(
+                        await _emailAgent.SendCircleHeadRejectedEmailAsync(
                             relatedEntityId.Value,
-                            user.Email,
                             message,
                             cancellationToken);
                     }

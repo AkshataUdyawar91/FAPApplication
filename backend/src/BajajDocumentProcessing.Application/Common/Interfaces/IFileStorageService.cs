@@ -38,6 +38,14 @@ public interface IFileStorageService
     Task<bool> FileExistsAsync(string blobUrl);
 
     /// <summary>
+    /// Checks whether the given URL points to a valid, retrievable blob.
+    /// Returns false for seed/placeholder URLs and blobs that don't exist in storage.
+    /// </summary>
+    /// <param name="blobUrl">URL to check</param>
+    /// <returns>True if the blob is accessible, false otherwise</returns>
+    Task<bool> IsBlobAccessibleAsync(string blobUrl);
+
+    /// <summary>
     /// Downloads a file from Azure Blob Storage as a byte array
     /// </summary>
     /// <param name="blobUrl">URL of the blob to download</param>

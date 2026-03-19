@@ -43,8 +43,9 @@ public class DatabaseRedesignEntityTests
         Assert.Equal(5, (int)PackageState.ASMRejected);
         Assert.Equal(6, (int)PackageState.PendingRA);
         Assert.Equal(7, (int)PackageState.RARejected);
+        Assert.Equal(0, (int)PackageState.Draft);
         Assert.Equal(8, (int)PackageState.Approved);
-        Assert.Equal(8, Enum.GetValues<PackageState>().Length);
+        Assert.Equal(9, Enum.GetValues<PackageState>().Length);
     }
 
     [Fact]
@@ -134,68 +135,7 @@ public class DatabaseRedesignEntityTests
 
     #endregion
 
-    #region ASM Entity Tests
-
-    [Fact]
-    public async Task ASM_CanBeCreatedWithoutUser()
-    {
-        await using var context = CreateInMemoryContext();
-
-        var asm = new ASM
-        {
-            Id = Guid.NewGuid(),
-            Name = "Test ASM",
-            Location = "North Region",
-            UserId = null,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        await context.ASMs.AddAsync(asm);
-        await context.SaveChangesAsync();
-
-        var saved = await context.ASMs.FindAsync(asm.Id);
-        Assert.NotNull(saved);
-        Assert.Equal("Test ASM", saved.Name);
-        Assert.Equal("North Region", saved.Location);
-        Assert.Null(saved.UserId);
-    }
-
-    [Fact]
-    public async Task ASM_CanBeLinkedToUser()
-    {
-        await using var context = CreateInMemoryContext();
-        var userId = Guid.NewGuid();
-
-        var user = new User
-        {
-            Id = userId,
-            Email = "asm@test.com",
-            PasswordHash = "hash",
-            FullName = "ASM User",
-            Role = UserRole.ASM,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        var asm = new ASM
-        {
-            Id = Guid.NewGuid(),
-            Name = "Linked ASM",
-            Location = "South Region",
-            UserId = userId,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        await context.Users.AddAsync(user);
-        await context.ASMs.AddAsync(asm);
-        await context.SaveChangesAsync();
-
-        var saved = await context.ASMs
-            .Include(a => a.User)
-            .FirstAsync(a => a.Id == asm.Id);
-
-        Assert.NotNull(saved.User);
-        Assert.Equal(userId, saved.UserId);
-    }
+    #region ASM Entity Tests (Removed - ASM entity no longer exists in current schema)
 
     #endregion
 

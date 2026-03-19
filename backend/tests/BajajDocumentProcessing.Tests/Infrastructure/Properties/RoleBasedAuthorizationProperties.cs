@@ -34,10 +34,10 @@ public class RoleBasedAuthorizationProperties
     {
         var inMemorySettings = new Dictionary<string, string>
         {
-            {"Jwt:Secret", "YourSuperSecretKeyThatIsAtLeast32CharactersLong!"},
+            {"Jwt:SecretKey", "YourSuperSecretKeyThatIsAtLeast32CharactersLong!"},
             {"Jwt:Issuer", "TestIssuer"},
             {"Jwt:Audience", "TestAudience"},
-            {"Jwt:ExpirationMinutes", "30"}
+            {"Jwt:ExpiryMinutes", "30"}
         };
 
         return new ConfigurationBuilder()

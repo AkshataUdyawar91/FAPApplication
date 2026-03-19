@@ -62,6 +62,26 @@ public class TeamPhotos : BaseEntity
     /// Gets or sets the device model used to capture the photo (from EXIF data)
     /// </summary>
     public string? DeviceModel { get; set; }
+
+    /// <summary>
+    /// Whether date/timestamp is visible in the photo (EXIF or overlay)
+    /// </summary>
+    public bool? DateVisible { get; set; }
+
+    /// <summary>
+    /// Whether AI detected a person wearing a blue t-shirt
+    /// </summary>
+    public bool? BlueTshirtPresent { get; set; }
+
+    /// <summary>
+    /// Whether AI detected a 3-wheel vehicle
+    /// </summary>
+    public bool? ThreeWheelerPresent { get; set; }
+
+    /// <summary>
+    /// Date text extracted from photo overlay
+    /// </summary>
+    public string? PhotoDateOverlay { get; set; }
     
     /// <summary>
     /// Gets or sets the JSON representation of extracted metadata from the photo
