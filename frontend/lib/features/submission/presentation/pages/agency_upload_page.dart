@@ -1,3 +1,4 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:dio/dio.dart';
@@ -53,6 +54,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   List<Map<String, dynamic>> _indianStates = [];
   String? _selectedActivationState;
   bool _isLoadingStates = false;
+  final _stateSearchController = TextEditingController();
+  List<Map<String, dynamic>> _filteredStates = [];
 
   PlatformFile? _purchaseOrder;
   String? _existingPOFileName; // Server-side PO file name for edit mode
@@ -80,7 +83,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   @override
   void initState() {
     super.initState();
-    _dio = widget.dio ?? Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+    _dio = widget.dio ?? Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
     _tabController = TabController(length: _totalSteps, vsync: this)
       ..addListener(() {
         if (!_tabController.indexIsChanging) return;
@@ -98,6 +101,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   void dispose() {
     _tabController.dispose();
     _poSearchController.dispose();
+    _stateSearchController.dispose();
+    for (final inv in _invoices) {
+      inv.dispose();
+    }
     super.dispose();
   }
 
@@ -353,40 +360,74 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
     }
   }
 
-  /// Uploads an invoice file and autofills fields from the immediately-extracted data
-  /// returned in the upload response (no polling needed — backend extracts synchronously).
+  /// Extracts invoice fields from the uploaded file using the extract-only endpoint.
+  /// Does NOT require a packageId — extraction happens on a temp blob and returns immediately.
   Future<void> _uploadAndAutofillInvoice(InvoiceItemData invoice) async {
-    if (invoice.file?.bytes == null || _currentPackageId == null) return;
-    setState(() => invoice.isExtracting = true);
+    if (invoice.file?.bytes == null) return;
+    setState(() {
+      invoice.isExtracting = true;
+      invoice.extractionStatus = ExtractionStatus.extracting;
+      invoice.extractionError = null;
+    });
     try {
-      final uploadResponse = await _dio.post(
-        '/documents/upload',
+      final extractResponse = await _dio.post(
+        '/documents/extract',
         data: FormData.fromMap({
           'file': MultipartFile.fromBytes(invoice.file!.bytes!, filename: invoice.file!.name),
           'documentType': 'Invoice',
-          'packageId': _currentPackageId,
         }),
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (!mounted) return;
-      if (uploadResponse.statusCode == 200) {
-        final extractedJson = uploadResponse.data['extractedDataJson']?.toString();
-        if (extractedJson != null && extractedJson.isNotEmpty) {
-          final data = _parseJsonString(extractedJson);
+      if (extractResponse.statusCode == 200) {
+        final extractedData = extractResponse.data['extractedData'];
+        if (extractedData != null && extractedData is Map) {
+          final data = Map<String, dynamic>.from(extractedData);
           if (data.isNotEmpty) {
             setState(() {
-              invoice.invoiceNumber = data['InvoiceNumber'] ?? data['invoiceNumber'] ?? invoice.invoiceNumber;
+              invoice.invoiceNumber = (data['InvoiceNumber'] ?? data['invoiceNumber'])?.toString() ?? invoice.invoiceNumber;
               invoice.totalAmount   = (data['TotalAmount'] ?? data['totalAmount'])?.toString() ?? invoice.totalAmount;
-              invoice.gstNumber     = data['GSTNumber'] ?? data['gstNumber'] ?? data['GSTIN'] ?? data['gstin'] ?? invoice.gstNumber;
+              invoice.gstNumber     = (data['GSTNumber'] ?? data['gstNumber'] ?? data['GSTIN'] ?? data['gstin'])?.toString() ?? invoice.gstNumber;
               final rawDate = data['InvoiceDate'] ?? data['invoiceDate'] ?? data['Date'] ?? data['date'];
               if (rawDate != null) invoice.invoiceDate = _formatDateForField(rawDate);
+              // Sync controllers so the TextFormFields reflect the new values
+              invoice.invoiceNumberController.text = invoice.invoiceNumber;
+              invoice.totalAmountController.text = invoice.totalAmount;
+              invoice.gstNumberController.text = invoice.gstNumber;
+              invoice.invoiceDateController.text = invoice.invoiceDate;
+              invoice.extractionStatus = ExtractionStatus.success;
             });
+            return;
           }
         }
+        // Response OK but no data extracted
+        setState(() {
+          invoice.extractionStatus = ExtractionStatus.failed;
+          invoice.extractionError = 'Could not extract fields from this document';
+        });
+      } else {
+        setState(() {
+          invoice.extractionStatus = ExtractionStatus.failed;
+          invoice.extractionError = 'Extraction returned status ${extractResponse.statusCode}';
+        });
+      }
+    } on DioException catch (e) {
+      debugPrint('Invoice autofill DioException: $e');
+      if (mounted) {
+        final msg = e.response?.data?['error']?.toString() ?? e.message ?? 'Network error';
+        setState(() {
+          invoice.extractionStatus = ExtractionStatus.failed;
+          invoice.extractionError = msg;
+        });
       }
     } catch (e) {
       debugPrint('Invoice autofill failed: $e');
-      // Silent — user can fill manually
+      if (mounted) {
+        setState(() {
+          invoice.extractionStatus = ExtractionStatus.failed;
+          invoice.extractionError = 'Extraction failed. Please enter details manually.';
+        });
+      }
     } finally {
       if (mounted) setState(() => invoice.isExtracting = false);
     }
@@ -426,10 +467,84 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       _showError('Please select a Purchase Order');
       return;
     }
+    // Step 1: Activation state required
+    if (_currentStep == 1 && (_selectedActivationState == null || _selectedActivationState!.isEmpty)) {
+      _showError('Please select an Activation State');
+      return;
+    }
+    // Step 1: At least one invoice required
+    if (_currentStep == 1 && _invoices.isEmpty) {
+      _showError('Please upload at least one Invoice');
+      return;
+    }
+    // Step 1: Invoice fields required
+    if (_currentStep == 1) {
+      for (int i = 0; i < _invoices.length; i++) {
+        final inv = _invoices[i];
+        final label = _invoices.length > 1 ? 'Invoice ${i + 1}' : 'Invoice';
+        if (inv.invoiceNumber.trim().isEmpty) {
+          _showError('Please enter $label Number');
+          return;
+        }
+        if (inv.invoiceDate.trim().isEmpty) {
+          _showError('Please enter $label Date');
+          return;
+        }
+        if (inv.totalAmount.trim().isEmpty) {
+          _showError('Please enter $label Amount');
+          return;
+        }
+        if (inv.gstNumber.trim().isEmpty) {
+          _showError('Please enter GSTIN for $label');
+          return;
+        }
+      }
+    }
+    // Step 1: Cost summary required
+    if (_currentStep == 1 && _costSummaryFile == null && _existingCostSummaryFileName == null) {
+      _showError('Please upload a Cost Summary');
+      return;
+    }
+    // Step 2: Activity summary required
+    if (_currentStep == 2 && _activitySummaryFile == null && _existingActivitySummaryFileName == null) {
+      _showError('Please upload an Activity Summary');
+      return;
+    }
     // Step 2: at least one team required
     if (_currentStep == 2 && _campaigns.isEmpty) {
       _showError('Please add at least one team');
       return;
+    }
+    // Step 2: team field validation
+    if (_currentStep == 2) {
+      for (int i = 0; i < _campaigns.length; i++) {
+        final team = _campaigns[i];
+        final label = _campaigns.length > 1 ? 'Team ${i + 1}' : 'Team';
+        if (team.campaignName.trim().isEmpty) {
+          _showError('Please enter Dealer Code for $label');
+          return;
+        }
+        if (team.dealershipName.trim().isEmpty) {
+          _showError('Please enter Dealership Name for $label');
+          return;
+        }
+        if (team.dealershipAddress.trim().isEmpty) {
+          _showError('Please enter City for $label');
+          return;
+        }
+        if (team.startDate.trim().isEmpty) {
+          _showError('Please enter Start Date for $label');
+          return;
+        }
+        if (team.endDate.trim().isEmpty) {
+          _showError('Please enter End Date for $label');
+          return;
+        }
+        if (team.workingDays.trim().isEmpty) {
+          _showError('Please enter Working Days for $label');
+          return;
+        }
+      }
     }
     if (_currentStep < _totalSteps) {
       setState(() => _currentStep++);
@@ -453,7 +568,19 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
 
   Future<void> _handleSubmit() async {
     if (_purchaseOrder == null && _existingPOFileName == null && _selectedPO == null) { _showError('Please select or upload a Purchase Order'); return; }
+    if (_selectedActivationState == null || _selectedActivationState!.isEmpty) { _showError('Please select an Activation State'); return; }
+    if (_invoices.isEmpty) { _showError('Please upload at least one Invoice'); return; }
+    for (int i = 0; i < _invoices.length; i++) {
+      final inv = _invoices[i];
+      final label = _invoices.length > 1 ? 'Invoice ${i + 1}' : 'Invoice';
+      if (inv.invoiceNumber.trim().isEmpty) { _showError('Please enter $label Number'); return; }
+      if (inv.invoiceDate.trim().isEmpty) { _showError('Please enter $label Date'); return; }
+      if (inv.totalAmount.trim().isEmpty) { _showError('Please enter $label Amount'); return; }
+      if (inv.gstNumber.trim().isEmpty) { _showError('Please enter GSTIN for $label'); return; }
+    }
+    if (_costSummaryFile == null && _existingCostSummaryFileName == null) { _showError('Please upload a Cost Summary'); return; }
     if (_enquiryDocFile == null && _existingEnquiryDocFileName == null) { _showError('Please upload Enquiry Document'); return; }
+    if (_activitySummaryFile == null && _existingActivitySummaryFileName == null) { _showError('Please upload an Activity Summary'); return; }
     setState(() => _isUploading = true);
     try {
       String? packageId = _currentPackageId;
@@ -948,19 +1075,19 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Purchase Order section ──
-          _buildSectionLabel('Purchase Order', 'Select the PO assigned to your agency.'),
+          _buildSectionLabel('Purchase Order', 'Select the PO assigned to your agency.', required: true),
           const SizedBox(height: 12),
           _buildPOSearchDropdown(device),
           const SizedBox(height: 24),
 
           // ── Activation State section ──
-          _buildSectionLabel('State', 'Select the state where the activation took place.'),
+          _buildSectionLabel('State', 'Select the state where the activation took place.', required: true),
           const SizedBox(height: 12),
           _buildStateDropdown(),
           const SizedBox(height: 24),
 
           // ── Invoice section ──
-          _buildSectionLabel('Invoice', 'Upload the invoice and enter key details.'),
+          _buildSectionLabel('Invoice', 'Upload the invoice and enter key details.', required: true),
           const SizedBox(height: 12),
           ..._invoices.asMap().entries.map((entry) =>
             _buildInvoiceCard(entry.key, entry.value, device)),
@@ -973,9 +1100,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               () async {
                 final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: _allowedExtensions);
                 if (result != null && result.files.isNotEmpty) {
-                  setState(() => _invoices.add(InvoiceItemData(
+                  final invoice = InvoiceItemData(
                     id: 'invoice_${DateTime.now().millisecondsSinceEpoch}',
-                  )..file = result.files.first));
+                  )..file = result.files.first;
+                  setState(() => _invoices.add(invoice));
+                  await _uploadAndAutofillInvoice(invoice);
                 }
               },
               () {},
@@ -991,7 +1120,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
           const SizedBox(height: 24),
 
           // ── Cost Summary section ──
-          _buildSectionLabel('Cost Summary', 'Upload the cost breakdown document.'),
+          _buildSectionLabel('Cost Summary', 'Upload the cost breakdown document.', required: true),
           const SizedBox(height: 12),
           _buildFlatFileRow(
             file: _costSummaryFile,
@@ -1113,7 +1242,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                   final po = _availablePOs[i];
                   final poNum = po['poNumber']?.toString() ?? '—';
                   final vendor = po['vendorName']?.toString() ?? '';
-                  final amount = po['totalAmount'];
+                  final amount = po['totalAmount']; // ignore: unused_local_variable
                   return InkWell(
                     onTap: () {
                       setState(() {
@@ -1138,11 +1267,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                               ],
                             ),
                           ),
-                          if (amount != null)
-                            Text(
-                              '₹${_formatAmount(amount)}',
-                              style: const TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w500),
-                            ),
+                    // if (amount != null)
+                    //   Text(
+                    //     '₹${_formatAmount(amount)}',
+                    //     style: const TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w500),
+                    //   ),
                         ],
                       ),
                     ),
@@ -1178,7 +1307,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
     }
   }
 
-  /// Activation State dropdown — populated from API.
+  /// Activation State searchable dropdown — populated from API.
   Widget _buildStateDropdown() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1190,46 +1319,155 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
           ],
         ),
         const SizedBox(height: 6),
-        _isLoadingStates
-            ? Container(
-                height: 42,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.border),
+        // Selected state chip
+        if (_selectedActivationState != null && _selectedActivationState!.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0FDF4),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Color(0xFF16A34A), size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _selectedActivationState!,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF15803D)),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                child: const Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
-              )
-            : DropdownButtonFormField<String>(
-                value: _selectedActivationState,
-                hint: const Text('Select state', style: TextStyle(fontSize: 13, color: Color(0xFF9E9E9E))),
-                isExpanded: true,
-                style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
-                decoration: InputDecoration(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
-                  isDense: true,
+                GestureDetector(
+                  onTap: () => setState(() {
+                    _selectedActivationState = null;
+                    _stateSearchController.clear();
+                    _filteredStates = [];
+                  }),
+                  child: const Icon(Icons.close, size: 16, color: AppColors.rejectedText),
                 ),
-                items: _indianStates.map((s) {
-                  final name = s['stateName']?.toString() ?? '';
-                  return DropdownMenuItem<String>(
-                    value: name,
-                    child: Text(name, style: const TextStyle(fontSize: 13)),
-                  );
-                }).toList(),
-                onChanged: (v) => setState(() => _selectedActivationState = v),
+              ],
+            ),
+          )
+        else ...[
+          // Search field
+          TextFormField(
+            controller: _stateSearchController,
+            style: const TextStyle(fontSize: 14),
+            decoration: InputDecoration(
+              hintText: 'Search state...',
+              hintStyle: const TextStyle(color: Color(0xFF9E9E9E), fontSize: 13),
+              prefixIcon: _isLoadingStates
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                    )
+                  : const Icon(Icons.search, color: AppColors.primary, size: 20),
+              suffixIcon: _stateSearchController.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 18),
+                      onPressed: () {
+                        _stateSearchController.clear();
+                        setState(() => _filteredStates = []);
+                      },
+                    )
+                  : null,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
+              isDense: true,
+            ),
+            onChanged: (v) {
+              setState(() {
+                if (v.isEmpty) {
+                  _filteredStates = [];
+                } else {
+                  _filteredStates = _indianStates
+                      .where((s) => (s['stateName']?.toString() ?? '').toLowerCase().contains(v.toLowerCase()))
+                      .toList();
+                }
+              });
+            },
+          ),
+          // Dropdown results
+          if (_filteredStates.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Container(
+              constraints: const BoxConstraints(maxHeight: 220),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.border),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 4))],
               ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: _filteredStates.length,
+                separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
+                itemBuilder: (context, i) {
+                  final state = _filteredStates[i];
+                  final name = state['stateName']?.toString() ?? '';
+                  // final gst = state['gstPercentage']?.toString();
+                  return InkWell(
+                    onTap: () {
+                      setState(() {
+                        _selectedActivationState = name;
+                        _stateSearchController.clear();
+                        _filteredStates = [];
+                      });
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.location_on_outlined, size: 18, color: AppColors.primary),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                          ),
+                          // if (gst != null)
+                          //   Text(
+                          //     'GST $gst%',
+                          //     style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+                          //   ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ] else if (_stateSearchController.text.isNotEmpty && !_isLoadingStates) ...[
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: const Text('No states found', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            ),
+          ],
+        ],
       ],
     );
   }
 
   /// Flat section label matching the screenshot style.
-  Widget _buildSectionLabel(String title, String subtitle) {
+  Widget _buildSectionLabel(String title, String subtitle, {bool required = false}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
+        Row(
+          children: [
+            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
+            if (required) const Text(' *', style: TextStyle(color: Colors.red, fontSize: 16, fontWeight: FontWeight.w600)),
+          ],
+        ),
         const SizedBox(height: 2),
         Text(subtitle, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
       ],
@@ -1341,7 +1579,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 ),
                 if (_invoices.length > 1)
                   IconButton(
-                    onPressed: () => setState(() => _invoices.removeAt(index)),
+                    onPressed: () => setState(() {
+                      final removed = _invoices.removeAt(index);
+                      removed.dispose();
+                    }),
                     icon: const Icon(Icons.close, color: AppColors.rejectedText, size: 20),
                     tooltip: 'Remove invoice',
                   ),
@@ -1349,27 +1590,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             ),
             const SizedBox(height: 20),
             // File upload area
-            if (invoice.isExtracting)
-              Container(
-                width: double.infinity,
-                height: isMobile ? 120 : 140,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.03),
-                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.3), width: 2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(width: 36, height: 36, child: CircularProgressIndicator(strokeWidth: 3, valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary))),
-                    SizedBox(height: 12),
-                    Text('Extracting invoice details...', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.primary)),
-                    SizedBox(height: 4),
-                    Text('Fields will autofill when complete', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                  ],
-                ),
-              )
-            else if (invoice.file == null && invoice.existingFileName == null)
+            if (invoice.file == null && invoice.existingFileName == null)
               InkWell(
                 onTap: () async {
                   final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: _allowedExtensions);
@@ -1433,7 +1654,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                       ),
                     ),
                     IconButton(
-                      onPressed: () => setState(() => invoice.file = null),
+                      onPressed: () => setState(() {
+                        invoice.file = null;
+                        invoice.extractionStatus = ExtractionStatus.none;
+                        invoice.extractionError = null;
+                      }),
                       icon: const Icon(Icons.close, color: AppColors.rejectedText, size: 24),
                       tooltip: 'Remove file',
                     ),
@@ -1441,26 +1666,81 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 ),
               ),
             const SizedBox(height: 16),
+            // Extraction status banner
+            if (invoice.extractionStatus == ExtractionStatus.extracting)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+                ),
+                child: Row(
+                  children: [
+                    SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary))),
+                    const SizedBox(width: 10),
+                    const Expanded(child: Text('Extracting invoice details... Fields will autofill when complete.', style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w500))),
+                  ],
+                ),
+              )
+            else if (invoice.extractionStatus == ExtractionStatus.success)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.approvedBackground,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.approvedBorder),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.auto_awesome, size: 18, color: AppColors.approvedText),
+                    SizedBox(width: 10),
+                    Expanded(child: Text('Fields auto-filled from document. Please verify before proceeding.', style: TextStyle(fontSize: 12, color: AppColors.approvedText, fontWeight: FontWeight.w500))),
+                  ],
+                ),
+              )
+            else if (invoice.extractionStatus == ExtractionStatus.failed)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFED7AA)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline, size: 18, color: Color(0xFFEA580C)),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(invoice.extractionError ?? 'Auto-extraction failed. Please enter details manually.', style: const TextStyle(fontSize: 12, color: Color(0xFFEA580C), fontWeight: FontWeight.w500))),
+                  ],
+                ),
+              ),
             // Fields grid
             if (isMobile) ...[
-              _buildFlatField('Invoice Number', invoice.invoiceNumber, (v) => invoice.invoiceNumber = v, required: true),
+              _buildFlatField('Invoice Number', invoice.invoiceNumber, (v) => invoice.invoiceNumber = v, required: true, controller: invoice.invoiceNumberController),
               const SizedBox(height: 10),
-              _buildFlatDateField('Invoice Date', invoice.invoiceDate, (v) => invoice.invoiceDate = v, required: true),
+              _buildFlatDateField('Invoice Date', invoice.invoiceDate, (v) => invoice.invoiceDate = v, required: true, controller: invoice.invoiceDateController),
               const SizedBox(height: 10),
-              _buildFlatField('Invoice Amount', invoice.totalAmount, (v) => invoice.totalAmount = v, required: true),
+              _buildFlatField('Invoice Amount', invoice.totalAmount, (v) => invoice.totalAmount = v, required: true, controller: invoice.totalAmountController),
               const SizedBox(height: 10),
-              _buildFlatField('GSTIN', invoice.gstNumber, (v) => invoice.gstNumber = v, required: true),
+              _buildFlatField('GSTIN', invoice.gstNumber, (v) => invoice.gstNumber = v, required: true, controller: invoice.gstNumberController),
             ] else ...[
               Row(children: [
-                Expanded(child: _buildFlatField('Invoice Number', invoice.invoiceNumber, (v) => invoice.invoiceNumber = v, required: true)),
+                Expanded(child: _buildFlatField('Invoice Number', invoice.invoiceNumber, (v) => invoice.invoiceNumber = v, required: true, controller: invoice.invoiceNumberController)),
                 const SizedBox(width: 16),
-                Expanded(child: _buildFlatDateField('Invoice Date', invoice.invoiceDate, (v) => invoice.invoiceDate = v, required: true)),
+                Expanded(child: _buildFlatDateField('Invoice Date', invoice.invoiceDate, (v) => invoice.invoiceDate = v, required: true, controller: invoice.invoiceDateController)),
               ]),
               const SizedBox(height: 12),
               Row(children: [
-                Expanded(child: _buildFlatField('Invoice Amount', invoice.totalAmount, (v) => invoice.totalAmount = v, required: true)),
+                Expanded(child: _buildFlatField('Invoice Amount', invoice.totalAmount, (v) => invoice.totalAmount = v, required: true, controller: invoice.totalAmountController)),
                 const SizedBox(width: 16),
-                Expanded(child: _buildFlatField('GSTIN', invoice.gstNumber, (v) => invoice.gstNumber = v, required: true)),
+                Expanded(child: _buildFlatField('GSTIN', invoice.gstNumber, (v) => invoice.gstNumber = v, required: true, controller: invoice.gstNumberController)),
               ]),
             ],
           ],
@@ -1470,7 +1750,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   }
 
   /// Flat labeled text field matching the screenshot style.
-  Widget _buildFlatField(String label, String value, Function(String) onChanged, {bool required = false}) {
+  /// When [controller] is provided it is used instead of [initialValue] so
+  /// that programmatic updates (e.g. from extraction) are reflected in the UI.
+  Widget _buildFlatField(String label, String value, Function(String) onChanged, {bool required = false, TextEditingController? controller}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1482,7 +1764,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         ),
         const SizedBox(height: 6),
         TextFormField(
-          initialValue: value,
+          controller: controller,
+          initialValue: controller == null ? value : null,
           onChanged: (v) => setState(() => onChanged(v)),
           style: const TextStyle(fontSize: 14),
           decoration: InputDecoration(
@@ -1498,7 +1781,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   }
 
   /// Flat date field with calendar picker — matches PO date style.
-  Widget _buildFlatDateField(String label, String value, Function(String) onChanged, {bool required = false}) {
+  Widget _buildFlatDateField(String label, String value, Function(String) onChanged, {bool required = false, TextEditingController? controller}) {
+    // Use the provided controller, or create a temporary one for backward compat
+    final ctrl = controller ?? TextEditingController(text: value);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1511,7 +1796,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         const SizedBox(height: 6),
         TextFormField(
           readOnly: true,
-          controller: TextEditingController(text: value),
+          controller: ctrl,
           style: const TextStyle(fontSize: 14),
           decoration: InputDecoration(
             hintText: 'dd-mm-yyyy',
@@ -1544,6 +1829,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             if (picked != null) {
               final formatted =
                   '${picked.day.toString().padLeft(2, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.year}';
+              ctrl.text = formatted;
               setState(() => onChanged(formatted));
             }
           },
@@ -1562,7 +1848,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Activity Summary section ──
-          _buildSectionLabel('Activity Summary', 'Upload the activity summary document.'),
+          _buildSectionLabel('Activity Summary', 'Upload the activity summary document.', required: true),
           const SizedBox(height: 12),
           _buildFlatFileRow(
             file: _activitySummaryFile,
@@ -1594,7 +1880,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Inquiry Document ──
-          _buildSectionLabel('Enquiry Document', 'Upload the enquiry dump with customer leads. This is mandatory.'),
+          _buildSectionLabel('Enquiry Document', 'Upload the enquiry dump with customer leads. This is mandatory.', required: true),
           const SizedBox(height: 12),
           _buildFlatFileRow(
             file: _enquiryDocFile,
@@ -1681,31 +1967,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
           )),
         ],
       ],
-    );
-  }
-
-  Widget _buildExtractionLoadingCard(String title, String subtitle) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(width: 48, height: 48, child: CircularProgressIndicator(strokeWidth: 3, valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary))),
-            const SizedBox(height: 16),
-            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.primary)),
-            const SizedBox(height: 8),
-            Text(subtitle, style: TextStyle(fontSize: 14, color: AppColors.textSecondary), textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            Text('Fields will auto-populate when extraction completes.\nYou can also enter details manually.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary.withOpacity(0.8)), textAlign: TextAlign.center),
-          ],
-        ),
-      ),
     );
   }
 
