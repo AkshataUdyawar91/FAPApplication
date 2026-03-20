@@ -846,6 +846,7 @@ public class SubmissionsController : ControllerBase
             }
             else
             {
+                // Admin or HQ: see all submissions
                 _logger.LogInformation("Showing all submissions for role: {Role}", userRole);
             }
 

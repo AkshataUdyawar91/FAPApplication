@@ -1,0 +1,88 @@
+{
+  "type": "AdaptiveCard",
+  "version": "1.3",
+  "body": [
+    {
+      "type": "Container",
+      "style": "default",
+      "bleed": true,
+      "items": [
+        {
+          "type": "ColumnSet",
+          "columns": [
+            {
+              "type": "Column",
+              "width": "stretch",
+              "items": [
+                {
+                  "type": "TextBlock",
+                  "text": "Review Details",
+                  "size": "Medium",
+                  "weight": "Bolder",
+                  "color": "Accent"
+                }
+              ]
+            },
+            {
+              "type": "Column",
+              "width": "auto",
+              "items": [
+                {
+                  "type": "TextBlock",
+                  "text": "Status: PendingASM",
+                  "size": "Small",
+                  "isSubtle": true,
+                  "horizontalAlignment": "Right"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "TextBlock",
+          "text": "Validation Checks",
+          "weight": "Bolder",
+          "separator": true,
+          "spacing": "Medium"
+        },
+        {
+          "type": "FactSet",
+          "facts": []
+        },
+        {
+          "type": "ActionSet",
+          "separator": true,
+          "actions": [
+            {
+              "type": "Action.Submit",
+              "title": "Approve",
+              "style": "positive",
+              "data": {
+                "action": "approve_from_review",
+                "submissionId": "",
+                "fapId": "",
+                "cardVersion": "1.0"
+              }
+            },
+            {
+              "type": "Action.Submit",
+              "title": "Reject",
+              "style": "destructive",
+              "data": {
+                "action": "reject_from_review",
+                "submissionId": "",
+                "fapId": "",
+                "cardVersion": "1.0"
+              }
+            },
+            {
+              "type": "Action.OpenUrl",
+              "title": "Open in Portal",
+              "url": "#"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

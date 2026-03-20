@@ -738,8 +738,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
 
   Widget _buildMobileDocumentCard(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber =
-        'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
+    final fapNumber = doc['submissionNumber']?.toString() ?? 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
     final invoiceAmount = doc['invoiceAmount'];
@@ -907,8 +906,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
 
   DataRow _buildDocumentDataRow(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber =
-        'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
+    final fapNumber = doc['submissionNumber']?.toString() ?? 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
     final invoiceAmount = doc['invoiceAmount'];

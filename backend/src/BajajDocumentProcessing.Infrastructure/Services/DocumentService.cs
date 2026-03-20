@@ -285,7 +285,7 @@ public class DocumentService : IDocumentService
                     .FirstOrDefaultAsync();
                 if (photoTeam == null)
                 {
-                    photoTeam = new Teams
+                    photoTeam = new Domain.Entities.Teams
                     {
                         Id = Guid.NewGuid(),
                         PackageId = actualPackageId,

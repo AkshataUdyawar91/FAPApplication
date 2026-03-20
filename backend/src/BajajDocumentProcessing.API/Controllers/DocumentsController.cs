@@ -22,12 +22,14 @@ public class DocumentsController : ControllerBase
     private readonly IFileStorageService _fileStorageService;
     private readonly IProactiveValidationService? _proactiveValidationService;
     private readonly IProactiveValidator _proactiveValidator;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
 
     public DocumentsController(
         IDocumentService documentService, 
         ILogger<DocumentsController> logger,
         IApplicationDbContext context,
         IFileStorageService fileStorageService,
+        IServiceScopeFactory serviceScopeFactory,
         IProactiveValidationService? proactiveValidationService = null,
         IProactiveValidator proactiveValidator = null!)
     {
@@ -35,6 +37,7 @@ public class DocumentsController : ControllerBase
         _logger = logger;
         _context = context;
         _fileStorageService = fileStorageService;
+        _serviceScopeFactory = serviceScopeFactory;
         _proactiveValidationService = proactiveValidationService;
         _proactiveValidator = proactiveValidator;
     }
@@ -154,16 +157,23 @@ public class DocumentsController : ControllerBase
             {
                 try
                 {
+                    var docId = response.DocumentId;
+                    var docType = documentType;
+                    var pkgId = effectivePackageId.Value;
                     _ = Task.Run(async () =>
                     {
                         try
                         {
-                            await _proactiveValidationService.ValidateDocumentAsync(
-                                response.DocumentId, documentType, effectivePackageId.Value);
+                            using var scope = _serviceScopeFactory.CreateScope();
+                            var scopedService = scope.ServiceProvider.GetService<IProactiveValidationService>();
+                            if (scopedService != null)
+                            {
+                                await scopedService.ValidateDocumentAsync(docId, docType, pkgId);
+                            }
                         }
                         catch (Exception valEx)
                         {
-                            _logger.LogError(valEx, "Proactive validation failed for document {DocumentId}", response.DocumentId);
+                            _logger.LogError(valEx, "Proactive validation failed for document {DocumentId}", docId);
                         }
                     });
                     _logger.LogInformation("Proactive validation triggered for document {DocumentId}", response.DocumentId);

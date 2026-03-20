@@ -32,7 +32,7 @@ public class TeamPhotosConfiguration : IEntityTypeConfiguration<TeamPhotos>
             .HasMaxLength(100);
 
         builder.Property(tp => tp.Caption)
-            .HasMaxLength(1000);
+            .HasColumnType("nvarchar(max)");
 
         builder.Property(tp => tp.DeviceModel)
             .HasMaxLength(200);

@@ -68,6 +68,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<CostMaster> CostMasters => Set<CostMaster>();
     public DbSet<CostMasterStateRate> CostMasterStateRates => Set<CostMasterStateRate>();
 
+    // Teams bot conversations
+    public DbSet<TeamsConversation> TeamsConversations => Set<TeamsConversation>();
     // Audit logs
     public DbSet<PoBalanceLog> POBalanceLogs => Set<PoBalanceLog>();
     public DbSet<POSyncLog> POSyncLogs => Set<POSyncLog>();
@@ -112,6 +114,26 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<HsnMaster>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CostMaster>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CostMasterStateRate>().HasQueryFilter(e => !e.IsDeleted);
+        
+        // Hierarchical entities
+        modelBuilder.Entity<Invoice>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Campaign>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<CampaignPhoto>().HasQueryFilter(e => !e.IsDeleted);
+
+        // Teams bot
+        modelBuilder.Entity<TeamsConversation>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<TeamsConversation>().HasIndex(e => e.TeamsUserId);
+        modelBuilder.Entity<TeamsConversation>().HasIndex(e => e.ConversationId);
+        modelBuilder.Entity<TeamsConversation>().HasIndex(e => e.UserId).HasFilter("IsActive = 1");
+        modelBuilder.Entity<TeamsConversation>().Property(e => e.TeamsUserId).HasMaxLength(256);
+        modelBuilder.Entity<TeamsConversation>().Property(e => e.ConversationId).HasMaxLength(256);
+        modelBuilder.Entity<TeamsConversation>().Property(e => e.ServiceUrl).HasMaxLength(512);
+        modelBuilder.Entity<TeamsConversation>().Property(e => e.ChannelId).HasMaxLength(64);
+        modelBuilder.Entity<TeamsConversation>()
+            .HasOne(tc => tc.User)
+            .WithMany()
+            .HasForeignKey(tc => tc.UserId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

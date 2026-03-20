@@ -26,6 +26,12 @@ public class LoginResponse
     public required string Email { get; init; }
     
     /// <summary>
+    /// User's full name
+    /// </summary>
+    [JsonPropertyName("fullName")]
+    public required string FullName { get; init; }
+
+    /// <summary>
     /// User's role (Agency, ASM, or HQ)
     /// </summary>
     [JsonPropertyName("role")]

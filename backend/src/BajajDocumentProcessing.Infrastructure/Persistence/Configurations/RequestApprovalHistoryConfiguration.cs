@@ -44,6 +44,9 @@ public class RequestApprovalHistoryConfiguration : IEntityTypeConfiguration<Requ
             .IsRequired()
             .HasDefaultValue(1);
 
+        builder.Property(r => r.Channel)
+            .HasMaxLength(50);
+
         // Relationships
 
         // Many-to-one with DocumentPackage

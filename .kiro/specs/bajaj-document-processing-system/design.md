@@ -4330,3 +4330,519 @@ RejectedByRA → Uploaded (Agency resubmits — triggers workflow again)
 ### No Schema Changes Required
 
 All required PackageState values and DB columns (ResubmissionCount, HQResubmissionCount, ASMReviewNotes, HQReviewNotes) already exist.
+## Component 11: Teams Bot Service — Approval Actions, Proactive Notifications, and SSO
+
+### Overview
+
+The Teams Bot Service integrates Microsoft Teams as a first-class notification and action channel for the Bajaj Document Processing System. It enables ASMs to approve/reject FAPs directly from Teams adaptive cards without portal login, delivers proactive notifications to both ASM and Agency users, and provides seamless SSO from Teams to the portal via Azure AD/Entra ID token exchange.
+
+### Technology Stack
+
+- **Microsoft Bot Framework SDK v4** (.NET): Bot messaging, adaptive cards, proactive messaging
+- **Azure Bot Service**: Bot registration, channel configuration (Teams channel)
+- **Microsoft.Bot.Builder.Integration.AspNet.Core**: ASP.NET Core hosting for the bot
+- **Microsoft.Bot.Schema**: Adaptive card models and activity types
+- **AdaptiveCards**: Adaptive card JSON templating
+- **Microsoft.Identity.Web**: Azure AD token validation for SSO
+- **Teams JavaScript SDK** (`@microsoft/teams-js`): Client-side SSO token acquisition in Flutter web
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph "Microsoft Teams"
+        ASMTeams[ASM Teams Client]
+        AgencyTeams[Agency Teams Client]
+    end
+
+    subgraph "Azure"
+        BotService[Azure Bot Service]
+        EntraID[Azure AD / Entra ID]
+    end
+
+    subgraph ".NET API Backend"
+        BotController[TeamsController /api/teams/messages]
+        TeamsBotService[TeamsBotService]
+        ProactiveService[ProactiveNotificationService]
+        SSOService[TeamsSSOService]
+        ConversationStore[ConversationReferenceStore]
+    end
+
+    subgraph "Existing Services"
+        WorkflowOrchestrator[WorkflowOrchestrator]
+        NotifAgent[NotificationAgent]
+        AuthService[AuthService]
+    end
+
+    subgraph "Data"
+        SQL[(SQL Server)]
+    end
+
+    ASMTeams -->|Bot messages| BotService
+    AgencyTeams -->|Bot messages| BotService
+    BotService -->|Webhook| BotController
+    BotController --> TeamsBotService
+    TeamsBotService --> ConversationStore
+    TeamsBotService --> SQL
+
+    WorkflowOrchestrator -->|Events| ProactiveService
+    NotifAgent -->|Events| ProactiveService
+    ProactiveService --> ConversationStore
+    ProactiveService -->|Proactive messages| BotService
+    BotService -->|Deliver| ASMTeams
+    BotService -->|Deliver| AgencyTeams
+
+    ASMTeams -->|SSO token| SSOService
+    SSOService --> EntraID
+    SSOService --> AuthService
+```
+
+### Data Model
+
+#### TeamsUserMapping Entity
+
+```csharp
+// Domain/Entities/TeamsUserMapping.cs
+public class TeamsUserMapping : BaseEntity
+{
+    public Guid UserId { get; set; }
+    public User User { get; set; }
+
+    /// <summary>
+    /// Serialized ConversationReference from Bot Framework SDK.
+    /// Contains: conversationId, serviceUrl, channelId, bot/user accounts, tenantId.
+    /// </summary>
+    public string ConversationReferenceJson { get; set; }
+
+    /// <summary>
+    /// Teams user email (from activity.from). Used for matching to portal user.
+    /// </summary>
+    public string TeamsEmail { get; set; }
+
+    /// <summary>
+    /// Azure AD tenant ID from the Teams context.
+    /// </summary>
+    public string TenantId { get; set; }
+
+    /// <summary>
+    /// False when user uninstalls the bot. Prevents sending to dead references.
+    /// </summary>
+    public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// Last time a proactive message was successfully delivered.
+    /// </summary>
+    public DateTime? LastMessageSentAt { get; set; }
+}
+```
+
+#### Database Configuration
+
+```csharp
+// Infrastructure/Persistence/Configurations/TeamsUserMappingConfiguration.cs
+public class TeamsUserMappingConfiguration : IEntityTypeConfiguration<TeamsUserMapping>
+{
+    public void Configure(EntityTypeBuilder<TeamsUserMapping> builder)
+    {
+        builder.ToTable("TeamsUserMappings");
+        builder.HasKey(t => t.Id);
+
+        builder.Property(t => t.ConversationReferenceJson)
+            .IsRequired()
+            .HasColumnType("nvarchar(max)");
+
+        builder.Property(t => t.TeamsEmail)
+            .IsRequired()
+            .HasMaxLength(256);
+
+        builder.Property(t => t.TenantId)
+            .IsRequired()
+            .HasMaxLength(128);
+
+        builder.HasOne(t => t.User)
+            .WithMany()
+            .HasForeignKey(t => t.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasIndex(t => t.UserId).IsUnique();
+        builder.HasIndex(t => t.TeamsEmail);
+        builder.HasIndex(t => new { t.IsActive, t.UserId });
+    }
+}
+```
+
+### Interfaces
+
+```csharp
+// Application/Common/Interfaces/ITeamsBotService.cs
+
+/// <summary>
+/// Handles incoming Teams bot messages and adaptive card actions.
+/// </summary>
+public interface ITeamsBotService
+{
+    /// <summary>
+    /// Process an incoming Teams activity (message, card action, install/uninstall).
+    /// </summary>
+    Task OnTurnAsync(ITurnContext turnContext, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Sends proactive Teams messages and adaptive cards to users.
+/// </summary>
+public interface IProactiveNotificationService
+{
+    /// <summary>
+    /// Send a text notification to a user via Teams.
+    /// </summary>
+    Task SendTextNotificationAsync(Guid userId, string title, string message, string deepLinkUrl, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Send an adaptive card for ASM approval to the ASM who owns the PO.
+    /// </summary>
+    Task SendApprovalCardAsync(Guid fapId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Notify Agency that a new PO has arrived from SAP.
+    /// </summary>
+    Task NotifyAgencyNewPOAsync(Guid poId, Guid agencyUserId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Notify Agency of FAP approval/rejection.
+    /// </summary>
+    Task NotifyAgencyFAPDecisionAsync(Guid fapId, string decision, string reason, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Manages the mapping between portal users and their Teams conversation references.
+/// </summary>
+public interface IConversationReferenceStore
+{
+    Task SaveReferenceAsync(Guid userId, string teamsEmail, string tenantId, ConversationReference reference, CancellationToken cancellationToken);
+    Task<ConversationReference> GetReferenceAsync(Guid userId, CancellationToken cancellationToken);
+    Task DeactivateAsync(Guid userId, CancellationToken cancellationToken);
+    Task<bool> IsActiveAsync(Guid userId, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Handles Teams SSO token exchange: Azure AD token → portal JWT.
+/// </summary>
+public interface ITeamsSSOService
+{
+    /// <summary>
+    /// Exchange an Azure AD/Entra ID token (from Teams SSO) for a portal JWT.
+    /// Validates: issuer, audience, signature, tenant ID, and maps email to portal user.
+    /// </summary>
+    Task<TokenExchangeResult> ExchangeTokenAsync(string azureAdToken, CancellationToken cancellationToken);
+}
+
+public class TokenExchangeResult
+{
+    public bool Success { get; set; }
+    public string PortalJwt { get; set; }
+    public string ErrorMessage { get; set; }
+    public string UserRole { get; set; }
+    public Guid UserId { get; set; }
+}
+```
+
+### Adaptive Card Design
+
+#### ASM Approval Card
+
+```json
+{
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "type": "AdaptiveCard",
+  "version": "1.5",
+  "body": [
+    {
+      "type": "TextBlock",
+      "text": "New FAP Submission for Review",
+      "weight": "Bolder",
+      "size": "Medium"
+    },
+    {
+      "type": "FactSet",
+      "facts": [
+        { "title": "FAP #", "value": "${fapNumber}" },
+        { "title": "Agency", "value": "${agencyName}" },
+        { "title": "PO #", "value": "${poNumber}" },
+        { "title": "Amount", "value": "₹${amount}" },
+        { "title": "Submitted", "value": "${submittedDate}" }
+      ]
+    },
+    {
+      "type": "ColumnSet",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "auto",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "AI Confidence",
+              "weight": "Bolder"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "auto",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${confidenceScore}%",
+              "color": "${confidenceColor}",
+              "weight": "Bolder",
+              "size": "ExtraLarge"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "Recommendation: ${recommendation}",
+      "weight": "Bolder",
+      "color": "${recommendationColor}"
+    },
+    {
+      "type": "TextBlock",
+      "text": "${recommendationSummary}",
+      "wrap": true,
+      "size": "Small"
+    }
+  ],
+  "actions": [
+    {
+      "type": "Action.Submit",
+      "title": "✅ Approve",
+      "style": "positive",
+      "data": {
+        "action": "approve",
+        "fapId": "${fapId}"
+      }
+    },
+    {
+      "type": "Action.ShowCard",
+      "title": "❌ Reject",
+      "card": {
+        "type": "AdaptiveCard",
+        "body": [
+          {
+            "type": "Input.Text",
+            "id": "rejectionReason",
+            "placeholder": "Enter rejection reason (min 10 characters)...",
+            "isMultiline": true,
+            "isRequired": true,
+            "label": "Rejection Reason"
+          }
+        ],
+        "actions": [
+          {
+            "type": "Action.Submit",
+            "title": "Confirm Reject",
+            "style": "destructive",
+            "data": {
+              "action": "reject",
+              "fapId": "${fapId}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Action.OpenUrl",
+      "title": "📋 View in Portal",
+      "url": "${portalDeepLink}"
+    }
+  ]
+}
+```
+
+### Processing Flows
+
+#### Proactive Notification Flow (New Submission → ASM)
+
+```mermaid
+sequenceDiagram
+    participant Agency
+    participant Orchestrator as WorkflowOrchestrator
+    participant ProactiveService
+    participant ConvStore as ConversationReferenceStore
+    participant BotService as Azure Bot Service
+    participant ASMTeams as ASM Teams
+
+    Agency->>Orchestrator: Submit FAP
+    Orchestrator->>Orchestrator: Process (extract, validate, score, recommend)
+    Orchestrator->>ProactiveService: NotifyASM(fapId)
+    ProactiveService->>ProactiveService: Lookup ASM from PO owner
+    ProactiveService->>ConvStore: GetReference(asmUserId)
+    ConvStore-->>ProactiveService: ConversationReference
+    ProactiveService->>ProactiveService: Build adaptive card JSON
+    ProactiveService->>BotService: ContinueConversation(ref, card)
+    BotService->>ASMTeams: Deliver adaptive card
+    ProactiveService->>ProactiveService: Update LastMessageSentAt
+```
+
+#### Approve/Reject from Adaptive Card
+
+```mermaid
+sequenceDiagram
+    participant ASMTeams as ASM Teams
+    participant BotService as Azure Bot Service
+    participant BotController as TeamsController
+    participant TeamsBotSvc as TeamsBotService
+    participant SubmissionSvc as SubmissionsService
+    participant AuditLog
+    participant ProactiveService
+    participant AgencyTeams as Agency Teams
+
+    ASMTeams->>BotService: Click "Approve" on card
+    BotService->>BotController: POST /api/teams/messages (invoke activity)
+    BotController->>TeamsBotSvc: OnTurnAsync(turnContext)
+    TeamsBotSvc->>TeamsBotSvc: Parse action data (fapId, action=approve)
+    TeamsBotSvc->>TeamsBotSvc: Validate ASM authorization
+    TeamsBotSvc->>SubmissionSvc: ApproveAsync(fapId, asmUserId, source="Teams")
+    SubmissionSvc->>SubmissionSvc: State guard: PendingApproval → Approved
+    SubmissionSvc->>AuditLog: Log(ASM, approve, timestamp, "Teams Bot")
+    SubmissionSvc-->>TeamsBotSvc: Success
+    TeamsBotSvc->>ASMTeams: Update card: "Approved by [name] at [time]"
+    TeamsBotSvc->>ProactiveService: NotifyAgencyFAPDecision(fapId, "Approved")
+    ProactiveService->>AgencyTeams: "Your FAP #123 has been approved"
+```
+
+#### Teams SSO Flow
+
+```mermaid
+sequenceDiagram
+    participant ASMTeams as ASM in Teams
+    participant TeamsSDK as Teams JS SDK
+    participant FlutterApp as Flutter Web App
+    participant SSOEndpoint as POST /api/auth/teams-sso
+    participant EntraID as Azure AD / Entra ID
+    participant AuthService
+
+    ASMTeams->>ASMTeams: Click deep link in Teams message
+    ASMTeams->>FlutterApp: Open portal URL
+    FlutterApp->>TeamsSDK: microsoftTeams.authentication.getAuthToken()
+    TeamsSDK->>EntraID: Request token (silent, SSO)
+    EntraID-->>TeamsSDK: Azure AD token (JWT)
+    TeamsSDK-->>FlutterApp: Azure AD token
+    FlutterApp->>SSOEndpoint: POST { azureAdToken }
+    SSOEndpoint->>EntraID: Validate token (issuer, audience, signature)
+    SSOEndpoint->>SSOEndpoint: Check tid == BAJAJ_AZURE_AD_TENANT_ID
+    SSOEndpoint->>AuthService: FindUserByEmail(token.preferred_username)
+    AuthService-->>SSOEndpoint: User (with role)
+    SSOEndpoint->>SSOEndpoint: Generate portal JWT with role claims
+    SSOEndpoint-->>FlutterApp: { portalJwt, role, userId }
+    FlutterApp->>FlutterApp: Store JWT in flutter_secure_storage
+    FlutterApp->>FlutterApp: Navigate to deep-linked page (go_router)
+```
+
+### Configuration (appsettings.json)
+
+```json
+{
+  "TeamsBot": {
+    "MicrosoftAppId": "YOUR_BOT_APP_ID",
+    "MicrosoftAppPassword": "YOUR_BOT_APP_SECRET",
+    "TenantId": "BAJAJ_AZURE_AD_TENANT_ID",
+    "PortalBaseUrl": "https://portal.bajaj.com",
+    "ProactiveMessaging": {
+      "MaxRetriesPerMessage": 3,
+      "RetryDelaySeconds": [2, 4, 8],
+      "RateLimitPerSecond": 4
+    }
+  },
+  "AzureAd": {
+    "Instance": "https://login.microsoftonline.com/",
+    "TenantId": "BAJAJ_AZURE_AD_TENANT_ID",
+    "ClientId": "YOUR_BOT_APP_ID",
+    "Audience": "api://YOUR_BOT_APP_ID"
+  }
+}
+```
+
+### API Endpoints
+
+```
+POST   /api/teams/messages          — Bot Framework webhook (receives all Teams activities)
+POST   /api/auth/teams-sso          — Exchange Azure AD token for portal JWT
+```
+
+### Registration in DependencyInjection.cs
+
+```csharp
+// Infrastructure/DependencyInjection.cs (additions)
+
+// Bot Framework adapter and bot (Singleton — required by Bot Framework)
+services.AddSingleton<IBotFrameworkHttpAdapter, AdapterWithErrorHandler>();
+services.AddSingleton<TeamsBotService>();
+services.AddSingleton<IBot>(sp => sp.GetRequiredService<TeamsBotService>());
+
+// TeamsBotService is Singleton but needs Scoped dependencies (DbContext, SubmissionsService).
+// It MUST use IServiceScopeFactory to create a scope per OnTurnAsync call.
+// See: https://learn.microsoft.com/en-us/azure/bot-service/bot-builder-basics
+
+// ConversationReferenceStore: Scoped (accesses DbContext).
+// When called from Singleton TeamsBotService, accessed via IServiceScopeFactory scope.
+services.AddScoped<IConversationReferenceStore, ConversationReferenceStore>();
+
+// Proactive messaging: Scoped service + Singleton background consumer.
+// ProactiveNotificationService enqueues to Channel<ProactiveMessage>.
+// ProactiveMessageConsumer (BackgroundService) drains the channel at rate limit.
+services.AddScoped<IProactiveNotificationService, ProactiveNotificationService>();
+services.AddSingleton<ProactiveMessageChannel>(); // Channel<ProactiveMessage> wrapper
+services.AddHostedService<ProactiveMessageConsumer>(); // BackgroundService, uses IServiceScopeFactory
+
+services.AddScoped<ITeamsSSOService, TeamsSSOService>();
+```
+
+### NuGet Packages Required
+
+```xml
+<PackageReference Include="Microsoft.Bot.Builder.Integration.AspNet.Core" Version="4.22.*" />
+<PackageReference Include="Microsoft.Bot.Builder" Version="4.22.*" />
+<PackageReference Include="Microsoft.Bot.Builder.Teams" Version="4.22.*" />
+<PackageReference Include="AdaptiveCards" Version="3.1.*" />
+<PackageReference Include="Microsoft.Identity.Web" Version="2.17.*" />
+```
+
+### Key Implementation Notes
+
+**TeamsActivityHandler (not raw ActivityHandler)**: The `TeamsBotService` extends `TeamsActivityHandler` (from `Microsoft.Bot.Builder.Teams`), which provides Teams-specific overrides: `OnTeamsMembersAddedAsync`, `OnTeamsSigninVerifyStateAsync`, and proper invoke activity handling for adaptive card actions. This eliminates manual activity type parsing.
+
+**Singleton + Scoped lifetime resolution**: `TeamsBotService` is Singleton (Bot Framework requirement). In every `OnTurnAsync` call, it creates a scope via `IServiceScopeFactory` and resolves scoped services (DbContext, SubmissionsService, ConversationReferenceStore) from that scope. The scope is disposed at the end of the turn.
+
+**Proactive messaging backpressure**: `ProactiveNotificationService` does not send messages directly. It enqueues a `ProactiveMessage` to a `Channel<ProactiveMessage>` (bounded, capacity 1000). A `ProactiveMessageConsumer` BackgroundService reads from the channel and sends at the configured rate (default 4/sec). This prevents flooding Teams when a batch of POs arrives from SAP.
+
+**Adaptive card versioning**: Every adaptive card action payload includes `"cardVersion": "1.0"`. The `TeamsBotService` checks this version on incoming actions. If the version is unrecognized (old card), it responds with "This card is outdated. Please check the portal for the latest status." and includes a deep link.
+
+**ConversationReference upsert**: `SaveReferenceAsync` does an upsert. If a `TeamsUserMapping` already exists for the user (active or inactive), it updates `ConversationReferenceJson`, sets `IsActive = true`, and refreshes timestamps. No duplicate insert. This handles the uninstall → re-install lifecycle.
+
+**Optimistic concurrency on approve/reject**: The `SubmissionsService.ApproveAsync` / `RejectAsync` methods use `RowVersion` (optimistic concurrency) on `DocumentPackage`. If two concurrent card clicks race, the second gets `DbUpdateConcurrencyException`, which the bot handler catches and returns "This FAP has already been actioned."
+
+**SSO endpoint location**: The `POST /api/auth/teams-sso` endpoint lives in `AuthController` (not `TeamsController`) because it's an authentication concern. It's marked `[AllowAnonymous]` — the Azure AD token IS the authentication. The endpoint validates the Azure AD token and returns a portal JWT.
+
+### Error Handling
+
+| Scenario | Behavior |
+|----------|----------|
+| Proactive message fails (network) | Retry 3x with exponential backoff (2s, 4s, 8s). Log failure. Don't block FAP workflow. |
+| Conversation reference expired (403/404) | Mark TeamsUserMapping.IsActive = false. Stop sending. User must re-install bot. |
+| Adaptive card action fails (backend error) | Return error card: "Action failed. Please try again or use the portal." Log with correlation ID. |
+| Duplicate approve/reject (already actioned) | Return info card: "This FAP has already been [Approved/Rejected]." No state change. |
+| SSO token exchange fails | Fall back to standard login page with message. Log failure. |
+| User not found during bot install | Reply: "Your email is not registered. Contact your administrator." |
+| Azure AD tenant mismatch | Reject token. Return 403. Log security event. |
+
+### Correctness Properties
+
+1. **Idempotency**: Approving/rejecting a FAP via Teams that has already been actioned produces no state change and returns an informational message.
+2. **Authorization**: Only the ASM who owns the PO can approve/reject via the adaptive card. Other users receive "Access denied."
+3. **Audit completeness**: Every approve/reject action from Teams is logged with source="Teams Bot", ASM identity, timestamp, and FAP ID.
+4. **Notification reliability**: Proactive message failures never block the primary FAP processing workflow.
+5. **SSO tenant isolation**: Only tokens from the configured Bajaj Azure AD tenant are accepted. Cross-tenant tokens are rejected with 403.
+6. **Mapping lifecycle**: Uninstalling the bot sets IsActive=false. No messages are sent to inactive mappings. Re-installing creates a new active mapping.

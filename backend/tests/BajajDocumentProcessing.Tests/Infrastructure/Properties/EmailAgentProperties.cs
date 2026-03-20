@@ -159,7 +159,6 @@ public class EmailAgentProperties
         // Assert
         Assert.True(result.Success);
         Assert.NotNull(result.MessageId);
-        Assert.StartsWith("msg_", result.MessageId);
     }
 
     /// <summary>

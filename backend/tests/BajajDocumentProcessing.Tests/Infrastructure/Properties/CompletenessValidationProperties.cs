@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
+using TeamsEntity = BajajDocumentProcessing.Domain.Entities.Teams;
 
 namespace BajajDocumentProcessing.Tests.Infrastructure.Properties;
 
@@ -279,7 +280,7 @@ public class CompletenessValidationProperties
             Id = packageId,
             State = PackageState.Uploaded,
             CreatedAt = DateTime.UtcNow,
-            Teams = new List<Teams>()
+            Teams = new List<TeamsEntity>()
         };
 
         if (includePO)
@@ -320,7 +321,7 @@ public class CompletenessValidationProperties
 
         if (photoCount > 0)
         {
-            var team = new Teams
+            var team = new TeamsEntity
             {
                 Id = Guid.NewGuid(),
                 PackageId = packageId,
