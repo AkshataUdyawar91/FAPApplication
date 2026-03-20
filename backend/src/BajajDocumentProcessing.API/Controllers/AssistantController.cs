@@ -2351,7 +2351,7 @@ public class AssistantController : ControllerBase
         var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
         package.SubmissionNumber = submissionNumber;
 
-        package.State = Domain.Enums.PackageState.PendingASM;
+        package.State = Domain.Enums.PackageState.PendingCH;
         package.CurrentStep = 10;
         package.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);

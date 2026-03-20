@@ -12,6 +12,7 @@ import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/kpi_card.dart';
 import '../../../../core/widgets/quarter_year_filter.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../../core/widgets/pagination_bar.dart';
 import '../../../analytics/data/models/quarterly_fap_kpi_model.dart';
 
 class ASMReviewPage extends StatefulWidget {
@@ -32,7 +33,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
   final _searchController = TextEditingController();
 
-  String _statusFilter = 'all';
+  String _statusFilter = 'pending';
   String _sortBy = 'date';
   bool _sortAscending = false;
   bool _isLoading = true;
@@ -40,9 +41,15 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   bool _isSidebarCollapsed = true;
   List<Map<String, dynamic>> _documents = [];
 
+  // Pagination state
+  int _currentPage = 1;
+  int _totalItems = 0;
+  int _totalPages = 1;
+  static const int _pageSize = 20;
+
   // KPI state
-  String _selectedQuarter = 'Q${(DateTime.now().month - 1) ~/ 3 + 1}';
-  int _selectedYear = DateTime.now().year;
+  String _selectedQuarter = 'All';
+  int _selectedYear = QuarterYearFilter.currentFiscalYear();
   QuarterlyFapKpiModel? _kpiData;
   bool _isKpiLoading = true;
   String? _kpiError;
@@ -50,11 +57,11 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
     // ASM role status normalization
-    if (state == 'pendingasmapproval' || state == 'pendingapproval' || state == 'pendingwithasm') return 'pending';
-    if (state == 'pendinghqapproval' || state == 'pendingwithra') return 'pending-with-ra';
+    if (state == 'pendingch' || state == 'pendingchapproval' || state == 'pendingapproval' || state == 'pendingwithch') return 'pending';
+    if (state == 'pendingra' || state == 'pendinghqapproval' || state == 'pendingwithra') return 'pending-with-ra';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyasm' || state == 'rejected') return 'rejected';
-    if (state == 'rejectedbyhq' || state == 'rejectedbyra') return 'rejected-by-ra';
+    if (state == 'chrejected' || state == 'rejectedbyasm' || state == 'rejected') return 'rejected';
+    if (state == 'rarejected' || state == 'rejectedbyhq' || state == 'rejectedbyra') return 'rejected-by-ra';
     if (state == 'validationfailed' || state == 'reuploadrequested') return 'rejected';
     if (state == 'uploaded' || state == 'extracting' || state == 'validating' ||
         state == 'scoring' || state == 'recommending') {
@@ -78,11 +85,39 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     super.dispose();
   }
 
-  Future<void> _loadDocuments() async {
+  /// Maps the UI status filter value to the backend PackageState enum name.
+  String? _mapFilterToBackendState(String filter) {
+    switch (filter) {
+      case 'pending':
+        return 'PendingCH';
+      case 'rejected':
+        return 'CHRejected';
+      case 'rejected-by-ra':
+        return 'RARejected';
+      case 'pending-with-ra':
+        return 'PendingRA';
+      case 'approved':
+        return 'Approved';
+      default:
+        return null; // 'all' — no server-side state filter
+    }
+  }
+
+  Future<void> _loadDocuments({int page = 1}) async {
     setState(() => _isLoading = true);
     try {
+      final queryParams = <String, dynamic>{
+        'page': page,
+        'pageSize': _pageSize,
+      };
+      final backendState = _mapFilterToBackendState(_statusFilter);
+      if (backendState != null) {
+        queryParams['state'] = backendState;
+      }
+
       final response = await _dio.get(
         '/submissions',
+        queryParameters: queryParams,
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
@@ -93,6 +128,9 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
           } else {
             _documents = [];
           }
+          _totalItems = data is Map ? (data['total'] ?? 0) : 0;
+          _totalPages = data is Map ? (data['totalPages'] ?? 1) : 1;
+          _currentPage = page;
           _isLoading = false;
         });
       }
@@ -133,14 +171,14 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     }
   }
 
-  /// Returns the start and end months (1-indexed) for a quarter string.
-  /// Q1 = Jan-Mar, Q2 = Apr-Jun, Q3 = Jul-Sep, Q4 = Oct-Dec.
+  /// Returns the start and end months (1-indexed) for an Indian fiscal quarter.
+  /// Q1 = Apr-Jun, Q2 = Jul-Sep, Q3 = Oct-Dec, Q4 = Jan-Mar.
   (int, int) _quarterMonthRange(String quarter) {
     switch (quarter) {
-      case 'Q1': return (1, 3);
-      case 'Q2': return (4, 6);
-      case 'Q3': return (7, 9);
-      case 'Q4': return (10, 12);
+      case 'Q1': return (4, 6);
+      case 'Q2': return (7, 9);
+      case 'Q3': return (10, 12);
+      case 'Q4': return (1, 3);
       default: return (1, 12);
     }
   }
@@ -150,7 +188,8 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     if (dateStr == null) return false;
     try {
       final dt = DateTime.parse(dateStr);
-      if (dt.year != _selectedYear) return false;
+      final docFY = QuarterYearFilter.fiscalYear(dt);
+      if (docFY != _selectedYear) return false;
       if (_selectedQuarter == 'All') return true;
       final (startMonth, endMonth) = _quarterMonthRange(_selectedQuarter);
       return dt.month >= startMonth && dt.month <= endMonth;
@@ -161,15 +200,12 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
 
   List<Map<String, dynamic>> get _filteredDocuments {
     final filtered = _documents.where((doc) {
-      final status = _normalizeStatus(doc['state']?.toString() ?? '');
-      if (status == 'processing') return false;
       if (!_matchesQuarterYear(doc)) return false;
       final matchesSearch = _searchController.text.isEmpty ||
           doc['id']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true ||
           doc['invoiceNumber']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true ||
           doc['poNumber']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true;
-      final matchesStatus = _statusFilter == 'all' || status == _statusFilter;
-      return matchesSearch && matchesStatus;
+      return matchesSearch;
     }).toList();
 
     filtered.sort((a, b) {
@@ -375,7 +411,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   Widget _buildContent(DeviceType device) {
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width, mobile: 12, tablet: 16, desktop: 24);
     return RefreshIndicator(
-      onRefresh: _loadDocuments,
+      onRefresh: () => _loadDocuments(page: 1),
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(hPad),
@@ -425,7 +461,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                           QuarterYearFilter(
                             selectedQuarter: _selectedQuarter,
                             selectedYear: _selectedYear,
-                            availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                            availableYears: List.generate(5, (i) => QuarterYearFilter.currentFiscalYear() - i),
                             onQuarterChanged: (q) {
                               setState(() => _selectedQuarter = q);
                               _loadKpiData();
@@ -453,7 +489,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                     QuarterYearFilter(
                       selectedQuarter: _selectedQuarter,
                       selectedYear: _selectedYear,
-                      availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                      availableYears: List.generate(5, (i) => QuarterYearFilter.currentFiscalYear() - i),
                       onQuarterChanged: (q) {
                         setState(() => _selectedQuarter = q);
                         _loadKpiData();
@@ -540,7 +576,10 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
           DropdownMenuItem(value: 'approved', child: Text('Approved')),
         ],
         onChanged: (value) {
-          if (value != null) setState(() => _statusFilter = value);
+          if (value != null) {
+            setState(() => _statusFilter = value);
+            _loadDocuments(page: 1);
+          }
         },
       ),
     );
@@ -606,13 +645,24 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
         ),
       );
     }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 900) {
-          return Column(children: filtered.map((doc) => _buildMobileDocumentCard(doc)).toList());
-        }
-        return _buildDesktopTable(filtered);
-      },
+    return Column(
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < 900) {
+              return Column(children: filtered.map((doc) => _buildMobileDocumentCard(doc)).toList());
+            }
+            return _buildDesktopTable(filtered);
+          },
+        ),
+        PaginationBar(
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          totalItems: _totalItems,
+          pageSize: _pageSize,
+          onPageChanged: (page) => _loadDocuments(page: page),
+        ),
+      ],
     );
   }
 
@@ -680,7 +730,7 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
       'token': widget.token,
       'userName': widget.userName,
     },);
-    if (result == true || result == null) _loadDocuments();
+    if (result == true || result == null) _loadDocuments(page: _currentPage);
   }
 
   int? get _sortColumnIndex {

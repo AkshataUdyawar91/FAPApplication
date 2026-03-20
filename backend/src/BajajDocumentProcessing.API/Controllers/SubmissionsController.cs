@@ -97,10 +97,27 @@ public class SubmissionsController : ControllerBase
                 SubmittedByUserId = userId,
                 AgencyId = user.AgencyId.Value,
                 SelectedPOId = request.SelectedPoId,
+                ActivityState = request.ActivityState,
                 State = PackageState.Uploaded,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
+
+            // Generate submission number
+            var submissionNumber = await _submissionNumberService.GenerateAsync(cancellationToken);
+            package.SubmissionNumber = submissionNumber;
+
+            // Auto-assign CIRCLE HEAD based on ActivityState
+            if (!string.IsNullOrEmpty(request.ActivityState))
+            {
+                var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(request.ActivityState, cancellationToken);
+                package.AssignedCircleHeadUserId = circleHeadUserId;
+
+                if (circleHeadUserId == null)
+                {
+                    _logger.LogWarning("No CIRCLE HEAD found for state {State} on new submission", request.ActivityState);
+                }
+            }
 
             _context.DocumentPackages.Add(package);
             await _context.SaveChangesAsync(cancellationToken);
@@ -411,7 +428,7 @@ public class SubmissionsController : ControllerBase
                 ReviewedAt = asmApproval?.ActionDate,
                 ReviewNotes = asmApproval?.Comments,
                 Documents = BuildDocumentDtos(package),
-                Campaigns = package.Teams.Where(c => !c.IsDeleted).Select(c => new CampaignDto
+                Campaigns = package.Teams.Where(c => !c.IsDeleted).Select((c, index) => new CampaignDto
                 {
                     Id = c.Id,
                     CampaignName = c.CampaignName,
@@ -432,7 +449,19 @@ public class SubmissionsController : ControllerBase
                         FileName = p2.FileName,
                         BlobUrl = p2.BlobUrl,
                         Caption = p2.Caption
-                    }).ToList()
+                    }).ToList(),
+                    // Include package-level invoices in the first campaign so the frontend can display them
+                    Invoices = index == 0
+                        ? package.Invoices.Where(i => !i.IsDeleted).Select(i => new CampaignInvoiceDto
+                        {
+                            Id = i.Id,
+                            InvoiceNumber = i.InvoiceNumber,
+                            VendorName = i.VendorName,
+                            TotalAmount = i.TotalAmount,
+                            FileName = i.FileName ?? "",
+                            BlobUrl = i.BlobUrl ?? ""
+                        }).ToList()
+                        : new List<CampaignInvoiceDto>()
                 }).ToList(),
                 ValidationResult = validationResult != null ? new ValidationResultDto
                 {
@@ -631,7 +660,7 @@ public class SubmissionsController : ControllerBase
     /// <summary>
     /// List submissions with filtering and pagination (Agency users see only their own submissions)
     /// </summary>
-    /// <param name="state">Optional filter by package state (Uploaded, PendingASMApproval, PendingHQApproval, Approved, etc.)</param>
+    /// <param name="state">Optional filter by package state (Uploaded, PendingCH, PendingRA, Approved, etc.)</param>
     /// <param name="page">Page number for pagination (default: 1)</param>
     /// <param name="pageSize">Number of items per page (default: 20, max: 100)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
@@ -840,8 +869,8 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Allow approval from PendingASM or RARejected states
-            if (package.State != PackageState.PendingASM && 
+            // Allow approval from PendingCH or RARejected states
+            if (package.State != PackageState.PendingCH && 
                 package.State != PackageState.RARejected)
             {
                 return BadRequest(new { error = $"Submission is not in a state that can be approved by ASM. Current state: {package.State}" });
@@ -916,7 +945,7 @@ public class SubmissionsController : ControllerBase
     /// <param name="request">Rejection reason (required)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Updated submission status</returns>
-    /// <response code="200">Submission rejected by ASM</response>
+    /// <response code="200">Submission rejected by CH</response>
     /// <response code="400">Bad request - submission not in correct state</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - ASM role required</response>
@@ -942,14 +971,14 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Allow rejection from PendingASM or RARejected states
-            if (package.State != PackageState.PendingASM && 
+            // Allow rejection from PendingCH or RARejected states
+            if (package.State != PackageState.PendingCH && 
                 package.State != PackageState.RARejected)
             {
-                return BadRequest(new { error = $"Submission is not in a state that can be rejected by ASM. Current state: {package.State}" });
+                return BadRequest(new { error = $"Submission is not in a state that can be rejected by CH. Current state: {package.State}" });
             }
 
-            package.State = PackageState.ASMRejected;
+            package.State = PackageState.CHRejected;
             // Record rejection in RequestApprovalHistory
             var rejectionHistory = new Domain.Entities.RequestApprovalHistory
             {
@@ -970,7 +999,7 @@ public class SubmissionsController : ControllerBase
             // Push SubmissionStatusChanged event via SignalR
             await _submissionNotificationService.SendSubmissionStatusChangedAsync(
                 id,
-                new { submissionId = id, newStatus = PackageState.ASMRejected.ToString(), assignedTo = (Guid?)null },
+                new { submissionId = id, newStatus = PackageState.CHRejected.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
 
             // Send circleHead_rejected email to agency
@@ -981,13 +1010,13 @@ public class SubmissionsController : ControllerBase
                     _logger.LogWarning("circleHead_rejected email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
             });
 
-            _logger.LogInformation("Submission {Id} rejected by ASM {UserId} with reason: {Reason}", id, userId, request.Reason);
+            _logger.LogInformation("Submission {Id} rejected by CH {UserId} with reason: {Reason}", id, userId, request.Reason);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Rejected by ASM"
+                Message = "Rejected by CH"
             };
 
             return Ok(response);
@@ -1094,7 +1123,7 @@ public class SubmissionsController : ControllerBase
     /// <param name="request">Rejection reason (required)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Updated submission status</returns>
-    /// <response code="200">Submission rejected by HQ, sent back to ASM</response>
+    /// <response code="200">Submission rejected by HQ, sent back to CH</response>
     /// <response code="400">Bad request - submission not in correct state</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - HQ role required</response>
@@ -1214,7 +1243,7 @@ public class SubmissionsController : ControllerBase
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Updated submission status with resubmission count</returns>
     /// <response code="200">Package resubmitted successfully and workflow triggered</response>
-    /// <response code="400">Bad request - can only resubmit packages rejected by ASM</response>
+    /// <response code="400">Bad request - can only resubmit packages rejected by CH</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - Agency role required or user does not own package</response>
     /// <response code="404">Not found - submission does not exist</response>
@@ -1238,11 +1267,11 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Can only resubmit if rejected by ASM or rejected by RA
-            if (package.State != PackageState.ASMRejected && 
+            // Can only resubmit if rejected by CH or rejected by RA
+            if (package.State != PackageState.CHRejected && 
                 package.State != PackageState.RARejected)
             {
-                return BadRequest(new { error = $"Can only resubmit packages rejected by ASM or RA. Current state: {package.State}" });
+                return BadRequest(new { error = $"Can only resubmit packages rejected by CH or RA. Current state: {package.State}" });
             }
 
             // Verify the package belongs to the user
@@ -1428,8 +1457,8 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = $"Can only send back packages rejected by RA. Current state: {package.State}" });
             }
 
-            // Move to ASMRejected so Agency can edit and resubmit
-            package.State = PackageState.ASMRejected;
+            // Move to CHRejected so Agency can edit and resubmit
+            package.State = PackageState.CHRejected;
             // Record in RequestApprovalHistory
             var sendBackHistory = new Domain.Entities.RequestApprovalHistory
             {
@@ -1496,12 +1525,12 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingASM)
+            if (package.State != PackageState.PendingCH)
             {
                 return BadRequest(new { error = "Submission is not in pending approval state" });
             }
 
-            package.State = PackageState.ASMRejected;
+            package.State = PackageState.CHRejected;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -1743,20 +1772,20 @@ public class SubmissionsController : ControllerBase
             // Only allow moving from Uploaded state
             if (package.State != PackageState.Uploaded)
             {
-                return BadRequest(new { error = $"Cannot move submission from {package.State} to PendingASM" });
+                return BadRequest(new { error = $"Cannot move submission from {package.State} to PendingCH" });
             }
 
-            package.State = PackageState.PendingASM;
+            package.State = PackageState.PendingCH;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} manually moved to PendingASM", id);
+            _logger.LogInformation("Submission {Id} manually moved to PendingCH", id);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Moved to PendingASM"
+                Message = "Moved to PendingCH"
             };
 
             return Ok(response);
@@ -1856,7 +1885,10 @@ public class SubmissionsController : ControllerBase
     [HttpPost("{packageId}/process-async")]
     [Authorize]
     [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status202Accepted)]
-    public async Task<IActionResult> ProcessPackageAsync(Guid packageId, CancellationToken cancellationToken)
+    public async Task<IActionResult> ProcessPackageAsync(
+        Guid packageId,
+        [FromBody] ProcessAsyncRequest? request,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -1867,6 +1899,31 @@ public class SubmissionsController : ControllerBase
             {
                 return NotFound(new { error = "Package not found" });
             }
+
+            // Set ActivityState if provided and not already set
+            if (!string.IsNullOrEmpty(request?.ActivityState) && string.IsNullOrEmpty(package.ActivityState))
+            {
+                package.ActivityState = request.ActivityState;
+                _logger.LogInformation("ActivityState set to {State} for package {PackageId}", request.ActivityState, packageId);
+            }
+
+            // Generate submission number if missing
+            if (string.IsNullOrEmpty(package.SubmissionNumber))
+            {
+                package.SubmissionNumber = await _submissionNumberService.GenerateAsync(cancellationToken);
+                _logger.LogInformation("SubmissionNumber {Number} generated for package {PackageId}", package.SubmissionNumber, packageId);
+            }
+
+            // Auto-assign CIRCLE HEAD if missing and ActivityState is set
+            if (!package.AssignedCircleHeadUserId.HasValue && !string.IsNullOrEmpty(package.ActivityState))
+            {
+                var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, cancellationToken);
+                package.AssignedCircleHeadUserId = circleHeadUserId;
+                _logger.LogInformation("CircleHead {UserId} assigned for package {PackageId}", circleHeadUserId, packageId);
+            }
+
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
 
             // Queue for background processing - returns immediately
             await _backgroundQueue.QueueWorkflowAsync(packageId);
@@ -2452,7 +2509,8 @@ public record CreateSubmissionRequest(
     DateTime? CampaignStartDate = null,
     DateTime? CampaignEndDate = null,
     int? CampaignWorkingDays = null,
-    Guid? SelectedPoId = null
+    Guid? SelectedPoId = null,
+    string? ActivityState = null
 );
 
 /// <summary>
@@ -2472,6 +2530,14 @@ public record RejectSubmissionRequest(
     [Required(ErrorMessage = "Reason is required")]
     [StringLength(500, MinimumLength = 10, ErrorMessage = "Reason must be between 10 and 500 characters")]
     string Reason
+);
+
+/// <summary>
+/// Request to trigger async processing with optional ActivityState
+/// </summary>
+/// <param name="ActivityState">Activity state/region for the submission</param>
+public record ProcessAsyncRequest(
+    string? ActivityState = null
 );
 
 /// <summary>

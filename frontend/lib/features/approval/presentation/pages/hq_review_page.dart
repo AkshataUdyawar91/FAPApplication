@@ -14,6 +14,7 @@ import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/kpi_card.dart';
 import '../../../../core/widgets/quarter_year_filter.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../../core/widgets/pagination_bar.dart';
 import '../../../analytics/data/models/quarterly_fap_kpi_model.dart';
 
 class HQReviewPage extends StatefulWidget {
@@ -42,19 +43,25 @@ class _HQReviewPageState extends State<HQReviewPage> {
   bool _isSidebarCollapsed = true;
   List<Map<String, dynamic>> _documents = [];
 
+  // Pagination state
+  int _currentPage = 1;
+  int _totalItems = 0;
+  int _totalPages = 1;
+  static const int _pageSize = 20;
+
   // KPI state
-  String _selectedQuarter = 'Q${(DateTime.now().month - 1) ~/ 3 + 1}';
-  int _selectedYear = DateTime.now().year;
+  String _selectedQuarter = 'All';
+  int _selectedYear = QuarterYearFilter.currentFiscalYear();
   QuarterlyFapKpiModel? _kpiData;
   bool _isKpiLoading = true;
   String? _kpiError;
 
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
-    if (state == 'pendinghqapproval') return 'pending';
+    if (state == 'pendingra' || state == 'pendinghqapproval') return 'pending';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyhq') return 'rejected';
-    if (state == 'pendingasmapproval' || state == 'uploaded' || state == 'extracting' ||
+    if (state == 'rarejected' || state == 'rejectedbyhq' || state == 'rejectedbyra') return 'rejected';
+    if (state == 'pendingch' || state == 'pendingchapproval' || state == 'uploaded' || state == 'extracting' ||
         state == 'validating' || state == 'scoring' || state == 'recommending') {
       return 'processing';
     }
@@ -74,11 +81,12 @@ class _HQReviewPageState extends State<HQReviewPage> {
     super.dispose();
   }
 
-  Future<void> _loadDocuments() async {
+  Future<void> _loadDocuments({int page = 1}) async {
     setState(() => _isLoading = true);
     try {
       final response = await _dio.get(
         '/submissions',
+        queryParameters: {'page': page, 'pageSize': _pageSize},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
@@ -89,6 +97,9 @@ class _HQReviewPageState extends State<HQReviewPage> {
           } else {
             _documents = [];
           }
+          _totalItems = data is Map ? (data['total'] ?? 0) : 0;
+          _totalPages = data is Map ? (data['totalPages'] ?? 1) : 1;
+          _currentPage = page;
           _isLoading = false;
         });
       }
@@ -129,12 +140,14 @@ class _HQReviewPageState extends State<HQReviewPage> {
     }
   }
 
+  /// Returns the start and end months for an Indian fiscal quarter.
+  /// Q1 = Apr-Jun, Q2 = Jul-Sep, Q3 = Oct-Dec, Q4 = Jan-Mar.
   (int, int) _quarterMonthRange(String quarter) {
     switch (quarter) {
-      case 'Q1': return (1, 3);
-      case 'Q2': return (4, 6);
-      case 'Q3': return (7, 9);
-      case 'Q4': return (10, 12);
+      case 'Q1': return (4, 6);
+      case 'Q2': return (7, 9);
+      case 'Q3': return (10, 12);
+      case 'Q4': return (1, 3);
       default: return (1, 12);
     }
   }
@@ -144,7 +157,8 @@ class _HQReviewPageState extends State<HQReviewPage> {
     if (dateStr == null) return false;
     try {
       final dt = DateTime.parse(dateStr);
-      if (dt.year != _selectedYear) return false;
+      final docFY = QuarterYearFilter.fiscalYear(dt);
+      if (docFY != _selectedYear) return false;
       if (_selectedQuarter == 'All') return true;
       final (startMonth, endMonth) = _quarterMonthRange(_selectedQuarter);
       return dt.month >= startMonth && dt.month <= endMonth;
@@ -364,7 +378,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
   Widget _buildContent(DeviceType device) {
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width, mobile: 12, tablet: 16, desktop: 24);
     return RefreshIndicator(
-      onRefresh: _loadDocuments,
+      onRefresh: () => _loadDocuments(page: 1),
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(hPad),
@@ -414,7 +428,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                           QuarterYearFilter(
                             selectedQuarter: _selectedQuarter,
                             selectedYear: _selectedYear,
-                            availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                            availableYears: List.generate(5, (i) => QuarterYearFilter.currentFiscalYear() - i),
                             onQuarterChanged: (q) {
                               setState(() => _selectedQuarter = q);
                               _loadKpiData();
@@ -445,7 +459,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
                     QuarterYearFilter(
                       selectedQuarter: _selectedQuarter,
                       selectedYear: _selectedYear,
-                      availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                      availableYears: List.generate(5, (i) => QuarterYearFilter.currentFiscalYear() - i),
                       onQuarterChanged: (q) {
                         setState(() => _selectedQuarter = q);
                         _loadKpiData();
@@ -662,13 +676,24 @@ class _HQReviewPageState extends State<HQReviewPage> {
         ),
       );
     }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 900) {
-          return Column(children: filtered.map((doc) => _buildMobileDocumentCard(doc)).toList());
-        }
-        return _buildDesktopTable(filtered);
-      },
+    return Column(
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < 900) {
+              return Column(children: filtered.map((doc) => _buildMobileDocumentCard(doc)).toList());
+            }
+            return _buildDesktopTable(filtered);
+          },
+        ),
+        PaginationBar(
+          currentPage: _currentPage,
+          totalPages: _totalPages,
+          totalItems: _totalItems,
+          pageSize: _pageSize,
+          onPageChanged: (page) => _loadDocuments(page: page),
+        ),
+      ],
     );
   }
 
@@ -739,7 +764,7 @@ class _HQReviewPageState extends State<HQReviewPage> {
       'token': widget.token,
       'userName': widget.userName,
     },);
-    if (result == true || result == null) _loadDocuments();
+    if (result == true || result == null) _loadDocuments(page: _currentPage);
   }
 
   int? get _sortColumnIndex {
