@@ -621,11 +621,11 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
     Color textColor;
     String displayText;
     
-    if (normalizedState == 'pendingapproval' || normalizedState == 'pendingchapproval') {
+    if (normalizedState == 'pendingch' || normalizedState == 'pendingapproval' || normalizedState == 'pendingchapproval') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending';
-    } else if (normalizedState == 'asmapproved' || normalizedState == 'pendinghqapproval') {
+    } else if (normalizedState == 'pendingra' || normalizedState == 'asmapproved' || normalizedState == 'pendinghqapproval') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending with RA';
@@ -633,11 +633,11 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
       backgroundColor = const Color(0xFFD1FAE5);
       textColor = const Color(0xFF10B981);
       displayText = 'Approved';
-    } else if (normalizedState == 'rejectedbyhq' || normalizedState == 'rejectedbyra') {
+    } else if (normalizedState == 'rarejected' || normalizedState == 'rejectedbyhq' || normalizedState == 'rejectedbyra') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected by RA';
-    } else if (normalizedState == 'rejectedbyasm' || normalizedState == 'rejected') {
+    } else if (normalizedState == 'chrejected' || normalizedState == 'rejectedbyasm' || normalizedState == 'rejected') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected';
@@ -677,8 +677,10 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
 
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
-    return state == 'pendingapproval' || 
-           state == 'pendingchapproval';
+    return state == 'pendingch' || 
+           state == 'pendingapproval' || 
+           state == 'pendingchapproval' ||
+           state == 'rarejected';
   }
 
   /// Builds CampaignDetailRow list from hierarchical campaign data.
