@@ -56,18 +56,23 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
     // ASM role status normalization
     if (state == 'pendingasmapproval' ||
         state == 'pendingapproval' ||
-        state == 'pendingwithasm') return 'pending';
-    if (state == 'pendinghqapproval' || state == 'pendingwithra')
-      return 'pending-with-ra';
+        state == 'pendingwithasm' ||
+        state == 'pendingch' ||
+        state == 'pendingchapproval') return 'pending';
+    if (state == 'pendinghqapproval' ||
+        state == 'pendingwithra' ||
+        state == 'pendingra' ||
+        state == 'asmapproved') return 'pending-with-ra';
     if (state == 'approved') return 'approved';
     if (state == 'rejectedbyasm' ||
         state == 'rejected' ||
-        state == 'asmrejected') return 'rejected';
-    if (state == 'rejectedbyhq' || state == 'rejectedbyra')
+        state == 'asmrejected' ||
+        state == 'chrejected' ||
+        state == 'rejectedbych') return 'rejected';
+    if (state == 'rejectedbyhq' || state == 'rejectedbyra' || state == 'rarejected')
       return 'rejected-by-ra';
     if (state == 'validationfailed' || state == 'reuploadrequested')
       return 'rejected';
-    // Don't hide uploaded/extracting/validating - these should be visible to ASM
     if (state == 'uploaded') return 'uploaded';
     if (state == 'extracting' ||
         state == 'validating' ||
@@ -75,7 +80,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
         state == 'recommending') {
       return 'processing';
     }
-    return 'uploaded'; // Default to uploaded instead of processing
+    return 'uploaded';
   }
 
   @override

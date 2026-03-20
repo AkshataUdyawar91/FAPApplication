@@ -132,14 +132,37 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
         // Extract validation data from submission response
         final invoiceValidations =
             submissionData['invoiceValidations'] as List<dynamic>? ?? [];
-        final photoValidations =
+        final photoValidationsRaw =
             submissionData['photoValidations'] as List<dynamic>? ?? [];
+        var photoValidations = photoValidationsRaw;
         final costSummaryValidation =
             submissionData['costSummaryValidation'] as Map<String, dynamic>?;
         final activityValidation =
             submissionData['activityValidation'] as Map<String, dynamic>?;
         final enquiryValidation =
             submissionData['enquiryValidation'] as Map<String, dynamic>?;
+
+        // Fallback: if photoValidations is empty, fetch from validations endpoint
+        if (photoValidations.isEmpty) {
+          try {
+            final valResponse = await _dio.get(
+              '/submissions/${widget.submissionId}/validations',
+              options: Options(
+                  headers: {'Authorization': 'Bearer ${widget.token}'}),
+            );
+            if (valResponse.statusCode == 200 && valResponse.data != null) {
+              final docs = valResponse.data['documents'] as List<dynamic>? ?? [];
+              final photoDocs = docs
+                  .where((d) => d['documentType'] == 'TeamPhoto')
+                  .toList();
+              if (photoDocs.isNotEmpty) {
+                photoValidations = photoDocs;
+              }
+            }
+          } catch (e) {
+            debugPrint('Fallback photo validation fetch failed: $e');
+          }
+        }
 
         print('=== HQ - Validation Data from Submission ===');
         print('Invoice Validations Count: ${invoiceValidations.length}');
@@ -739,7 +762,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     String displayText;
 
     // RA role status labels
-    if (normalizedState == 'pendinghqapproval' ||
+    if (normalizedState == 'pendingra' ||
+        normalizedState == 'pendinghqapproval' ||
         normalizedState == 'pendingwithra') {
       backgroundColor = const Color(0xFFFEF3C7);
       textColor = const Color(0xFFD97706);
@@ -748,13 +772,15 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       backgroundColor = const Color(0xFFD1FAE5);
       textColor = const Color(0xFF10B981);
       displayText = 'Approved';
-    } else if (normalizedState == 'rejectedbyhq' ||
+    } else if (normalizedState == 'rarejected' ||
+        normalizedState == 'rejectedbyhq' ||
         normalizedState == 'rejectedbyra' ||
         normalizedState == 'rejected') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected';
-    } else if (normalizedState == 'pendingapproval' ||
+    } else if (normalizedState == 'pendingch' ||
+        normalizedState == 'pendingapproval' ||
         normalizedState == 'pendingchapproval' ||
         normalizedState == 'pendingwithch') {
       backgroundColor = const Color(0xFFDEEAFF);
@@ -874,7 +900,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
 
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
-    return state == 'pendinghqapproval';
+    return state == 'pendingra' || 
+           state == 'pendinghqapproval';
   }
 
   List<CampaignDetailRow> _buildHierarchicalRows(

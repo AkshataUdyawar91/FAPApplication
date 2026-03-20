@@ -17,6 +17,7 @@ import '../../../../core/widgets/kpi_card.dart';
 import '../../../../core/widgets/quarter_year_filter.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/network/dio_client.dart';
 import '../../../analytics/data/models/quarterly_fap_kpi_model.dart';
 
 class HQReviewPage extends ConsumerStatefulWidget {
@@ -34,7 +35,7 @@ class HQReviewPage extends ConsumerStatefulWidget {
 }
 
 class _HQReviewPageState extends ConsumerState<HQReviewPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  Dio get _dio => ref.read(dioProvider);
   final _searchController = TextEditingController();
 
   String _statusFilter = 'all';
@@ -54,20 +55,18 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
 
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
-    if (state == 'pendinghqapproval') return 'pending';
+    if (state == 'pendingra' || state == 'pendinghqapproval') return 'pending';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyhq' ||
+    if (state == 'rarejected' ||
+        state == 'rejectedbyhq' ||
         state == 'hqrejected' ||
-        state == 'asmrejected') return 'rejected';
-    if (state == 'pendingasmapproval' ||
-        state == 'uploaded' ||
-        state == 'extracting' ||
-        state == 'validating' ||
-        state == 'scoring' ||
-        state == 'recommending') {
-      return 'pending';
+        state == 'rejectedbyra') return 'rejected';
+    if (state == 'pendingch' ||
+        state == 'pendingasmapproval' ||
+        state == 'chrejected') {
+      return 'ch-level';
     }
-    return 'pending';
+    return 'other';
   }
 
   @override
@@ -84,22 +83,32 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
   }
 
   Future<void> _loadDocuments() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     try {
+      // Backend enforces RA role scoping: only returns submissions in
+      // PendingRA, Approved, RARejected states for the RA's assigned activity states.
+      // A single call without state filter fetches all RA-visible submissions.
       final response = await _dio.get(
         '/submissions',
+        queryParameters: {
+          'pageSize': 100,
+        },
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
-        setState(() {
-          final data = response.data;
-          if (data is Map && data.containsKey('items')) {
-            _documents = List<Map<String, dynamic>>.from(data['items']);
-          } else {
-            _documents = [];
-          }
-          _isLoading = false;
-        });
+        final items = <Map<String, dynamic>>[];
+        final data = response.data;
+        if (data is Map && data.containsKey('items')) {
+          items.addAll(List<Map<String, dynamic>>.from(data['items']));
+        }
+
+        if (mounted) {
+          setState(() {
+            _documents = items;
+            _isLoading = false;
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -114,6 +123,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
   }
 
   Future<void> _loadKpiData() async {
+    if (!mounted) return;
     setState(() {
       _isKpiLoading = true;
       _kpiError = null;
@@ -712,7 +722,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
         'FAP Number,PO Number,PO Amount,Invoice Number,Invoice Amount,Submitted Date,AI Score,Status');
 
     for (final doc in filtered) {
-      final fapNumber =
+      final fapNumber = doc['submissionNumber']?.toString() ??
           'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
       final poNumber = doc['poNumber']?.toString() ?? '-';
       final poAmount = doc['poAmount']?.toString() ?? '';
@@ -797,7 +807,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
 
   Widget _buildMobileDocumentCard(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber =
+    final fapNumber = doc['submissionNumber']?.toString() ??
         'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final poAmount = doc['poAmount'];
@@ -892,7 +902,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
         'userName': widget.userName,
       },
     );
-    if (result == true || result == null) _loadDocuments();
+    if (mounted && (result == true || result == null)) _loadDocuments();
   }
 
   int? get _sortColumnIndex {
@@ -984,7 +994,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
 
   DataRow _buildDocumentDataRow(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber =
+    final fapNumber = doc['submissionNumber']?.toString() ??
         'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final poAmount = doc['poAmount'];
