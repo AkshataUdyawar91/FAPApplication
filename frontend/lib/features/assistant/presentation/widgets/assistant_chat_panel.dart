@@ -1030,10 +1030,12 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     final hasIssues = issues > 0;
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
 
-    // Disable "Continue" if extracted invoice amount is 0
+    // Disable "Continue" only if extracted invoice amount is 0 or missing
     final amountRule = rules.where((rule) => rule.label == 'Invoice Amount').firstOrNull;
-    final extractedAmount = double.tryParse(amountRule?.extractedValue ?? '') ?? 0;
-    final isAmountZero = extractedAmount == 0;
+    final rawAmount = amountRule?.extractedValue ?? '';
+    final cleanedAmount = rawAmount.replaceAll('₹', '').replaceAll(',', '').trim();
+    final extractedAmount = double.tryParse(cleanedAmount) ?? 0;
+    final isAmountZero = amountRule != null && extractedAmount == 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
