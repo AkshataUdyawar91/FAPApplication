@@ -1030,13 +1030,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     final hasIssues = issues > 0;
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
 
-    // Disable "Continue" only if extracted invoice amount is 0 or missing
-    final amountRule = rules.where((rule) => rule.label == 'Invoice Amount').firstOrNull;
-    final rawAmount = amountRule?.extractedValue ?? '';
-    final cleanedAmount = rawAmount.replaceAll('₹', '').replaceAll(',', '').trim();
-    final extractedAmount = double.tryParse(cleanedAmount) ?? 0;
-    final isAmountZero = amountRule != null && extractedAmount == 0;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1144,7 +1137,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           const SizedBox(width: 8),
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: (isLoading || isAmountZero) ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
+              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
               icon: const Icon(Icons.arrow_forward, size: 14),
               label: Text(hasIssues ? 'Continue with warnings' : 'Continue',
                   style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
