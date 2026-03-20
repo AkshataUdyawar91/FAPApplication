@@ -77,7 +77,11 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                 CONSTRAINT [PK_StateCities] PRIMARY KEY ([Id])
             )");
 
-            migrationBuilder.Sql("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StateMappings_CircleHeadUserId' AND object_id = OBJECT_ID('StateMappings')) CREATE UNIQUE INDEX [IX_StateMappings_CircleHeadUserId] ON [StateMappings] ([CircleHeadUserId]) WHERE [CircleHeadUserId] IS NOT NULL");
+            migrationBuilder.Sql(@"
+                IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StateMappings_CircleHeadUserId' AND object_id = OBJECT_ID('StateMappings'))
+                    DROP INDEX [IX_StateMappings_CircleHeadUserId] ON [StateMappings];
+                CREATE INDEX [IX_StateMappings_CircleHeadUserId] ON [StateMappings] ([CircleHeadUserId]);
+            ");
             migrationBuilder.Sql("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StateMappings_State' AND object_id = OBJECT_ID('StateMappings')) CREATE UNIQUE INDEX [IX_StateMappings_State] ON [StateMappings] ([State])");
             migrationBuilder.Sql("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Dealers_DealerCode' AND object_id = OBJECT_ID('Dealers')) CREATE UNIQUE INDEX [IX_Dealers_DealerCode] ON [Dealers] ([DealerCode])");
             migrationBuilder.Sql("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Dealers_State' AND object_id = OBJECT_ID('Dealers')) CREATE INDEX [IX_Dealers_State] ON [Dealers] ([State])");
