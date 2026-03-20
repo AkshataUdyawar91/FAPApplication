@@ -350,6 +350,7 @@ public class TeamsBotService : TeamsActivityHandler
             var pendingPackages = await query
                 .Include(p => p.Agency)
                 .Include(p => p.Invoices)
+                    .ThenInclude(i => i.PO)
                 .Include(p => p.Teams.Where(t => !t.IsDeleted))
                     .ThenInclude(t => t.Invoices)
                 .Include(p => p.ConfidenceScore)
@@ -417,8 +418,19 @@ public class TeamsBotService : TeamsActivityHandler
         {
             var shortId = package.Id.ToString()[..8].ToUpper();
             var agencyName = package.Agency?.SupplierName ?? "Unknown Agency";
-            var poNumber = package.PO?.PONumber ?? "N/A";
-            var amount = package.Teams?.SelectMany(t => t.Invoices).Sum(i => i.TotalAmount ?? 0m) ?? 0m;
+
+            // PO Number: from PO navigation first, then SelectedPOId lookup is not available here
+            // so fall back to "N/A" — SelectedPO is loaded via Include(p => p.PO) which covers dashboard flow.
+            // For chatbot flow, PO is not a navigation but SelectedPOId — we read PONumber from Invoices.POId indirectly.
+            var poNumber = package.PO?.PONumber
+                ?? package.Invoices?.Select(i => i.PO?.PONumber).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
+                ?? "N/A";
+
+            // Invoice amount: Teams.Invoices (dashboard flow) → package.Invoices (chatbot flow)
+            var teamInvoiceAmount = package.Teams?.SelectMany(t => t.Invoices).Sum(i => i.TotalAmount ?? 0m) ?? 0m;
+            var amount = teamInvoiceAmount > 0
+                ? teamInvoiceAmount
+                : package.Invoices?.Sum(i => i.TotalAmount ?? 0m) ?? 0m;
             var formattedAmount = $"₹{amount:N0}";
             var confidence = package.ConfidenceScore?.OverallConfidence ?? 0;
             var confidenceFormatted = $"{confidence:F0}/100";
@@ -884,6 +896,18 @@ public class TeamsBotService : TeamsActivityHandler
         // Execute approval: state transition + RequestApprovalHistory (same as ASMApproveSubmission)
         package.State = PackageState.PendingRA;
         package.UpdatedAt = DateTime.UtcNow;
+
+        // Auto-assign RA user based on submission's activity state (same as portal ASMApproveSubmission)
+        var raUserId = await context.StateMappings
+            .Where(sm => sm.State == (package.ActivityState ?? string.Empty)
+                      && sm.IsActive && !sm.IsDeleted && sm.RAUserId != null)
+            .Select(sm => sm.RAUserId)
+            .FirstOrDefaultAsync(cancellationToken);
+        package.AssignedRAUserId = raUserId;
+        if (raUserId == null)
+            _logger.LogWarning(
+                "No RA user found for state '{ActivityState}' on FAP-{ShortId}. Manual RA assignment required.",
+                package.ActivityState, shortId);
 
         var approvalHistory = new RequestApprovalHistory
         {

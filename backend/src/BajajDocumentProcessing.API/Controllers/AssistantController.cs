@@ -22,17 +22,20 @@ public class AssistantController : ControllerBase
     private readonly ILogger<AssistantController> _logger;
     private readonly IReferenceDataService _referenceData;
     private readonly ISubmissionNumberService _submissionNumberService;
+    private readonly IWorkflowOrchestrator _workflowOrchestrator;
 
     public AssistantController(
         IApplicationDbContext context,
         ILogger<AssistantController> logger,
         IReferenceDataService referenceData,
-        ISubmissionNumberService submissionNumberService)
+        ISubmissionNumberService submissionNumberService,
+        IWorkflowOrchestrator workflowOrchestrator)
     {
         _context = context;
         _logger = logger;
         _referenceData = referenceData;
         _submissionNumberService = submissionNumberService;
+        _workflowOrchestrator = workflowOrchestrator;
     }
 
     /// <summary>
@@ -2366,13 +2369,27 @@ public class AssistantController : ControllerBase
         var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
         package.SubmissionNumber = submissionNumber;
 
-        package.State = Domain.Enums.PackageState.PendingCH;
+        // Do NOT set state to PendingCH here — let WorkflowOrchestrator handle state transition,
+        // CH assignment, Teams notification, email, and SignalR push.
         package.CurrentStep = 10;
         package.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Package {PackageId} submitted from chat by user {UserId}. SubmissionNumber: {SubNum}",
+        _logger.LogInformation("Package {PackageId} submitted from chat by user {UserId}. SubmissionNumber: {SubNum} — triggering orchestrator",
             submissionId, userId, submissionNumber);
+
+        // Fire orchestrator in background so user gets immediate response
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _workflowOrchestrator.ProcessSubmissionAsync(package.Id, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background orchestration failed for package {PackageId}", package.Id);
+            }
+        });
 
         return new AssistantResponse
         {

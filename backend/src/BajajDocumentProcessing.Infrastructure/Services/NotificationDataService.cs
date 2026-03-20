@@ -54,10 +54,13 @@ public class NotificationDataService : INotificationDataService
         var package = await _context.DocumentPackages
             .Include(p => p.PO)
             .Include(p => p.Agency)
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
             .Include(p => p.Teams.Where(t => !t.IsDeleted))
                 .ThenInclude(t => t.Invoices.Where(i => !i.IsDeleted))
             .Include(p => p.Teams.Where(t => !t.IsDeleted))
                 .ThenInclude(t => t.Photos.Where(ph => !ph.IsDeleted))
+            .Include(p => p.CostSummary)
+            .Include(p => p.ActivitySummary)
             .Include(p => p.EnquiryDocument)
             .Include(p => p.ConfidenceScore)
             .Include(p => p.Recommendation)
@@ -88,32 +91,38 @@ public class NotificationDataService : INotificationDataService
         var allTeamInvoices = package.Teams.SelectMany(t => t.Invoices).ToList();
         foreach (var inv in allTeamInvoices)
             allDocumentIds.Add(inv.Id);
+        // Chatbot flow: also add direct package invoices
+        foreach (var inv in package.Invoices)
+            if (!allDocumentIds.Contains(inv.Id)) allDocumentIds.Add(inv.Id);
 
-        // Also need CostSummary, ActivitySummary, EnquiryDocument, Invoices — load them
-        var packageWithDocs = await _context.DocumentPackages
-            .Include(p => p.CostSummary)
-            .Include(p => p.ActivitySummary)
-            .Include(p => p.EnquiryDocument)
-            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        // CostSummary, ActivitySummary, EnquiryDocument, Invoices are now loaded in the main query above.
+        // Add their IDs for validation result lookup.
+        if (package.CostSummary != null) allDocumentIds.Add(package.CostSummary.Id);
+        if (package.ActivitySummary != null) allDocumentIds.Add(package.ActivitySummary.Id);
+        if (package.EnquiryDocument != null) allDocumentIds.Add(package.EnquiryDocument.Id);
+        // Add photo IDs so photo-level ValidationResults are loaded
+        foreach (var photo in package.Teams.SelectMany(t => t.Photos).Where(p => !p.IsDeleted))
+            allDocumentIds.Add(photo.Id);
 
-        if (packageWithDocs?.CostSummary != null) allDocumentIds.Add(packageWithDocs.CostSummary.Id);
-        if (packageWithDocs?.ActivitySummary != null) allDocumentIds.Add(packageWithDocs.ActivitySummary.Id);
-        if (packageWithDocs?.EnquiryDocument != null) allDocumentIds.Add(packageWithDocs.EnquiryDocument.Id);
-
-        // Merge the extra document references into the package for BuildCheckGroupsFromAllDocuments
-        if (packageWithDocs != null)
+        // Chatbot flow: PO is referenced via SelectedPOId, not via the PO navigation property.
+        // Load it from the POs table so MapKeyFacts can read PONumber and TotalAmount.
+        if (package.PO == null && package.SelectedPOId.HasValue)
         {
-            package.CostSummary ??= packageWithDocs.CostSummary;
-            package.ActivitySummary ??= packageWithDocs.ActivitySummary;
-            package.EnquiryDocument ??= packageWithDocs.EnquiryDocument;
-            // Merge Invoices collection (needed by BuildCheckGroupsFromAllDocuments)
-            if (package.Invoices.Count == 0 && packageWithDocs.Invoices.Count > 0)
-            {
-                foreach (var inv in packageWithDocs.Invoices)
-                    package.Invoices.Add(inv);
-            }
+            package.PO = await _context.POs
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == package.SelectedPOId.Value && !p.IsDeleted, cancellationToken);
+        }
+
+        // Chatbot flow: load invoice validation results linked to the invoice document
+        // (chatbot stores ValidationResults by invoice DocumentId, not by PO DocumentId)
+        if (package.ValidationResult == null && package.Invoices.Any())
+        {
+            var firstInvoiceId = package.Invoices.First().Id;
+            package.ValidationResult = await _context.ValidationResults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    vr => vr.DocumentId == firstInvoiceId && vr.DocumentType == DocumentType.Invoice,
+                    cancellationToken);
         }
 
         var allValidationResults = allDocumentIds.Count > 0
@@ -165,7 +174,39 @@ public class NotificationDataService : INotificationDataService
         MapValidationChecks(cardData, package);
 
         // === Detailed Check Groups (per-document validation table) ===
+        // Load photo ValidationResults separately by DocumentType + PackageId — most reliable approach
+        // since photo DocumentIds may not always be in allDocumentIds if Teams.Photos was empty above.
+        var photoIds = package.Teams
+            .SelectMany(t => t.Photos)
+            .Where(p => !p.IsDeleted)
+            .Select(p => p.Id)
+            .ToList();
+        if (photoIds.Count > 0)
+        {
+            var photoVrs = await _context.ValidationResults
+                .AsNoTracking()
+                .Where(vr => vr.DocumentType == DocumentType.TeamPhoto && photoIds.Contains(vr.DocumentId))
+                .ToListAsync(cancellationToken);
+            // Merge into allValidationResults (avoid duplicates)
+            var existingVrIds = allValidationResults.Select(v => v.Id).ToHashSet();
+            allValidationResults.AddRange(photoVrs.Where(v => !existingVrIds.Contains(v.Id)));
+        }
         cardData.CheckGroups = BuildCheckGroupsFromAllDocuments(package, allValidationResults);
+
+        // === Override recommendation if orchestrator hasn't run (no AI recommendation) ===
+        // Score-based: calculate pass rate across all check groups; ≥70% → Approve, <70% → Reject
+        if (package.Recommendation is null)
+        {
+            var totalChecks = cardData.CheckGroups.Count;
+            var passedChecks = cardData.CheckGroups.Count(g =>
+                g.Status?.Equals("Pass", StringComparison.OrdinalIgnoreCase) == true);
+            var passRate = totalChecks > 0 ? (double)passedChecks / totalChecks : 0.0;
+            var approve = passRate >= 0.70;
+            cardData.Recommendation = approve ? "Approve" : "Reject";
+            cardData.RecommendationEmoji = approve ? "✅" : "❌";
+            cardData.ConfidenceScore = (int)Math.Round(passRate * 100);
+            cardData.ConfidenceScoreFormatted = $"{passedChecks}/{totalChecks} checks passed";
+        }
 
         // === Action Buttons ===
         cardData.ShowQuickApprove = package.Recommendation?.Type == RecommendationType.Approve;
@@ -190,27 +231,39 @@ public class NotificationDataService : INotificationDataService
         // PO Number with ExtractedDataJson fallback
         cardData.PoNumber = package.PO?.PONumber ?? TryExtractPoNumber(package.PO?.ExtractedDataJson) ?? "N/A";
 
-        // Invoice number: first invoice across all Teams
-        var allInvoices = package.Teams
+        // Invoice number + amount: check Teams.Invoices first (dashboard flow),
+        // then fall back to package.Invoices (chatbot flow).
+        // Use anonymous projection to unify the two different invoice entity types.
+        var teamInvoices = package.Teams
             .SelectMany(t => t.Invoices)
+            .Select(i => new { i.InvoiceNumber, i.TotalAmount, IsDeleted = false })
             .ToList();
 
-        cardData.InvoiceNumber = allInvoices
+        var invoiceProjections = teamInvoices.Count > 0
+            ? teamInvoices
+            : package.Invoices
+                .Where(i => !i.IsDeleted)
+                .Select(i => new { i.InvoiceNumber, i.TotalAmount, IsDeleted = i.IsDeleted })
+                .ToList();
+
+        cardData.InvoiceNumber = invoiceProjections
             .Select(i => i.InvoiceNumber)
             .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "N/A";
 
-        // Invoice amount: sum of TotalAmount across all team invoices
-        var totalAmount = allInvoices
+        // Invoice amount: sum of TotalAmount across all invoices
+        var totalAmount = invoiceProjections
             .Where(i => i.TotalAmount.HasValue)
             .Sum(i => i.TotalAmount!.Value);
 
         cardData.InvoiceAmountRaw = totalAmount;
         cardData.InvoiceAmount = FormatIndianCurrency(totalAmount);
 
-        // State: first Team's State field
+        // State: Teams.State first (dashboard flow), fall back to package.ActivityState (chatbot flow)
         cardData.State = package.Teams
             .Select(t => t.State)
-            .FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "N/A";
+            .FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))
+            ?? package.ActivityState
+            ?? "N/A";
 
         // Submitted timestamp
         cardData.SubmittedAt = package.CreatedAt;
@@ -232,9 +285,27 @@ public class NotificationDataService : INotificationDataService
     {
         if (package.Recommendation is null)
         {
-            cardData.Recommendation = "N/A";
-            cardData.RecommendationEmoji = "❓";
-            cardData.CardStyle = "default";
+            // Orchestrator hasn't run yet — derive a basic recommendation from invoice validation results.
+            // Binary: all checks passed → Approve, any failure → Reject.
+            if (package.ValidationResult != null)
+            {
+                var allPassed = package.ValidationResult.AllValidationsPassed;
+                cardData.Recommendation = allPassed ? "Approve" : "Reject";
+                cardData.RecommendationEmoji = allPassed ? "✅" : "❌";
+                cardData.CardStyle = "default";
+                cardData.ConfidenceScore = 0;
+                cardData.ConfidenceScoreFormatted = "Pending";
+            }
+            else
+            {
+                // No validation result at all — count fails across all check groups
+                // Default to Approve unless we have evidence of failures
+                cardData.Recommendation = "Approve";
+                cardData.RecommendationEmoji = "✅";
+                cardData.CardStyle = "default";
+                cardData.ConfidenceScore = 0;
+                cardData.ConfidenceScoreFormatted = "Pending";
+            }
             return;
         }
 
@@ -514,17 +585,30 @@ public class NotificationDataService : INotificationDataService
             using var doc = JsonDocument.Parse(extractedDataJson);
             var root = doc.RootElement;
 
-            int? total = root.TryGetProperty("totalRecords", out var t) && t.ValueKind == JsonValueKind.Number
-                ? t.GetInt32()
-                : root.TryGetProperty("total_records", out var t2) && t2.ValueKind == JsonValueKind.Number
-                    ? t2.GetInt32()
-                    : null;
+            // Try various casing variants for TotalRecords
+            int? total = null;
+            foreach (var key in new[] { "TotalRecords", "totalRecords", "total_records", "Total" })
+            {
+                if (root.TryGetProperty(key, out var t) && t.ValueKind == JsonValueKind.Number)
+                { total = t.GetInt32(); break; }
+            }
 
-            int? complete = root.TryGetProperty("completeRecords", out var c) && c.ValueKind == JsonValueKind.Number
-                ? c.GetInt32()
-                : root.TryGetProperty("complete_records", out var c2) && c2.ValueKind == JsonValueKind.Number
-                    ? c2.GetInt32()
-                    : null;
+            // If TotalRecords not found, count the Records array
+            if (!total.HasValue)
+            {
+                foreach (var key in new[] { "Records", "records" })
+                {
+                    if (root.TryGetProperty(key, out var arr) && arr.ValueKind == JsonValueKind.Array)
+                    { total = arr.GetArrayLength(); break; }
+                }
+            }
+
+            int? complete = null;
+            foreach (var key in new[] { "CompleteRecords", "completeRecords", "complete_records" })
+            {
+                if (root.TryGetProperty(key, out var c) && c.ValueKind == JsonValueKind.Number)
+                { complete = c.GetInt32(); break; }
+            }
 
             if (total.HasValue && complete.HasValue)
                 return $"{total.Value} records ({complete.Value} complete)";
@@ -562,6 +646,8 @@ public class NotificationDataService : INotificationDataService
             .Include(p => p.ActivitySummary)
             .Include(p => p.EnquiryDocument)
             .Include(p => p.Teams).ThenInclude(t => t.Invoices)
+            .Include(p => p.Teams).ThenInclude(t => t.Photos.Where(ph => !ph.IsDeleted))
+            .AsSplitQuery()
             .AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
 
@@ -649,6 +735,21 @@ public class NotificationDataService : INotificationDataService
         }
 
         // Build validation check groups from ALL documents' validation results
+        // Load photo ValidationResults separately by DocumentType + photo IDs
+        var photoIdsBreakdown = package.Teams
+            .SelectMany(t => t.Photos)
+            .Where(p => !p.IsDeleted)
+            .Select(p => p.Id)
+            .ToList();
+        if (photoIdsBreakdown.Count > 0)
+        {
+            var photoVrs = await _context.ValidationResults
+                .AsNoTracking()
+                .Where(vr => vr.DocumentType == DocumentType.TeamPhoto && photoIdsBreakdown.Contains(vr.DocumentId))
+                .ToListAsync(cancellationToken);
+            var existingVrIds = allValidationResults.Select(v => v.Id).ToHashSet();
+            allValidationResults.AddRange(photoVrs.Where(v => !existingVrIds.Contains(v.Id)));
+        }
         breakdown.CheckGroups = BuildCheckGroupsFromAllDocuments(package, allValidationResults);
 
         _logger.LogInformation(
@@ -813,88 +914,112 @@ public class NotificationDataService : INotificationDataService
             });
         }
 
-        // Activity Summary: use the same validation as the conversational chatbot
+        // Activity Summary: read from ValidationResults.RuleResultsJson (same pattern as Enquiry Dump)
         var actSummary = package.ActivitySummary;
         if (actSummary != null && !actSummary.IsDeleted)
         {
-            string? dealerName = actSummary.DealerName;
-            string? location = null;
+            var actVr = allResults.FirstOrDefault(vr =>
+                vr.DocumentId == actSummary.Id ||
+                vr.DocumentType == Domain.Enums.DocumentType.ActivitySummary);
 
-            if (!string.IsNullOrEmpty(actSummary.ExtractedDataJson))
+            bool builtFromRules = false;
+            if (actVr?.RuleResultsJson != null)
             {
                 try
                 {
-                    var json = JsonDocument.Parse(actSummary.ExtractedDataJson).RootElement;
-                    if (string.IsNullOrWhiteSpace(dealerName))
+                    var rules = JsonSerializer.Deserialize<List<EnquiryRuleResult>>(
+                        actVr.RuleResultsJson,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                    if (rules != null && rules.Count > 0)
                     {
-                        if (json.TryGetProperty("DealerName", out var dn) || json.TryGetProperty("dealerName", out dn))
-                            dealerName = dn.GetString();
-                    }
-                    if (json.TryGetProperty("Rows", out var rows) || json.TryGetProperty("rows", out rows))
-                    {
-                        if (rows.ValueKind == JsonValueKind.Array && rows.GetArrayLength() > 0)
+                        foreach (var rule in rules)
                         {
-                            var first = rows[0];
-                            if (string.IsNullOrWhiteSpace(dealerName))
+                            groups.Add(new ValidationCheckGroup
                             {
-                                if (first.TryGetProperty("DealerName", out var rdn) || first.TryGetProperty("dealerName", out rdn))
-                                    dealerName = rdn.GetString();
-                            }
-                            if (first.TryGetProperty("Location", out var loc) || first.TryGetProperty("location", out loc))
-                                location = loc.GetString();
+                                GroupName = "Activity Summary",
+                                Status = rule.Passed ? "Pass" : "Fail",
+                                Details = rule.Label ?? rule.RuleCode ?? "Check",
+                                Evidence = rule.ExtractedValue
+                                    ?? (rule.Passed ? "Present" : rule.Message ?? "Not detected")
+                            });
                         }
+                        builtFromRules = true;
                     }
                 }
-                catch { /* malformed JSON */ }
+                catch { /* malformed JSON — fall through to hardcoded */ }
             }
 
-            bool dealerPresent = !string.IsNullOrWhiteSpace(dealerName);
-            bool locationPresent = !string.IsNullOrWhiteSpace(location);
-            bool dealerLocationPassed = dealerPresent && locationPresent;
+            // Fallback: hardcoded 3-row layout if no RuleResultsJson available
+            if (!builtFromRules)
+            {
+                string? dealerName = actSummary.DealerName;
+                string? location = null;
 
-            string evidence;
-            if (dealerLocationPassed)
-            {
-                evidence = string.Join(", ", new[] { dealerName, location }.Where(s => !string.IsNullOrWhiteSpace(s)));
-            }
-            else if (!dealerPresent && !locationPresent)
-            {
-                evidence = "Dealer name and location not detected";
-            }
-            else if (!dealerPresent)
-            {
-                evidence = $"Location: {location} — Dealer name not detected";
-            }
-            else
-            {
-                evidence = $"Dealer: {dealerName} — Location not detected";
-            }
+                if (!string.IsNullOrEmpty(actSummary.ExtractedDataJson))
+                {
+                    try
+                    {
+                        var json = JsonDocument.Parse(actSummary.ExtractedDataJson).RootElement;
+                        if (string.IsNullOrWhiteSpace(dealerName))
+                        {
+                            if (json.TryGetProperty("DealerName", out var dn) || json.TryGetProperty("dealerName", out dn))
+                                dealerName = dn.GetString();
+                        }
+                        if (json.TryGetProperty("Rows", out var rows) || json.TryGetProperty("rows", out rows))
+                        {
+                            if (rows.ValueKind == JsonValueKind.Array && rows.GetArrayLength() > 0)
+                            {
+                                var first = rows[0];
+                                if (string.IsNullOrWhiteSpace(dealerName))
+                                {
+                                    if (first.TryGetProperty("DealerName", out var rdn) || first.TryGetProperty("dealerName", out rdn))
+                                        dealerName = rdn.GetString();
+                                }
+                                if (first.TryGetProperty("Location", out var loc) || first.TryGetProperty("location", out loc))
+                                    location = loc.GetString();
+                            }
+                        }
+                    }
+                    catch { /* malformed JSON */ }
+                }
 
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = "Activity Summary",
-                Status = dealerLocationPassed ? "Pass" : "Fail",
-                Details = "Dealer & Location Details",
-                Evidence = evidence
-            });
+                bool dealerPresent = !string.IsNullOrWhiteSpace(dealerName);
+                bool locationPresent = !string.IsNullOrWhiteSpace(location);
+                bool dealerLocationPassed = dealerPresent && locationPresent;
 
-            // 2. Total No. of Days (Info — always pass, show extracted value)
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = "Activity Summary",
-                Status = "Pass",
-                Details = "Total No. of Days",
-                Evidence = actSummary.TotalDays.HasValue ? actSummary.TotalDays.ToString()! : "Not extracted"
-            });
+                string evidence;
+                if (dealerLocationPassed)
+                    evidence = string.Join(", ", new[] { dealerName, location }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                else if (!dealerPresent && !locationPresent)
+                    evidence = "Dealer name and location not detected";
+                else if (!dealerPresent)
+                    evidence = $"Location: {location} — Dealer name not detected";
+                else
+                    evidence = $"Dealer: {dealerName} — Location not detected";
 
-            // 3. Total No. of Working Days (Info — always pass, show extracted value)
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = "Activity Summary",
-                Status = "Pass",
-                Details = "Total No. of Working Days",
-                Evidence = actSummary.TotalWorkingDays.HasValue ? actSummary.TotalWorkingDays.ToString()! : "Not extracted"
-            });
+                groups.Add(new ValidationCheckGroup
+                {
+                    GroupName = "Activity Summary",
+                    Status = dealerLocationPassed ? "Pass" : "Fail",
+                    Details = "Dealer & Location Details",
+                    Evidence = evidence
+                });
+                groups.Add(new ValidationCheckGroup
+                {
+                    GroupName = "Activity Summary",
+                    Status = "Pass",
+                    Details = "Total No. of Days",
+                    Evidence = actSummary.TotalDays.HasValue ? actSummary.TotalDays.ToString()! : "Not extracted"
+                });
+                groups.Add(new ValidationCheckGroup
+                {
+                    GroupName = "Activity Summary",
+                    Status = "Pass",
+                    Details = "Total No. of Working Days",
+                    Evidence = actSummary.TotalWorkingDays.HasValue ? actSummary.TotalWorkingDays.ToString()! : "Not extracted"
+                });
+            }
         }
 
         // Invoice: use the same 9 specific checks as the conversational chatbot.
@@ -1102,6 +1227,182 @@ public class NotificationDataService : INotificationDataService
             return BuildCheckGroups(allResults.FirstOrDefault());
         }
 
+        // Enquiry Dump validation section — read from ValidationResults.RuleResultsJson
+        var enquiry = package.EnquiryDocument;
+        if (enquiry != null && !enquiry.IsDeleted)
+        {
+            // Find the ValidationResult for this enquiry document
+            var enquiryVr = allResults.FirstOrDefault(vr =>
+                vr.DocumentId == enquiry.Id ||
+                vr.DocumentType == Domain.Enums.DocumentType.EnquiryDocument);
+
+            if (enquiryVr?.RuleResultsJson != null)
+            {
+                try
+                {
+                    var rules = JsonSerializer.Deserialize<List<EnquiryRuleResult>>(
+                        enquiryVr.RuleResultsJson,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                    if (rules != null)
+                    {
+                        // Display in the required order
+                        var orderedCodes = new[]
+                        {
+                            "EQ_STATE", "EQ_DATE", "EQ_DEALER_CODE", "EQ_DEALER_NAME",
+                            "EQ_DISTRICT", "EQ_PINCODE", "EQ_CUSTOMER_NAME",
+                            "EQ_CUSTOMER_PHONE", "EQ_TEST_RIDE"
+                        };
+
+                        foreach (var code in orderedCodes)
+                        {
+                            var rule = rules.FirstOrDefault(r =>
+                                r.RuleCode?.Equals(code, StringComparison.OrdinalIgnoreCase) == true);
+                            if (rule == null) continue;
+
+                            groups.Add(new ValidationCheckGroup
+                            {
+                                GroupName = "Enquiry Dump",
+                                Status = rule.Passed ? "Pass" : "Fail",
+                                Details = rule.Label ?? code,
+                                Evidence = rule.ExtractedValue
+                                    ?? (rule.Passed ? "Present" : rule.Message ?? "Not detected")
+                            });
+                        }
+                    }
+                }
+                catch { /* malformed JSON — fall through to basic check */ }
+            }
+
+            // Fallback if no ValidationResult found
+            if (!groups.Any(g => g.GroupName == "Enquiry Dump"))
+            {
+                groups.Add(new ValidationCheckGroup
+                {
+                    GroupName = "Enquiry Dump",
+                    Status = "Fail",
+                    Details = "Validation",
+                    Evidence = "No validation results found"
+                });
+            }
+        }
+
+        // Photos validation section — one row per rule per photo, grouped by team
+        var teams = package.Teams.Where(t => !t.IsDeleted).ToList();
+        if (teams.Any())
+        {
+            for (int ti = 0; ti < teams.Count; ti++)
+            {
+                var team = teams[ti];
+                var teamLabel = team.CampaignName ?? $"Team {ti + 1}";
+                var photos = team.Photos.Where(p => !p.IsDeleted).ToList();
+
+                if (photos.Count == 0)
+                {
+                    groups.Add(new ValidationCheckGroup
+                    {
+                        GroupName = "Team Photos",
+                        Status = "Fail",
+                        Details = $"{teamLabel} — Photo Count",
+                        Evidence = "No photos uploaded"
+                    });
+                    continue;
+                }
+
+                // Collect all rule results across all photos for this team
+                // Key: ruleCode → aggregate (all passed, pass values, fail messages)
+                var ruleAgg = new Dictionary<string, (string Label, bool AllPassed, List<string> PassValues, List<string> FailMessages)>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var photo in photos)
+                {
+                    var photoVr = photo.ValidationResult
+                        ?? allResults.FirstOrDefault(vr => vr.DocumentId == photo.Id);
+                    if (photoVr?.RuleResultsJson == null) continue;
+
+                    try
+                    {
+                        var rules = JsonSerializer.Deserialize<List<EnquiryRuleResult>>(
+                            photoVr.RuleResultsJson,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                        if (rules == null) continue;
+
+                        foreach (var rule in rules)
+                        {
+                            if (string.IsNullOrWhiteSpace(rule.RuleCode)) continue;
+                            var key = rule.RuleCode!;
+                            if (!ruleAgg.TryGetValue(key, out var agg))
+                                agg = (rule.Label ?? key, true, new List<string>(), new List<string>());
+
+                            bool nowPassed = agg.AllPassed && rule.Passed;
+
+                            if (rule.Passed)
+                            {
+                                if (!string.IsNullOrWhiteSpace(rule.ExtractedValue))
+                                    agg.PassValues.Add(rule.ExtractedValue!);
+                            }
+                            else
+                            {
+                                var failMsg = rule.Message ?? rule.ExtractedValue ?? "Not detected";
+                                if (!string.IsNullOrWhiteSpace(failMsg))
+                                    agg.FailMessages.Add(failMsg);
+                            }
+
+                            ruleAgg[key] = (agg.Label, nowPassed, agg.PassValues, agg.FailMessages);
+                        }
+                    }
+                    catch { /* malformed JSON */ }
+                }
+
+                if (ruleAgg.Count > 0)
+                {
+                    // Photo count row first
+                    bool enoughPhotos = photos.Count >= 3;
+                    groups.Add(new ValidationCheckGroup
+                    {
+                        GroupName = "Team Photos",
+                        Status = enoughPhotos ? "Pass" : "Fail",
+                        Details = $"{teamLabel} — Photo Count",
+                        Evidence = enoughPhotos
+                            ? $"{photos.Count} photos uploaded"
+                            : $"Only {photos.Count} photo(s) — minimum 3 required"
+                    });
+
+                    // One row per rule (aggregated across all photos in this team)
+                    foreach (var (code, (label, allPassed, passValues, failMessages)) in ruleAgg)
+                    {
+                        string evidence;
+                        if (allPassed)
+                            evidence = passValues.Count > 0 ? string.Join(", ", passValues.Distinct()) : "Present";
+                        else
+                            evidence = failMessages.Count > 0 ? string.Join("; ", failMessages.Distinct()) : "Not detected";
+
+                        groups.Add(new ValidationCheckGroup
+                        {
+                            GroupName = "Team Photos",
+                            Status = allPassed ? "Pass" : "Fail",
+                            Details = $"{teamLabel} — {label}",
+                            Evidence = evidence
+                        });
+                    }
+                }
+                else
+                {
+                    // Fallback: no ValidationResult found — just show photo count
+                    bool enoughPhotos = photos.Count >= 3;
+                    groups.Add(new ValidationCheckGroup
+                    {
+                        GroupName = "Team Photos",
+                        Status = enoughPhotos ? "Pass" : "Fail",
+                        Details = $"{teamLabel} — Photo Count",
+                        Evidence = enoughPhotos
+                            ? $"{photos.Count} photos uploaded"
+                            : $"Only {photos.Count} photo(s) — minimum 3 required"
+                    });
+                }
+            }
+        }
+
         return groups;
     }
 
@@ -1179,4 +1480,16 @@ public class NotificationDataService : INotificationDataService
 
         return result;
     }
+}
+
+/// <summary>
+/// Minimal DTO for deserializing enquiry dump rule results from RuleResultsJson.
+/// </summary>
+file sealed class EnquiryRuleResult
+{
+    public string? RuleCode { get; set; }
+    public string? Label { get; set; }
+    public bool Passed { get; set; }
+    public string? ExtractedValue { get; set; }
+    public string? Message { get; set; }
 }

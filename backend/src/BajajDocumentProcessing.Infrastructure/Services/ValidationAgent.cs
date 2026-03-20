@@ -1598,7 +1598,7 @@ public class ValidationAgent : IValidationAgent
 
         var documentResults = BuildPerDocumentResults(result, package);
 
-        foreach (var (documentType, documentId, allPassed, failureReason, detailsJson) in documentResults)
+        foreach (var (documentType, documentId, allPassed, failureReason, detailsJson, ruleResultsJson) in documentResults)
         {
             try
             {
@@ -1612,6 +1612,7 @@ public class ValidationAgent : IValidationAgent
                     existing.AllValidationsPassed = allPassed;
                     existing.FailureReason = failureReason;
                     existing.ValidationDetailsJson = detailsJson;
+                    existing.RuleResultsJson = ruleResultsJson;
                     existing.UpdatedAt = DateTime.UtcNow;
                 }
                 else
@@ -1624,6 +1625,7 @@ public class ValidationAgent : IValidationAgent
                         AllValidationsPassed = allPassed,
                         FailureReason = failureReason,
                         ValidationDetailsJson = detailsJson,
+                        RuleResultsJson = ruleResultsJson,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     });
@@ -1647,12 +1649,17 @@ public class ValidationAgent : IValidationAgent
 
     /// <summary>
     /// Builds a list of per-document-type validation result tuples from the package validation result.
+    /// Each tuple includes RuleResultsJson in the same format as the chatbot pipeline.
     /// </summary>
-    private static List<(DocumentType Type, Guid DocumentId, bool AllPassed, string? FailureReason, string? DetailsJson)>
+    private static List<(DocumentType Type, Guid DocumentId, bool AllPassed, string? FailureReason, string? DetailsJson, string? RuleResultsJson)>
         BuildPerDocumentResults(PackageValidationResult result, Domain.Entities.DocumentPackage package)
     {
-        var items = new List<(DocumentType, Guid, bool, string?, string?)>();
+        var items = new List<(DocumentType, Guid, bool, string?, string?, string?)>();
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
+
+        // Helper: serialize rules list to RuleResultsJson
+        static string? SerializeRules(IEnumerable<object> rules) =>
+            JsonSerializer.Serialize(rules);
 
         // PO: SAP verification + date validation
         if (package.PO != null)
@@ -1666,9 +1673,15 @@ public class ValidationAgent : IValidationAgent
                 issues.AddRange(result.DateValidation.DateIssues);
 
             var details = new { sapVerification = result.SAPVerification, dateValidation = result.DateValidation };
+            var poRules = new List<object>
+            {
+                new { ruleCode = "PO_SAP_VERIFIED", type = "Required", passed = result.SAPVerification?.IsVerified ?? true, isWarning = false, label = "SAP Verification", extractedValue = result.SAPVerification?.IsVerified == true ? "Verified" : (string?)null, message = result.SAPVerification?.IsVerified == false ? string.Join("; ", result.SAPVerification.Discrepancies) : null },
+                new { ruleCode = "PO_DATE_VALID", type = "Required", passed = result.DateValidation?.IsValid ?? true, isWarning = false, label = "Date Validation", extractedValue = (string?)null, message = result.DateValidation?.IsValid == false ? string.Join("; ", result.DateValidation.DateIssues) : null }
+            };
             items.Add((DocumentType.PO, package.PO.Id, passed,
                 issues.Count > 0 ? string.Join("; ", issues) : null,
-                JsonSerializer.Serialize(details, jsonOptions)));
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(poRules)));
         }
 
         // Invoice: field presence + cross-document
@@ -1684,9 +1697,19 @@ public class ValidationAgent : IValidationAgent
                 invIssues.AddRange(result.InvoiceCrossDocument.Issues);
 
             var details = new { fieldPresence = result.InvoiceFieldPresence, crossDocument = result.InvoiceCrossDocument };
+            var invRules = new List<object>
+            {
+                new { ruleCode = "INV_NUMBER_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Number") ?? false), isWarning = false, label = "Invoice Number", extractedValue = invoiceDoc.InvoiceNumber, message = (string?)null },
+                new { ruleCode = "INV_DATE_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Date") ?? false), isWarning = false, label = "Invoice Date", extractedValue = invoiceDoc.InvoiceDate?.ToString("dd-MMM-yyyy"), message = (string?)null },
+                new { ruleCode = "INV_AMOUNT_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Amount") ?? false), isWarning = false, label = "Invoice Amount", extractedValue = invoiceDoc.TotalAmount.HasValue ? $"₹{invoiceDoc.TotalAmount:N0}" : null, message = (string?)null },
+                new { ruleCode = "INV_GST_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("GST Number") ?? false), isWarning = false, label = "GST Number", extractedValue = invoiceDoc.GSTNumber, message = (string?)null },
+                new { ruleCode = "INV_PO_MATCH", type = "Required", passed = result.InvoiceCrossDocument?.PONumberMatches ?? true, isWarning = false, label = "PO Number Match", extractedValue = (string?)null, message = result.InvoiceCrossDocument?.PONumberMatches == false ? "PO number mismatch" : null },
+                new { ruleCode = "INV_AMOUNT_VS_BALANCE", type = "Required", passed = result.InvoiceCrossDocument?.AmountWithinPOBalance ?? true, isWarning = false, label = "Amount vs PO Balance", extractedValue = (string?)null, message = result.InvoiceCrossDocument?.AmountWithinPOBalance == false ? "Invoice amount exceeds PO balance" : null }
+            };
             items.Add((DocumentType.Invoice, invoiceDoc.Id, invPassed,
                 invIssues.Count > 0 ? string.Join("; ", invIssues) : null,
-                JsonSerializer.Serialize(details, jsonOptions)));
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(invRules)));
         }
 
         // CostSummary: field presence + cross-document
@@ -1701,9 +1724,20 @@ public class ValidationAgent : IValidationAgent
                 issues.AddRange(result.CostSummaryCrossDocument.Issues);
 
             var details = new { fieldPresence = result.CostSummaryFieldPresence, crossDocument = result.CostSummaryCrossDocument };
+            var cs = package.CostSummary;
+            var csRules = new List<object>
+            {
+                new { ruleCode = "CS_PLACE_OF_SUPPLY", type = "Required", passed = !string.IsNullOrWhiteSpace(cs.PlaceOfSupply), isWarning = false, label = "Place of Supply", extractedValue = cs.PlaceOfSupply, message = (string?)null },
+                new { ruleCode = "CS_NUMBER_OF_DAYS", type = "Required", passed = cs.NumberOfDays.HasValue && cs.NumberOfDays > 0, isWarning = false, label = "No. of Days", extractedValue = cs.NumberOfDays?.ToString(), message = (string?)null },
+                new { ruleCode = "CS_NUMBER_OF_ACTIVATIONS", type = "Required", passed = cs.NumberOfActivations.HasValue && cs.NumberOfActivations > 0, isWarning = false, label = "No. of Activations", extractedValue = cs.NumberOfActivations?.ToString(), message = (string?)null },
+                new { ruleCode = "CS_NUMBER_OF_TEAMS", type = "Required", passed = cs.NumberOfTeams.HasValue && cs.NumberOfTeams > 0, isWarning = false, label = "No. of Teams", extractedValue = cs.NumberOfTeams?.ToString(), message = (string?)null },
+                new { ruleCode = "CS_ELEMENT_WISE_COST", type = "Required", passed = !string.IsNullOrWhiteSpace(cs.ElementWiseCostsJson) && cs.ElementWiseCostsJson != "[]", isWarning = false, label = "Element-wise Cost", extractedValue = "Cost breakdown detected", message = (string?)null },
+                new { ruleCode = "CS_ELEMENT_WISE_QTY", type = "Required", passed = !string.IsNullOrWhiteSpace(cs.ElementWiseQuantityJson) && cs.ElementWiseQuantityJson != "[]", isWarning = false, label = "Element-wise Quantity", extractedValue = "Quantity breakdown detected", message = (string?)null }
+            };
             items.Add((DocumentType.CostSummary, package.CostSummary.Id, passed,
                 issues.Count > 0 ? string.Join("; ", issues) : null,
-                JsonSerializer.Serialize(details, jsonOptions)));
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(csRules)));
         }
 
         // ActivitySummary: field presence + cross-document
@@ -1718,9 +1752,21 @@ public class ValidationAgent : IValidationAgent
                 issues.AddRange(result.ActivityCrossDocument.Issues);
 
             var details = new { fieldPresence = result.ActivityFieldPresence, crossDocument = result.ActivityCrossDocument };
+            var act = package.ActivitySummary;
+            var actDays = act.TotalDays ?? 0;
+            var csDays = package.CostSummary?.NumberOfDays ?? 0;
+            var daysMatch = actDays == csDays;
+            var actRules = new List<object>
+            {
+                new { ruleCode = "AS_DEALER_LOCATION_PRESENT", type = "Required", passed = result.ActivityFieldPresence?.AllFieldsPresent ?? true, isWarning = false, label = "Dealer & Location Details", extractedValue = act.DealerName, message = (string?)null },
+                new { ruleCode = "AS_TOTAL_DAYS", type = "Info", passed = true, isWarning = false, label = "Total No. of Days", extractedValue = act.TotalDays?.ToString(), message = (string?)null },
+                new { ruleCode = "AS_TOTAL_WORKING_DAYS", type = "Info", passed = true, isWarning = false, label = "Total No. of Working Days", extractedValue = act.TotalWorkingDays?.ToString(), message = (string?)null },
+                new { ruleCode = "AS_DAYS_MATCH_COST_SUMMARY", type = "Required", passed = daysMatch, isWarning = false, label = "Days Match with Cost Summary", extractedValue = $"Activity: {actDays} days | Cost Summary: {csDays} days", message = daysMatch ? null : $"Activity Summary days ({actDays}) does not match Cost Summary days ({csDays})" }
+            };
             items.Add((DocumentType.ActivitySummary, package.ActivitySummary.Id, passed,
                 issues.Count > 0 ? string.Join("; ", issues) : null,
-                JsonSerializer.Serialize(details, jsonOptions)));
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(actRules)));
         }
 
         // EnquiryDocument: field presence + cross-document
@@ -1735,9 +1781,24 @@ public class ValidationAgent : IValidationAgent
                 issues.AddRange(result.EnquiryDumpCrossDocument.Issues);
 
             var details = new { fieldPresence = result.EnquiryDumpFieldPresence, crossDocument = result.EnquiryDumpCrossDocument };
+            // Build per-field rules from EnquiryDumpFieldPresence
+            var eq = result.EnquiryDumpFieldPresence;
+            var eqRules = new List<object>
+            {
+                new { ruleCode = "EQ_STATE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("State")) ?? false), isWarning = false, label = "State", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_DATE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Date")) ?? false), isWarning = false, label = "Date", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_DEALER_CODE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Dealer Code")) ?? false), isWarning = false, label = "Dealer Code", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_DEALER_NAME", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Dealer Name")) ?? false), isWarning = false, label = "Dealer Name", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_DISTRICT", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("District")) ?? false), isWarning = false, label = "District", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_PINCODE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Pincode")) ?? false), isWarning = false, label = "Pincode", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_CUSTOMER_NAME", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Customer Name")) ?? false), isWarning = false, label = "Customer Name", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_CUSTOMER_PHONE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Customer Phone")) ?? false), isWarning = false, label = "Customer Phone", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_TEST_RIDE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Test Ride")) ?? false), isWarning = false, label = "Test Ride", extractedValue = (string?)null, message = (string?)null }
+            };
             items.Add((DocumentType.EnquiryDocument, package.EnquiryDocument.Id, passed,
                 issues.Count > 0 ? string.Join("; ", issues) : null,
-                JsonSerializer.Serialize(details, jsonOptions)));
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(eqRules)));
         }
 
         // TeamPhotos: field presence + cross-document (use package ID as the "document" since photos are a collection)
@@ -1752,9 +1813,19 @@ public class ValidationAgent : IValidationAgent
                 issues.AddRange(result.PhotoCrossDocument.Issues);
 
             var details = new { fieldPresence = result.PhotoFieldPresence, crossDocument = result.PhotoCrossDocument };
+            var ph = result.PhotoFieldPresence;
+            var phRules = new List<object>
+            {
+                new { ruleCode = "PHOTO_COUNT", type = "Required", passed = ph?.AllFieldsPresent ?? true, isWarning = false, label = "Photo Count", extractedValue = (string?)null, message = ph?.AllFieldsPresent == false ? string.Join("; ", ph.MissingFields) : null },
+                new { ruleCode = "PHOTO_DATE_VISIBLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("date") || f.Contains("Date")) ?? false), isWarning = false, label = "Date", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "PHOTO_GPS_VISIBLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("GPS") || f.Contains("location")) ?? false), isWarning = false, label = "GPS", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "PHOTO_BLUE_TSHIRT", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("t-shirt") || f.Contains("tshirt") || f.Contains("Blue")) ?? false), isWarning = false, label = "Blue T-shirt", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "PHOTO_3W_VEHICLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("vehicle") || f.Contains("Vehicle") || f.Contains("3W")) ?? false), isWarning = false, label = "3W Vehicle", extractedValue = (string?)null, message = (string?)null }
+            };
             items.Add((DocumentType.TeamPhoto, package.Id, passed,
                 issues.Count > 0 ? string.Join("; ", issues) : null,
-                JsonSerializer.Serialize(details, jsonOptions)));
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(phRules)));
         }
 
         return items;
