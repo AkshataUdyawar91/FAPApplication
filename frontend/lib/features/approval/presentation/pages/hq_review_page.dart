@@ -17,6 +17,7 @@ import '../../../../core/widgets/kpi_card.dart';
 import '../../../../core/widgets/quarter_year_filter.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/network/dio_client.dart';
 import '../../../analytics/data/models/quarterly_fap_kpi_model.dart';
 
 class HQReviewPage extends ConsumerStatefulWidget {
@@ -34,7 +35,7 @@ class HQReviewPage extends ConsumerStatefulWidget {
 }
 
 class _HQReviewPageState extends ConsumerState<HQReviewPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  Dio get _dio => ref.read(dioProvider);
   final _searchController = TextEditingController();
 
   String _statusFilter = 'all';
@@ -721,7 +722,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
         'FAP Number,PO Number,PO Amount,Invoice Number,Invoice Amount,Submitted Date,AI Score,Status');
 
     for (final doc in filtered) {
-      final fapNumber =
+      final fapNumber = doc['submissionNumber']?.toString() ??
           'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
       final poNumber = doc['poNumber']?.toString() ?? '-';
       final poAmount = doc['poAmount']?.toString() ?? '';
@@ -806,7 +807,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
 
   Widget _buildMobileDocumentCard(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber =
+    final fapNumber = doc['submissionNumber']?.toString() ??
         'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final poAmount = doc['poAmount'];
@@ -993,7 +994,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
 
   DataRow _buildDocumentDataRow(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber =
+    final fapNumber = doc['submissionNumber']?.toString() ??
         'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final poAmount = doc['poAmount'];
