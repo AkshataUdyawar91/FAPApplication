@@ -1245,8 +1245,8 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "dealer_search_results",
-            Message = dealers.Count > 0
-                ? $"Found {dealers.Count} dealer(s) matching \"{query}\". Select one:"
+            Message = dealers.Count() > 0
+                ? $"Found {dealers.Count()} dealer(s) matching \"{query}\". Select one:"
                 : $"No dealers found matching \"{query}\". Try a different name.",
             Dealers = dealers,
             InputHint = "Type dealer name (min 2 chars)...",
