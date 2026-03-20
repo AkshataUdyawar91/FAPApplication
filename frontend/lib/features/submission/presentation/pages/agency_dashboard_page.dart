@@ -1,8 +1,11 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/router/app_router.dart';
 
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -13,7 +16,7 @@ import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/pagination_bar.dart';
 
-class AgencyDashboardPage extends StatefulWidget {
+class AgencyDashboardPage extends ConsumerStatefulWidget {
   final String token;
   final String userName;
 
@@ -24,11 +27,13 @@ class AgencyDashboardPage extends StatefulWidget {
   });
 
   @override
-  State<AgencyDashboardPage> createState() => _AgencyDashboardPageState();
+  ConsumerState<AgencyDashboardPage> createState() =>
+      _AgencyDashboardPageState();
 }
 
-class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
+class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    ..interceptors.add(PrettyDioLogger());
   final _searchController = TextEditingController();
 
   String _statusFilter = 'all';
@@ -277,7 +282,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   userName: widget.userName,
                   userRole: 'Agency',
                   navItems: _getNavItems(context),
-                  onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                  onLogout: () => handleLogout(context, ref),
                 )
               : null,
           body: Column(
@@ -291,8 +296,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                         userName: widget.userName,
                         userRole: 'Agency',
                         navItems: _getNavItems(context),
-                        onLogout: () =>
-                            Navigator.pushReplacementNamed(context, '/'),
+                        onLogout: () => handleLogout(context, ref),
                         isCollapsed: _isSidebarCollapsed,
                         onToggleCollapse: () => setState(
                             () => _isSidebarCollapsed = !_isSidebarCollapsed),
@@ -347,7 +351,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   }
 
   void _navigateToUpload() {
-    Navigator.pushNamed(context, '/agency/upload', arguments: {
+    context.pushNamed('agency-upload', extra: {
       'token': widget.token,
       'userName': widget.userName,
     });
@@ -843,10 +847,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () {
-                  Navigator.pushNamed(
-                    context,
-                    '/agency/submission-detail',
-                    arguments: {
+                  context.pushNamed(
+                    'submission-detail',
+                    extra: {
                       'submissionId': request['id'],
                       'token': widget.token,
                       'userName': widget.userName,
@@ -983,10 +986,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                             color: AppColors.primary,
                             onPressed: () {
                               // Navigate to detailed view page
-                              Navigator.pushNamed(
-                                context,
-                                '/agency/submission-detail',
-                                arguments: {
+                              context.pushNamed(
+                                'submission-detail',
+                                extra: {
                                   'submissionId': r['id'],
                                   'token': widget.token,
                                   'userName': widget.userName,

@@ -22,10 +22,10 @@ namespace BajajDocumentProcessing.Tests.Infrastructure.Properties;
 public class EmailAgentProperties
 {
     /// <summary>
-    /// Property: Data failure emails should be sent to the agency user who submitted the package
+    /// Property: Validation failure emails should be sent to the agency user who submitted the package
     /// </summary>
     [Property(MaxTest = 10)]
-    public Property EmailRecipientRouting_DataFailure_ShouldSendToAgency()
+    public Property EmailRecipientRouting_ValidationFailure_ShouldSendToAgency()
     {
         return Prop.ForAll(
             Arb.Default.Guid().Generator.ToArbitrary(),
@@ -53,10 +53,10 @@ public class EmailAgentProperties
     }
 
     /// <summary>
-    /// Unit test: Data pass email should be sent to ASM
+    /// Unit test: Pending Circle Head email should be sent to ASM
     /// </summary>
     [Fact]
-    public async Task EmailRecipientRouting_DataPass_ShouldSendToASM()
+    public async Task EmailRecipientRouting_PendingCircleHead_ShouldSendToASM()
     {
         // Arrange
         var packageId = Guid.NewGuid();
@@ -74,10 +74,10 @@ public class EmailAgentProperties
     }
 
     /// <summary>
-    /// Unit test: Approved email should be sent to agency
+    /// Unit test: RA approved email should be sent to agency
     /// </summary>
     [Fact]
-    public async Task EmailRecipientRouting_Approved_ShouldSendToAgency()
+    public async Task EmailRecipientRouting_RaApproved_ShouldSendToAgency()
     {
         // Arrange
         var packageId = Guid.NewGuid();
@@ -93,10 +93,10 @@ public class EmailAgentProperties
     }
 
     /// <summary>
-    /// Unit test: Rejected email should be sent to agency
+    /// Unit test: RA rejected email should be sent to agency
     /// </summary>
     [Fact]
-    public async Task EmailRecipientRouting_Rejected_ShouldSendToAgency()
+    public async Task EmailRecipientRouting_RaRejected_ShouldSendToAgency()
     {
         // Arrange
         var packageId = Guid.NewGuid();
@@ -106,7 +106,7 @@ public class EmailAgentProperties
         SetupMockPackageWithUser(mockContext, packageId, agencyEmail, UserRole.Agency);
 
         // Act
-        var result = await agent.SendRejectedEmailAsync(packageId, agencyEmail, reason, CancellationToken.None);
+        var result = await agent.SendRaRejectedEmailAsync(packageId, reason, CancellationToken.None);
 
         // Assert
         Assert.True(result.Success);
@@ -162,10 +162,10 @@ public class EmailAgentProperties
     }
 
     /// <summary>
-    /// Unit test: Email should include validation issues in data failure scenario
+    /// Unit test: Email should include validation issues in validation failure scenario
     /// </summary>
     [Fact]
-    public async Task EmailContent_DataFailure_ShouldIncludeValidationIssues()
+    public async Task EmailContent_ValidationFailure_ShouldIncludeValidationIssues()
     {
         // Arrange
         var packageId = Guid.NewGuid();
@@ -199,10 +199,10 @@ public class EmailAgentProperties
     }
 
     /// <summary>
-    /// Unit test: Email should include confidence score in data pass scenario
+    /// Unit test: Email should include confidence score in pending Circle Head scenario
     /// </summary>
     [Fact]
-    public async Task EmailContent_DataPass_ShouldIncludeConfidenceScore()
+    public async Task EmailContent_PendingCircleHead_ShouldIncludeConfidenceScore()
     {
         // Arrange
         var packageId = Guid.NewGuid();
@@ -233,7 +233,7 @@ public class EmailAgentProperties
         SetupMockPackageWithUser(mockContext, packageId, agencyEmail, UserRole.Agency);
 
         // Act
-        var result = await agent.SendRejectedEmailAsync(packageId, agencyEmail, reason, CancellationToken.None);
+        var result = await agent.SendRaRejectedEmailAsync(packageId, reason, CancellationToken.None);
 
         // Assert
         Assert.True(result.Success);

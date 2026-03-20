@@ -18,6 +18,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   bool _rememberMe = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Prefill credentials for development
+    _emailController.text = 'agency@bajaj.com';
+    _passwordController.text = 'Password123!';
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
@@ -204,7 +212,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
                               // Remember me and forgot password
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
                                   Row(
                                     children: [
@@ -217,7 +226,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                               ? null
                                               : (value) {
                                                   setState(() {
-                                                    _rememberMe = value ?? false;
+                                                    _rememberMe =
+                                                        value ?? false;
                                                   });
                                                 },
                                         ),
@@ -233,9 +243,11 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                     onPressed: authState.isLoading
                                         ? null
                                         : () {
-                                            ScaffoldMessenger.of(context).showSnackBar(
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
                                               const SnackBar(
-                                                content: Text('Password reset coming soon'),
+                                                content: Text(
+                                                    'Password reset coming soon'),
                                               ),
                                             );
                                           },
@@ -252,7 +264,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               SizedBox(
                                 height: 48,
                                 child: ElevatedButton(
-                                  onPressed: authState.isLoading ? null : _handleLogin,
+                                  onPressed:
+                                      authState.isLoading ? null : _handleLogin,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFF2563EB),
                                     shape: RoundedRectangleBorder(
@@ -265,11 +278,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                           width: 20,
                                           child: CircularProgressIndicator(
                                             strokeWidth: 2,
-                                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                    Colors.white),
                                           ),
                                         )
                                       : const Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
                                           children: [
                                             Text(
                                               'Sign In',
