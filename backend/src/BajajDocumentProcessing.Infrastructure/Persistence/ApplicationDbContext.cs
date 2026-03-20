@@ -83,8 +83,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
 
         // Global query filter for soft delete
-        modelBuilder.Entity<User>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<Agency>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<DocumentPackage>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<PO>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Invoice>().HasQueryFilter(e => !e.IsDeleted);
@@ -103,7 +101,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<AuditLog>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Conversation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ConversationMessage>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<StateMapping>().HasQueryFilter(e => !e.IsDeleted);
 
         modelBuilder.Entity<POSyncLog>().HasQueryFilter(e => !e.IsDeleted);
 

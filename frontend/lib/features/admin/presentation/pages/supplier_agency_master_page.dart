@@ -8,10 +8,12 @@ class SupplierAgencyMasterPage extends StatefulWidget {
   const SupplierAgencyMasterPage({super.key, required this.token});
 
   @override
-  State<SupplierAgencyMasterPage> createState() => _SupplierAgencyMasterPageState();
+  State<SupplierAgencyMasterPage> createState() =>
+      _SupplierAgencyMasterPageState();
 }
 
-class _SupplierAgencyMasterPageState extends State<SupplierAgencyMasterPage> {
+class _SupplierAgencyMasterPageState
+    extends State<SupplierAgencyMasterPage> {
   late final Dio _dio;
   final _searchController = TextEditingController();
 
@@ -20,6 +22,7 @@ class _SupplierAgencyMasterPageState extends State<SupplierAgencyMasterPage> {
   int _page = 1;
   final int _pageSize = 10;
   int _totalCount = 0;
+  int _totalPages = 1;
   String _search = '';
 
   @override
@@ -53,41 +56,19 @@ class _SupplierAgencyMasterPageState extends State<SupplierAgencyMasterPage> {
               .map((e) => AgencyDto.fromJson(e as Map<String, dynamic>))
               .toList();
           _totalCount = data['totalCount'] as int;
+          _totalPages = data['totalPages'] as int? ?? 1;
         });
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load agencies: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Failed to load agencies: $e'),
+              backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _delete(AgencyDto agency) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Delete Agency'),
-        content: Text('Delete "${agency.supplierName}"?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    try {
-      await _dio.delete('/admin/agencies/${agency.id}');
-      _load();
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Delete failed: $e'), backgroundColor: Colors.red),
-      );
     }
   }
 
@@ -100,8 +81,6 @@ class _SupplierAgencyMasterPageState extends State<SupplierAgencyMasterPage> {
     if (saved == true) _load();
   }
 
-  int get _totalPages => (_totalCount / _pageSize).ceil().clamp(1, 9999);
-
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -109,65 +88,119 @@ class _SupplierAgencyMasterPageState extends State<SupplierAgencyMasterPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
-          Row(children: [
-            const Text('Supplier / Agency Master',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF003087))),
-            const SizedBox(width: 16),
-            ElevatedButton.icon(
-              onPressed: () => _openForm(),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('CREATE NEW'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF003087),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          // ── Header ──────────────────────────────────────────────────────
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Text(
+                'Agency Master',
+                style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF003087)),
               ),
-            ),
-            const Spacer(),
-            SizedBox(
-              width: 240,
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Search code or name...',
-                  prefixIcon: const Icon(Icons.search, size: 18),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  isDense: true,
+              const SizedBox(width: 16),
+              Flexible(
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 240,
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search code or name...',
+                          prefixIcon: const Icon(Icons.search, size: 18),
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          isDense: true,
+                        ),
+                        onChanged: (v) {
+                          _search = v;
+                          _page = 1;
+                          _load();
+                        },
+                      ),
+                    ),
+                    Builder(
+                      builder: (context) {
+                        final w = MediaQuery.of(context).size.width;
+                        final fontSize = w < 600 ? 11.0 : w < 900 ? 12.0 : 13.0;
+                        final iconSize = w < 600 ? 14.0 : 16.0;
+                        final hPad = w < 600 ? 12.0 : 20.0;
+                        final vPad = w < 600 ? 8.0 : 12.0;
+                        return ElevatedButton.icon(
+                          onPressed: () => _openForm(),
+                          icon: Icon(Icons.add, size: iconSize),
+                          label: Text('CREATE NEW',
+                              style: TextStyle(fontSize: fontSize)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF003087),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20)),
+                            padding: EdgeInsets.symmetric(
+                                horizontal: hPad, vertical: vPad),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
-                onChanged: (v) { _search = v; _page = 1; _load(); },
               ),
-            ),
-          ]),
+            ],
+          ),
           const SizedBox(height: 4),
           Divider(color: Colors.grey.shade300),
           const SizedBox(height: 8),
-          // Table
+          // ── Table ────────────────────────────────────────────────────────
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _agencies.isEmpty
-                    ? Center(child: Text('No agencies found.', style: TextStyle(color: Colors.grey.shade500)))
+                    ? Center(
+                        child: Text('No agencies found.',
+                            style:
+                                TextStyle(color: Colors.grey.shade500)))
                     : _buildTable(),
           ),
           const SizedBox(height: 12),
-          // Pagination
-          Row(children: [
-            Text('Showing $_pageSize of $_totalCount entries',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-            const Spacer(),
-            IconButton(
-              icon: const Icon(Icons.chevron_left),
-              onPressed: _page > 1 ? () { setState(() => _page--); _load(); } : null,
-            ),
-            Text('$_page / $_totalPages', style: const TextStyle(fontSize: 13)),
-            IconButton(
-              icon: const Icon(Icons.chevron_right),
-              onPressed: _page < _totalPages ? () { setState(() => _page++); _load(); } : null,
-            ),
-          ]),
+          // ── Pagination ───────────────────────────────────────────────────
+          Row(
+            children: [
+              Text(
+                'Showing ${_agencies.length} of $_totalCount entries',
+                style:
+                    TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.chevron_left),
+                onPressed: _page > 1
+                    ? () {
+                        setState(() => _page--);
+                        _load();
+                      }
+                    : null,
+              ),
+              Text('$_page / $_totalPages',
+                  style: const TextStyle(fontSize: 13)),
+              IconButton(
+                icon: const Icon(Icons.chevron_right),
+                onPressed: _page < _totalPages
+                    ? () {
+                        setState(() => _page++);
+                        _load();
+                      }
+                    : null,
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -178,16 +211,26 @@ class _SupplierAgencyMasterPageState extends State<SupplierAgencyMasterPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 8),
+        ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-            headingRowColor: WidgetStateProperty.all(const Color(0xFFF0F4FF)),
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: DataTable(
+            headingRowColor:
+                WidgetStateProperty.all(const Color(0xFFF0F4FF)),
             headingTextStyle: const TextStyle(
-                fontWeight: FontWeight.w600, color: Color(0xFF003087), fontSize: 13),
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF003087),
+                fontSize: 13),
             dataRowMinHeight: 52,
             dataRowMaxHeight: 52,
             columnSpacing: 32,
@@ -198,25 +241,33 @@ class _SupplierAgencyMasterPageState extends State<SupplierAgencyMasterPage> {
               DataColumn(label: Text('Actions')),
             ],
             rows: _agencies.map((a) {
-              final date = a.createdAt.length >= 10 ? a.createdAt.substring(0, 10) : a.createdAt;
+              final date = a.createdAt.length >= 10
+                  ? a.createdAt.substring(0, 10)
+                  : a.createdAt;
               return DataRow(cells: [
-                DataCell(Text(a.supplierCode, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
-                DataCell(Text(a.supplierName, style: const TextStyle(fontSize: 13))),
-                DataCell(Text(date, style: const TextStyle(fontSize: 13))),
-                DataCell(Row(mainAxisSize: MainAxisSize.min, children: [
-                  IconButton(
-                    icon: const Icon(Icons.edit_outlined, size: 18, color: Color(0xFF003087)),
-                    tooltip: 'Edit', splashRadius: 18,
-                    onPressed: () => _openForm(agency: a),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                    tooltip: 'Delete', splashRadius: 18,
-                    onPressed: () => _delete(a),
-                  ),
-                ])),
+                DataCell(Text(a.supplierCode,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w500))),
+                DataCell(Text(a.supplierName,
+                    style: const TextStyle(fontSize: 13))),
+                DataCell(
+                    Text(date, style: const TextStyle(fontSize: 13))),
+                DataCell(Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined,
+                          size: 18, color: Color(0xFF003087)),
+                      tooltip: 'Edit',
+                      splashRadius: 18,
+                      onPressed: () => _openForm(agency: a),
+                    ),
+                  ],
+                )),
               ]);
             }).toList(),
+          ),
+            ),
           ),
         ),
       ),

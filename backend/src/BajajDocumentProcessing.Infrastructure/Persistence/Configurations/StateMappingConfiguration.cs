@@ -26,9 +26,6 @@ public class StateMappingConfiguration : IEntityTypeConfiguration<StateMapping>
         builder.Property(e => e.IsActive)
             .HasDefaultValue(true);
 
-        builder.Property(e => e.IsDeleted)
-            .HasDefaultValue(false);
-
         // One Circle Head per state (unique, nullable filtered)
         builder.HasIndex(e => e.CircleHeadUserId)
             .IsUnique()

@@ -92,14 +92,43 @@ class _AgencyFormDialogState extends State<AgencyFormDialog> {
                 _label('Supplier Code'),
                 TextFormField(
                   controller: _codeCtrl,
-                  decoration: _dec('e.g. V001'),
+                  readOnly: _isEdit,
+                  style: TextStyle(color: _isEdit ? Colors.grey.shade600 : Colors.black),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. V001',
+                    filled: true,
+                    fillColor: _isEdit ? Colors.grey.shade100 : Colors.white,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey.shade400),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    isDense: true,
+                    suffixIcon: _isEdit
+                        ? const Tooltip(
+                            message: 'Supplier code cannot be changed',
+                            child: Icon(Icons.lock_outline, size: 16, color: Colors.grey))
+                        : null,
+                  ),
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                 ),
                 const SizedBox(height: 14),
                 _label('Supplier Name'),
                 TextFormField(
                   controller: _nameCtrl,
-                  decoration: _dec('e.g. Demo Agency Pvt Ltd'),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. Demo Agency Pvt Ltd',
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey.shade400),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    isDense: true,
+                  ),
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                 ),
                 const SizedBox(height: 24),
@@ -130,12 +159,5 @@ class _AgencyFormDialogState extends State<AgencyFormDialog> {
   Widget _label(String t) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
     child: Text(t, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-  );
-
-  InputDecoration _dec(String hint) => InputDecoration(
-    hintText: hint,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-    isDense: true,
   );
 }

@@ -69,7 +69,7 @@ public class AgenciesController : ControllerBase
         return Ok(agency);
     }
 
-    /// <summary>Soft-delete an agency.</summary>
+    /// <summary>Hard-delete an agency.</summary>
     [HttpDelete("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -77,7 +77,7 @@ public class AgenciesController : ControllerBase
     {
         var deleted = await _service.DeleteAgencyAsync(id, ct);
         if (!deleted) return NotFound();
-        _logger.LogInformation("Admin soft-deleted agency {Id}", id);
+        _logger.LogInformation("Admin hard-deleted agency {Id}", id);
         return NoContent();
     }
 }

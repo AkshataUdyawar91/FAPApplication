@@ -73,7 +73,7 @@ public class UsersController : ControllerBase
         return Ok(user);
     }
 
-    /// <summary>Soft-delete a user.</summary>
+    /// <summary>Hard-delete a user.</summary>
     [HttpDelete("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -82,7 +82,7 @@ public class UsersController : ControllerBase
         var deleted = await _service.DeleteUserAsync(id, ct);
         if (!deleted) return NotFound();
 
-        _logger.LogInformation("Admin soft-deleted user {Id}", id);
+        _logger.LogInformation("Admin hard-deleted user {Id}", id);
         return NoContent();
     }
 }

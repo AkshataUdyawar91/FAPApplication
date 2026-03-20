@@ -24,10 +24,7 @@ public class UserManagementService : IUserManagementService
         pageSize   = Math.Clamp(pageSize, 1, 100);
 
         var query = _context.Users
-            .AsNoTracking()
-            .Where(u => !u.IsDeleted);
-
-        if (!string.IsNullOrWhiteSpace(search))
+            .AsNoTracking();        if (!string.IsNullOrWhiteSpace(search))
         {
             var s = search.Trim().ToLower();
             query = query.Where(u =>
@@ -59,7 +56,7 @@ public class UserManagementService : IUserManagementService
     {
         var user = await _context.Users
             .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted, ct);
+            .FirstOrDefaultAsync(u => u.Id == id, ct);
         return user == null ? null : ToDto(user);
     }
 
@@ -74,7 +71,6 @@ public class UserManagementService : IUserManagementService
             Role         = (UserRole)request.Role,
             PhoneNumber  = request.PhoneNumber?.Trim(),
             IsActive     = request.IsActive,
-            IsDeleted    = false,
             CreatedAt    = DateTime.UtcNow,
             UpdatedAt    = DateTime.UtcNow,
         };
@@ -87,7 +83,7 @@ public class UserManagementService : IUserManagementService
     public async Task<UserDto?> UpdateUserAsync(Guid id, UpdateUserRequest request, CancellationToken ct)
     {
         var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted, ct);
+            .FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user == null) return null;
 
         user.FullName    = request.FullName.Trim();
@@ -106,11 +102,11 @@ public class UserManagementService : IUserManagementService
     public async Task<bool> DeleteUserAsync(Guid id, CancellationToken ct)
     {
         var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted, ct);
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user == null) return false;
 
-        user.IsDeleted = true;
-        user.UpdatedAt = DateTime.UtcNow;
+        _context.Users.Remove(user);
         await _context.SaveChangesAsync(ct);
         return true;
     }

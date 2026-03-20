@@ -4,13 +4,11 @@ import '../../data/models/user_dto.dart';
 class UserTable extends StatelessWidget {
   final List<UserDto> users;
   final void Function(UserDto) onEdit;
-  final void Function(UserDto) onDelete;
 
   const UserTable({
     super.key,
     required this.users,
     required this.onEdit,
-    required this.onDelete,
   });
 
   @override
@@ -19,13 +17,16 @@ class UserTable extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8)],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xFFF0F4FF)),
             headingTextStyle: const TextStyle(
                 fontWeight: FontWeight.w600, color: Color(0xFF003087), fontSize: 13),
@@ -43,6 +44,8 @@ class UserTable extends StatelessWidget {
             ],
             rows: users.map((u) => _buildRow(u)).toList(),
           ),
+            ),
+          ),
         ),
       ),
     );
@@ -57,23 +60,14 @@ class UserTable extends StatelessWidget {
       DataCell(Text(u.phoneNumber ?? '—', style: const TextStyle(fontSize: 13))),
       DataCell(_StatusBadge(isActive: u.isActive)),
       DataCell(Text(date, style: const TextStyle(fontSize: 13))),
-      DataCell(Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.edit_outlined, size: 18, color: Color(0xFF003087)),
-            tooltip: 'Edit',
-            splashRadius: 18,
-            onPressed: () => onEdit(u),
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-            tooltip: 'Delete',
-            splashRadius: 18,
-            onPressed: () => onDelete(u),
-          ),
-        ],
-      )),
+      DataCell(
+        IconButton(
+          icon: const Icon(Icons.edit_outlined, size: 18, color: Color(0xFF003087)),
+          tooltip: 'Edit',
+          splashRadius: 18,
+          onPressed: () => onEdit(u),
+        ),
+      ),
     ]);
   }
 }

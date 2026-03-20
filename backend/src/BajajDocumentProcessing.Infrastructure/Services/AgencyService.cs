@@ -19,7 +19,7 @@ public class AgencyService : IAgencyService
         pageNumber = Math.Max(1, pageNumber);
         pageSize   = Math.Clamp(pageSize, 1, 100);
 
-        var query = _context.Agencies.AsNoTracking().Where(a => !a.IsDeleted);
+        var query = _context.Agencies.AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -49,14 +49,14 @@ public class AgencyService : IAgencyService
     public async Task<AgencyDto?> GetAgencyByIdAsync(Guid id, CancellationToken ct = default)
     {
         var a = await _context.Agencies.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted, ct);
+            .FirstOrDefaultAsync(x => x.Id == id, ct);
         return a == null ? null : ToDto(a);
     }
 
     public async Task<AgencyDto?> GetAgencyBySupplierCodeAsync(string code, CancellationToken ct = default)
     {
         var a = await _context.Agencies.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.SupplierCode == code && !x.IsDeleted, ct);
+            .FirstOrDefaultAsync(x => x.SupplierCode == code, ct);
         return a == null ? null : ToDto(a);
     }
 
@@ -78,10 +78,9 @@ public class AgencyService : IAgencyService
     public async Task<AgencyDto?> UpdateAgencyAsync(Guid id, UpdateAgencyRequest request, CancellationToken ct = default)
     {
         var agency = await _context.Agencies
-            .FirstOrDefaultAsync(a => a.Id == id && !a.IsDeleted, ct);
+            .FirstOrDefaultAsync(a => a.Id == id, ct);
         if (agency == null) return null;
 
-        agency.SupplierCode = request.SupplierCode.Trim();
         agency.SupplierName = request.SupplierName.Trim();
         agency.UpdatedAt    = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
@@ -91,11 +90,11 @@ public class AgencyService : IAgencyService
     public async Task<bool> DeleteAgencyAsync(Guid id, CancellationToken ct = default)
     {
         var agency = await _context.Agencies
-            .FirstOrDefaultAsync(a => a.Id == id && !a.IsDeleted, ct);
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(a => a.Id == id, ct);
         if (agency == null) return false;
 
-        agency.IsDeleted = true;
-        agency.UpdatedAt = DateTime.UtcNow;
+        _context.Agencies.Remove(agency);
         await _context.SaveChangesAsync(ct);
         return true;
     }

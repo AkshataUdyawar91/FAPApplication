@@ -9,6 +9,7 @@ import 'user_management_page.dart';
 import 'dealer_master_page.dart';
 import 'ra_ch_state_mapping_page.dart';
 import 'enquiry_dump_page.dart';
+import 'sap_logs_page.dart';
 import 'email_logs_page.dart';
 
 class AdminDashboardPage extends StatefulWidget {
@@ -30,14 +31,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   bool _isSidebarCollapsed = false;
 
   final List<_AdminMenuItem> _menuItems = const [
-    _AdminMenuItem(icon: Icons.business, label: 'Supplier/Agency Master'),
+    _AdminMenuItem(icon: Icons.business, label: 'Agency Master'),
     _AdminMenuItem(icon: Icons.receipt_long, label: 'Supplier PO'),
     _AdminMenuItem(icon: Icons.map_outlined, label: 'State City Master'),
     _AdminMenuItem(icon: Icons.manage_accounts, label: 'User Management'),
     _AdminMenuItem(icon: Icons.store, label: 'Dealer Master'),
-    _AdminMenuItem(icon: Icons.account_tree_outlined, label: 'RA/CH/State Mapping'),
-    _AdminMenuItem(icon: Icons.download_outlined, label: 'Complete Enquiry Dump per FAP'),
+    _AdminMenuItem(icon: Icons.account_tree_outlined, label: 'State Hierarchy'),
+    _AdminMenuItem(icon: Icons.download_outlined, label: 'Enquiry Data'),
     _AdminMenuItem(icon: Icons.email_outlined, label: 'Email Logs'),
+    _AdminMenuItem(icon: Icons.sync_outlined, label: 'SAP Logs'),
   ];
 
   Widget _buildPage(int index) {
@@ -51,6 +53,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       case 5: return RaChStateMappingPage(key: ValueKey('page-$index'), token: widget.token);
       case 6: return EnquiryDumpPage(key: ValueKey('page-$index'), token: widget.token);
       case 7: return EmailLogsPage(key: ValueKey('page-$index'), token: widget.token);
+      case 8: return SapLogsPage(key: ValueKey('page-$index'), token: widget.token);
       default: return SupplierAgencyMasterPage(key: ValueKey('page-$index'), token: widget.token);
     }
   }

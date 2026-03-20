@@ -18,8 +18,13 @@ class _SupplierPoPageState extends State<SupplierPoPage> {
   int _page = 1;
   final int _pageSize = 10;
   int _totalCount = 0;
+  int _totalPages = 1;
   String _search = '';
   String? _statusFilter;
+
+  // Sorting
+  String _sortColumn = 'createdAt';
+  bool _sortAsc = false;
 
   static const _statuses = ['Open', 'PartiallyConsumed', 'Closed'];
 
@@ -47,12 +52,15 @@ class _SupplierPoPageState extends State<SupplierPoPage> {
         'pageSize': _pageSize,
         if (_search.isNotEmpty) 'search': _search,
         if (_statusFilter != null) 'poStatus': _statusFilter,
+        'sortBy': _sortColumn,
+        'sortAsc': _sortAsc,
       });
       if (resp.statusCode == 200 && mounted) {
         final data = resp.data as Map<String, dynamic>;
         setState(() {
           _pos = List<Map<String, dynamic>>.from(data['items'] as List);
           _totalCount = data['totalCount'] as int;
+          _totalPages = data['totalPages'] as int? ?? 1;
         });
       }
     } catch (e) {
@@ -64,7 +72,18 @@ class _SupplierPoPageState extends State<SupplierPoPage> {
     }
   }
 
-  int get _totalPages => (_totalCount / _pageSize).ceil().clamp(1, 9999);
+  void _onSort(String column) {
+    setState(() {
+      if (_sortColumn == column) {
+        _sortAsc = !_sortAsc;
+      } else {
+        _sortColumn = column;
+        _sortAsc = true;
+      }
+      _page = 1;
+    });
+    _load();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -73,50 +92,56 @@ class _SupplierPoPageState extends State<SupplierPoPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
-          Row(children: [
-            const Text('Supplier PO',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF003087))),
-            const Spacer(),
-            // Status filter
-            Container(
-              width: 180,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade300),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String?>(
-                  value: _statusFilter,
-                  isDense: true,
-                  hint: const Text('All Statuses', style: TextStyle(fontSize: 13)),
-                  items: [
-                    const DropdownMenuItem(value: null,
-                        child: Text('All Statuses', style: TextStyle(fontSize: 13))),
-                    ..._statuses.map((s) => DropdownMenuItem(
-                        value: s, child: Text(s, style: const TextStyle(fontSize: 13)))),
-                  ],
-                  onChanged: (v) { setState(() { _statusFilter = v; _page = 1; }); _load(); },
+          // ── Responsive header ────────────────────────────────────────────
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text('Supplier PO',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF003087))),
+              // Status filter
+              SizedBox(
+                width: 170,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String?>(
+                      value: _statusFilter,
+                      isDense: true,
+                      isExpanded: true,
+                      hint: const Text('All Statuses', style: TextStyle(fontSize: 13)),
+                      items: [
+                        const DropdownMenuItem(value: null,
+                            child: Text('All Statuses', style: TextStyle(fontSize: 13))),
+                        ..._statuses.map((s) => DropdownMenuItem(
+                            value: s, child: Text(s, style: const TextStyle(fontSize: 13)))),
+                      ],
+                      onChanged: (v) { setState(() { _statusFilter = v; _page = 1; }); _load(); },
+                    ),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: 240,
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Search PO number or vendor...',
-                  prefixIcon: const Icon(Icons.search, size: 18),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  isDense: true,
+              SizedBox(
+                width: 220,
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search PO or vendor...',
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    isDense: true,
+                  ),
+                  onChanged: (v) { _search = v; _page = 1; _load(); },
                 ),
-                onChanged: (v) { _search = v; _page = 1; _load(); },
               ),
-            ),
-          ]),
+            ],
+          ),
           const SizedBox(height: 4),
           Divider(color: Colors.grey.shade300),
           const SizedBox(height: 8),
@@ -132,7 +157,7 @@ class _SupplierPoPageState extends State<SupplierPoPage> {
           const SizedBox(height: 12),
           // Pagination
           Row(children: [
-            Text('Showing $_pageSize of $_totalCount entries',
+            Text('Showing ${_pos.length} of $_totalCount entries',
                 style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
             const Spacer(),
             IconButton(
@@ -150,39 +175,62 @@ class _SupplierPoPageState extends State<SupplierPoPage> {
     );
   }
 
+  Widget _sortHeader(String label, String column) {
+    final isActive = _sortColumn == column;
+    return InkWell(
+      onTap: () => _onSort(column),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Text(label, style: TextStyle(
+          fontWeight: FontWeight.w600,
+          color: isActive ? const Color(0xFF003087) : const Color(0xFF003087),
+          fontSize: 13,
+        )),
+        const SizedBox(width: 4),
+        Icon(
+          isActive
+              ? (_sortAsc ? Icons.arrow_upward : Icons.arrow_downward)
+              : Icons.unfold_more,
+          size: 14,
+          color: isActive ? const Color(0xFF003087) : Colors.grey.shade400,
+        ),
+      ]),
+    );
+  }
+
   Widget _buildTable() {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8)],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: DataTable(
             headingRowColor: WidgetStateProperty.all(const Color(0xFFF0F4FF)),
-            headingTextStyle: const TextStyle(
-                fontWeight: FontWeight.w600, color: Color(0xFF003087), fontSize: 13),
             dataRowMinHeight: 52,
             dataRowMaxHeight: 52,
             columnSpacing: 24,
-            columns: const [
-              DataColumn(label: Text('PO Number')),
-              DataColumn(label: Text('Vendor Name')),
-              DataColumn(label: Text('Agency')),
-              DataColumn(label: Text('Total Amount')),
-              DataColumn(label: Text('Remaining Balance')),
-              DataColumn(label: Text('PO Date')),
-              DataColumn(label: Text('Status')),
-              DataColumn(label: Text('Created On')),
+            columns: [
+              DataColumn(label: _sortHeader('PO Number', 'poNumber')),
+              DataColumn(label: _sortHeader('Vendor Name', 'vendorName')),
+              DataColumn(label: _sortHeader('Agency', 'agencyName')),
+              DataColumn(label: _sortHeader('Total Amount', 'totalAmount')),
+              DataColumn(label: _sortHeader('Remaining', 'remainingBalance')),
+              DataColumn(label: _sortHeader('PO Date', 'poDate')),
+              DataColumn(label: _sortHeader('Status', 'poStatus')),
+              DataColumn(label: _sortHeader('Created On', 'createdAt')),
             ],
             rows: _pos.map((p) {
-              final poDate   = _fmtDate(p['poDate'] as String?);
-              final created  = _fmtDate(p['createdAt'] as String?);
-              final total    = p['totalAmount'] != null ? '₹${_fmtNum(p['totalAmount'])}' : '—';
-              final balance  = p['remainingBalance'] != null ? '₹${_fmtNum(p['remainingBalance'])}' : '—';
+              final poDate  = _fmtDate(p['poDate'] as String?);
+              final created = _fmtDate(p['createdAt'] as String?);
+              final total   = p['totalAmount'] != null ? '₹${_fmtNum(p['totalAmount'])}' : '—';
+              final balance = p['remainingBalance'] != null ? '₹${_fmtNum(p['remainingBalance'])}' : '—';
               return DataRow(cells: [
                 DataCell(Text(p['poNumber'] ?? '—',
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
@@ -197,6 +245,8 @@ class _SupplierPoPageState extends State<SupplierPoPage> {
                 DataCell(Text(created, style: const TextStyle(fontSize: 13))),
               ]);
             }).toList(),
+          ),
+            ),
           ),
         ),
       ),

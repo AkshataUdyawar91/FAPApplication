@@ -30,8 +30,6 @@ public class AgencyConfiguration : IEntityTypeConfiguration<Agency>
             .IsRequired()
             .HasDefaultValue(false);
 
-        builder.HasIndex(a => a.IsDeleted);
-
         // TODO: Uncomment relationships when corresponding entities are updated
         // Relationships will be enabled in:
         // - Task 3.1: User.Agency navigation property

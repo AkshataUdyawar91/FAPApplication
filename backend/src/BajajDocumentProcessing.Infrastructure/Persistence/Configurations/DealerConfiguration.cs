@@ -34,10 +34,6 @@ public class DealerConfiguration : IEntityTypeConfiguration<Dealer>
             .IsRequired()
             .HasDefaultValue(true);
 
-        builder.Property(d => d.IsDeleted)
-            .IsRequired()
-            .HasDefaultValue(false);
-
         builder.HasQueryFilter(d => !d.IsDeleted);
 
         builder.HasIndex(d => d.DealerCode)

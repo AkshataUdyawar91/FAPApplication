@@ -19,8 +19,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
   List<UserDto> _users = [];
   bool _isLoading = true;
   int _page = 1;
-  int _pageSize = 10;
+  final int _pageSize = 10;
   int _totalCount = 0;
+  int _totalPages = 1;
   String _search = '';
   int? _roleFilter;
 
@@ -56,44 +57,19 @@ class _UserManagementPageState extends State<UserManagementPage> {
               .map((e) => UserDto.fromJson(e as Map<String, dynamic>))
               .toList();
           _totalCount = data['totalCount'] as int;
+          _totalPages = data['totalPages'] as int? ?? 1;
         });
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load users: $e'),
+          SnackBar(
+              content: Text('Failed to load users: $e'),
               backgroundColor: Colors.red),
         );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _deleteUser(UserDto user) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Delete User'),
-        content: Text('Are you sure you want to delete ${user.fullName}?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    try {
-      await _dio.delete('/admin/users/${user.id}');
-      _loadUsers();
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Delete failed: $e'), backgroundColor: Colors.red),
-      );
     }
   }
 
@@ -106,8 +82,6 @@ class _UserManagementPageState extends State<UserManagementPage> {
     if (saved == true) _loadUsers();
   }
 
-  int get _totalPages => (_totalCount / _pageSize).ceil().clamp(1, 9999);
-
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -115,68 +89,118 @@ class _UserManagementPageState extends State<UserManagementPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header row
+          // ── Header ──────────────────────────────────────────────────────
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              const Text('User Management',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF003087))),
+              const Text(
+                'User Management',
+                style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF003087)),
+              ),
               const SizedBox(width: 16),
-              ElevatedButton.icon(
-                onPressed: () => _openForm(),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('CREATE NEW'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF003087),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                ),
-              ),
-              const Spacer(),
-              // Role filter
-              Container(
-                width: 160,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<int?>(
-                    value: _roleFilter,
-                    hint: const Text('All Roles', style: TextStyle(fontSize: 13)),
-                    isDense: true,
-                    items: [
-                      const DropdownMenuItem(value: null, child: Text('All Roles', style: TextStyle(fontSize: 13))),
-                      const DropdownMenuItem(value: 1, child: Text('Agency', style: TextStyle(fontSize: 13))),
-                      const DropdownMenuItem(value: 2, child: Text('ASM', style: TextStyle(fontSize: 13))),
-                      const DropdownMenuItem(value: 3, child: Text('RA', style: TextStyle(fontSize: 13))),
-                      const DropdownMenuItem(value: 4, child: Text('Admin', style: TextStyle(fontSize: 13))),
-                    ],
-                    onChanged: (v) {
-                      setState(() { _roleFilter = v; _page = 1; });
-                      _loadUsers();
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
-                width: 240,
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search name or email...',
-                    prefixIcon: const Icon(Icons.search, size: 18),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    isDense: true,
-                  ),
-                  onChanged: (v) {
-                    _search = v;
-                    _page = 1;
-                    _loadUsers();
-                  },
+              Flexible(
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    // Role filter
+                    SizedBox(
+                      width: 160,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int?>(
+                            value: _roleFilter,
+                            hint: const Text('All Roles',
+                                style: TextStyle(fontSize: 13)),
+                            isDense: true,
+                            isExpanded: true,
+                            items: const [
+                              DropdownMenuItem(
+                                  value: null,
+                                  child: Text('All Roles',
+                                      style: TextStyle(fontSize: 13))),
+                              DropdownMenuItem(
+                                  value: 1,
+                                  child: Text('Agency',
+                                      style: TextStyle(fontSize: 13))),
+                              DropdownMenuItem(
+                                  value: 2,
+                                  child: Text('ASM',
+                                      style: TextStyle(fontSize: 13))),
+                              DropdownMenuItem(
+                                  value: 3,
+                                  child: Text('RA',
+                                      style: TextStyle(fontSize: 13))),
+                              DropdownMenuItem(
+                                  value: 4,
+                                  child: Text('Admin',
+                                      style: TextStyle(fontSize: 13))),
+                            ],
+                            onChanged: (v) {
+                              setState(() {
+                                _roleFilter = v;
+                                _page = 1;
+                              });
+                              _loadUsers();
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 240,
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search name or email...',
+                          prefixIcon: const Icon(Icons.search, size: 18),
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          isDense: true,
+                        ),
+                        onChanged: (v) {
+                          _search = v;
+                          _page = 1;
+                          _loadUsers();
+                        },
+                      ),
+                    ),
+                    Builder(
+                      builder: (context) {
+                        final w = MediaQuery.of(context).size.width;
+                        final fontSize = w < 600 ? 11.0 : w < 900 ? 12.0 : 13.0;
+                        final iconSize = w < 600 ? 14.0 : 16.0;
+                        final hPad = w < 600 ? 12.0 : 20.0;
+                        final vPad = w < 600 ? 8.0 : 12.0;
+                        return ElevatedButton.icon(
+                          onPressed: () => _openForm(),
+                          icon: Icon(Icons.add, size: iconSize),
+                          label: Text('CREATE NEW',
+                              style: TextStyle(fontSize: fontSize)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF003087),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20)),
+                            padding: EdgeInsets.symmetric(
+                                horizontal: hPad, vertical: vPad),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -184,33 +208,49 @@ class _UserManagementPageState extends State<UserManagementPage> {
           const SizedBox(height: 4),
           Divider(color: Colors.grey.shade300),
           const SizedBox(height: 8),
-          // Table
+          // ── Table ────────────────────────────────────────────────────────
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _users.isEmpty
-                    ? Center(child: Text('No users found.', style: TextStyle(color: Colors.grey.shade500)))
+                    ? Center(
+                        child: Text('No users found.',
+                            style:
+                                TextStyle(color: Colors.grey.shade500)))
                     : UserTable(
                         users: _users,
                         onEdit: (u) => _openForm(user: u),
-                        onDelete: _deleteUser,
                       ),
           ),
           const SizedBox(height: 12),
-          // Pagination
+          // ── Pagination ───────────────────────────────────────────────────
           Row(
             children: [
-              Text('Showing $_pageSize of $_totalCount entries',
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+              Text(
+                'Showing ${_users.length} of $_totalCount entries',
+                style:
+                    TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.chevron_left),
-                onPressed: _page > 1 ? () { setState(() => _page--); _loadUsers(); } : null,
+                onPressed: _page > 1
+                    ? () {
+                        setState(() => _page--);
+                        _loadUsers();
+                      }
+                    : null,
               ),
-              Text('$_page / $_totalPages', style: const TextStyle(fontSize: 13)),
+              Text('$_page / $_totalPages',
+                  style: const TextStyle(fontSize: 13)),
               IconButton(
                 icon: const Icon(Icons.chevron_right),
-                onPressed: _page < _totalPages ? () { setState(() => _page++); _loadUsers(); } : null,
+                onPressed: _page < _totalPages
+                    ? () {
+                        setState(() => _page++);
+                        _loadUsers();
+                      }
+                    : null,
               ),
             ],
           ),
