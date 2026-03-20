@@ -442,7 +442,8 @@ class _ASMReviewDetailPageState extends State<ASMReviewDetailPage> {
   Widget _buildHeaderSection() {
     final documents = _submission!['documents'] as List? ?? [];
     String invoiceNumber = '';
-    String reqNumber = 'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
+    String reqNumber = _submission!['submissionNumber']?.toString() 
+        ?? 'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
     
     // Extract invoice number from invoice document
     for (var doc in documents) {
