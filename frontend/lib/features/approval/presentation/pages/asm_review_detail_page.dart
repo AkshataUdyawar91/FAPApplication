@@ -138,7 +138,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         // Extract validation data from submission response
         final invoiceValidations =
             submissionData['invoiceValidations'] as List<dynamic>? ?? [];
-        final photoValidations =
+        var photoValidations =
             submissionData['photoValidations'] as List<dynamic>? ?? [];
         final costSummaryValidation =
             submissionData['costSummaryValidation'] as Map<String, dynamic>? ??
@@ -147,6 +147,29 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
             submissionData['activityValidation'] as Map<String, dynamic>? ?? {};
         final enquiryValidation =
             submissionData['enquiryValidation'] as Map<String, dynamic>? ?? {};
+
+        // Fallback: if photoValidations is empty, fetch directly by package ID
+        // (TeamPhoto validation is stored with DocumentId = packageId)
+        if (photoValidations.isEmpty) {
+          try {
+            final valResponse = await _dio.get(
+              '/submissions/${widget.submissionId}/validations',
+              options: Options(
+                  headers: {'Authorization': 'Bearer ${widget.token}'}),
+            );
+            if (valResponse.statusCode == 200 && valResponse.data != null) {
+              final docs = valResponse.data['documents'] as List<dynamic>? ?? [];
+              final photoDocs = docs
+                  .where((d) => d['documentType'] == 'TeamPhoto')
+                  .toList();
+              if (photoDocs.isNotEmpty) {
+                photoValidations = photoDocs;
+              }
+            }
+          } catch (e) {
+            debugPrint('Fallback photo validation fetch failed: $e');
+          }
+        }
 
         print('=== ASM - Validation Data from Submission ===');
         print('Invoice Validations Count: ${invoiceValidations.length}');
@@ -1329,121 +1352,32 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
   Widget _buildInvoiceValidationCard(Map<String, dynamic> invoice) {
     final fileName = invoice['fileName'] ?? 'Unknown';
-    final allPassed = invoice['allPassed'] ?? false;
-    final failureReason = invoice['failureReason'];
     final validationDetailsJson = invoice['validationDetailsJson'] as String?;
 
     Map<String, dynamic>? validationDetails;
-    int passedCount = 0;
-    int totalCount = 0;
+    List<Map<String, dynamic>> allRows = [];
 
     if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
       try {
         validationDetails =
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
-
-        // Count passed and total validations
         if (validationDetails != null) {
-          // Count proactive validations
-          if (validationDetails['proactive'] != null) {
-            final proactive = validationDetails['proactive'] as List<dynamic>;
-            totalCount += proactive.length;
-            passedCount += proactive.where((v) => v['passed'] == true).length;
-          }
-
-          // Count reactive validations
-          if (validationDetails['reactive'] != null) {
-            final reactive = validationDetails['reactive'] as List<dynamic>;
-            totalCount += reactive.length;
-            passedCount += reactive.where((v) => v['passed'] == true).length;
-          }
-
-          // Count checks
-          if (validationDetails['checks'] != null) {
-            final checks = validationDetails['checks'] as List<dynamic>;
-            totalCount += checks.length;
-            passedCount += checks.where((v) => v['passed'] == true).length;
-          }
+          allRows = _extractAllValidationRows(validationDetails);
         }
       } catch (e) {
-        print('Error parsing validation details: $e');
+        debugPrint('Error parsing invoice validation details: $e');
       }
     }
 
-    return Card(
-      elevation: 1,
-      margin: const EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(
-          color: Color(0xFFE5E7EB),
-          width: 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color.fromARGB(255, 240, 237, 237),
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(8)),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Invoice Validations',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        fileName,
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                RichText(
-                  text: TextSpan(
-                    children: [
-                      TextSpan(
-                        text: '$passedCount/$totalCount ',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
-                        ),
-                      ),
-                      TextSpan(
-                        text: 'Passed',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: const Color(0xFF16A34A),
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+    final passedCount = allRows.where((r) => r['passed'] == true).length;
+    final totalCount = allRows.length;
 
-          // Validation Details - Single unified table
-          if (validationDetails != null)
-            _buildUnifiedValidationTable(validationDetails),
-        ],
-      ),
+    return _buildValidationCard(
+      title: 'Invoice Validations',
+      fileName: fileName,
+      passedCount: passedCount,
+      totalCount: totalCount,
+      rows: allRows,
     );
   }
 
@@ -1461,56 +1395,285 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
   Widget _buildPhotoValidationCard(Map<String, dynamic> photo) {
     final fileName = photo['fileName'] ?? 'Unknown';
-    final allPassed = photo['allPassed'] ?? false;
-    final failureReason = photo['failureReason'];
     final validationDetailsJson = photo['validationDetailsJson'] as String?;
+    final failureReason = photo['failureReason'] as String?;
 
     Map<String, dynamic>? validationDetails;
-    int passedCount = 0;
-    int totalCount = 0;
+    List<Map<String, dynamic>> allRows = [];
 
-    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty && validationDetailsJson != '{}') {
       try {
         validationDetails =
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
-
-        // Count passed and total validations
         if (validationDetails != null) {
-          // Count required items (for photos)
-          if (validationDetails['requiredItems'] != null) {
-            final items = validationDetails['requiredItems'] as List<dynamic>;
-            totalCount += items.length;
-            passedCount += items.where((v) => v['passed'] == true).length;
-          }
-
-          // Count checks
-          if (validationDetails['checks'] != null) {
-            final checks = validationDetails['checks'] as List<dynamic>;
-            totalCount += checks.length;
-            passedCount += checks.where((v) => v['passed'] == true).length;
-          }
+          allRows = _extractAllValidationRows(validationDetails);
         }
       } catch (e) {
-        print('Error parsing validation details: $e');
+        debugPrint('Error parsing photo validation details: $e');
       }
     }
 
+    // Fallback: if no rows extracted from validationDetailsJson, parse failureReason
+    if (allRows.isEmpty && failureReason != null && failureReason.isNotEmpty) {
+      final reasons = failureReason.split('; ');
+      for (final reason in reasons) {
+        allRows.add({'label': reason.trim(), 'passed': false, 'message': reason.trim()});
+      }
+    }
+
+    final passedCount = allRows.where((r) => r['passed'] == true).length;
+    final totalCount = allRows.length;
+
+    return _buildValidationCard(
+      title: 'Photo Validations',
+      fileName: fileName,
+      passedCount: passedCount,
+      totalCount: totalCount,
+      rows: allRows,
+    );
+  }
+
+  /// Extracts all validation rows from ValidationDetailsJson into a unified list.
+  /// Reads: fieldPresence, crossDocument, amountConsistency, lineItemMatching,
+  /// vendorMatching, completeness, and proactiveRules — deduplicating by label.
+  List<Map<String, dynamic>> _extractAllValidationRows(
+      Map<String, dynamic> details) {
+    final rows = <Map<String, dynamic>>[];
+    final seenLabels = <String>{};
+
+    void addRow(String label, bool passed, String message) {
+      final key = label.toLowerCase();
+      if (seenLabels.contains(key)) return;
+      seenLabels.add(key);
+      rows.add({'label': label, 'passed': passed, 'message': message});
+    }
+
+    // 1. Proactive rules (richest detail — add first so they win dedup)
+    final proactiveRules = details['proactiveRules'] as List<dynamic>?;
+    if (proactiveRules != null) {
+      for (final rule in proactiveRules) {
+        if (rule is! Map<String, dynamic>) continue;
+        final ruleCode = (rule['RuleCode'] ?? rule['ruleCode'] ?? '') as String;
+        final passed = (rule['Passed'] ?? rule['passed'] ?? false) as bool;
+        final extracted = rule['ExtractedValue'] ?? rule['extractedValue'];
+        final expected = rule['ExpectedValue'] ?? rule['expectedValue'];
+
+        final label = _ruleCodeToLabel(ruleCode);
+        String message;
+        if (passed) {
+          message = extracted != null ? extracted.toString() : 'Passed';
+        } else {
+          if (extracted != null && expected != null) {
+            message = 'Found: $extracted, Expected: $expected';
+          } else {
+            message = 'Field is missing';
+          }
+        }
+        addRow(label, passed, message);
+      }
+    }
+
+    // 2. Field presence — missing fields
+    final fieldPresence = details['fieldPresence'] as Map<String, dynamic>?;
+    if (fieldPresence != null) {
+      final missingFields =
+          fieldPresence['missingFields'] as List<dynamic>? ?? [];
+      final totalRecords = fieldPresence['totalRecords'];
+
+      if (totalRecords == null) {
+        // Invoice/CostSummary/Activity: each missing field is a row
+        for (final field in missingFields) {
+          addRow(field.toString(), false, 'Field is missing');
+        }
+        // Photo-specific counters
+        final totalPhotos = fieldPresence['totalPhotos'];
+        if (totalPhotos != null) {
+          final photosWithDate = fieldPresence['photosWithDate'] ?? 0;
+          final photosWithLocation = fieldPresence['photosWithLocation'] ?? 0;
+          final photosWithBlueTshirt =
+              fieldPresence['photosWithBlueTshirt'] ?? 0;
+          final photosWithVehicle = fieldPresence['photosWithVehicle'] ?? 0;
+          final photosWithFace = fieldPresence['photosWithFace'] ?? 0;
+
+          addRow('Date in Photos', photosWithDate == totalPhotos,
+              'Present in $photosWithDate/$totalPhotos photos');
+          addRow('Location in Photos', photosWithLocation == totalPhotos,
+              'Present in $photosWithLocation/$totalPhotos photos');
+          addRow('Blue T-shirt Detection', photosWithBlueTshirt > 0,
+              'Detected in $photosWithBlueTshirt/$totalPhotos photos');
+          addRow('Bajaj Vehicle Detection', photosWithVehicle > 0,
+              'Detected in $photosWithVehicle/$totalPhotos photos');
+          addRow('Face Detection', photosWithFace > 0,
+              'Detected in $photosWithFace/$totalPhotos photos');
+        }
+      } else {
+        // Enquiry: per-field record counts
+        final fieldMap = {
+          'recordsWithState': 'State',
+          'recordsWithDate': 'Date',
+          'recordsWithDealerCode': 'Dealer Code',
+          'recordsWithDealerName': 'Dealer Name',
+          'recordsWithDistrict': 'District',
+          'recordsWithPincode': 'Pincode',
+          'recordsWithCustomerName': 'Customer Name',
+          'recordsWithCustomerNumber': 'Customer Number',
+          'recordsWithTestRide': 'Test Ride',
+        };
+        for (final entry in fieldMap.entries) {
+          final count = fieldPresence[entry.key];
+          if (count != null) {
+            addRow(entry.value, count == totalRecords,
+                'Present in $count/$totalRecords records');
+          }
+        }
+      }
+    }
+
+    // 3. Cross-document checks
+    final crossDocument = details['crossDocument'] as Map<String, dynamic>?;
+    if (crossDocument != null) {
+      final checkMap = {
+        'totalCostValid': ('Total Cost Validation', 'Total cost matches invoice', 'Total cost does not match invoice'),
+        'elementCostsValid': ('Element Costs Validation', 'Element costs are valid', 'Element costs are invalid'),
+        'fixedCostsValid': ('Fixed Costs Validation', 'Fixed costs are valid', 'Fixed costs are invalid'),
+        'variableCostsValid': ('Variable Costs Validation', 'Variable costs are valid', 'Variable costs are invalid'),
+        'numberOfDaysMatches': ('Number of Days Match', 'Days match between documents', 'Days mismatch between documents'),
+        'photoCountMatchesManDays': ('Photo Count vs Man Days', 'Photo count matches man days', 'Photo count does not match man days'),
+        'manDaysWithinCostSummaryDays': ('Man Days vs Cost Summary Days', 'Man days within cost summary days', 'Man days exceed cost summary days'),
+        'agencyCodeMatches': ('Agency Code Match', 'Agency code matches', 'Agency code mismatch'),
+        'poNumberMatches': ('PO Number Match', 'PO number matches', 'PO number mismatch'),
+        'gstStateMatches': ('GST State Match', 'GST state matches', 'GST state mismatch'),
+        'hsnSacCodeValid': ('HSN/SAC Code', 'HSN/SAC code is valid', 'HSN/SAC code is invalid'),
+        'invoiceAmountValid': ('Invoice Amount', 'Invoice amount is valid', 'Invoice amount is invalid'),
+        'gstPercentageValid': ('GST Percentage', 'GST percentage is valid', 'GST percentage is invalid'),
+      };
+      for (final entry in checkMap.entries) {
+        final val = crossDocument[entry.key];
+        if (val != null && val is bool) {
+          addRow(entry.value.$1, val, val ? entry.value.$2 : entry.value.$3);
+        }
+      }
+      // Cross-document issues as separate rows
+      final issues = crossDocument['issues'] as List<dynamic>? ?? [];
+      for (final issue in issues) {
+        addRow(issue.toString(), false, issue.toString());
+      }
+    }
+
+    // 4. Amount consistency (Invoice)
+    final amountConsistency =
+        details['amountConsistency'] as Map<String, dynamic>?;
+    if (amountConsistency != null) {
+      final isConsistent = amountConsistency['isConsistent'] ?? false;
+      final invoiceTotal = amountConsistency['invoiceTotal'];
+      final costTotal = amountConsistency['costSummaryTotal'];
+      final pctDiff = amountConsistency['percentageDifference'];
+      addRow(
+        'Amount Consistency',
+        isConsistent == true,
+        isConsistent == true
+            ? 'Invoice and Cost Summary amounts match'
+            : 'Invoice: $invoiceTotal vs Cost Summary: $costTotal (${pctDiff}% diff)',
+      );
+    }
+
+    // 5. Line item matching (Invoice)
+    final lineItemMatching =
+        details['lineItemMatching'] as Map<String, dynamic>?;
+    if (lineItemMatching != null) {
+      final allMatched = lineItemMatching['allItemsMatched'] ?? false;
+      final missing = lineItemMatching['missingItemCodes'] as List<dynamic>? ?? [];
+      addRow(
+        'Line Item Matching',
+        allMatched == true,
+        allMatched == true
+            ? 'All PO line items found in invoice'
+            : 'Missing ${missing.length} items: ${missing.join(", ")}',
+      );
+    }
+
+    // 6. Vendor matching (Invoice)
+    final vendorMatching =
+        details['vendorMatching'] as Map<String, dynamic>?;
+    if (vendorMatching != null) {
+      final isMatched = vendorMatching['isMatched'] ?? false;
+      final poVendor = vendorMatching['poVendor'] ?? 'N/A';
+      final invVendor = vendorMatching['invoiceVendor'] ?? 'N/A';
+      addRow(
+        'Vendor Matching',
+        isMatched == true,
+        isMatched == true
+            ? 'Vendor information matches across documents'
+            : 'PO: $poVendor vs Invoice: $invVendor',
+      );
+    }
+
+    // 7. Completeness (CostSummary)
+    final completeness = details['completeness'] as Map<String, dynamic>?;
+    if (completeness != null) {
+      final isComplete = completeness['isComplete'] ?? false;
+      final missingItems = completeness['missingItems'] as List<dynamic>? ?? [];
+      addRow(
+        'Package Completeness',
+        isComplete == true,
+        isComplete == true
+            ? 'All required documents present'
+            : 'Missing: ${missingItems.join(", ")}',
+      );
+    }
+
+    return rows;
+  }
+
+  /// Converts a proactive rule code like "INV_INVOICE_NUMBER_PRESENT" to a readable label.
+  String _ruleCodeToLabel(String ruleCode) {
+    const labelMap = {
+      'INV_INVOICE_NUMBER_PRESENT': 'Invoice Number',
+      'INV_DATE_PRESENT': 'Invoice Date',
+      'INV_AMOUNT_PRESENT': 'Invoice Amount',
+      'INV_GST_NUMBER_PRESENT': 'GST Number',
+      'INV_GST_PERCENT_PRESENT': 'GST Percentage',
+      'INV_HSN_SAC_PRESENT': 'HSN/SAC Code',
+      'INV_VENDOR_CODE_PRESENT': 'Vendor Code',
+      'INV_PO_NUMBER_MATCH': 'PO Number Match',
+      'INV_AMOUNT_VS_PO_BALANCE': 'Amount vs PO Balance',
+      'AS_DEALER_LOCATION_PRESENT': 'Dealer/Location',
+      'AS_DAYS_MATCH_COST_SUMMARY': 'Days Match (Cost Summary)',
+      'AS_DAYS_MATCH_TEAM_DETAILS': 'Days Match (Team Details)',
+      'CS_PLACE_OF_SUPPLY_PRESENT': 'Place of Supply',
+      'CS_TOTAL_DAYS_PRESENT': 'Total Days',
+      'CS_TOTAL_VS_INVOICE': 'Total vs Invoice',
+      'CS_ELEMENT_COST_VS_RATES': 'Element Cost vs Rates',
+    };
+    return labelMap[ruleCode] ??
+        ruleCode
+            .replaceAll('_', ' ')
+            .replaceFirst(RegExp(r'^(INV|AS|CS|PO)\s'), '')
+            .trim();
+  }
+
+  /// Reusable validation card with header and table rows.
+  Widget _buildValidationCard({
+    required String title,
+    required String fileName,
+    required int passedCount,
+    required int totalCount,
+    required List<Map<String, dynamic>> rows,
+  }) {
     return Card(
       elevation: 1,
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(
-          color: Color(0xFFE5E7EB),
-          width: 1,
-        ),
+        side: const BorderSide(color: Color(0xFFE5E7EB), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
             decoration: const BoxDecoration(
               color: Color.fromARGB(255, 240, 237, 237),
               borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
@@ -1521,106 +1684,49 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Photo Validations',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        fileName,
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
+                      Text(title,
+                          style: AppTextStyles.bodyMedium
+                              .copyWith(fontWeight: FontWeight.w600)),
+                      if (fileName.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(fileName,
+                            style: AppTextStyles.bodySmall
+                                .copyWith(color: AppColors.textSecondary)),
+                      ],
                     ],
                   ),
                 ),
-                RichText(
-                  text: TextSpan(
-                    children: [
+                if (totalCount > 0)
+                  RichText(
+                    text: TextSpan(children: [
                       TextSpan(
                         text: '$passedCount/$totalCount ',
                         style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
-                        ),
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11),
                       ),
                       TextSpan(
                         text: 'Passed',
                         style: AppTextStyles.bodySmall.copyWith(
-                          color: const Color(0xFF16A34A),
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
-                        ),
+                            color: const Color(0xFF16A34A),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11),
                       ),
-                    ],
+                    ]),
                   ),
-                ),
               ],
             ),
           ),
-
-          // Validation Details - Single unified table
-          if (validationDetails != null)
-            _buildUnifiedValidationTable(validationDetails),
+          // Table
+          if (rows.isNotEmpty) _buildValidationRowsTable(rows),
         ],
       ),
     );
   }
 
-  Widget _buildUnifiedValidationTable(Map<String, dynamic> validationDetails) {
-    // Collect all validations into a single list
-    List<Map<String, dynamic>> allValidations = [];
-
-    // Add missing fields from fieldPresence (for invoice validations)
-    if (validationDetails['fieldPresence'] != null) {
-      final fieldPresence =
-          validationDetails['fieldPresence'] as Map<String, dynamic>;
-      final missingFields =
-          fieldPresence['missingFields'] as List<dynamic>? ?? [];
-
-      // Create a row for each missing field
-      for (var field in missingFields) {
-        allValidations.add({
-          'field': field.toString(),
-          'label': field.toString(),
-          'passed': false,
-          'message': 'Field is missing',
-        });
-      }
-    }
-
-    // Add proactive validations
-    if (validationDetails['proactive'] != null) {
-      final proactive = validationDetails['proactive'] as List<dynamic>;
-      allValidations.addAll(proactive.map((v) => v as Map<String, dynamic>));
-    }
-
-    // Add reactive validations
-    if (validationDetails['reactive'] != null) {
-      final reactive = validationDetails['reactive'] as List<dynamic>;
-      allValidations.addAll(reactive.map((v) => v as Map<String, dynamic>));
-    }
-
-    // Add checks
-    if (validationDetails['checks'] != null) {
-      final checks = validationDetails['checks'] as List<dynamic>;
-      allValidations.addAll(checks.map((v) => v as Map<String, dynamic>));
-    }
-
-    // Add required items (for photos)
-    if (validationDetails['requiredItems'] != null) {
-      final items = validationDetails['requiredItems'] as List<dynamic>;
-      allValidations.addAll(items.map((v) => v as Map<String, dynamic>));
-    }
-
-    if (allValidations.isEmpty) {
-      return const SizedBox();
-    }
-
+  /// Renders a table of validation rows with WHAT WAS CHECKED / RESULT / WHAT WAS FOUND columns.
+  Widget _buildValidationRowsTable(List<Map<String, dynamic>> rows) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1635,57 +1741,41 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
             children: [
               Expanded(
                 flex: 3,
-                child: Text(
-                  'WHAT WAS CHECKED',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
-                    fontSize: 11,
-                  ),
-                ),
+                child: Text('WHAT WAS CHECKED',
+                    style: AppTextStyles.bodySmall.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary,
+                        fontSize: 11)),
               ),
               SizedBox(
                 width: 80,
-                child: Text(
-                  'RESULT',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
-                    fontSize: 11,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
+                child: Text('RESULT',
+                    style: AppTextStyles.bodySmall.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary,
+                        fontSize: 11),
+                    textAlign: TextAlign.center),
               ),
               const SizedBox(width: 12),
               Expanded(
                 flex: 3,
-                child: Text(
-                  'WHAT WAS FOUND',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
-                    fontSize: 11,
-                  ),
-                ),
+                child: Text('WHAT WAS FOUND',
+                    style: AppTextStyles.bodySmall.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary,
+                        fontSize: 11)),
               ),
             ],
           ),
         ),
-
         // Table Rows
-        ...allValidations.asMap().entries.map((entry) {
+        ...rows.asMap().entries.map((entry) {
           final index = entry.key;
-          final validation = entry.value;
-          final isLast = index == allValidations.length - 1;
-
-          final field = validation['field'] ?? validation['item'] ?? 'Unknown';
-          final passed = validation['passed'] ?? false;
-          final value = validation['value'];
-          final message = validation['message'];
-          final label = validation['label'];
-          final confidence = validation['confidence'];
-          final present = validation['present'];
-
+          final row = entry.value;
+          final isLast = index == rows.length - 1;
+          final label = row['label'] ?? 'Unknown';
+          final passed = row['passed'] ?? false;
+          final message = row['message'] ?? '';
           final statusColor =
               passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
 
@@ -1694,12 +1784,11 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
             decoration: BoxDecoration(
               color: Colors.white,
               border: Border(
-                left: BorderSide(color: const Color(0xFFE5E7EB)),
-                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                left: const BorderSide(color: Color(0xFFE5E7EB)),
+                right: const BorderSide(color: Color(0xFFE5E7EB)),
                 bottom: BorderSide(
-                  color: const Color(0xFFE5E7EB),
-                  width: isLast ? 1 : 0.5,
-                ),
+                    color: const Color(0xFFE5E7EB),
+                    width: isLast ? 1 : 0.5),
               ),
               borderRadius: isLast
                   ? const BorderRadius.vertical(bottom: Radius.circular(8))
@@ -1708,42 +1797,31 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Column 1: What was checked
                 Expanded(
                   flex: 3,
-                  child: Text(
-                    label ?? field,
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+                  child: Text(label,
+                      style: AppTextStyles.bodySmall
+                          .copyWith(fontWeight: FontWeight.w500)),
                 ),
-
-                // Column 2: Status
                 SizedBox(
                   width: 80,
-                  child: Text(
-                    passed ? 'Pass' : 'Fail',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      color: statusColor,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 11,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
+                  child: Text(passed ? 'Pass' : 'Fail',
+                      style: AppTextStyles.bodySmall.copyWith(
+                          color: statusColor,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11),
+                      textAlign: TextAlign.center),
                 ),
-
                 const SizedBox(width: 12),
-
-                // Column 3: What was found
                 Expanded(
                   flex: 3,
-                  child: _buildWhatWasFoundColumn(
-                    value: value,
-                    message: message,
-                    confidence: confidence,
-                    present: present,
-                  ),
+                  child: Text(message,
+                      style: AppTextStyles.bodySmall.copyWith(
+                          color: passed
+                              ? const Color(0xFF16A34A)
+                              : const Color(0xFFDC2626),
+                          fontStyle:
+                              passed ? FontStyle.normal : FontStyle.italic)),
                 ),
               ],
             ),
@@ -1783,598 +1861,28 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     final validationDetailsJson =
         validation['validationDetailsJson'] as String?;
 
-    Map<String, dynamic>? validationDetails;
-    int passedCount = 0;
-    int totalCount = 0;
+    List<Map<String, dynamic>> allRows = [];
 
     if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
       try {
-        validationDetails =
+        final validationDetails =
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
-
-        // Count passed and total validations
-        if (validationDetails != null) {
-          // Count field presence checks
-          final fieldPresence =
-              validationDetails['fieldPresence'] as Map<String, dynamic>?;
-          if (fieldPresence != null) {
-            final missingFields =
-                fieldPresence['missingFields'] as List<dynamic>? ?? [];
-            final totalRecords = fieldPresence['totalRecords'];
-
-            // Count missing fields
-            totalCount += missingFields.length;
-
-            // Count enquiry field validations
-            if (totalRecords != null) {
-              final recordsWithState = fieldPresence['recordsWithState'];
-              final recordsWithDate = fieldPresence['recordsWithDate'];
-              final recordsWithDealerCode =
-                  fieldPresence['recordsWithDealerCode'];
-              final recordsWithDealerName =
-                  fieldPresence['recordsWithDealerName'];
-              final recordsWithDistrict = fieldPresence['recordsWithDistrict'];
-              final recordsWithPincode = fieldPresence['recordsWithPincode'];
-              final recordsWithCustomerName =
-                  fieldPresence['recordsWithCustomerName'];
-              final recordsWithCustomerNumber =
-                  fieldPresence['recordsWithCustomerNumber'];
-              final recordsWithTestRide = fieldPresence['recordsWithTestRide'];
-
-              if (recordsWithState != null) {
-                totalCount++;
-                if (recordsWithState == totalRecords) passedCount++;
-              }
-              if (recordsWithDate != null) {
-                totalCount++;
-                if (recordsWithDate == totalRecords) passedCount++;
-              }
-              if (recordsWithDealerCode != null) {
-                totalCount++;
-                if (recordsWithDealerCode == totalRecords) passedCount++;
-              }
-              if (recordsWithDealerName != null) {
-                totalCount++;
-                if (recordsWithDealerName == totalRecords) passedCount++;
-              }
-              if (recordsWithDistrict != null) {
-                totalCount++;
-                if (recordsWithDistrict == totalRecords) passedCount++;
-              }
-              if (recordsWithPincode != null) {
-                totalCount++;
-                if (recordsWithPincode == totalRecords) passedCount++;
-              }
-              if (recordsWithCustomerName != null) {
-                totalCount++;
-                if (recordsWithCustomerName == totalRecords) passedCount++;
-              }
-              if (recordsWithCustomerNumber != null) {
-                totalCount++;
-                if (recordsWithCustomerNumber == totalRecords) passedCount++;
-              }
-              if (recordsWithTestRide != null) {
-                totalCount++;
-                if (recordsWithTestRide == totalRecords) passedCount++;
-              }
-            }
-          }
-
-          // Count cross-document checks
-          final crossDocument =
-              validationDetails['crossDocument'] as Map<String, dynamic>?;
-          if (crossDocument != null) {
-            final totalCostValid = crossDocument['totalCostValid'];
-            final elementCostsValid = crossDocument['elementCostsValid'];
-            final fixedCostsValid = crossDocument['fixedCostsValid'];
-            final variableCostsValid = crossDocument['variableCostsValid'];
-            final numberOfDaysMatches = crossDocument['numberOfDaysMatches'];
-
-            if (totalCostValid != null) {
-              totalCount++;
-              if (totalCostValid == true) passedCount++;
-            }
-            if (elementCostsValid != null) {
-              totalCount++;
-              if (elementCostsValid == true) passedCount++;
-            }
-            if (fixedCostsValid != null) {
-              totalCount++;
-              if (fixedCostsValid == true) passedCount++;
-            }
-            if (variableCostsValid != null) {
-              totalCount++;
-              if (variableCostsValid == true) passedCount++;
-            }
-            if (numberOfDaysMatches != null) {
-              totalCount++;
-              if (numberOfDaysMatches == true) passedCount++;
-            }
-
-            // Count issues
-            final issues = crossDocument['issues'] as List<dynamic>? ?? [];
-            totalCount += issues.length;
-          }
-        }
+        allRows = _extractAllValidationRows(validationDetails);
       } catch (e) {
-        print('Error parsing validation details: $e');
+        debugPrint('Error parsing validation details for $title: $e');
       }
     }
 
-    return Card(
-      elevation: 1,
-      margin: const EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(
-          color: Color(0xFFE5E7EB),
-          width: 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: const BoxDecoration(
-              color: Color.fromARGB(255, 240, 237, 237),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      if (fileName != null && fileName.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          fileName,
-                          style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                if (totalCount > 0)
-                  RichText(
-                    text: TextSpan(
-                      children: [
-                        TextSpan(
-                          text: '$passedCount/$totalCount ',
-                          style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11,
-                          ),
-                        ),
-                        TextSpan(
-                          text: 'Passed',
-                          style: AppTextStyles.bodySmall.copyWith(
-                            color: const Color(0xFF16A34A),
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
+    final passedCount = allRows.where((r) => r['passed'] == true).length;
+    final totalCount = allRows.length;
 
-          // Validation Details Table (if available)
-          if (validationDetails != null)
-            _buildSimpleValidationDetailsTable(validationDetails),
-        ],
-      ),
+    return _buildValidationCard(
+      title: title,
+      fileName: fileName ?? '',
+      passedCount: passedCount,
+      totalCount: totalCount,
+      rows: allRows,
     );
   }
 
-  Widget _buildWhatWasFoundColumn({
-    dynamic value,
-    dynamic message,
-    dynamic confidence,
-    dynamic present,
-  }) {
-    // Handle required items with confidence
-    if (confidence != null) {
-      final isPresent = present ?? false;
-      return Row(
-        children: [
-          Text(
-            isPresent ? 'Detected with ' : 'Not detected, ',
-            style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textPrimary,
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: _getConfidenceColor((confidence as num).toDouble() * 100)
-                  .withOpacity(0.1),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(
-                color:
-                    _getConfidenceColor((confidence as num).toDouble() * 100),
-                width: 0.5,
-              ),
-            ),
-            child: Text(
-              '${((confidence as num) * 100).toStringAsFixed(0)}% confidence',
-              style: AppTextStyles.bodySmall.copyWith(
-                color:
-                    _getConfidenceColor((confidence as num).toDouble() * 100),
-                fontWeight: FontWeight.w600,
-                fontSize: 10,
-              ),
-            ),
-          ),
-        ],
-      );
-    }
-
-    // Handle regular validations
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (value != null)
-          Text(
-            value.toString(),
-            style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textPrimary,
-            ),
-          ),
-        if (message != null)
-          Text(
-            message.toString(),
-            style: AppTextStyles.bodySmall.copyWith(
-              color: const Color(0xFFDC2626),
-              fontStyle: FontStyle.italic,
-            ),
-          ),
-        if (value == null && message == null)
-          Text(
-            '-',
-            style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textSecondary,
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildSimpleValidationDetailsTable(
-      Map<String, dynamic> validationDetails) {
-    // Extract field presence and cross-document checks
-    final fieldPresence =
-        validationDetails['fieldPresence'] as Map<String, dynamic>?;
-    final crossDocument =
-        validationDetails['crossDocument'] as Map<String, dynamic>?;
-
-    List<Map<String, dynamic>> rows = [];
-
-    // Add field presence checks - ONE ROW PER MISSING FIELD
-    if (fieldPresence != null) {
-      final allFieldsPresent = fieldPresence['allFieldsPresent'] ?? true;
-      final missingFields =
-          fieldPresence['missingFields'] as List<dynamic>? ?? [];
-      final totalRecords = fieldPresence['totalRecords'];
-
-      // For enquiry validation (has totalRecords), don't add missingFields
-      // because we'll add individual field checks below
-      if (totalRecords == null &&
-          !allFieldsPresent &&
-          missingFields.isNotEmpty) {
-        // This is for Invoice/Cost Summary/Activity validations
-        // Create a separate row for each missing field
-        for (var field in missingFields) {
-          rows.add({
-            'label': field.toString(),
-            'passed': false,
-            'message': 'Field is missing',
-          });
-        }
-      }
-
-      // Add other field presence details if available (for enquiry validation)
-      if (totalRecords != null) {
-        // Show ALL fields with their pass/fail status
-        final recordsWithState = fieldPresence['recordsWithState'];
-        final recordsWithDate = fieldPresence['recordsWithDate'];
-        final recordsWithDealerCode = fieldPresence['recordsWithDealerCode'];
-        final recordsWithDealerName = fieldPresence['recordsWithDealerName'];
-        final recordsWithDistrict = fieldPresence['recordsWithDistrict'];
-        final recordsWithPincode = fieldPresence['recordsWithPincode'];
-        final recordsWithCustomerName =
-            fieldPresence['recordsWithCustomerName'];
-        final recordsWithCustomerNumber =
-            fieldPresence['recordsWithCustomerNumber'];
-        final recordsWithTestRide = fieldPresence['recordsWithTestRide'];
-
-        // Add all fields with their status
-        if (recordsWithState != null) {
-          rows.add({
-            'label': 'State',
-            'passed': recordsWithState == totalRecords,
-            'message': 'Present in $recordsWithState/$totalRecords records',
-          });
-        }
-        if (recordsWithDate != null) {
-          rows.add({
-            'label': 'Date',
-            'passed': recordsWithDate == totalRecords,
-            'message': 'Present in $recordsWithDate/$totalRecords records',
-          });
-        }
-        if (recordsWithDealerCode != null) {
-          rows.add({
-            'label': 'Dealer Code',
-            'passed': recordsWithDealerCode == totalRecords,
-            'message':
-                'Present in $recordsWithDealerCode/$totalRecords records',
-          });
-        }
-        if (recordsWithDealerName != null) {
-          rows.add({
-            'label': 'Dealer Name',
-            'passed': recordsWithDealerName == totalRecords,
-            'message':
-                'Present in $recordsWithDealerName/$totalRecords records',
-          });
-        }
-        if (recordsWithDistrict != null) {
-          rows.add({
-            'label': 'District',
-            'passed': recordsWithDistrict == totalRecords,
-            'message': 'Present in $recordsWithDistrict/$totalRecords records',
-          });
-        }
-        if (recordsWithPincode != null) {
-          rows.add({
-            'label': 'Pincode',
-            'passed': recordsWithPincode == totalRecords,
-            'message': 'Present in $recordsWithPincode/$totalRecords records',
-          });
-        }
-        if (recordsWithCustomerName != null) {
-          rows.add({
-            'label': 'Customer Name',
-            'passed': recordsWithCustomerName == totalRecords,
-            'message':
-                'Present in $recordsWithCustomerName/$totalRecords records',
-          });
-        }
-        if (recordsWithCustomerNumber != null) {
-          rows.add({
-            'label': 'Customer Number',
-            'passed': recordsWithCustomerNumber == totalRecords,
-            'message':
-                'Present in $recordsWithCustomerNumber/$totalRecords records',
-          });
-        }
-        if (recordsWithTestRide != null) {
-          rows.add({
-            'label': 'Test Ride',
-            'passed': recordsWithTestRide == totalRecords,
-            'message': 'Present in $recordsWithTestRide/$totalRecords records',
-          });
-        }
-      }
-    }
-
-    // Add cross-document checks
-    if (crossDocument != null) {
-      // Add specific validation checks for cost summary
-      final totalCostValid = crossDocument['totalCostValid'];
-      final elementCostsValid = crossDocument['elementCostsValid'];
-      final fixedCostsValid = crossDocument['fixedCostsValid'];
-      final variableCostsValid = crossDocument['variableCostsValid'];
-      final numberOfDaysMatches = crossDocument['numberOfDaysMatches'];
-
-      if (totalCostValid != null) {
-        rows.add({
-          'label': 'Total Cost Validation',
-          'passed': totalCostValid,
-          'message': totalCostValid
-              ? 'Total cost matches invoice'
-              : 'Total cost does not match invoice',
-        });
-      }
-
-      if (elementCostsValid != null) {
-        rows.add({
-          'label': 'Element Costs Validation',
-          'passed': elementCostsValid,
-          'message': elementCostsValid
-              ? 'Element costs are valid'
-              : 'Element costs are invalid',
-        });
-      }
-
-      if (fixedCostsValid != null) {
-        rows.add({
-          'label': 'Fixed Costs Validation',
-          'passed': fixedCostsValid,
-          'message': fixedCostsValid
-              ? 'Fixed costs are valid'
-              : 'Fixed costs are invalid',
-        });
-      }
-
-      if (variableCostsValid != null) {
-        rows.add({
-          'label': 'Variable Costs Validation',
-          'passed': variableCostsValid,
-          'message': variableCostsValid
-              ? 'Variable costs are valid'
-              : 'Variable costs are invalid',
-        });
-      }
-
-      if (numberOfDaysMatches != null) {
-        rows.add({
-          'label': 'Number of Days Match',
-          'passed': numberOfDaysMatches,
-          'message': numberOfDaysMatches
-              ? 'Number of days matches between documents'
-              : 'Number of days mismatch between documents',
-        });
-      }
-
-      // Add issues as separate rows
-      final issues = crossDocument['issues'] as List<dynamic>? ?? [];
-      for (var issue in issues) {
-        rows.add({
-          'label': 'Cross-document Issue',
-          'passed': false,
-          'message': issue.toString(),
-        });
-      }
-    }
-
-    if (rows.isEmpty) {
-      return const SizedBox();
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Table Header
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: Text(
-                  'WHAT WAS CHECKED',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
-                    fontSize: 11,
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: 80,
-                child: Text(
-                  'RESULT',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
-                    fontSize: 11,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 3,
-                child: Text(
-                  'WHAT WAS FOUND',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
-                    fontSize: 11,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // Table Rows
-        ...rows.asMap().entries.map((entry) {
-          final index = entry.key;
-          final row = entry.value;
-          final isLast = index == rows.length - 1;
-
-          final label = row['label'] ?? 'Unknown';
-          final passed = row['passed'] ?? false;
-          final message = row['message'] ?? '';
-
-          final statusColor =
-              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
-
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(
-                left: BorderSide(color: const Color(0xFFE5E7EB)),
-                right: BorderSide(color: const Color(0xFFE5E7EB)),
-                bottom: BorderSide(
-                  color: const Color(0xFFE5E7EB),
-                  width: isLast ? 1 : 0.5,
-                ),
-              ),
-              borderRadius: isLast
-                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
-                  : BorderRadius.zero,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Column 1: What was checked
-                Expanded(
-                  flex: 3,
-                  child: Text(
-                    label,
-                    style: AppTextStyles.bodySmall.copyWith(
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-
-                // Column 2: Status
-                SizedBox(
-                  width: 80,
-                  child: Text(
-                    passed ? 'Pass' : 'Fail',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      color: statusColor,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 11,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-
-                const SizedBox(width: 12),
-
-                // Column 3: What was found
-                Expanded(
-                  flex: 3,
-                  child: Text(
-                    message,
-                    style: AppTextStyles.bodySmall.copyWith(
-                      color: passed
-                          ? const Color(0xFF16A34A)
-                          : const Color(0xFFDC2626),
-                      fontStyle: passed ? FontStyle.normal : FontStyle.italic,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }),
-      ],
-    );
-  }
 }

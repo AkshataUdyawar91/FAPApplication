@@ -582,6 +582,7 @@ public class ProactiveValidationService : IProactiveValidationService
                     DocumentId = documentId,
                     DocumentType = documentType,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = BuildDetailsWithProactiveRules(null, ruleResultsJson),
                     CreatedAt = DateTime.UtcNow
                 };
                 _db.ValidationResults.Add(validationResult);
@@ -589,6 +590,9 @@ public class ProactiveValidationService : IProactiveValidationService
             else
             {
                 validationResult.RuleResultsJson = ruleResultsJson;
+                // Merge proactive rules into existing ValidationDetailsJson
+                validationResult.ValidationDetailsJson = BuildDetailsWithProactiveRules(
+                    validationResult.ValidationDetailsJson, ruleResultsJson);
                 validationResult.UpdatedAt = DateTime.UtcNow;
             }
 
@@ -599,6 +603,49 @@ public class ProactiveValidationService : IProactiveValidationService
             _logger.LogError(ex,
                 "Failed to persist rule results for document {DocumentId}", documentId);
             // Don't throw — validation results are still returned to the caller
+        }
+    }
+
+    /// <summary>
+    /// Builds or updates ValidationDetailsJson by adding/replacing the proactiveRules array.
+    /// Preserves any existing reactive validation properties (fieldPresence, crossDocument, etc.).
+    /// </summary>
+    private static string BuildDetailsWithProactiveRules(string? existingDetailsJson, string ruleResultsJson)
+    {
+        try
+        {
+            using var proactiveDoc = JsonDocument.Parse(ruleResultsJson);
+            if (proactiveDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return existingDetailsJson ?? "{}";
+
+            using var existingDoc = JsonDocument.Parse(existingDetailsJson ?? "{}");
+
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = false }))
+            {
+                writer.WriteStartObject();
+
+                // Copy all existing properties except proactiveRules (will be replaced)
+                foreach (var prop in existingDoc.RootElement.EnumerateObject())
+                {
+                    if (!string.Equals(prop.Name, "proactiveRules", StringComparison.OrdinalIgnoreCase))
+                    {
+                        prop.WriteTo(writer);
+                    }
+                }
+
+                // Write the updated proactive rules
+                writer.WritePropertyName("proactiveRules");
+                proactiveDoc.RootElement.WriteTo(writer);
+
+                writer.WriteEndObject();
+            }
+
+            return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        }
+        catch (JsonException)
+        {
+            return existingDetailsJson ?? "{}";
         }
     }
 

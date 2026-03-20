@@ -85,44 +85,26 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
     if (!mounted) return;
     setState(() => _isLoading = true);
     try {
-      // RA should only see submissions that have been approved by ASM (PendingRA),
-      // plus ones they've already acted on (Approved, RARejected)
+      // Backend enforces RA role scoping: only returns submissions in
+      // PendingRA, Approved, RARejected states for the RA's assigned activity states.
+      // A single call without state filter fetches all RA-visible submissions.
       final response = await _dio.get(
         '/submissions',
         queryParameters: {
-          'state': 'PendingRA',
+          'pageSize': 100,
         },
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
-        final pendingItems = <Map<String, dynamic>>[];
+        final items = <Map<String, dynamic>>[];
         final data = response.data;
         if (data is Map && data.containsKey('items')) {
-          pendingItems.addAll(List<Map<String, dynamic>>.from(data['items']));
-        }
-
-        // Also fetch Approved and RARejected for history view
-        for (final extraState in ['Approved', 'RARejected']) {
-          try {
-            final extraResponse = await _dio.get(
-              '/submissions',
-              queryParameters: {'state': extraState},
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-            );
-            if (extraResponse.statusCode == 200) {
-              final extraData = extraResponse.data;
-              if (extraData is Map && extraData.containsKey('items')) {
-                pendingItems.addAll(List<Map<String, dynamic>>.from(extraData['items']));
-              }
-            }
-          } catch (_) {
-            // Non-critical — continue loading
-          }
+          items.addAll(List<Map<String, dynamic>>.from(data['items']));
         }
 
         if (mounted) {
           setState(() {
-            _documents = pendingItems;
+            _documents = items;
             _isLoading = false;
           });
         }

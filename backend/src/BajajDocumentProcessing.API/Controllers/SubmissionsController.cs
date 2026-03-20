@@ -434,18 +434,17 @@ public class SubmissionsController : ControllerBase
                     .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.EnquiryDocument && v.DocumentId == package.EnquiryDocument.Id, cancellationToken)
                 : null;
 
-            var photoValidations = new List<Domain.Entities.ValidationResult>();
+            // Photo validation: query by package ID and all individual photo IDs in one go
+            var photoDocumentIds = new List<Guid> { id }; // package ID (new code stores TeamPhoto with DocumentId = packageId)
             foreach (var team in package.Teams.Where(t => !t.IsDeleted))
             {
                 foreach (var photo in team.Photos.Where(p => !p.IsDeleted))
-                {
-                    var validation = await _context.ValidationResults
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.TeamPhoto && v.DocumentId == photo.Id, cancellationToken);
-                    if (validation != null)
-                        photoValidations.Add(validation);
-                }
+                    photoDocumentIds.Add(photo.Id);
             }
+            var photoValidations = await _context.ValidationResults
+                .AsNoTracking()
+                .Where(v => v.DocumentType == DocumentType.TeamPhoto && photoDocumentIds.Contains(v.DocumentId))
+                .ToListAsync(cancellationToken);
 
             _logger.LogInformation("Retrieved submission {Id} successfully", id);
 
@@ -574,9 +573,7 @@ public class SubmissionsController : ControllerBase
                 {
                     DocumentType = "TeamPhoto",
                     DocumentId = v.DocumentId,
-                    FileName = package.Teams
-                        .SelectMany(t => t.Photos)
-                        .FirstOrDefault(p => p.Id == v.DocumentId)?.FileName,
+                    FileName = "Team Photos (All)",
                     AllPassed = v.AllValidationsPassed,
                     FailureReason = v.FailureReason,
                     ValidatedAt = v.CreatedAt,
@@ -715,8 +712,13 @@ public class SubmissionsController : ControllerBase
             if (package.CostSummary != null) documentIds.Add(package.CostSummary.Id);
             if (package.ActivitySummary != null) documentIds.Add(package.ActivitySummary.Id);
             if (package.EnquiryDocument != null) documentIds.Add(package.EnquiryDocument.Id);
-            // TeamPhoto uses package.Id as DocumentId
+            // TeamPhoto uses package.Id as DocumentId; also add individual photo IDs for backward compatibility
             documentIds.Add(package.Id);
+            foreach (var team in package.Teams.Where(t => !t.IsDeleted))
+            {
+                foreach (var photo in team.Photos.Where(p => !p.IsDeleted))
+                    documentIds.Add(photo.Id);
+            }
 
             // Query all validation results for these document IDs
             var validationResults = await _context.ValidationResults
@@ -734,6 +736,7 @@ public class SubmissionsController : ControllerBase
             if (package.CostSummary != null) fileNames["CostSummary"] = package.CostSummary.FileName ?? "Cost Summary document";
             if (package.ActivitySummary != null) fileNames["ActivitySummary"] = package.ActivitySummary.FileName ?? "Activity Summary document";
             if (package.EnquiryDocument != null) fileNames["EnquiryDocument"] = package.EnquiryDocument.FileName ?? "Enquiry Dump document";
+            fileNames["TeamPhoto"] = "Team Photos (All)";
 
             var response = new SubmissionValidationsResponse
             {
@@ -753,11 +756,9 @@ public class SubmissionsController : ControllerBase
                     FileName = fileName,
                     AllPassed = vr.AllValidationsPassed,
                     FailureReason = vr.FailureReason,
-                    ValidatedAt = vr.UpdatedAt ?? vr.CreatedAt
+                    ValidatedAt = vr.UpdatedAt ?? vr.CreatedAt,
+                    ValidationDetailsJson = vr.ValidationDetailsJson
                 };
-
-                // Note: ValidationDetailsJson was removed. FieldPresence and CrossDocument
-                // details are no longer stored as JSON. FailureReason contains the summary.
 
                 response.Documents.Add(docDto);
             }
@@ -843,6 +844,15 @@ public class SubmissionsController : ControllerBase
                 }
                 _logger.LogInformation("Filtering submissions for RA {UserId} with assigned states: {States}", userId, string.Join(", ", assignedStates));
                 query = query.Where(p => p.ActivityState != null && assignedStates.Contains(p.ActivityState));
+
+                // RA should only see submissions that have been approved by ASM (reached RA level or beyond)
+                var raVisibleStates = new[]
+                {
+                    PackageState.PendingRA,
+                    PackageState.RARejected,
+                    PackageState.Approved
+                };
+                query = query.Where(p => raVisibleStates.Contains(p.State));
             }
             else
             {
