@@ -183,7 +183,7 @@ public class AnalyticsController : ControllerBase
     /// Get quarterly FAP (Final Approved Payment) KPI data
     /// </summary>
     [HttpGet("quarterly-fap")]
-    [Authorize(Roles = "ASM,HQ")]
+    [Authorize(Roles = "ASM,HQ,RA")]
     public async Task<IActionResult> GetQuarterlyFapKpis(
         [FromQuery] string quarter = "current",
         [FromQuery] int? year = null,

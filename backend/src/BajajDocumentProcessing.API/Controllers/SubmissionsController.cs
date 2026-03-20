@@ -399,10 +399,54 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Load ValidationResult separately — it uses polymorphic DocumentType+DocumentId, not a direct FK
-            var validationResult = await _context.ValidationResults
-                .AsNoTracking()
-                .FirstOrDefaultAsync(v => v.DocumentId == package.Id, cancellationToken);
+            // Load ValidationResults for each document type
+            var poValidation = package.PO != null 
+                ? await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.PO && v.DocumentId == package.PO.Id, cancellationToken)
+                : null;
+
+            var invoiceValidations = new List<Domain.Entities.ValidationResult>();
+            foreach (var invoice in package.Invoices.Where(i => !i.IsDeleted))
+            {
+                var validation = await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.Invoice && v.DocumentId == invoice.Id, cancellationToken);
+                if (validation != null)
+                    invoiceValidations.Add(validation);
+            }
+
+            var costSummaryValidation = package.CostSummary != null
+                ? await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.CostSummary && v.DocumentId == package.CostSummary.Id, cancellationToken)
+                : null;
+
+            var activityValidation = package.ActivitySummary != null
+                ? await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.ActivitySummary && v.DocumentId == package.ActivitySummary.Id, cancellationToken)
+                : null;
+
+            var enquiryValidation = package.EnquiryDocument != null
+                ? await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.EnquiryDocument && v.DocumentId == package.EnquiryDocument.Id, cancellationToken)
+                : null;
+
+            var photoValidations = new List<Domain.Entities.ValidationResult>();
+            foreach (var team in package.Teams.Where(t => !t.IsDeleted))
+            {
+                foreach (var photo in team.Photos.Where(p => !p.IsDeleted))
+                {
+                    var validation = await _context.ValidationResults
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.TeamPhoto && v.DocumentId == photo.Id, cancellationToken);
+                    if (validation != null)
+                        photoValidations.Add(validation);
+                }
+            }
+
             _logger.LogInformation("Retrieved submission {Id} successfully", id);
 
             // Get approval history for review fields
@@ -463,11 +507,81 @@ public class SubmissionsController : ControllerBase
                         }).ToList()
                         : new List<CampaignInvoiceDto>()
                 }).ToList(),
-                ValidationResult = validationResult != null ? new ValidationResultDto
+                ValidationResult = null, // Legacy field - kept for backward compatibility
+                POValidation = poValidation != null ? new ValidationResultDto
                 {
-                    AllValidationsPassed = validationResult.AllValidationsPassed,
-                    FailureReason = validationResult.FailureReason
+                    AllValidationsPassed = poValidation.AllValidationsPassed,
+                    FailureReason = poValidation.FailureReason,
+                    SapVerificationPassed = poValidation.SapVerificationPassed,
+                    AmountConsistencyPassed = poValidation.AmountConsistencyPassed,
+                    LineItemMatchingPassed = poValidation.LineItemMatchingPassed,
+                    CompletenessCheckPassed = poValidation.CompletenessCheckPassed,
+                    DateValidationPassed = poValidation.DateValidationPassed,
+                    VendorMatchingPassed = poValidation.VendorMatchingPassed,
+                    RuleResultsJson = poValidation.RuleResultsJson,
+                    ValidationDetailsJson = poValidation.ValidationDetailsJson
                 } : null,
+                InvoiceValidations = invoiceValidations.Select(v => new DocumentValidationDto
+                {
+                    DocumentType = "Invoice",
+                    DocumentId = v.DocumentId,
+                    FileName = package.Invoices.FirstOrDefault(i => i.Id == v.DocumentId)?.FileName,
+                    AllPassed = v.AllValidationsPassed,
+                    FailureReason = v.FailureReason,
+                    ValidatedAt = v.CreatedAt,
+                    ValidationDetailsJson = v.ValidationDetailsJson
+                }).ToList(),
+                CostSummaryValidation = costSummaryValidation != null ? new ValidationResultDto
+                {
+                    AllValidationsPassed = costSummaryValidation.AllValidationsPassed,
+                    FailureReason = costSummaryValidation.FailureReason,
+                    SapVerificationPassed = costSummaryValidation.SapVerificationPassed,
+                    AmountConsistencyPassed = costSummaryValidation.AmountConsistencyPassed,
+                    LineItemMatchingPassed = costSummaryValidation.LineItemMatchingPassed,
+                    CompletenessCheckPassed = costSummaryValidation.CompletenessCheckPassed,
+                    DateValidationPassed = costSummaryValidation.DateValidationPassed,
+                    VendorMatchingPassed = costSummaryValidation.VendorMatchingPassed,
+                    RuleResultsJson = costSummaryValidation.RuleResultsJson,
+                    ValidationDetailsJson = costSummaryValidation.ValidationDetailsJson
+                } : null,
+                ActivityValidation = activityValidation != null ? new ValidationResultDto
+                {
+                    AllValidationsPassed = activityValidation.AllValidationsPassed,
+                    FailureReason = activityValidation.FailureReason,
+                    SapVerificationPassed = activityValidation.SapVerificationPassed,
+                    AmountConsistencyPassed = activityValidation.AmountConsistencyPassed,
+                    LineItemMatchingPassed = activityValidation.LineItemMatchingPassed,
+                    CompletenessCheckPassed = activityValidation.CompletenessCheckPassed,
+                    DateValidationPassed = activityValidation.DateValidationPassed,
+                    VendorMatchingPassed = activityValidation.VendorMatchingPassed,
+                    RuleResultsJson = activityValidation.RuleResultsJson,
+                    ValidationDetailsJson = activityValidation.ValidationDetailsJson
+                } : null,
+                EnquiryValidation = enquiryValidation != null ? new ValidationResultDto
+                {
+                    AllValidationsPassed = enquiryValidation.AllValidationsPassed,
+                    FailureReason = enquiryValidation.FailureReason,
+                    SapVerificationPassed = enquiryValidation.SapVerificationPassed,
+                    AmountConsistencyPassed = enquiryValidation.AmountConsistencyPassed,
+                    LineItemMatchingPassed = enquiryValidation.LineItemMatchingPassed,
+                    CompletenessCheckPassed = enquiryValidation.CompletenessCheckPassed,
+                    DateValidationPassed = enquiryValidation.DateValidationPassed,
+                    VendorMatchingPassed = enquiryValidation.VendorMatchingPassed,
+                    RuleResultsJson = enquiryValidation.RuleResultsJson,
+                    ValidationDetailsJson = enquiryValidation.ValidationDetailsJson
+                } : null,
+                PhotoValidations = photoValidations.Select(v => new DocumentValidationDto
+                {
+                    DocumentType = "TeamPhoto",
+                    DocumentId = v.DocumentId,
+                    FileName = package.Teams
+                        .SelectMany(t => t.Photos)
+                        .FirstOrDefault(p => p.Id == v.DocumentId)?.FileName,
+                    AllPassed = v.AllValidationsPassed,
+                    FailureReason = v.FailureReason,
+                    ValidatedAt = v.CreatedAt,
+                    ValidationDetailsJson = v.ValidationDetailsJson
+                }).ToList(),
                 ConfidenceScore = package.ConfidenceScore != null ? new ConfidenceScoreDto
                 {
                     OverallConfidence = package.ConfidenceScore.OverallConfidence,

@@ -1422,7 +1422,7 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
         public string? Category { get; set; }
         public string? ElementName { get; set; }
         public decimal Amount { get; set; }
-        public int? Quantity { get; set; }
+        public decimal? Quantity { get; set; }
         public string? Unit { get; set; }
         public bool IsFixedCost { get; set; }
         public bool IsVariableCost { get; set; }

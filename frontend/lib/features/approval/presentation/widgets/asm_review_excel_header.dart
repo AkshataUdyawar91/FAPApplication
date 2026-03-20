@@ -12,6 +12,9 @@ class ASMReviewExcelHeader extends StatelessWidget {
   /// The FAP submission ID.
   final String submissionId;
   
+  /// The submission number (e.g., FAP-2026-0001). Falls back to truncated ID if null.
+  final String? submissionNumber;
+  
   /// Current state of the submission (e.g., "PendingApproval", "RejectedByHQ").
   final String state;
   
@@ -30,6 +33,7 @@ class ASMReviewExcelHeader extends StatelessWidget {
   const ASMReviewExcelHeader({
     super.key,
     required this.submissionId,
+    this.submissionNumber,
     required this.state,
     required this.isProcessing,
     required this.onBack,
@@ -39,7 +43,7 @@ class ASMReviewExcelHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fapId = 'FAP-${submissionId.length >= 8 ? submissionId.substring(0, 8).toUpperCase() : submissionId.toUpperCase()}';
+    final fapId = submissionNumber ?? 'FAP-${submissionId.length >= 8 ? submissionId.substring(0, 8).toUpperCase() : submissionId.toUpperCase()}';
     
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
