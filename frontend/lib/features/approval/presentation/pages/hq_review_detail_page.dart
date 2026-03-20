@@ -739,7 +739,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     String displayText;
 
     // RA role status labels
-    if (normalizedState == 'pendinghqapproval' ||
+    if (normalizedState == 'pendingra' ||
+        normalizedState == 'pendinghqapproval' ||
         normalizedState == 'pendingwithra') {
       backgroundColor = const Color(0xFFFEF3C7);
       textColor = const Color(0xFFD97706);
@@ -748,13 +749,15 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       backgroundColor = const Color(0xFFD1FAE5);
       textColor = const Color(0xFF10B981);
       displayText = 'Approved';
-    } else if (normalizedState == 'rejectedbyhq' ||
+    } else if (normalizedState == 'rarejected' ||
+        normalizedState == 'rejectedbyhq' ||
         normalizedState == 'rejectedbyra' ||
         normalizedState == 'rejected') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected';
-    } else if (normalizedState == 'pendingapproval' ||
+    } else if (normalizedState == 'pendingch' ||
+        normalizedState == 'pendingapproval' ||
         normalizedState == 'pendingchapproval' ||
         normalizedState == 'pendingwithch') {
       backgroundColor = const Color(0xFFDEEAFF);
@@ -874,7 +877,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
 
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
-    return state == 'pendinghqapproval';
+    return state == 'pendingra' || 
+           state == 'pendinghqapproval';
   }
 
   List<CampaignDetailRow> _buildHierarchicalRows(

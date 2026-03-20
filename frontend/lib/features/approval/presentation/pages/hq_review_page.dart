@@ -54,20 +54,18 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
 
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
-    if (state == 'pendinghqapproval') return 'pending';
+    if (state == 'pendingra' || state == 'pendinghqapproval') return 'pending';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyhq' ||
+    if (state == 'rarejected' ||
+        state == 'rejectedbyhq' ||
         state == 'hqrejected' ||
-        state == 'asmrejected') return 'rejected';
-    if (state == 'pendingasmapproval' ||
-        state == 'uploaded' ||
-        state == 'extracting' ||
-        state == 'validating' ||
-        state == 'scoring' ||
-        state == 'recommending') {
-      return 'pending';
+        state == 'rejectedbyra') return 'rejected';
+    if (state == 'pendingch' ||
+        state == 'pendingasmapproval' ||
+        state == 'chrejected') {
+      return 'ch-level';
     }
-    return 'pending';
+    return 'other';
   }
 
   @override
@@ -84,22 +82,50 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
   }
 
   Future<void> _loadDocuments() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     try {
+      // RA should only see submissions that have been approved by ASM (PendingRA),
+      // plus ones they've already acted on (Approved, RARejected)
       final response = await _dio.get(
         '/submissions',
+        queryParameters: {
+          'state': 'PendingRA',
+        },
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
-        setState(() {
-          final data = response.data;
-          if (data is Map && data.containsKey('items')) {
-            _documents = List<Map<String, dynamic>>.from(data['items']);
-          } else {
-            _documents = [];
+        final pendingItems = <Map<String, dynamic>>[];
+        final data = response.data;
+        if (data is Map && data.containsKey('items')) {
+          pendingItems.addAll(List<Map<String, dynamic>>.from(data['items']));
+        }
+
+        // Also fetch Approved and RARejected for history view
+        for (final extraState in ['Approved', 'RARejected']) {
+          try {
+            final extraResponse = await _dio.get(
+              '/submissions',
+              queryParameters: {'state': extraState},
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            );
+            if (extraResponse.statusCode == 200) {
+              final extraData = extraResponse.data;
+              if (extraData is Map && extraData.containsKey('items')) {
+                pendingItems.addAll(List<Map<String, dynamic>>.from(extraData['items']));
+              }
+            }
+          } catch (_) {
+            // Non-critical — continue loading
           }
-          _isLoading = false;
-        });
+        }
+
+        if (mounted) {
+          setState(() {
+            _documents = pendingItems;
+            _isLoading = false;
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -114,6 +140,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
   }
 
   Future<void> _loadKpiData() async {
+    if (!mounted) return;
     setState(() {
       _isKpiLoading = true;
       _kpiError = null;
@@ -892,7 +919,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
         'userName': widget.userName,
       },
     );
-    if (result == true || result == null) _loadDocuments();
+    if (mounted && (result == true || result == null)) _loadDocuments();
   }
 
   int? get _sortColumnIndex {

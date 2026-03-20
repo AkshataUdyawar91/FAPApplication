@@ -1157,7 +1157,7 @@ public class SubmissionsController : ControllerBase
     /// <response code="404">Not found - submission does not exist</response>
     /// <response code="500">Internal server error</response>
     [HttpPatch("{id}/hq-approve")]
-    [Authorize(Roles = "HQ")]
+    [Authorize(Roles = "HQ,RA")]
     [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> HQApproveSubmission(
         Guid id,
@@ -1245,7 +1245,7 @@ public class SubmissionsController : ControllerBase
     /// <response code="404">Not found - submission does not exist</response>
     /// <response code="500">Internal server error</response>
     [HttpPatch("{id}/hq-reject")]
-    [Authorize(Roles = "HQ")]
+    [Authorize(Roles = "HQ,RA")]
     [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> HQRejectSubmission(
         Guid id,
