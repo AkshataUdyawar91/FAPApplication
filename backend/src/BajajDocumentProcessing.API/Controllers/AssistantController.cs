@@ -39,53 +39,68 @@ public class AssistantController : ControllerBase
     /// Process an assistant message and return the next response.
     /// </summary>
     [HttpPost("message")]
-    [Authorize(Roles = "Agency")]
+    [Authorize(Roles = "Agency,ASM,HQ")]
     public async Task<IActionResult> ProcessMessage(
         [FromBody] AssistantRequest request,
         CancellationToken ct = default)
     {
         var agencyId = await GetAgencyIdAsync(ct);
-        if (agencyId == null) return Forbid();
+        var action = request.Action?.ToLowerInvariant();
+
+        // Actions that don't require an agencyId (available to all roles)
+        var publicActions = new HashSet<string>
+        {
+            "greet", "create_request", "view_requests", "pending_approvals",
+            "search_state", "list_states", "submit_team_name",
+            "search_dealer", "select_dealer", "submit_team_dates",
+            "reupload_invoice", "reupload_activity_summary",
+            "reupload_cost_summary", "reupload_enquiry_dump",
+            "continue_after_cost_summary", "continue_after_teams",
+            "save_draft_from_chat",
+        };
+
+        if (!publicActions.Contains(action ?? "") && agencyId == null)
+            return Forbid();
 
         try
         {
-            var response = request.Action?.ToLowerInvariant() switch
+            var response = action switch
             {
                 "greet" => BuildGreeting(),
                 "create_request" => BuildCreateRequestPrompt(),
                 "view_requests" => BuildViewRequestsPrompt(),
                 "pending_approvals" => BuildPendingApprovalsPrompt(),
-                "search_po" => await HandleSearchPO(request, agencyId.Value, ct),
-                "select_po" => await HandleSelectPO(request, agencyId.Value, ct),
-                "select_state" => await HandleSelectState(request, agencyId.Value, ct),
+                "search_po" => await HandleSearchPO(request, agencyId!.Value, ct),
+                "select_po" => await HandleSelectPO(request, agencyId!.Value, ct),
+                "select_state" => await HandleSelectState(request, agencyId!.Value, ct),
                 "search_state" => HandleSearchState(request, ct),
                 "list_states" => HandleListAllStates(),
-                "invoice_uploaded" => await HandleInvoiceUploaded(request, agencyId.Value, ct),
-                "continue_invoice" => await HandleContinueInvoice(request, agencyId.Value, ct),
+                "invoice_uploaded" => await HandleInvoiceUploaded(request, agencyId!.Value, ct),
+                "continue_invoice" => await HandleContinueInvoice(request, agencyId!.Value, ct),
                 "reupload_invoice" => HandleReuploadInvoice(),
-                "activity_summary_uploaded" => await HandleActivitySummaryUploaded(request, agencyId.Value, ct),
+                "activity_summary_uploaded" => await HandleActivitySummaryUploaded(request, agencyId!.Value, ct),
                 "reupload_activity_summary" => HandleReuploadActivitySummary(),
-                "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId.Value, ct),
-                "start_team_entry" => await HandleStartTeamEntry(request, agencyId.Value, ct),
-                "submit_team_count" => await HandleSubmitTeamCount(request, agencyId.Value, ct),
+                "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId!.Value, ct),
+                "start_team_entry" => await HandleStartTeamEntry(request, agencyId!.Value, ct),
+                "submit_team_count" => await HandleSubmitTeamCount(request, agencyId!.Value, ct),
                 "submit_team_name" => HandleSubmitTeamName(request),
                 "search_dealer" => await HandleSearchDealer(request, ct),
                 "select_dealer" => HandleSelectDealer(request),
                 "submit_team_dates" => HandleSubmitTeamDates(request),
-                "confirm_team" => await HandleConfirmTeam(request, agencyId.Value, ct),
-                "start_photo_upload" => await HandleStartPhotoUpload(request, agencyId.Value, ct),
-                "photos_uploaded" => await HandlePhotosUploaded(request, agencyId.Value, ct),
-                "replace_photo" => await HandleReplacePhoto(request, agencyId.Value, ct),
-                "add_more_photos" => await HandleAddMorePhotos(request, agencyId.Value, ct),
-                "done_team_photos" => await HandleDoneTeamPhotos(request, agencyId.Value, ct),
-                "cost_summary_uploaded" => await HandleCostSummaryUploaded(request, agencyId.Value, ct),
+                "confirm_team" => await HandleConfirmTeam(request, agencyId!.Value, ct),
+                "start_photo_upload" => await HandleStartPhotoUpload(request, agencyId!.Value, ct),
+                "photos_uploaded" => await HandlePhotosUploaded(request, agencyId!.Value, ct),
+                "replace_photo" => await HandleReplacePhoto(request, agencyId!.Value, ct),
+                "add_more_photos" => await HandleAddMorePhotos(request, agencyId!.Value, ct),
+                "done_team_photos" => await HandleDoneTeamPhotos(request, agencyId!.Value, ct),
+                "cost_summary_uploaded" => await HandleCostSummaryUploaded(request, agencyId!.Value, ct),
                 "reupload_cost_summary" => HandleReuploadCostSummary(),
                 "continue_after_cost_summary" => HandleContinueAfterCostSummary(request),
                 "continue_after_teams" => HandleEnquiryDumpUpload(),
-                "enquiry_dump_uploaded" => await HandleEnquiryDumpUploaded(request, agencyId.Value, ct),
+                "enquiry_dump_uploaded" => await HandleEnquiryDumpUploaded(request, agencyId!.Value, ct),
                 "reupload_enquiry_dump" => HandleEnquiryDumpUpload(),
-                "continue_after_enquiry" => await HandleFinalReview(request, agencyId.Value, ct),
-                "submit_from_chat" => await HandleSubmitFromChat(request, agencyId.Value, ct),
+                "continue_after_enquiry" => await HandleFinalReview(request, agencyId!.Value, ct),
+                "submit_from_chat" => await HandleSubmitFromChat(request, agencyId!.Value, ct),
                 "save_draft_from_chat" => HandleSaveDraftFromChat(),
                 _ => BuildGreeting(),
             };

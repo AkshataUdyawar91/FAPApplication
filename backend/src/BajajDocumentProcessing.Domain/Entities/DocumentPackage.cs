@@ -56,6 +56,8 @@ public class DocumentPackage : BaseEntity
     /// <summary>
     /// Gets or sets the unique identifier of the RA user assigned to review this submission.
     /// Auto-assigned at ASM approval time via StateMapping.
+    /// Gets or sets the RA user assigned to review this package at HQ level.
+    /// Auto-assigned when ASM approves via StateMapping.
     /// </summary>
     public Guid? AssignedRAUserId { get; set; }
 

@@ -327,7 +327,7 @@ public class ProactiveValidationService : IProactiveValidationService
     }
 
     private static ProactiveRuleResult CheckActivityDaysVsTeamDetails(
-        Dictionary<string, string> activityData, List<Teams> teams)
+        Dictionary<string, string> activityData, List<Domain.Entities.Teams> teams)
     {
         var activityDaysStr = GetJsonField(activityData, "totalDays")
             ?? GetJsonField(activityData, "workingDays")

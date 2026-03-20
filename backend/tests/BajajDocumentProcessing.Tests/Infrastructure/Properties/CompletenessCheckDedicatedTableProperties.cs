@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
+using TeamsEntity = BajajDocumentProcessing.Domain.Entities.Teams;
 
 namespace BajajDocumentProcessing.Tests.Infrastructure.Properties;
 
@@ -136,7 +137,7 @@ public class CompletenessCheckDedicatedTableProperties
             State = PackageState.Uploaded,
             CreatedAt = DateTime.UtcNow,
             Invoices = new List<Invoice>(),
-            Teams = new List<Teams>()
+            Teams = new List<TeamsEntity>()
         };
 
         if (hasPO)
@@ -168,7 +169,7 @@ public class CompletenessCheckDedicatedTableProperties
 
         if (hasPhotos)
         {
-            var team = new Teams
+            var team = new TeamsEntity
             {
                 Id = Guid.NewGuid(), PackageId = packageId,
                 CampaignName = "Test", Photos = new List<TeamPhotos>()
@@ -183,7 +184,7 @@ public class CompletenessCheckDedicatedTableProperties
         else
         {
             // Add a team with no photos to ensure Teams collection is initialized
-            var emptyTeam = new Teams
+            var emptyTeam = new TeamsEntity
             {
                 Id = Guid.NewGuid(), PackageId = packageId,
                 CampaignName = "Empty", Photos = new List<TeamPhotos>()

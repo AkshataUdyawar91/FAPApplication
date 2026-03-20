@@ -24,6 +24,7 @@ public class WorkflowOrchestratorTests : IDisposable
     private readonly Mock<IConfidenceScoreService> _mockConfidenceScoreService;
     private readonly Mock<IRecommendationAgent> _mockRecommendationAgent;
     private readonly Mock<INotificationAgent> _mockNotificationAgent;
+    private readonly Mock<INotificationDispatcher> _mockNotificationDispatcher;
     private readonly Mock<IEmailAgent> _mockEmailAgent;
     private readonly Mock<ISubmissionNotificationService> _mockSubmissionNotificationService;
     private readonly Mock<IFileStorageService> _mockFileStorageService;
@@ -45,6 +46,7 @@ public class WorkflowOrchestratorTests : IDisposable
         _mockConfidenceScoreService = new Mock<IConfidenceScoreService>();
         _mockRecommendationAgent = new Mock<IRecommendationAgent>();
         _mockNotificationAgent = new Mock<INotificationAgent>();
+        _mockNotificationDispatcher = new Mock<INotificationDispatcher>();
         _mockEmailAgent = new Mock<IEmailAgent>();
         _mockSubmissionNotificationService = new Mock<ISubmissionNotificationService>();
         _mockFileStorageService = new Mock<IFileStorageService>();
@@ -65,6 +67,7 @@ public class WorkflowOrchestratorTests : IDisposable
             _mockConfidenceScoreService.Object,
             _mockRecommendationAgent.Object,
             _mockNotificationAgent.Object,
+            _mockNotificationDispatcher.Object,
             _mockEmailAgent.Object,
             _mockSubmissionNotificationService.Object,
             _mockFileStorageService.Object,

@@ -1,10 +1,12 @@
 -- =============================================
--- PART 3: VALIDATION, SCORING, WORKFLOW, NOTIFICATION & CHAT TABLES
+-- PART 3: VALIDATION, SCORING, WORKFLOW, NOTIFICATION, AUDIT & CHAT TABLES
 -- Target: Azure Synapse Analytics Dedicated SQL Pool
 -- Database: Balsynwsdev | Prefix: BDP_
 -- =============================================
 
 -- ValidationResults: Polymorphic validation results for documents
+-- Removed: ValidationDetailsJson
+-- Added: RuleResultsJson (matches current domain entity)
 -- Logical unique pair: DocumentType + DocumentId
 CREATE TABLE dbo.BDP_ValidationResults
 (
@@ -18,7 +20,7 @@ CREATE TABLE dbo.BDP_ValidationResults
     DateValidationPassed        BIT                 NOT NULL,
     VendorMatchingPassed        BIT                 NOT NULL,
     AllValidationsPassed        BIT                 NOT NULL,
-    ValidationDetailsJson       NVARCHAR(4000)      NULL,
+    RuleResultsJson             NVARCHAR(4000)      NULL,
     FailureReason               NVARCHAR(2000)      NULL,
     IsDeleted                   BIT                 NOT NULL,
     CreatedAt                   DATETIME2           NOT NULL,
@@ -33,6 +35,7 @@ WITH
 );
 
 -- ConfidenceScores: AI-generated confidence scores (one per package)
+-- Weights: PO 30%, Invoice 30%, CostSummary 20%, Activity 10%, Photos 10%
 -- Logical FK: PackageId -> BDP_DocumentPackages.Id
 CREATE TABLE dbo.BDP_ConfidenceScores
 (
@@ -80,6 +83,7 @@ WITH
 );
 
 -- RequestApprovalHistory: Approval workflow history
+-- ApproverRole: 1=CircleHead(ASM), 2=RA(HQ)
 -- Logical FK: PackageId -> BDP_DocumentPackages.Id, ApproverId -> BDP_Users.Id
 CREATE TABLE dbo.BDP_RequestApprovalHistory
 (
@@ -150,7 +154,34 @@ WITH
     CLUSTERED COLUMNSTORE INDEX
 );
 
+-- EmailDeliveryLogs: Audit record for every email send attempt
+-- Logical FK: PackageId -> BDP_DocumentPackages.Id
+CREATE TABLE dbo.BDP_EmailDeliveryLogs
+(
+    Id              UNIQUEIDENTIFIER    NOT NULL,
+    PackageId       UNIQUEIDENTIFIER    NOT NULL,
+    RecipientEmail  NVARCHAR(500)       NOT NULL,
+    TemplateName    NVARCHAR(200)       NOT NULL,
+    Subject         NVARCHAR(500)       NOT NULL,
+    Success         BIT                 NOT NULL,
+    MessageId       NVARCHAR(200)       NULL,
+    ErrorMessage    NVARCHAR(2000)      NULL,
+    AttemptsCount   INT                 NOT NULL,
+    SentAt          DATETIME2           NOT NULL,
+    IsDeleted       BIT                 NOT NULL,
+    CreatedAt       DATETIME2           NOT NULL,
+    UpdatedAt       DATETIME2           NULL,
+    CreatedBy       NVARCHAR(256)       NULL,
+    UpdatedBy       NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = HASH(PackageId),
+    CLUSTERED COLUMNSTORE INDEX
+);
+
 -- AuditLogs: Audit trail for compliance and security
+-- Note: OldValuesJson removed (dropped from domain); NewValuesJson retained
 -- Logical FK: UserId -> BDP_Users.Id
 CREATE TABLE dbo.BDP_AuditLogs
 (
@@ -159,7 +190,6 @@ CREATE TABLE dbo.BDP_AuditLogs
     Action          NVARCHAR(128)       NOT NULL,
     EntityType      NVARCHAR(128)       NOT NULL,
     EntityId        UNIQUEIDENTIFIER    NULL,
-    OldValuesJson   NVARCHAR(4000)      NULL,
     NewValuesJson   NVARCHAR(4000)      NULL,
     IpAddress       NVARCHAR(45)        NOT NULL,
     UserAgent       NVARCHAR(512)       NOT NULL,
