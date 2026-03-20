@@ -1,6 +1,7 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import '../../../../core/constants/api_constants.dart';
 
 class NewLoginPage extends StatefulWidget {
   const NewLoginPage({super.key});
@@ -11,7 +12,8 @@ class NewLoginPage extends StatefulWidget {
 class _NewLoginPageState extends State<NewLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
+  final _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))..interceptors.add(PrettyDioLogger());
+
   bool _isLoading = false;
   String? _errorMessage;
   bool _obscurePassword = true;
@@ -31,6 +33,8 @@ class _NewLoginPageState extends State<NewLoginPage> {
   }
 
   Future<void> _handleLogin() async {
+    debugPrint('=== LOGIN ATTEMPT === URL: ${_dio.options.baseUrl}/auth/login');
+    debugPrint('Email: ${_emailController.text}');
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       setState(() => _errorMessage = 'Please enter email and password');
       return;
@@ -74,6 +78,11 @@ class _NewLoginPageState extends State<NewLoginPage> {
         } else {
           _errorMessage = 'Login failed: ${e.message}';
         }
+      });
+    } catch (e) {
+      debugPrint('Login unexpected error: $e');
+      setState(() {
+        _errorMessage = 'Unexpected error: $e';
       });
     } finally {
       if (mounted) setState(() => _isLoading = false);

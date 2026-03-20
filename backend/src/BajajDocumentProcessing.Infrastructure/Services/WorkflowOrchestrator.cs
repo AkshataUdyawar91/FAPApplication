@@ -16,6 +16,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
     private readonly IConfidenceScoreService _confidenceScoreService;
     private readonly IRecommendationAgent _recommendationAgent;
     private readonly INotificationAgent _notificationAgent;
+    private readonly INotificationDispatcher _notificationDispatcher;
     private readonly IEmailAgent _emailAgent;
     private readonly ISubmissionNotificationService _submissionNotificationService;
     private readonly IFileStorageService _fileStorageService;
@@ -31,6 +32,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         IConfidenceScoreService confidenceScoreService,
         IRecommendationAgent recommendationAgent,
         INotificationAgent notificationAgent,
+        INotificationDispatcher notificationDispatcher,
         IEmailAgent emailAgent,
         ISubmissionNotificationService submissionNotificationService,
         IFileStorageService fileStorageService,
@@ -45,6 +47,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         _confidenceScoreService = confidenceScoreService;
         _recommendationAgent = recommendationAgent;
         _notificationAgent = notificationAgent;
+        _notificationDispatcher = notificationDispatcher;
         _emailAgent = emailAgent;
         _submissionNotificationService = submissionNotificationService;
         _fileStorageService = fileStorageService;
@@ -53,9 +56,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
         _circleHeadAssignmentService = circleHeadAssignmentService;
         _submissionNumberService = submissionNumberService;
     }
-
     /// <summary>
-    /// Processes a document submission through the complete workflow pipeline
     /// </summary>
     /// <param name="packageId">The ID of the package to process</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -174,8 +175,20 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 },
                 cancellationToken);
 
-            // Send notification
+            // Send notification to agency user
             await _notificationAgent.NotifySubmissionReceivedAsync(package.SubmittedByUserId, package.Id, cancellationToken);
+
+            // Dispatch rich notification to ASM users (Teams adaptive card with fallback to email)
+            try
+            {
+                await _notificationDispatcher.DispatchNewSubmissionNotificationAsync(package.Id, cancellationToken);
+            }
+            catch (Exception dispatchEx)
+            {
+                _logger.LogWarning(dispatchEx,
+                    "Failed to dispatch ASM notification for package {PackageId} — workflow continues",
+                    packageId);
+            }
 
             // Send submission_received email to agency
             var emailResult = await _emailAgent.SendSubmissionReceivedEmailAsync(package.Id, cancellationToken);

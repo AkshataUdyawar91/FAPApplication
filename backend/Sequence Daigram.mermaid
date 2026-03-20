@@ -1,0 +1,80 @@
+sequenceDiagram
+    actor Agency
+    actor ASM
+    actor RA as RA / Finance
+    participant FAP as FAP Portal
+    participant DB as FAP Database
+    participant MuleSoft as MuleSoft ESB
+    participant SAP as SAP ERP
+    participant WH as Warehouse System
+    rect rgb(10, 30, 60)
+        Note over SAP, DB: FLOW 1 — PO Sync from SAP to FAP Portal (Scheduled Job)
+        SAP->>MuleSoft: PO created with Supplier mapping
+        MuleSoft->>FAP: Push {poNumber, vendorCode}
+        FAP->>DB: Upsert PurchaseOrders table {poNumber, vendorCode}
+    end
+    rect rgb(10, 30, 60)
+        Note over Agency, DB: FLOW 1B — Agency Views Their POs
+        Agency->>FAP: View My POs
+        FAP->>DB: SELECT FROM PurchaseOrders WHERE vendorCode = agency.vendorCode
+        DB-->>FAP: Matching PO records
+        FAP-->>Agency: List of PO Numbers only
+    end
+    rect rgb(20, 10, 50)
+        Note over WH, DB: FLOW 2 — Warehouse Territory Sync (Scheduled Job — data stored in FAP DB)
+        WH->>FAP: Sync territory master data
+        FAP->>DB: Upsert TerritoryMapping table {state, asmId, asmName, asmEmail, region, dealerName}
+    end
+    rect rgb(20, 10, 50)
+        Note over Agency, ASM: FLOW 2B — Agency Creates FAP Submission and ASM is Auto-Assigned
+        Agency->>FAP: Create FAP submission {poNumber, activityDetails}
+        FAP->>DB: Lookup TerritoryMapping by State or VendorCode
+        Note over FAP, DB: ⚠ Confirm with team — is ASM lookup by State or by VendorCode?
+        DB-->>FAP: {asmId, asmName, asmEmail, region, dealerName}
+        FAP->>DB: Save submission — assignedAsmId set, status = Submitted
+        FAP->>ASM: New FAP assigned to you — In-App + Email + Teams notification
+    end
+    rect rgb(10, 40, 10)
+        Note over Agency, SAP: FLOW 3 — AI Validation After Submission
+        FAP->>FAP: DocumentAgent — classify and extract documents
+        FAP->>FAP: ValidationAgent — run 43 validation rules
+        FAP->>FAP: RecommendationAgent — generate APPROVE / REVIEW / REJECT
+        FAP->>FAP: ConfidenceScoreService — calculate weighted score
+        FAP->>ASM: Notify — Submission ready for your review
+    end
+    rect rgb(40, 10, 10)
+        Note over ASM, SAP: FLOW 4 — ASM Real-Time PO Amount Check (ASM-Triggered)
+        ASM->>FAP: Opens submission — reviews AI summary and recommendation
+        ASM->>FAP: Clicks Check PO Amount button
+        FAP->>MuleSoft: GET /api/sap/validate-po {poNumber, invoiceAmount}
+        MuleSoft->>SAP: Fetch PO approved amount and balance
+        SAP-->>MuleSoft: {poApprovedAmount, poRemainingBalance, poStatus}
+        MuleSoft-->>FAP: {approvedAmount, remaining, status}
+        FAP-->>ASM: PO Amount check result displayed on screen
+        Note over ASM, FAP: No hard block — ASM can override and Approve or Reject based on their judgement
+    end
+    rect rgb(5, 35, 20)
+        Note over ASM, RA: FLOW 5A — Approval Path
+        ASM->>FAP: Approve submission with comments
+        FAP->>DB: Record ASM approval + timestamp, status = ASM Approved
+        FAP->>RA: Notify — FAP ready for Finance review — In-App + Email + Teams
+        RA->>FAP: Review submission with ASM remarks visible
+        RA->>FAP: Approve
+        FAP->>DB: Record RA approval + timestamp, status = RA Approved
+        FAP->>MuleSoft: POST /api/sap/trigger-payment {poNumber, invoiceAmount, vendorCode}
+        MuleSoft->>SAP: Create Service Entry and Payment Posting
+        SAP-->>MuleSoft: {sapPaymentDocNumber, status: posted}
+        MuleSoft-->>FAP: {paymentDocNumber, postedAt}
+        FAP->>Agency: Notify — Payment initiated — In-App + Email
+    end
+    rect rgb(50, 15, 5)
+        Note over RA, Agency: FLOW 5B — Rejection Path (RA Rejects)
+        RA->>FAP: Reject submission with reason
+        FAP->>DB: Record RA rejection + reason, status = Rejected
+        FAP->>Agency: Notify — Submission rejected by Finance — reason included — In-App + Email + Teams
+        Agency->>FAP: Open submission — review rejection reason
+        Agency->>FAP: Modify documents or amounts and resubmit
+        FAP->>DB: New submission version created, status = Submitted
+        FAP->>ASM: Notify — Resubmission received for your review — In-App + Email + Teams
+        Note over Agency, ASM: Flow restarts from FLOW 3 — AI Validation runs again on resubmission
+    end

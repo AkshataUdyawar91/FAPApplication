@@ -52,4 +52,38 @@ public class Notification : BaseEntity
     /// Gets or sets the document package related to this notification, if applicable
     /// </summary>
     public DocumentPackage? RelatedPackage { get; set; }
+
+    // === Multi-channel delivery tracking fields ===
+
+    /// <summary>
+    /// Gets or sets the delivery channel used for this notification (InApp, Teams, or Email).
+    /// Defaults to InApp for backward compatibility with existing notifications.
+    /// </summary>
+    public NotificationChannel Channel { get; set; } = NotificationChannel.InApp;
+
+    /// <summary>
+    /// Gets or sets the delivery status of this notification attempt.
+    /// Defaults to Sent for backward compatibility with existing notifications.
+    /// </summary>
+    public NotificationDeliveryStatus DeliveryStatus { get; set; } = NotificationDeliveryStatus.Sent;
+
+    /// <summary>
+    /// Gets or sets the number of delivery retry attempts made for this notification.
+    /// </summary>
+    public int RetryCount { get; set; } = 0;
+
+    /// <summary>
+    /// Gets or sets the timestamp when this notification was successfully sent.
+    /// </summary>
+    public DateTime? SentAt { get; set; }
+
+    /// <summary>
+    /// Gets or sets the external message identifier (Teams activity ID or email message ID) for tracking.
+    /// </summary>
+    public string? ExternalMessageId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the reason for delivery failure, if applicable.
+    /// </summary>
+    public string? FailureReason { get; set; }
 }

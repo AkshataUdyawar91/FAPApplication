@@ -21,6 +21,11 @@ public class ActivityData
     public string? DealerAddress { get; set; }
     
     /// <summary>
+    /// List of activities at different locations
+    /// </summary>
+    public List<ActivityRow> LocationActivities { get; set; } = new();
+    
+    /// <summary>
     /// Total number of days across all activities
     /// </summary>
     public int? TotalDays { get; set; }

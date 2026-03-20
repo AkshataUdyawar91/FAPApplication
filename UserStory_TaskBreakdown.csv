@@ -1,0 +1,205 @@
+User Story #,Title,Implementation Status,Functional Flow,Tasks for Team,Clarification Questions
+1,Document Upload (Invoice + Proof against PO),Needs Rework,"Agency logs in → sees list of POs from SAP (Story #20) → selects a PO to raise FAP claim → system blocks duplicate submission for same PO → uploads 5 mandatory docs: (1) Invoice, (2) Cost Summary, (3) Activity Summary, (4) Photo Proofs (multi-upload), (5) Enquiry Dump. Each doc uploaded into its mapped field (no classification). On upload → Document Intelligence extracts fields → shown inline read-only (e.g. Invoice: Number, Amount, GSTIN). PO NOT uploaded — comes from SAP. Submit enables when all 5 types present. On submit → background validations → scoring → recommendation.","1. [CRITICAL] Build PO list page from SAP data with selection
+2. [CRITICAL] Add duplicate-PO guard
+3. [CRITICAL] Remove PO upload card — PO from SAP
+4. [CRITICAL] Integrate Document Intelligence for real-time extraction on upload
+5. [CRITICAL] Show extracted fields inline (read-only) after each upload
+6. [TASK] Add Enquiry Dump as mandatory doc type
+7. [TASK] Enable multi-file upload for Photo Proofs
+8. [TASK] Update Submit logic — all 5 mandatory types required
+9. [TASK] Photo AI Vision checks (3W vehicle + blue t-shirt)
+10. [VERIFY] Test end-to-end: PO select → upload 5 docs → extraction → submit","1. Min/max photo count per submission?
+2. Pre-fill PO details on upload page from SAP?
+3. If extraction fails — block upload or show warning?"
+2,Document Data Extraction (No Classification),Needs Rework,"Classification NOT required — docs uploaded into mapped fields already. On upload → Azure Document Intelligence extracts fields → stored in ExtractedDataJson → displayed inline on upload page (read-only). Fields: Invoice (Agency Name/Address, Billing Name/Address, State, Invoice#, Date, Vendor Code, PO#, GST#, GST%, HSN/SAC, Amount). Cost Summary (Place of Supply, Element-wise Cost, Days, Activations, Teams, Quantity, Total Cost). Activity Summary (Dealer/Location, Days per location). Photos (Date/Lat-Long via EXIF, Blue T-shirt + 3W Vehicle via AI Vision). Enquiry Dump (State, Date, Dealer Code/Name, District, Pincode, Customer Name/Number, Test Ride).","1. [CRITICAL] Remove classification logic — not needed
+2. [CRITICAL] Show extracted fields inline on Agency upload page (currently ASM-only)
+3. [TASK] Update extraction for all 5 doc types with exact field lists
+4. [TASK] EXIF extraction for Photos (Date, GPS) via MetadataExtractor
+5. [TASK] AI Vision for Photos (blue t-shirt, 3W vehicle)
+6. [VERIFY] Test extraction accuracy with real samples","1. Blue t-shirt: specific Bajaj blue (#003087) or any blue?
+2. 3W vehicle: any three-wheeler or specific Bajaj models?
+3. Extraction failure — block upload or warning?
+4. Custom Document Intelligence models needed or use prebuilt?"
+3,Validation (Background after Submit),Needs Rework,"Runs in background after submit. (A) Presence checks — required fields exist. (B) Cross-checks — values match across docs and backend data. INVOICE (14): Presence of Agency Name/Address, Billing Name/Address, State, Invoice#, Date, Vendor Code, PO#, GST#/%, HSN/SAC, Amount. Cross: GST# vs State, HSN/SAC match, Amount ≤ PO Amount, GST% vs State (18%). COST SUMMARY (10): Presence of Place of Supply, Element Cost, Days, Activations, Teams, Quantity. Cross: Total ≤ Invoice Amount, element costs vs state rates, fixed/variable limits. ACTIVITY (3): Presence of Dealer/Location. Cross: Days vs Cost Summary. PHOTOS (5): Presence of Date, Lat/Long, Blue T-shirt, 3W Vehicle. Cross: Photo count = Activity man-days; Activity days ≤ Cost Summary days (3-way). ENQUIRY DUMP (9): Presence of State, Date, Dealer Code/Name, District, Pincode, Customer Name/Number, Test Ride. UI shows per-doc status: 'Invoice - Validation In Progress' → 'Invoice - Validation Completed'.","1. [CRITICAL] Implement full 41-validation matrix in ValidationAgent.cs
+2. [CRITICAL] Build reference data: GST-State mapping, HSN/SAC codes, state cost rates
+3. [CRITICAL] 3-way cross-validation: Photos ↔ Activity man-days ↔ Cost Summary days
+4. [TASK] Invoice cross-checks: GST# vs State, HSN/SAC, Amount ≤ PO, GST%
+5. [TASK] Cost Summary cross-checks: Total ≤ Invoice, element costs vs rates
+6. [TASK] Validation status UI with activity names per document
+7. [TASK] Seed GST-State mapping; get HSN/SAC list from Vivek
+8. [VERIFY] Test all 41 validations with real samples","1. GST-State full mapping available? (3 FAPs shared so far)
+2. HSN/SAC list — static or dynamic?
+3. State cost rates source — SAP or separate?
+4. Amount ≤ PO: taxable or total incl. GST?
+5. 3-way photo validation: exact match or tolerance?"
+4,Confidence Score Calculation,Needs Rework — Weights Changed,"PO excluded from scoring (comes from SAP). New weights: Invoice 30% + Cost Summary 20% + Activity 20% + Photos 30% = 100%. Score 0-100. Below 70 → mandatory ASM review. Displayed on Agency dashboard and ASM review page. Color: green >85%, amber 70-85%, red <70%.","1. [CRITICAL] Update weights: Invoice 0.30, CostSummary 0.20, Activity 0.20, Photos 0.30
+2. [CRITICAL] Remove PO from confidence calculation
+3. [TASK] Update ConfidenceScore entity/logic accordingly
+4. [VERIFY] Test with new weights
+5. [VERIFY] Test edge case: doc type scores 0",
+5,Approval Recommendation (Short ~100 char Summary),Needs Rework,"After validation + scoring → RecommendationAgent generates APPROVE / REVIEW / REJECT. Summary must be very short: ~2 lines / ~100 characters. Example: 'All validations passed. Confidence 92%. Recommend approval.' Stored in Recommendation entity. Shown on ASM review page.","1. [CRITICAL] Enforce ~100 char limit on recommendation text
+2. [TASK] Update RecommendationAgent prompt for concise 2-line output
+3. [TASK] Update recommendation_card.dart for compact display
+4. [VERIFY] Test all 3 types produce short summaries","1. Hard cutoff at 100 chars or guideline?
+2. Include confidence score number in summary?"
+6,Email Communication (PO PDF + Status),Needs Rework,"Two scenarios: (A) PO arrives from SAP → generate PO PDF → email to Agency as attachment + downloadable from portal. (B) Status emails: validation fail → email Agency with correction details; ASM/RA approve/reject → email Agency. All via ACS with 3x retry.","1. [CRITICAL] PO PDF generation (QuestPDF) on SAP PO arrival
+2. [CRITICAL] Email PO PDF attachment to Agency via ACS
+3. [TASK] PO PDF download button on Agency portal
+4. [TASK] Status emails: validation fail, ASM approve/reject, RA approve/reject
+5. [TASK] Configure ACS connection + sender email
+6. [VERIFY] Test PO PDF email + all status emails","1. Sender email address?
+2. Deep links in emails?
+3. PO PDF template — Bajaj format?"
+7,Analytics (Simple Quarterly FAP Totals),Needs Rework — Simplified,"Simple analytics only. Primary KPI: total FAP amount quarterly. Basic chart visualization. Excel export of quarterly data. No complex campaign/state breakdowns needed now.","1. [CRITICAL] Simplify to quarterly FAP total amounts
+2. [TASK] Build quarterly bar/line chart
+3. [TASK] Excel export for quarterly data
+4. [TASK] Defer complex analytics (state ROI, campaigns)
+5. [VERIFY] Test quarterly aggregation","1. Break down by Agency or just overall total?
+2. Other KPIs beyond FAP total? (approval rate, processing time?)
+3. Current quarter only or historical?"
+8,Notifications (Push for New PO),Needs Rework,"New PO arrives from SAP → push notification to Agency (mobile via FCM/APNs) so they know a new PO is available. Also: in-app notifications for status changes (ASM/RA approve/reject). Bell icon with unread badge. Mark-as-read on click. Note: 'Dealer' = Agency (same role).","1. [CRITICAL] Push notifications (FCM/APNs) for new PO arrival
+2. [TASK] In-app notifications for status changes
+3. [TASK] Bell icon with unread badge in app bar
+4. [TASK] Mark-as-read functionality
+5. [VERIFY] Test push delivery on mobile
+6. [VERIFY] Test in-app notifications for all events","1. Push for status changes too or only new PO?
+2. ASM push notifications for new submissions?"
+9,Conversational Bot (ASM + Agency — Full Actions),Needs Rework — Scope Expanded,"Chat bot is the primary interface for ALL roles. Both ASM and Agency can perform ALL app actions via chat. Agency: view POs, start submission, check status, download PO PDF. ASM: view pending approvals, approve/reject, view docs/validation. HQ: analytics queries. Bot answers questions AND navigates users to app sections. Uses Semantic Kernel + Azure OpenAI. Context maintained across messages.","1. [CRITICAL] Expand ChatService for action execution (not just Q&A)
+2. [CRITICAL] Enable chat for Agency + ASM (not just HQ)
+3. [CRITICAL] Add navigation commands (deep-link to pages)
+4. [TASK] Agency actions: view POs, check status, download PDF
+5. [TASK] ASM actions: list pending, approve/reject with comments
+6. [TASK] Intent recognition: action vs question
+7. [TASK] Conversation context across 10+ messages
+8. [VERIFY] Test all actions via chat for both roles","1. Bot trigger uploads or just navigate to upload page?
+2. Confirm before approve/reject via chat?
+3. Voice input or text only?"
+10,User Authentication and Authorization,Needs Update — SSO Added,"Login with email + password → JWT with role claims → flutter_secure_storage. Roles: Agency, ASM, HQ, RA/Finance, Audit. Teams SSO for ASM: Azure AD/Entra ID identity carries over to portal (no re-login). Session expires 30 min inactivity.","1. [CRITICAL] Teams SSO: Azure AD/Entra ID → portal JWT
+2. [TASK] Add RA/Finance + Audit roles
+3. [TASK] Token refresh logic
+4. [TASK] Session timeout detection on frontend
+5. [VERIFY] Test all role logins
+6. [VERIFY] Test Teams SSO flow","1. Azure AD/Entra ID as identity provider?
+2. All users move to SSO eventually or just ASM?"
+11,UI and Branding (Minimalist Chat-First),Needs Rework,"Clean minimalist UI. Home page for ALL roles: conversational chat as primary element + 1-2 role-specific KPIs + 1-2 quick action buttons. Typing in chat answers questions or navigates to sections. No cluttered dashboards. Bajaj colors: #003087, #00A3E0, #FFFFFF. Responsive web + mobile.","1. [CRITICAL] Redesign home: chat primary + 1-2 KPIs + 1-2 actions per role
+2. [TASK] Agency home: chat + (pending count, latest PO) + (New FAP, View POs)
+3. [TASK] ASM home: chat + (pending approvals, today's submissions) + (Review Queue)
+4. [TASK] HQ home: chat + (quarterly FAP total, approval rate) + (Analytics)
+5. [TASK] Bajaj brand colors throughout
+6. [VERIFY] Test minimalist design — no clutter","1. Confirm KPIs per role (suggestions above)?
+2. Confirm quick actions per role?
+3. Bajaj logo assets available?"
+12,Data Persistence and Integrity,Substantially Implemented,"EF Core + SQL Server. BaseEntity (Id/CreatedAt/UpdatedAt). ACID transactions. Referential integrity. AuditLog. Need: soft delete, retry logic, daily backups.","1. [TASK] Soft delete (IsDeleted + global query filter)
+2. [TASK] DB retry logic (3 attempts)
+3. [TASK] Daily backup schedule
+4. [VERIFY] Referential integrity on cascade
+5. [VERIFY] Audit logging complete",
+13,API Design and Integration,Substantially Implemented,"RESTful API, JWT auth, 6 controllers, Swagger, multipart upload 50MB, proper HTTP status codes.","1. [TASK] FluentValidation for request payloads
+2. [TASK] Correlation ID header
+3. [TASK] Health check endpoint
+4. [VERIFY] All endpoints return correct status codes",
+14,Performance and Scalability,Partially Implemented,"Background processing, pagination. Need: AsNoTracking, compression, indexes.","1. [TASK] AsNoTracking on read queries
+2. [TASK] DB indexes (State, SubmittedByUserId, CreatedAt)
+3. [TASK] Response compression (Gzip/Brotli)
+4. [VERIFY] Load test with expected users",
+15,Error Handling and Resilience,Partially Implemented,"Try-catch, Polly retry/circuit breaker, Null service fallback. Need: SAP retry queue, email queue, admin alerts.","1. [TASK] SAP retry queue
+2. [TASK] Failed email queue
+3. [TASK] Admin alert mechanism
+4. [VERIFY] Test Azure service degradation",
+16,Security and Compliance,Partially Implemented,"JWT, BCrypt, HTTPS, audit logging, malware scan, RBAC. Move secrets to env vars for prod.","1. [CRITICAL] Secrets to environment variables
+2. [TASK] TLS 1.3 enforcement
+3. [TASK] CORS restriction
+4. [TASK] IP in audit logs
+5. [VERIFY] RBAC per role",
+17,Enhanced Upload Page UI & Empty State,Needs Rework — Align with Story #1,"Agency opens 'All Requests' page → if no submissions: empty state with doc icon + 'No requests found' + 'Create New Request' button. If submissions exist: list view. Click 'Create New Request' → upload page. Upload page: step progress indicator (Step X of 4 with % bar). PO selection first (from SAP list per Story #1 — PO NOT uploaded). Then 5 mandatory doc cards: Invoice, Cost Summary, Activity Summary, Photo Proofs (multi-upload), Enquiry Dump. Each card: blue icon, accepted formats, max size, dashed upload area. On upload success: green checkmark + filename. All 5 uploaded → 'Submit for Review' button turns green. Mobile: cards stacked. Desktop: 2-3 column grid. Inline errors for invalid format/size.","1. [CRITICAL] Align with Story #1: PO selection from SAP list (not upload)
+2. [CRITICAL] 5 doc cards: Invoice, Cost Summary, Activity Summary, Photos, Enquiry Dump
+3. [TASK] Empty state: doc icon + 'No requests found' + centered CTA button
+4. [TASK] Step progress indicator (Step X of 4 with % bar)
+5. [TASK] Upload card design: blue icon, formats, size, dashed border area
+6. [TASK] Success state: green checkmark + filename
+7. [TASK] Submit button: green when all 5 present, gray when incomplete
+8. [TASK] Responsive: stacked mobile, 2-3 col grid desktop
+9. [TASK] Inline error messages per card
+10. [VERIFY] Test full flow: empty state → PO select → upload 5 docs → submit","1. Step 4 'Additional Documents' — still needed or replaced by Enquiry Dump?
+2. Photo card: show thumbnail previews after upload?"
+18,Submissions Dashboard (PO from SAP),Needs Update — PO from SAP,"Agency sees submissions list with columns: FAP#, PO No., PO Amt, Invoice No., Invoice Amt, Submitted Date, AI Score, Status, View. PO data comes from SAP (not uploaded). Dashboard shows extracted PO/Invoice fields. AI Score = overall confidence %. Color-coded status. Paginated. JWT-secured. Agency sees only own submissions.","1. [TASK] Ensure PO No./Amt sourced from SAP data (not uploaded doc)
+2. [TASK] Column order: FAP#, PO No., PO Amt, Invoice No., Invoice Amt, Date, AI Score, Status, View
+3. [TASK] Currency formatting: ₹ symbol, 2 decimals, right-aligned
+4. [TASK] AI Score center-aligned with color coding
+5. [TASK] Pagination + JWT filter (own submissions only)
+6. [VERIFY] Test with real SAP PO data","1. Sort/filter options needed? (by date, status, score)
+2. Search by PO# or FAP#?"
+19,RA/Finance Approval (Post-ASM),New — Not Yet Implemented,"After ASM approves → submission moves to RA/Finance queue. RA/Finance reviews: sees same doc sections + ASM approval note + AI summary. Can Approve (→ Approved-Final) or Reject (→ Rejected with comments back to Agency). Email notification to Agency on RA decision. Audit trail for RA actions.","1. [CRITICAL] New RA/Finance role + permissions
+2. [CRITICAL] RA approval queue page (similar to ASM review)
+3. [CRITICAL] State machine: ASM-Approved → RA-Pending → RA-Approved / RA-Rejected
+4. [TASK] RA review page: docs + ASM note + AI summary + Approve/Reject
+5. [TASK] Email to Agency on RA approve/reject
+6. [TASK] Audit log for RA actions
+7. [VERIFY] Test full flow: Agency submit → ASM approve → RA approve/reject","1. RA sees all submissions or filtered by region?
+2. RA can send back to ASM for re-review?
+3. SLA for RA approval?"
+20,PO Auto-Dispatch from SAP to Agency,New — Not Yet Implemented,"SAP sends PO data to system (API or scheduled sync). On PO arrival: (A) Store PO details in DB. (B) Generate PO PDF (QuestPDF). (C) Email PO PDF to Agency as attachment via ACS. (D) Push notification to Agency (FCM/APNs) — 'New PO available'. (E) PO appears in Agency's PO list for FAP submission (Story #1). Agency can also download PO PDF from portal.","1. [CRITICAL] SAP → System PO ingestion (API endpoint or scheduled job)
+2. [CRITICAL] PO PDF generation (QuestPDF library)
+3. [CRITICAL] Email PO PDF to Agency via ACS
+4. [CRITICAL] Push notification (FCM/APNs) on new PO
+5. [TASK] Store PO in DB with Agency mapping
+6. [TASK] PO list API for Agency (feeds Story #1)
+7. [TASK] PO PDF download endpoint
+8. [VERIFY] Test end-to-end: SAP PO → DB → PDF → email → push → portal list","1. SAP push (webhook) or pull (scheduled sync)?
+2. PO-to-Agency mapping logic? (vendor code?)
+3. PO PDF template — Bajaj branded?
+4. Frequency of SAP sync?"
+21,Audit Read-Only View & Case Bundle Export,New — Not Yet Implemented,"Audit role: read-only access to all submissions. Can view all docs, validations, scores, recommendations, approval history. Can export a 'case bundle' per submission: ZIP containing all docs + validation report + approval chain + AI summary as PDF. No edit/approve permissions.","1. [CRITICAL] Audit role with read-only permissions
+2. [CRITICAL] Case bundle export: ZIP with all docs + reports
+3. [TASK] Audit dashboard: list all submissions (all agencies)
+4. [TASK] Audit detail view: docs + validations + scores + approvals
+5. [TASK] ZIP generation: docs + validation PDF + approval chain + AI summary
+6. [TASK] Download endpoint for case bundle
+7. [VERIFY] Test read-only — no edit/approve buttons visible","1. Audit sees real-time or point-in-time snapshot?
+2. Bulk export (multiple submissions)?
+3. Retention period for case bundles?"
+22,SAP Service Entry Sheet Creation,New — Not Yet Implemented,"After final approval (RA-Approved) → system creates a Service Entry Sheet in SAP. Maps approved FAP data to SAP SES format. Posts via SAP API/RFC. Logs success/failure. On failure → retry queue + admin alert. Agency notified when SES created.","1. [CRITICAL] SAP SES API/RFC integration
+2. [CRITICAL] FAP-to-SES data mapping
+3. [TASK] Post SES to SAP on RA-Approved state
+4. [TASK] Retry queue for failed SES posts
+5. [TASK] Admin alert on SES failure
+6. [TASK] Email Agency on SES creation success
+7. [VERIFY] Test SES creation with SAP sandbox","1. SAP SES API available? (RFC or REST?)
+2. SES field mapping document?
+3. SAP sandbox for testing?
+4. SES creation triggers payment in SAP?"
+23,TeamsBot Approve/Reject + SSO,New — Not Yet Implemented,"ASM receives Teams notification for new submission. Can approve/reject directly from Teams adaptive card (no portal login needed). Teams SSO: Azure AD/Entra ID identity → portal JWT seamlessly (no re-login if ASM opens portal from Teams). Bot shows: FAP#, Agency name, AI score, recommendation, Approve/Reject buttons. On action → updates state in system → triggers downstream (email, RA queue).","1. [CRITICAL] Teams Bot with adaptive cards (Approve/Reject buttons)
+2. [CRITICAL] Teams SSO: Azure AD/Entra ID → portal JWT (no re-login)
+3. [TASK] Adaptive card: FAP#, Agency, AI score, recommendation, actions
+4. [TASK] Bot action handler: approve/reject → update state → trigger emails
+5. [TASK] Teams Bot registration in Azure Bot Service
+6. [TASK] SSO token exchange: Teams token → portal JWT
+7. [VERIFY] Test approve/reject from Teams
+8. [VERIFY] Test SSO: Teams → portal without re-login","1. Teams Bot Framework SDK version?
+2. Azure Bot Service plan (F0 free or S1)?
+3. ASM Teams accounts managed by Bajaj IT?"
+24,TeamsBot Real-Time Notifications,New — Not Yet Implemented,"ASM gets proactive Teams messages for: new submission, validation complete, score ready. Agency gets Teams messages for: PO arrived, approval/rejection. Messages include key details (FAP#, score, status) + deep link to portal page. Respects Teams notification settings.","1. [CRITICAL] Proactive messaging via Teams Bot
+2. [TASK] ASM notifications: new submission, validation done, score ready
+3. [TASK] Agency notifications: PO arrived, approved/rejected
+4. [TASK] Deep links to portal pages in messages
+5. [TASK] User-Teams mapping (email → Teams user ID)
+6. [VERIFY] Test proactive messages for all event types","1. Teams user mapping: by email or Azure AD object ID?
+2. Notification preferences (opt-out)?
+3. Rate limits on proactive messages?"
+26,Mobile App (Flutter — Test + Camera),Needs Verification,"Existing Flutter app should work on mobile (Android/iOS). Primary addition: camera capture for photo proofs (use device camera directly instead of file picker only). Test all screens on mobile form factor. Ensure responsive layouts. Secure storage for tokens on mobile.","1. [TASK] Test all existing screens on Android + iOS
+2. [TASK] Add camera capture option for photo proofs (image_picker)
+3. [TASK] Ensure responsive layouts on mobile (320px-428px width)
+4. [TASK] Verify flutter_secure_storage works on both platforms
+5. [TASK] Test push notifications (FCM for Android, APNs for iOS)
+6. [VERIFY] Full flow on mobile: login → PO list → upload (camera) → submit","1. Min Android/iOS versions?
+2. App Store / Play Store distribution or enterprise sideload?
+3. Offline mode needed for mobile?"
+27,WhatsApp Notifications,New — Not Yet Implemented,"Agency receives WhatsApp messages for key events: PO arrived, submission status change, approval/rejection. Uses WhatsApp Business API (via Azure Communication Services or Twilio). Messages include FAP#, status, brief summary. Deep link to portal. Requires Agency phone number in user profile.","1. [CRITICAL] WhatsApp Business API integration (ACS or Twilio)
+2. [TASK] Message templates for: PO arrived, status change, approved, rejected
+3. [TASK] Phone number field in user profile
+4. [TASK] WhatsApp opt-in/consent management
+5. [TASK] Deep links to portal in messages
+6. [VERIFY] Test message delivery for all event types","1. WhatsApp Business API provider: ACS or Twilio?
+2. WhatsApp template approval process (Meta review)?
+3. Agency phone numbers already in system?
+4. Fallback if WhatsApp fails — SMS?"

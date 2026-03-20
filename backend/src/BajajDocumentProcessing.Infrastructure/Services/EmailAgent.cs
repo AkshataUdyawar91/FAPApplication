@@ -119,7 +119,7 @@ public class EmailAgent : IEmailAgent
         var package = await LoadPackageWithUserAsync(packageId, cancellationToken);
         if (package is null) return PackageNotFound();
 
-        var fapId = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();
+        var fapId = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();    
 
         // Build issue text for the reason box
         var issueText = new StringBuilder();
@@ -420,6 +420,21 @@ public class EmailAgent : IEmailAgent
 
         return await SendAndLogAsync(packageId, "ra_rejected",
             package.SubmittedBy?.Email ?? "", subject, body, cancellationToken);
+    }
+
+    // ─── SendHtmlEmailAsync (used by NotificationDispatcher for email fallback) ─
+
+    /// <inheritdoc/>
+    public async Task<EmailResult> SendHtmlEmailAsync(
+        string recipientEmail, string subject, string htmlBody,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "Sending HTML email to {Email}, Subject: {Subject}. CorrelationId: {CorrelationId}",
+            recipientEmail, subject, _correlationIdService.GetCorrelationId());
+
+        return await SendAndLogAsync(
+            Guid.Empty, "html_email", recipientEmail, subject, htmlBody, cancellationToken);
     }
 
     // ─── Legacy compatibility ────────────────────────────────────────────────
