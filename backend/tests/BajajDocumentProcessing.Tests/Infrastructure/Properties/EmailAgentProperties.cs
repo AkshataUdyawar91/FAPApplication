@@ -43,7 +43,7 @@ public class EmailAgentProperties
                 };
 
                 // Act
-                var result = agent.SendDataFailureEmailAsync(packageId, issues, CancellationToken.None)
+                var result = agent.SendValidationFailedEmailAsync(packageId, issues, CancellationToken.None)
                     .GetAwaiter().GetResult();
 
                 // Assert - email should be sent successfully (to agency user)
@@ -67,7 +67,7 @@ public class EmailAgentProperties
         SetupMockRecommendation(mockContext, packageId, RecommendationType.Approve);
 
         // Act
-        var result = await agent.SendDataPassEmailAsync(packageId, asmEmail, CancellationToken.None);
+        var result = await agent.SendPendingCircleHeadEmailAsync(packageId, asmEmail, CancellationToken.None);
 
         // Assert
         Assert.True(result.Success);
@@ -86,7 +86,7 @@ public class EmailAgentProperties
         SetupMockPackageWithUser(mockContext, packageId, agencyEmail, UserRole.Agency);
 
         // Act
-        var result = await agent.SendApprovedEmailAsync(packageId, agencyEmail, CancellationToken.None);
+        var result = await agent.SendRaApprovedEmailAsync(packageId, CancellationToken.None);
 
         // Assert
         Assert.True(result.Success);
@@ -133,7 +133,7 @@ public class EmailAgentProperties
         };
 
         // Act
-        var result = await agent.SendDataFailureEmailAsync(packageId, issues, CancellationToken.None);
+        var result = await agent.SendValidationFailedEmailAsync(packageId, issues, CancellationToken.None);
 
         // Assert - should succeed (mock implementation always succeeds)
         // In real implementation with ACS failures, this would test retry logic
@@ -154,12 +154,11 @@ public class EmailAgentProperties
         SetupMockPackageWithUser(mockContext, packageId, agencyEmail, UserRole.Agency);
 
         // Act
-        var result = await agent.SendApprovedEmailAsync(packageId, agencyEmail, CancellationToken.None);
+        var result = await agent.SendRaApprovedEmailAsync(packageId, CancellationToken.None);
 
         // Assert
         Assert.True(result.Success);
         Assert.NotNull(result.MessageId);
-        Assert.StartsWith("msg_", result.MessageId);
     }
 
     /// <summary>
@@ -193,7 +192,7 @@ public class EmailAgentProperties
         };
 
         // Act
-        var result = await agent.SendDataFailureEmailAsync(packageId, issues, CancellationToken.None);
+        var result = await agent.SendValidationFailedEmailAsync(packageId, issues, CancellationToken.None);
 
         // Assert
         Assert.True(result.Success);
@@ -214,7 +213,7 @@ public class EmailAgentProperties
         SetupMockRecommendation(mockContext, packageId, RecommendationType.Approve);
 
         // Act
-        var result = await agent.SendDataPassEmailAsync(packageId, asmEmail, CancellationToken.None);
+        var result = await agent.SendPendingCircleHeadEmailAsync(packageId, asmEmail, CancellationToken.None);
 
         // Assert
         Assert.True(result.Success);

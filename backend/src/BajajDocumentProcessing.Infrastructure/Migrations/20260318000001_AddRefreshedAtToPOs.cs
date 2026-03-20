@@ -11,11 +11,12 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<DateTime>(
-                name: "RefreshedAt",
-                table: "POs",
-                type: "datetime2",
-                nullable: true);
+            migrationBuilder.Sql(@"
+                IF COL_LENGTH('POs', 'RefreshedAt') IS NULL
+                BEGIN
+                    ALTER TABLE [POs] ADD [RefreshedAt] datetime2 NULL;
+                END
+            ");
         }
 
         /// <inheritdoc />

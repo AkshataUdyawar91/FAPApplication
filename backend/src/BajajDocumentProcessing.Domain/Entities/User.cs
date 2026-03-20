@@ -40,6 +40,12 @@ public class User : BaseEntity
     public string? PhoneNumber { get; set; }
     
     /// <summary>
+    /// Gets or sets the Azure AD Object ID for Teams SSO and pre-linking.
+    /// Populated by admin script or during Teams SSO flow.
+    /// </summary>
+    public string? AadObjectId { get; set; }
+
+    /// <summary>
     /// Gets or sets whether the user account is active and can log in
     /// </summary>
     public bool IsActive { get; set; } = true;

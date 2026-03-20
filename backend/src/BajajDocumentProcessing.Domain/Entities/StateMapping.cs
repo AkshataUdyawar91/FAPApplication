@@ -18,6 +18,9 @@ public class StateMapping : BaseEntity
 
     public Guid? CircleHeadUserId { get; set; }
 
+    /// <summary>
+    /// RA user assigned to this state for HQ-level review.
+    /// </summary>
     public Guid? RAUserId { get; set; }
 
     public bool IsActive { get; set; } = true;

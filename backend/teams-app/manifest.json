@@ -1,0 +1,46 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "YOUR_BOT_APP_ID",
+  "developer": {
+    "name": "Bajaj Auto Limited",
+    "websiteUrl": "https://www.bajajauto.com",
+    "privacyUrl": "https://www.bajajauto.com/privacy",
+    "termsOfUseUrl": "https://www.bajajauto.com/terms"
+  },
+  "name": {
+    "short": "Bajaj Doc Processing",
+    "full": "Bajaj Document Processing Bot"
+  },
+  "description": {
+    "short": "Review and approve FAP submissions directly in Teams",
+    "full": "AI-powered document processing bot for Bajaj Auto. Receive adaptive card notifications when FAP submissions are ready for review. Approve or reject directly from Teams with AI confidence scores and recommendations."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#003087",
+  "bots": [
+    {
+      "botId": "YOUR_BOT_APP_ID",
+      "scopes": ["personal"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal"],
+          "commands": [
+            {
+              "title": "help",
+              "description": "Show available commands and bot capabilities"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["localhost", "*.bajajauto.com"]
+}
