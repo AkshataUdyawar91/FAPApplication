@@ -146,6 +146,12 @@ public static class DependencyInjection
         // Workflow Orchestrator
         services.AddScoped<IWorkflowOrchestrator, WorkflowOrchestrator>();
 
+        // Admin — User Management
+        services.AddScoped<IUserManagementService, UserManagementService>();
+
+        // Admin — Agency/Supplier Master
+        services.AddScoped<IAgencyService, AgencyService>();
+
         // Audit Logging
         services.AddScoped<IAuditLogService, AuditLogService>();
 

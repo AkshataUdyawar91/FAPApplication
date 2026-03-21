@@ -16,6 +16,7 @@ import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/pagination_bar.dart';
+import '../../../../core/network/dio_client.dart';
 
 class AgencyDashboardPage extends ConsumerStatefulWidget {
   final String token;

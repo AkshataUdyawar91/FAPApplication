@@ -12,6 +12,7 @@ import '../../features/approval/presentation/pages/asm_review_page.dart';
 import '../../features/approval/presentation/pages/asm_review_detail_page.dart';
 import '../../features/approval/presentation/pages/hq_review_page.dart';
 import '../../features/approval/presentation/pages/hq_review_detail_page.dart';
+import '../../features/admin/presentation/pages/admin_dashboard_page.dart';
 import 'dashboard_wrapper.dart';
 import '../../features/assistant/presentation/providers/assistant_providers.dart';
 import '../network/dio_client.dart';
@@ -57,6 +58,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           case 'ra':
             print('[Router] Redirecting to RA/HQ dashboard: /hq/dashboard');
             return '/hq/dashboard';
+          case 'admin':
+            print('[Router] Redirecting to Admin dashboard: /admin/dashboard');
+            return '/admin/dashboard';
           default:
             print(
                 '[Router] Unknown role, defaulting to Agency dashboard: /home');
@@ -77,7 +81,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: 'home',
         builder: (context, state) {
           return DashboardWrapper(
-            builder: (token, userName) => AgencyDashboardPage(
+            builder: (token, userName, onLogout) => AgencyDashboardPage(
               token: token,
               userName: userName,
             ),
@@ -89,7 +93,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: 'asm-dashboard',
         builder: (context, state) {
           return DashboardWrapper(
-            builder: (token, userName) => ASMReviewPage(
+            builder: (token, userName, onLogout) => ASMReviewPage(
               token: token,
               userName: userName,
             ),
@@ -101,9 +105,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: 'hq-dashboard',
         builder: (context, state) {
           return DashboardWrapper(
-            builder: (token, userName) => HQReviewPage(
+            builder: (token, userName, onLogout) => HQReviewPage(
               token: token,
               userName: userName,
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/admin/dashboard',
+        name: 'admin-dashboard',
+        builder: (context, state) {
+          return DashboardWrapper(
+            builder: (token, userName, onLogout) => AdminDashboardPage(
+              token: token,
+              userName: userName,
+              onLogout: onLogout,
             ),
           );
         },
