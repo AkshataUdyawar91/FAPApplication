@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/network/dio_client.dart';
 
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -52,6 +53,12 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   @override
   void initState() {
     super.initState();
+    // Sync token into authTokenProvider so AssistantChatPanel's dio interceptor picks it up
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.token.isNotEmpty) {
+        ref.read(authTokenProvider.notifier).state = widget.token;
+      }
+    });
     _loadRequests();
   }
 

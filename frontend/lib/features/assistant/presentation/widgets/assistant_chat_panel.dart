@@ -17,6 +17,8 @@ import 'po_search_list.dart';
 import 'file_upload_card.dart';
 import 'chat_input_bar.dart';
 import '../../data/models/assistant_response_model.dart';
+import '../../../../core/network/dio_client.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 
 /// Embeddable side-panel version of the Field Activity Assistant.
 /// Mirrors ChatScreen logic but renders as a Column (no Scaffold).
@@ -47,9 +49,20 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!_initialized) {
         _initialized = true;
+        // Restore token from secure storage into authTokenProvider if not already set
+        final currentToken = ref.read(authTokenProvider);
+        if (currentToken == null || currentToken.isEmpty) {
+          final localDataSource = ref.read(authLocalDataSourceProvider);
+          final storedToken = await localDataSource.getAccessToken();
+          if (storedToken != null && storedToken.isNotEmpty) {
+            ref.read(authTokenProvider.notifier).state = storedToken;
+          }
+        }
+        // Always reset to a fresh state every time the panel opens
+        ref.read(assistantNotifierProvider.notifier).reset();
         ref.read(assistantNotifierProvider.notifier).greet();
       }
     });
@@ -2018,7 +2031,10 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 IconButton(
                   icon: const Icon(Icons.refresh, color: Colors.white),
                   tooltip: 'New conversation',
-                  onPressed: () => ref.read(assistantNotifierProvider.notifier).greet(),
+                  onPressed: () {
+                    ref.read(assistantNotifierProvider.notifier).reset();
+                    ref.read(assistantNotifierProvider.notifier).greet();
+                  },
                 ),
                 IconButton(
                   icon: const Icon(Icons.close, color: Colors.white),
