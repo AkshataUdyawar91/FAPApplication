@@ -107,6 +107,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         newMode = 'state';
       } else if (t == 'dealer_search' || t == 'dealer_search_results') {
         newMode = 'dealer';
+      } else if (t == 'dealer_list') {
+        newMode = 'none'; // dropdown — no search bar needed
       } else if (t == 'team_name_input') {
         newMode = 'team_name';
       } else if (t == 'team_count_input') {
@@ -752,6 +754,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
               : null,
         );
+      case 'dealer_list':
       case 'dealer_search_results':
         return AssistantBubble(
           message: msg.content,
