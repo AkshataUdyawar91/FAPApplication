@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/web_camera_helper.dart' if (dart.library.io) '../../../../core/utils/web_camera_stub.dart';
 
 /// Extraction status for UI feedback
 enum ExtractionStatus { none, extracting, success, failed }
@@ -267,6 +270,38 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         widget.onCampaignsChanged(_campaigns);
       }
     } catch (e) { debugPrint('Error picking photos: $e'); }
+  }
+
+  Future<void> _capturePhoto(int campaignIndex) async {
+    final campaign = _campaigns[campaignIndex];
+    final existing = campaign.existingPhotoFileNames?.length ?? 0;
+    final remaining = CampaignItemData.maxPhotos - campaign.photos.length - existing;
+    if (remaining <= 0) { _showError('Maximum ${CampaignItemData.maxPhotos} photos reached'); return; }
+
+    if (kIsWeb) {
+      // Use web camera dialog with getUserMedia
+      final file = await capturePhotoOnWeb(context);
+      if (file != null && mounted) {
+        setState(() => campaign.photos.add(file));
+        widget.onCampaignsChanged(_campaigns);
+      }
+    } else {
+      // Use image_picker for mobile
+      try {
+        final picker = ImagePicker();
+        final XFile? photo = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+        if (photo != null) {
+          final bytes = await photo.readAsBytes();
+          final file = PlatformFile(
+            name: photo.name,
+            size: bytes.length,
+            bytes: bytes,
+          );
+          setState(() => campaign.photos.add(file));
+          widget.onCampaignsChanged(_campaigns);
+        }
+      } catch (e) { debugPrint('Error capturing photo: $e'); }
+    }
   }
 
   Future<void> _removePhoto(int campaignIndex, int photoIndex) async {
@@ -1050,6 +1085,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               onRemove: () => _removePhoto(campaignIndex, i),
             )),
             if (canAdd) _addPhotoTile(() => _pickPhotos(campaignIndex)),
+            if (canAdd) _capturePhotoTile(() => _capturePhoto(campaignIndex)),
           ],
         ),
       ],
@@ -1100,7 +1136,30 @@ class _CampaignListSectionState extends State<CampaignListSection> {
           children: [
             Icon(Icons.add_photo_alternate, size: 22, color: AppColors.primary.withValues(alpha: 0.6)),
             const SizedBox(height: 4),
-            const Text('+ Add Photo', style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w500)),
+            const Text('+ Upload', style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _capturePhotoTile(VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        width: 110,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: AppColors.primary.withValues(alpha: 0.4), width: 1.5),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.camera_alt, size: 22, color: AppColors.primary.withValues(alpha: 0.6)),
+            const SizedBox(height: 4),
+            const Text('+ Capture', style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w500)),
           ],
         ),
       ),
