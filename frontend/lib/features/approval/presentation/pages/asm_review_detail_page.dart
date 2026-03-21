@@ -1449,7 +1449,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
 
     // 1. Proactive rules (richest detail — add first so they win dedup)
-    final proactiveRules = details['proactiveRules'] as List<dynamic>?;
+    // Backend stores rules under 'proactiveRules' (ValidationAgent merge) or 'rules' (AssistantController)
+    final proactiveRules = (details['proactiveRules'] as List<dynamic>?) ??
+        (details['rules'] as List<dynamic>?);
     if (proactiveRules != null) {
       for (final rule in proactiveRules) {
         if (rule is! Map<String, dynamic>) continue;
