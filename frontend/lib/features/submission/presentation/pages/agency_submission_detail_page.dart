@@ -534,117 +534,13 @@ class _AgencySubmissionDetailPageState
       }
     }
 
-    return Card(
-      elevation: 1,
-      margin: const EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(
-          color: Color(0xFFE5E7EB),
-          width: 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: const BoxDecoration(
-              color: Color.fromARGB(255, 240, 237, 237),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Invoice Validations',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        fileName,
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (totalCount > 0)
-                      RichText(
-                        text: TextSpan(
-                          children: [
-                            TextSpan(
-                              text: '$passedCount/$totalCount ',
-                              style: AppTextStyles.bodySmall.copyWith(
-                                color: AppColors.textPrimary,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 11,
-                              ),
-                            ),
-                            TextSpan(
-                              text: 'Passed',
-                              style: AppTextStyles.bodySmall.copyWith(
-                                color: const Color(0xFF16A34A),
-                                fontWeight: FontWeight.w600,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if (docId.isNotEmpty) ...[
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        height: 28,
-                        child: OutlinedButton.icon(
-                          onPressed: () => _viewDocument(docId, fileName),
-                          icon: const Icon(Icons.visibility, size: 13),
-                          label: const Text('View', style: TextStyle(fontSize: 11)),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.primary,
-                            side: const BorderSide(color: AppColors.primary),
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      SizedBox(
-                        height: 28,
-                        child: ElevatedButton.icon(
-                          onPressed: () => _downloadDocumentDirect(docId, fileName),
-                          icon: const Icon(Icons.download, size: 13),
-                          label: const Text('Download', style: TextStyle(fontSize: 11)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-          ),
-
     return _buildValidationCardWidget(
       title: 'Invoice Validations',
       fileName: fileName,
-      passedCount: passedCount,
-      totalCount: totalCount,
+      passedCount: allRows.where((r) => r['passed'] == true).length,
+      totalCount: allRows.length,
       rows: allRows,
+      resolvedDocId: docId,
     );
   }
 
@@ -998,6 +894,8 @@ class _AgencySubmissionDetailPageState
     required int passedCount,
     required int totalCount,
     required List<Map<String, dynamic>> rows,
+    String resolvedDocId = '',
+    String resolvedBlobUrl = '',
   }) {
     return Card(
       elevation: 1,
