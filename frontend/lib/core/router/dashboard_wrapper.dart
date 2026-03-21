@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
+import '../network/dio_client.dart';
 
 /// Wrapper widget that fetches token and passes it to dashboard pages
 class DashboardWrapper extends ConsumerWidget {
@@ -35,6 +36,15 @@ class DashboardWrapper extends ConsumerWidget {
 
         final token = snapshot.data ?? '';
         final userName = authState.user?.name ?? authState.user?.email ?? '';
+
+        // Set the shared auth token once here so every widget using
+        // dioProvider (AssistantChatPanel, ChatPage, etc.) automatically
+        // gets the Bearer header — no per-page token wiring needed.
+        if (token.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            ref.read(authTokenProvider.notifier).state = token;
+          });
+        }
 
         print(
             '[DashboardWrapper] Token retrieved: ${token.isNotEmpty ? "${token.substring(0, 20)}..." : "EMPTY"}');
