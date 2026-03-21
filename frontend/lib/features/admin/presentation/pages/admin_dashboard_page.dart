@@ -15,11 +15,13 @@ import 'email_logs_page.dart';
 class AdminDashboardPage extends StatefulWidget {
   final String token;
   final String userName;
+  final VoidCallback? onLogout;
 
   const AdminDashboardPage({
     super.key,
     required this.token,
     required this.userName,
+    this.onLogout,
   });
 
   @override
@@ -34,7 +36,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _AdminMenuItem(icon: Icons.business, label: 'Agency Master'),
     _AdminMenuItem(icon: Icons.receipt_long, label: 'Supplier PO'),
     _AdminMenuItem(icon: Icons.map_outlined, label: 'State City Master'),
-    _AdminMenuItem(icon: Icons.manage_accounts, label: 'User Management'),
+    _AdminMenuItem(icon: Icons.manage_accounts, label: 'User Master'),
     _AdminMenuItem(icon: Icons.store, label: 'Dealer Master'),
     _AdminMenuItem(icon: Icons.account_tree_outlined, label: 'State Hierarchy'),
     _AdminMenuItem(icon: Icons.download_outlined, label: 'Enquiry Data'),
@@ -43,7 +45,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   ];
 
   Widget _buildPage(int index) {
-    // ValueKey forces a full rebuild + fresh initState when switching menu items
     switch (index) {
       case 0: return SupplierAgencyMasterPage(key: ValueKey('page-$index'), token: widget.token);
       case 1: return SupplierPoPage(key: ValueKey('page-$index'), token: widget.token);
@@ -70,10 +71,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     });
   }
 
-  void _logout() {
-    Navigator.pushReplacementNamed(context, '/');
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width >= 1024;
@@ -81,11 +78,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Row(
+        title: const Row(
           children: [
-            const Icon(Icons.admin_panel_settings, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            const Text('ClaimsIQ — Admin Panel',
+            Icon(Icons.admin_panel_settings, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Text('ClaimsIQ — Admin Panel',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
           ],
         ),
@@ -104,7 +101,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               userName: widget.userName,
               userRole: 'Admin',
               navItems: navItems,
-              onLogout: _logout,
+              onLogout: widget.onLogout ?? () {},
             ),
       body: Row(
         children: [
@@ -113,7 +110,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               userName: widget.userName,
               userRole: 'Admin',
               navItems: navItems,
-              onLogout: _logout,
+              onLogout: widget.onLogout ?? () {},
               isCollapsed: _isSidebarCollapsed,
               onToggleCollapse: () =>
                   setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),

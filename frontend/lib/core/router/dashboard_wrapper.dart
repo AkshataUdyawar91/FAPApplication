@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
 
 /// Wrapper widget that fetches token and passes it to dashboard pages
 class DashboardWrapper extends ConsumerWidget {
-  final Widget Function(String token, String userName) builder;
+  final Widget Function(String token, String userName, VoidCallback onLogout) builder;
 
   const DashboardWrapper({
     super.key,
@@ -15,6 +16,11 @@ class DashboardWrapper extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authNotifierProvider);
     final localDataSource = ref.watch(authLocalDataSourceProvider);
+
+    void onLogout() {
+      ref.read(authNotifierProvider.notifier).logout();
+      context.go('/login');
+    }
 
     return FutureBuilder<String?>(
       future: localDataSource.getAccessToken(),
@@ -35,7 +41,7 @@ class DashboardWrapper extends ConsumerWidget {
         print('[DashboardWrapper] UserName: $userName');
         print('[DashboardWrapper] User role: ${authState.user?.role}');
 
-        return builder(token, userName);
+        return builder(token, userName, onLogout);
       },
     );
   }
