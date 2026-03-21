@@ -30,7 +30,7 @@ BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, Is
 IF NOT EXISTS (SELECT 1 FROM Dealers WHERE DealerCode = 'DL-MH-106')
 BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-106', 'Patil Auto', 'Maharashtra', 'Kolhapur', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
 
--- Deshmukh Bajaj — present in Mumbai, Thane, Navi Mumbai, Aurangabad
+-- Deshmukh Bajaj — present in Mumbai, Thane, Navi Mumbai, Sambhaji Nagar
 IF NOT EXISTS (SELECT 1 FROM Dealers WHERE DealerCode = 'DL-MH-107')
 BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-107', 'Deshmukh Bajaj', 'Maharashtra', 'Mumbai', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
 
@@ -41,7 +41,7 @@ IF NOT EXISTS (SELECT 1 FROM Dealers WHERE DealerCode = 'DL-MH-109')
 BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-109', 'Deshmukh Bajaj', 'Maharashtra', 'Navi Mumbai', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
 
 IF NOT EXISTS (SELECT 1 FROM Dealers WHERE DealerCode = 'DL-MH-110')
-BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-110', 'Deshmukh Bajaj', 'Maharashtra', 'Aurangabad', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
+BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-110', 'Deshmukh Bajaj', 'Maharashtra', 'Sambhaji Nagar', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
 
 -- Kulkarni Two Wheelers — present in Pune, Solapur, Satara
 IF NOT EXISTS (SELECT 1 FROM Dealers WHERE DealerCode = 'DL-MH-111')
@@ -89,7 +89,7 @@ BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, Is
 IF NOT EXISTS (SELECT 1 FROM Dealers WHERE DealerCode = 'DL-MH-124')
 BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-124', 'Shinde Bajaj World', 'Maharashtra', 'Ratnagiri', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
 
--- Gaikwad Rides — present in Kolhapur, Sangli, Ahmednagar
+-- Gaikwad Rides — present in Kolhapur, Sangli, Ahilya Nagar
 IF NOT EXISTS (SELECT 1 FROM Dealers WHERE DealerCode = 'DL-MH-125')
 BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-125', 'Gaikwad Rides', 'Maharashtra', 'Kolhapur', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
 
@@ -97,6 +97,6 @@ IF NOT EXISTS (SELECT 1 FROM Dealers WHERE DealerCode = 'DL-MH-126')
 BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-126', 'Gaikwad Rides', 'Maharashtra', 'Sangli', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
 
 IF NOT EXISTS (SELECT 1 FROM Dealers WHERE DealerCode = 'DL-MH-127')
-BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-127', 'Gaikwad Rides', 'Maharashtra', 'Ahmednagar', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
+BEGIN INSERT INTO Dealers (Id, DealerCode, DealerName, State, City, IsActive, IsDeleted, CreatedAt) VALUES (NEWID(), 'DL-MH-127', 'Gaikwad Rides', 'Maharashtra', 'Ahilya Nagar', 1, 0, GETUTCDATE()); SET @inserted = @inserted + 1; END
 
 PRINT CAST(@inserted AS NVARCHAR) + ' Maharashtra dealer(s) inserted.';
