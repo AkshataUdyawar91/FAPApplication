@@ -1607,14 +1607,17 @@ public class ValidationAgent : IValidationAgent
                         v => v.DocumentType == documentType && v.DocumentId == documentId,
                         cancellationToken);
 
-                // Merge proactive rules into ValidationDetailsJson so it contains all validations
-                var mergedDetailsJson = MergeProactiveRulesIntoDetails(detailsJson, existing?.RuleResultsJson);
+                // Merge the current run's rules into ValidationDetailsJson so the web detail pages
+                // always have a "proactiveRules" key with all validation rows.
+                // For existing records with prior chatbot rules, combine both rule sets first.
+                var combinedRulesJson = CombineRuleArrays(ruleResultsJson, existing?.RuleResultsJson);
+                var mergedDetailsJson = MergeProactiveRulesIntoDetails(detailsJson, combinedRulesJson);
 
                 if (existing != null)
                 {
                     existing.AllValidationsPassed = allPassed;
                     existing.FailureReason = failureReason;
-                    existing.ValidationDetailsJson = detailsJson;
+                    existing.ValidationDetailsJson = mergedDetailsJson;
                     existing.RuleResultsJson = ruleResultsJson;
                     existing.UpdatedAt = DateTime.UtcNow;
                 }
@@ -1627,7 +1630,7 @@ public class ValidationAgent : IValidationAgent
                         DocumentId = documentId,
                         AllValidationsPassed = allPassed,
                         FailureReason = failureReason,
-                        ValidationDetailsJson = detailsJson,
+                        ValidationDetailsJson = mergedDetailsJson,
                         RuleResultsJson = ruleResultsJson,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
@@ -1748,6 +1751,72 @@ public class ValidationAgent : IValidationAgent
         }
 
         return names;
+    }
+
+    /// <summary>
+    /// Combines two JSON rule arrays into one, deduplicating by ruleCode.
+    /// The primary array takes precedence over the secondary for duplicate codes.
+    /// </summary>
+    private static string? CombineRuleArrays(string? primaryJson, string? secondaryJson)
+    {
+        if (string.IsNullOrWhiteSpace(primaryJson) && string.IsNullOrWhiteSpace(secondaryJson))
+            return null;
+        if (string.IsNullOrWhiteSpace(secondaryJson))
+            return primaryJson;
+        if (string.IsNullOrWhiteSpace(primaryJson))
+            return secondaryJson;
+
+        try
+        {
+            using var primaryDoc = JsonDocument.Parse(primaryJson);
+            using var secondaryDoc = JsonDocument.Parse(secondaryJson);
+
+            if (primaryDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return secondaryJson;
+            if (secondaryDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return primaryJson;
+
+            // Collect rule codes from primary
+            var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rule in primaryDoc.RootElement.EnumerateArray())
+            {
+                if (rule.TryGetProperty("RuleCode", out var rc) || rule.TryGetProperty("ruleCode", out rc))
+                {
+                    var code = rc.GetString();
+                    if (!string.IsNullOrEmpty(code))
+                        seenCodes.Add(code);
+                }
+            }
+
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartArray();
+
+                // Write all primary rules
+                foreach (var rule in primaryDoc.RootElement.EnumerateArray())
+                    rule.WriteTo(writer);
+
+                // Write secondary rules not already in primary
+                foreach (var rule in secondaryDoc.RootElement.EnumerateArray())
+                {
+                    string? code = null;
+                    if (rule.TryGetProperty("RuleCode", out var rc) || rule.TryGetProperty("ruleCode", out rc))
+                        code = rc.GetString();
+
+                    if (string.IsNullOrEmpty(code) || !seenCodes.Contains(code))
+                        rule.WriteTo(writer);
+                }
+
+                writer.WriteEndArray();
+            }
+
+            return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        }
+        catch (JsonException)
+        {
+            return primaryJson ?? secondaryJson;
+        }
     }
 
     /// <summary>
