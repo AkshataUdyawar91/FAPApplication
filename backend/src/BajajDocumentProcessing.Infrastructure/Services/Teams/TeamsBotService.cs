@@ -350,6 +350,7 @@ public class TeamsBotService : TeamsActivityHandler
             var pendingPackages = await query
                 .Include(p => p.Agency)
                 .Include(p => p.Invoices)
+                    .ThenInclude(i => i.PO)
                 .Include(p => p.Teams.Where(t => !t.IsDeleted))
                     .ThenInclude(t => t.Invoices)
                 .Include(p => p.ConfidenceScore)
@@ -415,10 +416,21 @@ public class TeamsBotService : TeamsActivityHandler
 
         foreach (var package in packages)
         {
-            var shortId = package.Id.ToString()[..8].ToUpper();
+            var shortId = package.SubmissionNumber ?? package.Id.ToString()[..8].ToUpper();
             var agencyName = package.Agency?.SupplierName ?? "Unknown Agency";
-            var poNumber = package.PO?.PONumber ?? "N/A";
-            var amount = package.Teams?.SelectMany(t => t.Invoices).Sum(i => i.TotalAmount ?? 0m) ?? 0m;
+
+            // PO Number: from PO navigation first, then SelectedPOId lookup is not available here
+            // so fall back to "N/A" — SelectedPO is loaded via Include(p => p.PO) which covers dashboard flow.
+            // For chatbot flow, PO is not a navigation but SelectedPOId — we read PONumber from Invoices.POId indirectly.
+            var poNumber = package.PO?.PONumber
+                ?? package.Invoices?.Select(i => i.PO?.PONumber).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
+                ?? "N/A";
+
+            // Invoice amount: Teams.Invoices (dashboard flow) → package.Invoices (chatbot flow)
+            var teamInvoiceAmount = package.Teams?.SelectMany(t => t.Invoices).Sum(i => i.TotalAmount ?? 0m) ?? 0m;
+            var amount = teamInvoiceAmount > 0
+                ? teamInvoiceAmount
+                : package.Invoices?.Sum(i => i.TotalAmount ?? 0m) ?? 0m;
             var formattedAmount = $"₹{amount:N0}";
             var confidence = package.ConfidenceScore?.OverallConfidence ?? 0;
             var confidenceFormatted = $"{confidence:F0}/100";
@@ -434,7 +446,7 @@ public class TeamsBotService : TeamsActivityHandler
                     new JObject
                     {
                         ["type"] = "TextBlock",
-                        ["text"] = $"**FAP-{shortId}** — {agencyName}",
+                        ["text"] = $"**{shortId}** — {agencyName}",
                         ["wrap"] = true,
                         ["weight"] = "Bolder"
                     },
@@ -460,7 +472,7 @@ public class TeamsBotService : TeamsActivityHandler
                     new JObject
                     {
                         ["type"] = "Action.Submit",
-                        ["title"] = $"View FAP-{shortId}",
+                        ["title"] = $"View {shortId}",
                         ["data"] = new JObject
                         {
                             ["action"] = "view_full_card",
@@ -781,7 +793,7 @@ public class TeamsBotService : TeamsActivityHandler
             _logger.LogWarning(
                 "Concurrency conflict during Quick Approve for FAP-{ShortId} — already actioned", shortId);
             return CreateAdaptiveCardResponse(
-                $"FAP-{shortId} has already been actioned by another user.");
+                $"{shortId} has already been actioned by another user.");
         }
         catch (Exception ex)
         {
@@ -808,13 +820,16 @@ public class TeamsBotService : TeamsActivityHandler
             .FirstOrDefaultAsync(p => p.Id == fapId, cancellationToken);
 
         if (package == null)
-            return CreateAdaptiveCardResponse($"FAP-{shortId} not found.");
+            return CreateAdaptiveCardResponse($"{shortId} not found.");
+
+        // Use SubmissionNumber if available, fall back to shortId
+        shortId = package.SubmissionNumber ?? shortId;
 
         // Idempotency: only PendingCH or RARejected can be approved
         if (package.State != PackageState.PendingCH && package.State != PackageState.RARejected)
         {
             return CreateAdaptiveCardResponse(
-                $"FAP-{shortId} has already been processed. No further action needed.");
+                $"{shortId} has already been processed. No further action needed.");
         }
 
         var agencyName = package.Agency?.SupplierName ?? "Unknown Agency";
@@ -867,13 +882,16 @@ public class TeamsBotService : TeamsActivityHandler
             .FirstOrDefaultAsync(p => p.Id == fapId, cancellationToken);
 
         if (package == null)
-            return CreateAdaptiveCardResponse($"FAP-{shortId} not found.");
+            return CreateAdaptiveCardResponse($"{shortId} not found.");
+
+        // Use SubmissionNumber if available
+        shortId = package.SubmissionNumber ?? shortId;
 
         // Idempotency check: only PendingCH or RARejected can be approved
         if (package.State != PackageState.PendingCH && package.State != PackageState.RARejected)
         {
             return CreateAdaptiveCardResponse(
-                $"FAP-{shortId} has already been processed. No further action needed.");
+                $"{shortId} has already been processed. No further action needed.");
         }
 
         var agencyName = package.Agency?.SupplierName ?? "Unknown Agency";
@@ -884,6 +902,18 @@ public class TeamsBotService : TeamsActivityHandler
         // Execute approval: state transition + RequestApprovalHistory (same as ASMApproveSubmission)
         package.State = PackageState.PendingRA;
         package.UpdatedAt = DateTime.UtcNow;
+
+        // Auto-assign RA user based on submission's activity state (same as portal ASMApproveSubmission)
+        var raUserId = await context.StateMappings
+            .Where(sm => sm.State == (package.ActivityState ?? string.Empty)
+                      && sm.IsActive && !sm.IsDeleted && sm.RAUserId != null)
+            .Select(sm => sm.RAUserId)
+            .FirstOrDefaultAsync(cancellationToken);
+        package.AssignedRAUserId = raUserId;
+        if (raUserId == null)
+            _logger.LogWarning(
+                "No RA user found for state '{ActivityState}' on FAP-{ShortId}. Manual RA assignment required.",
+                package.ActivityState, shortId);
 
         var approvalHistory = new RequestApprovalHistory
         {
@@ -908,7 +938,7 @@ public class TeamsBotService : TeamsActivityHandler
 
         // Build success message
         var successMessage =
-            $"✅ Approved! FAP-{shortId} forwarded to RA. " +
+            $"✅ Approved! {shortId} forwarded to RA. " +
             $"{agencyName} will be notified. Payable amount: {formattedAmount}";
 
         return CreateAdaptiveCardResponse(successMessage);
@@ -1466,7 +1496,7 @@ public class TeamsBotService : TeamsActivityHandler
             new JObject
             {
                 ["type"] = "TextBlock",
-                ["text"] = $"You're about to approve FAP-{shortId} ({agencyName}, {formattedAmount}). Do you want to continue?",
+                ["text"] = $"You're about to approve {shortId} ({agencyName}, {formattedAmount}). Do you want to continue?",
                 ["wrap"] = true,
                 ["weight"] = "Bolder"
             }
@@ -1607,7 +1637,7 @@ public class TeamsBotService : TeamsActivityHandler
             _logger.LogWarning(
                 "Concurrency conflict during Review Details flow for FAP-{ShortId} — already actioned", shortId);
             return CreateAdaptiveCardResponse(
-                $"FAP-{shortId} has already been actioned by another user.");
+                $"{shortId} has already been actioned by another user.");
         }
         catch (Exception ex)
         {
@@ -1675,7 +1705,7 @@ public class TeamsBotService : TeamsActivityHandler
             new JObject
             {
                 ["type"] = "TextBlock",
-                ["text"] = $"Rejecting FAP-{shortId}. Please provide a reason (minimum 10 characters):",
+                ["text"] = $"Rejecting {shortId}. Please provide a reason (minimum 10 characters):",
                 ["wrap"] = true,
                 ["weight"] = "Bolder"
             },
@@ -1756,13 +1786,16 @@ public class TeamsBotService : TeamsActivityHandler
             .FirstOrDefaultAsync(p => p.Id == fapId, cancellationToken);
 
         if (package == null)
-            return CreateAdaptiveCardResponse($"FAP-{shortId} not found.");
+            return CreateAdaptiveCardResponse($"{shortId} not found.");
+
+        // Use SubmissionNumber if available
+        shortId = package.SubmissionNumber ?? shortId;
 
         // Idempotency: only PendingCH or RARejected can be rejected
         if (package.State != PackageState.PendingCH && package.State != PackageState.RARejected)
         {
             return CreateAdaptiveCardResponse(
-                $"FAP-{shortId} has already been processed. No further action needed.");
+                $"{shortId} has already been processed. No further action needed.");
         }
 
         var approverId = systemUser?.Id ?? Guid.Empty;
@@ -1794,7 +1827,7 @@ public class TeamsBotService : TeamsActivityHandler
 
         var agencyName = package.Agency?.SupplierName ?? "Unknown Agency";
         return CreateAdaptiveCardResponse(
-            $"❌ Rejected. FAP-{shortId} ({agencyName}) has been rejected. Reason: {rejectionReason}");
+            $"❌ Rejected. {shortId} ({agencyName}) has been rejected. Reason: {rejectionReason}");
     }
 
     private async Task<AdaptiveCardInvokeResponse> ProcessCardActionAsync(

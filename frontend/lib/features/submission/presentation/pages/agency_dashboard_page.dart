@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/network/dio_client.dart';
 
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -53,10 +54,11 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   @override
   void initState() {
     super.initState();
-    // Set the shared auth token so AssistantChatPanel (and other widgets
-    // using dioProvider) can attach the Bearer token to their requests.
+    // Sync token into authTokenProvider so AssistantChatPanel's dio interceptor picks it up
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(authTokenProvider.notifier).state = widget.token;
+      if (widget.token.isNotEmpty) {
+        ref.read(authTokenProvider.notifier).state = widget.token;
+      }
     });
     _loadRequests();
   }
@@ -1072,12 +1074,14 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         label = state == 'validationfailed' ? 'Validation Failed' : 'Rejected';
         break;
       case 'rejectedbyasm':
+      case 'chrejected':
         bgColor = const Color(0xFFFEE2E2);
         textColor = const Color(0xFF991B1B);
         label = 'Rejected by CH';
         break;
       case 'rejectedbyhq':
       case 'rejectedbyra':
+      case 'rarejected':
         bgColor = const Color(0xFFFEE2E2);
         textColor = const Color(0xFF991B1B);
         label = 'Rejected by RA';
@@ -1098,12 +1102,14 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         break;
       case 'pendingchapproval':
       case 'pendingwithch':
+      case 'pendingch':
         bgColor = const Color(0xFFDBEAFE);
         textColor = const Color(0xFF1E40AF);
         label = 'Pending with CH';
         break;
       case 'pendinghqapproval':
       case 'pendingwithra':
+      case 'pendingra':
         bgColor = const Color(0xFFFEF3C7);
         textColor = const Color(0xFF92400E);
         label = 'Pending with RA';

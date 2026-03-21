@@ -879,9 +879,23 @@ public class SubmissionsController : ControllerBase
                 .Take(pageSize)
                 .ToListAsync(cancellationToken);
 
+            // Chatbot flow: packages use SelectedPOId instead of a linked PO entity.
+            // Bulk-load those POs so we can show PO number in the list.
+            var missingPoIds = packages
+                .Where(p => p.PO == null && p.SelectedPOId.HasValue)
+                .Select(p => p.SelectedPOId!.Value)
+                .Distinct()
+                .ToList();
+            var selectedPosById = missingPoIds.Count > 0
+                ? await _context.POs
+                    .AsNoTracking()
+                    .Where(po => missingPoIds.Contains(po.Id) && !po.IsDeleted)
+                    .ToDictionaryAsync(po => po.Id, cancellationToken)
+                : new Dictionary<Guid, Domain.Entities.PO>();
+
             var items = packages.Select(p =>
             {
-                // Extract invoice data from Invoices (linked to PO)
+                // Extract invoice data — chatbot stores directly on Invoices, portal via Teams
                 var firstInvoice = p.Invoices
                     .Where(i => !i.IsDeleted)
                     .FirstOrDefault();
@@ -898,15 +912,19 @@ public class SubmissionsController : ControllerBase
                     invoiceAmount = totalInvoiceAmount;
 
                 // Extract PO data from dedicated PO entity
-                string? poNumber = p.PO?.PONumber;
-                decimal? poAmount = p.PO?.TotalAmount;
+                // Chatbot flow: PO is referenced via SelectedPOId — use bulk-loaded selectedPosById
+                var effectivePo = p.PO
+                    ?? (p.SelectedPOId.HasValue && selectedPosById.TryGetValue(p.SelectedPOId.Value, out var selPo) ? selPo : null);
+
+                string? poNumber = effectivePo?.PONumber;
+                decimal? poAmount = effectivePo?.TotalAmount;
 
                 // Fallback: try ExtractedDataJson if typed fields are empty
-                if (p.PO != null && string.IsNullOrEmpty(poNumber) && !string.IsNullOrEmpty(p.PO.ExtractedDataJson))
+                if (effectivePo != null && string.IsNullOrEmpty(poNumber) && !string.IsNullOrEmpty(effectivePo.ExtractedDataJson))
                 {
                     try
                     {
-                        var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(p.PO.ExtractedDataJson);
+                        var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(effectivePo.ExtractedDataJson);
                         
                         if (poData.TryGetProperty("PONumber", out var poNum))
                             poNumber = poNum.GetString();

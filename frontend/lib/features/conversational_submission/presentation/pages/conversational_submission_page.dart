@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/network/dio_client.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 import '../providers/conversation_providers.dart';
 import '../providers/conversation_notifier.dart';
 import '../providers/signalr_notifier.dart';
@@ -39,6 +40,16 @@ class _ConversationalSubmissionPageState
   Future<void> _initConversation() async {
     if (_initialized) return;
     _initialized = true;
+
+    // Restore token from secure storage into authTokenProvider if not already set
+    final currentToken = ref.read(authTokenProvider);
+    if (currentToken == null || currentToken.isEmpty) {
+      final localDataSource = ref.read(authLocalDataSourceProvider);
+      final storedToken = await localDataSource.getAccessToken();
+      if (storedToken != null && storedToken.isNotEmpty) {
+        ref.read(authTokenProvider.notifier).state = storedToken;
+      }
+    }
 
     // Start the conversation
     await ref.read(conversationNotifierProvider.notifier).startConversation();

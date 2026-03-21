@@ -17,6 +17,8 @@ import 'po_search_list.dart';
 import 'file_upload_card.dart';
 import 'chat_input_bar.dart';
 import '../../data/models/assistant_response_model.dart';
+import '../../../../core/network/dio_client.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 
 /// Embeddable side-panel version of the Field Activity Assistant.
 /// Mirrors ChatScreen logic but renders as a Column (no Scaffold).
@@ -47,9 +49,20 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!_initialized) {
         _initialized = true;
+        // Restore token from secure storage into authTokenProvider if not already set
+        final currentToken = ref.read(authTokenProvider);
+        if (currentToken == null || currentToken.isEmpty) {
+          final localDataSource = ref.read(authLocalDataSourceProvider);
+          final storedToken = await localDataSource.getAccessToken();
+          if (storedToken != null && storedToken.isNotEmpty) {
+            ref.read(authTokenProvider.notifier).state = storedToken;
+          }
+        }
+        // Always reset to a fresh state every time the panel opens
+        ref.read(assistantNotifierProvider.notifier).reset();
         ref.read(assistantNotifierProvider.notifier).greet();
       }
     });
@@ -739,6 +752,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
               : null,
         );
+      case 'dealer_list':
       case 'dealer_search_results':
         return AssistantBubble(
           message: msg.content,
@@ -1030,13 +1044,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     final hasIssues = issues > 0;
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
 
-    // Disable "Continue" only if extracted invoice amount is 0 or missing
-    final amountRule = rules.where((rule) => rule.label == 'Invoice Amount').firstOrNull;
-    final rawAmount = amountRule?.extractedValue ?? '';
-    final cleanedAmount = rawAmount.replaceAll('₹', '').replaceAll(',', '').trim();
-    final extractedAmount = double.tryParse(cleanedAmount) ?? 0;
-    final isAmountZero = amountRule != null && extractedAmount == 0;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1144,7 +1151,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           const SizedBox(width: 8),
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: (isLoading || isAmountZero) ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
+              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
               icon: const Icon(Icons.arrow_forward, size: 14),
               label: Text(hasIssues ? 'Continue with warnings' : 'Continue',
                   style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
@@ -1697,7 +1704,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           const SizedBox(width: 8),
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(),
+              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(payloadJson: r.payloadJson),
               icon: const Icon(Icons.arrow_forward, size: 14),
               label: Text(hasIssues ? 'Continue with warnings' : 'Continue →',
                   style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
@@ -1970,6 +1977,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         newMode = 'state';
       } else if (t == 'dealer_search' || t == 'dealer_search_results') {
         newMode = 'dealer';
+      } else if (t == 'dealer_list') {
+        newMode = 'none'; // dropdown — no search bar needed
       } else if (t == 'team_name_input') {
         newMode = 'team_name';
       } else if (t == 'team_count_input') {
@@ -2025,7 +2034,10 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 IconButton(
                   icon: const Icon(Icons.refresh, color: Colors.white),
                   tooltip: 'New conversation',
-                  onPressed: () => ref.read(assistantNotifierProvider.notifier).greet(),
+                  onPressed: () {
+                    ref.read(assistantNotifierProvider.notifier).reset();
+                    ref.read(assistantNotifierProvider.notifier).greet();
+                  },
                 ),
                 IconButton(
                   icon: const Icon(Icons.close, color: Colors.white),
