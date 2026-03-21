@@ -2306,6 +2306,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
                 setState(() => _campaigns = campaigns),
             token: widget.token,
             packageId: _currentPackageId,
+            selectedActivationState: _selectedActivationState,
           ),
         ],
       ),

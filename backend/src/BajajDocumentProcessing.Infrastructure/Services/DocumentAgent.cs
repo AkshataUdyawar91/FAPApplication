@@ -6,6 +6,7 @@ using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 // CHANGE: Added ClosedXML for reading Excel files (Enquiry Dump)
@@ -1406,7 +1407,11 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
         public string? CampaignName { get; set; }
         public string? State { get; set; }
         public string? PlaceOfSupply { get; set; }
+
+        [JsonConverter(typeof(NullableDateTimeConverter))]
         public DateTime? CampaignStartDate { get; set; }
+
+        [JsonConverter(typeof(NullableDateTimeConverter))]
         public DateTime? CampaignEndDate { get; set; }
         public decimal TotalCost { get; set; }
         public int? NumberOfDays { get; set; }
@@ -1426,6 +1431,40 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
         public string? Unit { get; set; }
         public bool IsFixedCost { get; set; }
         public bool IsVariableCost { get; set; }
+    }
+
+    /// <summary>
+    /// Handles empty strings and various date formats from AI responses, returning null instead of throwing.
+    /// </summary>
+    private class NullableDateTimeConverter : JsonConverter<DateTime?>
+    {
+        public override DateTime? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Null)
+                return null;
+
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                var value = reader.GetString();
+                if (string.IsNullOrWhiteSpace(value))
+                    return null;
+
+                if (DateTime.TryParse(value, out var date))
+                    return date;
+
+                return null;
+            }
+
+            return reader.GetDateTime();
+        }
+
+        public override void Write(Utf8JsonWriter writer, DateTime? value, JsonSerializerOptions options)
+        {
+            if (value.HasValue)
+                writer.WriteStringValue(value.Value);
+            else
+                writer.WriteNullValue();
+        }
     }
 
     /// <summary>

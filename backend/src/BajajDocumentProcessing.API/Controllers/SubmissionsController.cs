@@ -163,16 +163,19 @@ public class SubmissionsController : ControllerBase
                 }
             }
 
-            // Queue workflow for background processing (non-blocking)
-            await _backgroundQueue.QueueWorkflowAsync(package.Id);
+            // Do NOT queue workflow here — the frontend uploads documents AFTER this call,
+            // then triggers processing via POST /submissions/{id}/process-async.
+            // Queuing here would start the workflow before documents are uploaded,
+            // causing validation to run with incomplete data and the package to reach
+            // PendingCH prematurely (skipping Extracting → Validating progression).
             
-            _logger.LogInformation("Submission {PackageId} created and queued for processing", package.Id);
+            _logger.LogInformation("Submission {PackageId} created. Awaiting document uploads before processing.", package.Id);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Submission received and is being processed"
+                Message = "Submission created. Upload documents and then trigger processing."
             };
 
             return CreatedAtAction(
@@ -2063,6 +2066,18 @@ public class SubmissionsController : ControllerBase
                 var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, cancellationToken);
                 package.AssignedCircleHeadUserId = circleHeadUserId;
                 _logger.LogInformation("CircleHead {UserId} assigned for package {PackageId}", circleHeadUserId, packageId);
+            }
+
+            // Reset state to Uploaded so the orchestrator processes from scratch.
+            // This handles cases where a previous premature workflow run moved the
+            // package to PendingCH before all documents were uploaded.
+            if (package.State == PackageState.PendingCH || 
+                package.State == PackageState.Extracting || 
+                package.State == PackageState.Validating ||
+                package.State == PackageState.Uploaded)
+            {
+                package.State = PackageState.Uploaded;
+                _logger.LogInformation("Package {PackageId} state reset to Uploaded for reprocessing", packageId);
             }
 
             package.UpdatedAt = DateTime.UtcNow;

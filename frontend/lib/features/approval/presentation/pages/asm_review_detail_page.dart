@@ -1558,7 +1558,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
 
     // 1. Proactive rules (richest detail — add first so they win dedup)
-    final proactiveRules = details['proactiveRules'] as List<dynamic>?;
+    // Backend stores rules under 'proactiveRules' (ValidationAgent merge) or 'rules' (AssistantController)
+    final proactiveRules = (details['proactiveRules'] as List<dynamic>?) ??
+        (details['rules'] as List<dynamic>?);
     if (proactiveRules != null) {
       for (final rule in proactiveRules) {
         if (rule is! Map<String, dynamic>) continue;
@@ -1654,6 +1656,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         'gstStateMatches': ('GST State Match', 'GST state matches', 'GST state mismatch'),
         'hsnSacCodeValid': ('HSN/SAC Code', 'HSN/SAC code is valid', 'HSN/SAC code is invalid'),
         'invoiceAmountValid': ('Invoice Amount', 'Invoice amount is valid', 'Invoice amount is invalid'),
+        // poBalanceValid intentionally excluded — use INV_AMOUNT_VS_PO_BALANCE from proactiveRules instead
+        // to avoid showing a default "Pass" when the balance was never actually checked.
         'gstPercentageValid': ('GST Percentage', 'GST percentage is valid', 'GST percentage is invalid'),
       };
       for (final entry in checkMap.entries) {
@@ -1737,6 +1741,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   /// Converts a proactive rule code like "INV_INVOICE_NUMBER_PRESENT" to a readable label.
   String _ruleCodeToLabel(String ruleCode) {
     const labelMap = {
+      // Chatbot rule codes
       'INV_INVOICE_NUMBER_PRESENT': 'Invoice Number',
       'INV_DATE_PRESENT': 'Invoice Date',
       'INV_AMOUNT_PRESENT': 'Invoice Amount',
@@ -1746,13 +1751,46 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       'INV_VENDOR_CODE_PRESENT': 'Vendor Code',
       'INV_PO_NUMBER_MATCH': 'PO Number Match',
       'INV_AMOUNT_VS_PO_BALANCE': 'Amount vs PO Balance',
+      // Web workflow rule codes (from BuildPerDocumentResults)
+      'INV_NUMBER_PRESENT': 'Invoice Number',
+      'INV_GST_PRESENT': 'GST Number',
+      'INV_PO_MATCH': 'PO Number Match',
+      // PO rule codes
+      'PO_SAP_VERIFIED': 'SAP Verification',
+      'PO_DATE_VALID': 'Date Validation',
+      // Activity Summary rule codes
       'AS_DEALER_LOCATION_PRESENT': 'Dealer/Location',
+      'AS_TOTAL_DAYS': 'Total No. of Days',
+      'AS_TOTAL_WORKING_DAYS': 'Total No. of Working Days',
       'AS_DAYS_MATCH_COST_SUMMARY': 'Days Match (Cost Summary)',
       'AS_DAYS_MATCH_TEAM_DETAILS': 'Days Match (Team Details)',
+      // Cost Summary rule codes
+      'CS_PLACE_OF_SUPPLY': 'Place of Supply',
       'CS_PLACE_OF_SUPPLY_PRESENT': 'Place of Supply',
+      'CS_NUMBER_OF_DAYS': 'No. of Days',
+      'CS_NUMBER_OF_ACTIVATIONS': 'No. of Activations',
+      'CS_NUMBER_OF_TEAMS': 'No. of Teams',
+      'CS_ELEMENT_WISE_COST': 'Element-wise Cost',
+      'CS_ELEMENT_WISE_QTY': 'Element-wise Quantity',
       'CS_TOTAL_DAYS_PRESENT': 'Total Days',
       'CS_TOTAL_VS_INVOICE': 'Total vs Invoice',
       'CS_ELEMENT_COST_VS_RATES': 'Element Cost vs Rates',
+      // Enquiry rule codes
+      'EQ_STATE': 'State',
+      'EQ_DATE': 'Date',
+      'EQ_DEALER_CODE': 'Dealer Code',
+      'EQ_DEALER_NAME': 'Dealer Name',
+      'EQ_DISTRICT': 'District',
+      'EQ_PINCODE': 'Pincode',
+      'EQ_CUSTOMER_NAME': 'Customer Name',
+      'EQ_CUSTOMER_PHONE': 'Customer Phone',
+      'EQ_TEST_RIDE': 'Test Ride',
+      // Photo rule codes
+      'PHOTO_COUNT': 'Photo Count',
+      'PHOTO_DATE_VISIBLE': 'Date',
+      'PHOTO_GPS_VISIBLE': 'GPS',
+      'PHOTO_BLUE_TSHIRT': 'Blue T-shirt',
+      'PHOTO_3W_VEHICLE': '3W Vehicle',
     };
     return labelMap[ruleCode] ??
         ruleCode

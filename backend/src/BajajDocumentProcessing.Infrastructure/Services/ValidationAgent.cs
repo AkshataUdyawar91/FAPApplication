@@ -23,6 +23,7 @@ public class ValidationAgent : IValidationAgent
     private readonly IReferenceDataService _referenceDataService;
     private readonly ICorrelationIdService _correlationIdService;
     private readonly IPerceptualHashService _perceptualHashService;
+    private readonly IPoBalanceService _poBalanceService;
     private readonly AsyncCircuitBreakerPolicy _circuitBreakerPolicy;
     private readonly IAsyncPolicy _retryPolicy;
 
@@ -40,7 +41,8 @@ public class ValidationAgent : IValidationAgent
         IHttpClientFactory httpClientFactory,
         IReferenceDataService referenceDataService,
         ICorrelationIdService correlationIdService,
-        IPerceptualHashService perceptualHashService)
+        IPerceptualHashService perceptualHashService,
+        IPoBalanceService poBalanceService)
     {
         _context = context;
         _logger = logger;
@@ -48,6 +50,7 @@ public class ValidationAgent : IValidationAgent
         _referenceDataService = referenceDataService;
         _correlationIdService = correlationIdService;
         _perceptualHashService = perceptualHashService;
+        _poBalanceService = poBalanceService;
 
         // Circuit breaker: Open after 5 failures, stay open for 60 seconds, close after 2 successes
         _circuitBreakerPolicy = Policy
@@ -289,7 +292,7 @@ public class ValidationAgent : IValidationAgent
             // 8. Invoice Cross-Document Validation
             if (invoiceData != null && poData != null)
             {
-                result.InvoiceCrossDocument = ValidateInvoiceCrossDocument(invoiceData, poData);
+                result.InvoiceCrossDocument = await ValidateInvoiceCrossDocumentAsync(invoiceData, poData, cancellationToken);
                 if (!result.InvoiceCrossDocument.AllChecksPass)
                 {
                     foreach (var issue in result.InvoiceCrossDocument.Issues)
@@ -896,7 +899,7 @@ public class ValidationAgent : IValidationAgent
     /// <param name="invoiceData">The invoice data to validate</param>
     /// <param name="poData">The PO data to validate against</param>
     /// <returns>An InvoiceCrossDocumentResult containing validation status and any issues</returns>
-    private InvoiceCrossDocumentResult ValidateInvoiceCrossDocument(InvoiceData invoiceData, POData poData)
+    private async Task<InvoiceCrossDocumentResult> ValidateInvoiceCrossDocumentAsync(InvoiceData invoiceData, POData poData, CancellationToken cancellationToken)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
         _logger.LogInformation(
@@ -962,6 +965,37 @@ public class ValidationAgent : IValidationAgent
         {
             result.AllChecksPass = false;
             result.Issues.Add($"Invoice amount ({invoiceData.TotalAmount:F2}) exceeds PO amount ({poData.TotalAmount:F2})");
+        }
+
+        // 5b. Amount vs PO Balance — call SAP PO balance API
+        if (!string.IsNullOrWhiteSpace(poData.PONumber))
+        {
+            try
+            {
+                var balanceResponse = await _poBalanceService.GetPoBalanceAsync(
+                    "BAL", poData.PONumber, requestedBy: null, correlationId, cancellationToken);
+
+                result.PoBalanceAmount = balanceResponse.Balance;
+                result.PoBalanceValid = invoiceData.TotalAmount <= balanceResponse.Balance;
+
+                if (!result.PoBalanceValid)
+                {
+                    result.AllChecksPass = false;
+                    var indian = new System.Globalization.CultureInfo("en-IN");
+                    result.Issues.Add(
+                        $"₹{invoiceData.TotalAmount.ToString("N0", indian)} exceeds available PO balance (₹{balanceResponse.Balance.ToString("N0", indian)})");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "PO balance check failed for PO {PONumber} — API call failed. CorrelationId: {CorrelationId}",
+                    poData.PONumber, correlationId);
+                // Mark as failed when we can't verify the balance
+                result.PoBalanceValid = false;
+                result.AllChecksPass = false;
+                result.Issues.Add($"PO balance check failed for PO {poData.PONumber}: unable to fetch balance from API");
+            }
         }
 
         // 6. GST Percentage validation (should match default 18% or state-specific rate)
@@ -1607,14 +1641,19 @@ public class ValidationAgent : IValidationAgent
                         v => v.DocumentType == documentType && v.DocumentId == documentId,
                         cancellationToken);
 
-                // Merge proactive rules into ValidationDetailsJson so it contains all validations
-                var mergedDetailsJson = MergeProactiveRulesIntoDetails(detailsJson, existing?.RuleResultsJson);
+                // Merge the current run's rules into ValidationDetailsJson so the web detail pages
+                // always have a "proactiveRules" key with all validation rows.
+                // For existing records with prior chatbot rules, combine both rule sets first.
+                // New reactive rules take precedence (primary) over old stored rules (secondary)
+                // because reactive rules use live API data (e.g. PO balance) that may have changed.
+                var combinedRulesJson = CombineRuleArrays(ruleResultsJson, existing?.RuleResultsJson);
+                var mergedDetailsJson = MergeProactiveRulesIntoDetails(detailsJson, combinedRulesJson);
 
                 if (existing != null)
                 {
                     existing.AllValidationsPassed = allPassed;
                     existing.FailureReason = failureReason;
-                    existing.ValidationDetailsJson = detailsJson;
+                    existing.ValidationDetailsJson = mergedDetailsJson;
                     existing.RuleResultsJson = ruleResultsJson;
                     existing.UpdatedAt = DateTime.UtcNow;
                 }
@@ -1627,7 +1666,7 @@ public class ValidationAgent : IValidationAgent
                         DocumentId = documentId,
                         AllValidationsPassed = allPassed,
                         FailureReason = failureReason,
-                        ValidationDetailsJson = detailsJson,
+                        ValidationDetailsJson = mergedDetailsJson,
                         RuleResultsJson = ruleResultsJson,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
@@ -1751,6 +1790,72 @@ public class ValidationAgent : IValidationAgent
     }
 
     /// <summary>
+    /// Combines two JSON rule arrays into one, deduplicating by ruleCode.
+    /// The primary array takes precedence over the secondary for duplicate codes.
+    /// </summary>
+    private static string? CombineRuleArrays(string? primaryJson, string? secondaryJson)
+    {
+        if (string.IsNullOrWhiteSpace(primaryJson) && string.IsNullOrWhiteSpace(secondaryJson))
+            return null;
+        if (string.IsNullOrWhiteSpace(secondaryJson))
+            return primaryJson;
+        if (string.IsNullOrWhiteSpace(primaryJson))
+            return secondaryJson;
+
+        try
+        {
+            using var primaryDoc = JsonDocument.Parse(primaryJson);
+            using var secondaryDoc = JsonDocument.Parse(secondaryJson);
+
+            if (primaryDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return secondaryJson;
+            if (secondaryDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return primaryJson;
+
+            // Collect rule codes from primary
+            var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rule in primaryDoc.RootElement.EnumerateArray())
+            {
+                if (rule.TryGetProperty("RuleCode", out var rc) || rule.TryGetProperty("ruleCode", out rc))
+                {
+                    var code = rc.GetString();
+                    if (!string.IsNullOrEmpty(code))
+                        seenCodes.Add(code);
+                }
+            }
+
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartArray();
+
+                // Write all primary rules
+                foreach (var rule in primaryDoc.RootElement.EnumerateArray())
+                    rule.WriteTo(writer);
+
+                // Write secondary rules not already in primary
+                foreach (var rule in secondaryDoc.RootElement.EnumerateArray())
+                {
+                    string? code = null;
+                    if (rule.TryGetProperty("RuleCode", out var rc) || rule.TryGetProperty("ruleCode", out rc))
+                        code = rc.GetString();
+
+                    if (string.IsNullOrEmpty(code) || !seenCodes.Contains(code))
+                        rule.WriteTo(writer);
+                }
+
+                writer.WriteEndArray();
+            }
+
+            return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        }
+        catch (JsonException)
+        {
+            return primaryJson ?? secondaryJson;
+        }
+    }
+
+    /// <summary>
     /// Builds a list of per-document-type validation result tuples from the package validation result.
     /// Each tuple includes RuleResultsJson in the same format as the chatbot pipeline.
     /// </summary>
@@ -1822,8 +1927,21 @@ public class ValidationAgent : IValidationAgent
                 new { ruleCode = "INV_AMOUNT_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Amount") ?? false), isWarning = false, label = "Invoice Amount", extractedValue = invoiceDoc.TotalAmount.HasValue ? $"₹{invoiceDoc.TotalAmount:N0}" : null, message = (string?)null },
                 new { ruleCode = "INV_GST_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("GST Number") ?? false), isWarning = false, label = "GST Number", extractedValue = invoiceDoc.GSTNumber, message = (string?)null },
                 new { ruleCode = "INV_PO_MATCH", type = "Required", passed = result.InvoiceCrossDocument?.PONumberMatches ?? true, isWarning = false, label = "PO Number Match", extractedValue = (string?)null, message = result.InvoiceCrossDocument?.PONumberMatches == false ? "PO number mismatch" : null },
-                new { ruleCode = "INV_AMOUNT_VS_BALANCE", type = "Required", passed = result.InvoiceCrossDocument?.InvoiceAmountValid ?? true, isWarning = false, label = "Amount vs PO Balance", extractedValue = (string?)null, message = result.InvoiceCrossDocument?.InvoiceAmountValid == false ? "Invoice amount exceeds PO balance" : null }
             };
+            // Only include PO balance rule when the balance was actually checked (PoBalanceAmount has a value).
+            // This prevents a default "passed: true" from overriding a chatbot rule that correctly has "Passed: false".
+            if (result.InvoiceCrossDocument?.PoBalanceAmount.HasValue == true)
+            {
+                var indian = new System.Globalization.CultureInfo("en-IN");
+                var poBalPassed = result.InvoiceCrossDocument.PoBalanceValid;
+                var extractedAmt = invoiceDoc.TotalAmount.HasValue
+                    ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)}"
+                    : (string?)null;
+                var poBalMsg = !poBalPassed && invoiceDoc.TotalAmount.HasValue
+                    ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)} exceeds available PO balance (₹{result.InvoiceCrossDocument.PoBalanceAmount.Value.ToString("N0", indian)})"
+                    : (string?)null;
+                invRules.Add(new { ruleCode = "INV_AMOUNT_VS_PO_BALANCE", type = "Required", passed = poBalPassed, isWarning = false, label = "Amount vs PO Balance", extractedValue = extractedAmt, message = poBalMsg });
+            }
             items.Add((DocumentType.Invoice, invoiceDoc.Id, invPassed,
                 invIssues.Count > 0 ? string.Join("; ", invIssues) : null,
                 JsonSerializer.Serialize(details, jsonOptions),
