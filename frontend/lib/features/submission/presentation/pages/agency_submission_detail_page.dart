@@ -1570,8 +1570,8 @@ class _AgencySubmissionDetailPageState
   }
 
   Widget _buildDesktopHeader(DeviceType device) {
-    final fapNumber =
-        'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    final fapNumber = _submission?['submissionNumber']?.toString() 
+        ?? 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: device == DeviceType.desktop ? 24 : 16,
@@ -1636,8 +1636,8 @@ class _AgencySubmissionDetailPageState
     if (_submission == null) return const SizedBox();
 
     final state = _submission!['state']?.toString() ?? 'Unknown';
-    final fapNumber =
-        'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    final fapNumber = _submission!['submissionNumber']?.toString() 
+        ?? 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
         mobile: 12, tablet: 16, desktop: 24);
 

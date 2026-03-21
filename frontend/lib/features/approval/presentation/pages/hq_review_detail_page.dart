@@ -574,8 +574,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
   Widget _buildHeaderSection() {
     final documents = _submission!['documents'] as List? ?? [];
     String invoiceNumber = '';
-    final reqNumber =
-        'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
+    final reqNumber = _submission!['submissionNumber']?.toString() 
+        ?? 'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
 
     for (var doc in documents) {
       if (doc['type'] == 'Invoice' && doc['extractedData'] != null) {
