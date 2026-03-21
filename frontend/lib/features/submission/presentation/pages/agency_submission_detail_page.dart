@@ -571,7 +571,6 @@ class _AgencySubmissionDetailPageState
       'INV_NUMBER_PRESENT': 'Invoice Number',
       'INV_GST_PRESENT': 'GST Number',
       'INV_PO_MATCH': 'PO Number Match',
-      'INV_AMOUNT_VS_BALANCE': 'Amount vs PO Balance',
       // PO rule codes
       'PO_SAP_VERIFIED': 'SAP Verification',
       'PO_DATE_VALID': 'Date Validation',
@@ -760,6 +759,8 @@ class _AgencySubmissionDetailPageState
         'gstStateMatches': ('GST State Match', 'GST state matches', 'GST state mismatch'),
         'hsnSacCodeValid': ('HSN/SAC Code', 'HSN/SAC code is valid', 'HSN/SAC code is invalid'),
         'invoiceAmountValid': ('Invoice Amount', 'Invoice amount is valid', 'Invoice amount is invalid'),
+        // poBalanceValid intentionally excluded — use INV_AMOUNT_VS_PO_BALANCE from proactiveRules instead
+        // to avoid showing a default "Pass" when the balance was never actually checked.
         'gstPercentageValid': ('GST Percentage', 'GST percentage is valid', 'GST percentage is invalid'),
       };
       for (final entry in checkMap.entries) {

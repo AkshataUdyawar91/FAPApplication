@@ -73,7 +73,8 @@ public class ValidationAgentTests : IDisposable
             _mockHttpClientFactory.Object,
             _mockReferenceDataService.Object,
             mockCorrelationIdService.Object,
-            mockPerceptualHashService.Object);
+            mockPerceptualHashService.Object,
+            new Mock<IPoBalanceService>().Object);
     }
 
     public void Dispose()
