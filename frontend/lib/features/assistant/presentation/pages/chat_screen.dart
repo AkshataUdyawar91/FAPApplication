@@ -1245,7 +1245,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: ElevatedButton.icon(
               onPressed: isLoading
                   ? null
-                  : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(),
+                  : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(payloadJson: r.payloadJson),
               icon: const Icon(Icons.arrow_forward, size: 14),
               label: Text(hasIssues ? 'Continue with warnings' : 'Continue →',
                   style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),

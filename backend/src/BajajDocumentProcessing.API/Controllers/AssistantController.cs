@@ -1,5 +1,6 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Enums;
+using BajajDocumentProcessing.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -22,17 +23,20 @@ public class AssistantController : ControllerBase
     private readonly ILogger<AssistantController> _logger;
     private readonly IReferenceDataService _referenceData;
     private readonly ISubmissionNumberService _submissionNumberService;
+    private readonly IBackgroundWorkflowQueue _backgroundQueue;
 
     public AssistantController(
         IApplicationDbContext context,
         ILogger<AssistantController> logger,
         IReferenceDataService referenceData,
-        ISubmissionNumberService submissionNumberService)
+        ISubmissionNumberService submissionNumberService,
+        IBackgroundWorkflowQueue backgroundQueue)
     {
         _context = context;
         _logger = logger;
         _referenceData = referenceData;
         _submissionNumberService = submissionNumberService;
+        _backgroundQueue = backgroundQueue;
     }
 
     /// <summary>
@@ -83,7 +87,7 @@ public class AssistantController : ControllerBase
                 "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId!.Value, ct),
                 "start_team_entry" => await HandleStartTeamEntry(request, agencyId!.Value, ct),
                 "submit_team_count" => await HandleSubmitTeamCount(request, agencyId!.Value, ct),
-                "submit_team_name" => HandleSubmitTeamName(request),
+                "submit_team_name" => await HandleSubmitTeamName(request, ct),
                 "search_dealer" => await HandleSearchDealer(request, ct),
                 "select_dealer" => HandleSelectDealer(request),
                 "submit_team_dates" => HandleSubmitTeamDates(request),
@@ -828,6 +832,7 @@ public class AssistantController : ControllerBase
     {
         string? documentId = request.Message?.Trim();
         Guid? submissionIdFromPayload = null;
+        string? costSummaryDocumentId = null;
 
         if (!string.IsNullOrEmpty(request.PayloadJson))
         {
@@ -838,6 +843,8 @@ public class AssistantController : ControllerBase
                     documentId = docProp.GetString();
                 if (payload.TryGetProperty("submissionId", out var subProp) && Guid.TryParse(subProp.GetString(), out var sid))
                     submissionIdFromPayload = sid;
+                if (payload.TryGetProperty("costSummaryDocumentId", out var csdProp))
+                    costSummaryDocumentId = csdProp.GetString();
             }
             catch { }
         }
@@ -853,11 +860,22 @@ public class AssistantController : ControllerBase
         if (actSummary == null)
             return new AssistantResponse { Type = "error", Message = "Activity Summary document not found. Please try uploading again." };
 
-        // Fetch latest cost summary for the same package (for AS_DAYS_MATCH_COST_SUMMARY check)
-        var costSummary = await _context.CostSummaries
-            .Where(c => c.PackageId == actSummary.PackageId && !c.IsDeleted)
-            .OrderByDescending(c => c.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+        // Fetch cost summary for the same package (for AS_DAYS_MATCH_COST_SUMMARY check)
+        // Prefer exact document ID to avoid picking up stale previous uploads
+        Domain.Entities.CostSummary? costSummary = null;
+        if (!string.IsNullOrEmpty(costSummaryDocumentId) && Guid.TryParse(costSummaryDocumentId, out var csDocId))
+        {
+            costSummary = await _context.CostSummaries
+                .Where(c => c.Id == csDocId && !c.IsDeleted)
+                .FirstOrDefaultAsync(ct);
+        }
+        if (costSummary == null)
+        {
+            costSummary = await _context.CostSummaries
+                .Where(c => c.PackageId == actSummary.PackageId && !c.IsDeleted)
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
 
         // Run validation rules
         var rules = RunActivitySummaryValidationRules(actSummary, costSummary?.NumberOfDays);
@@ -960,6 +978,11 @@ public class AssistantController : ControllerBase
             FailedCount = failCount,
             WarningCount = warnCount,
             SubmissionId = submissionIdFromPayload ?? actSummary.PackageId,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                submissionId = (submissionIdFromPayload ?? actSummary.PackageId).ToString(),
+                costSummaryDocumentId,
+            }),
         };
     }
 
@@ -1087,28 +1110,79 @@ public class AssistantController : ControllerBase
         // Kick off team entry — read team count from cost summary
         var submissionId = ExtractSubmissionId(request);
 
+        // Try to get the exact cost summary document ID from payload (set by HandleCostSummaryUploaded)
+        Guid? costSummaryDocId = null;
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var pl = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (pl.TryGetProperty("costSummaryDocumentId", out var csdProp) && Guid.TryParse(csdProp.GetString(), out var csd))
+                    costSummaryDocId = csd;
+            }
+            catch { }
+        }
+
         int? totalTeams = null;
         if (submissionId.HasValue)
         {
-            var cs = await _context.CostSummaries
-                .Where(c => c.PackageId == submissionId.Value && !c.IsDeleted)
-                .OrderByDescending(c => c.CreatedAt)
-                .Select(c => new { c.NumberOfTeams, c.ExtractedDataJson })
-                .FirstOrDefaultAsync(ct);
-
-            totalTeams = cs?.NumberOfTeams;
-
-            // Fallback: parse from ExtractedDataJson if column is null
-            if (totalTeams == null && !string.IsNullOrEmpty(cs?.ExtractedDataJson))
+            // Prefer exact document ID to avoid picking up stale previous uploads
+            if (costSummaryDocId.HasValue)
             {
-                try
+                var cs = await _context.CostSummaries
+                    .Where(c => c.Id == costSummaryDocId.Value && !c.IsDeleted)
+                    .Select(c => new { c.NumberOfTeams, c.ExtractedDataJson })
+                    .FirstOrDefaultAsync(ct);
+
+                // Read from the DB column first (populated by DocumentService during extraction)
+                if (cs?.NumberOfTeams > 0)
                 {
-                    var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    var json = JsonSerializer.Deserialize<JsonElement>(cs.ExtractedDataJson, opts);
-                    if (json.TryGetProperty("numberOfTeams", out var nt) && nt.ValueKind == JsonValueKind.Number)
-                        totalTeams = nt.GetInt32();
+                    totalTeams = cs.NumberOfTeams;
                 }
-                catch { }
+                else if (!string.IsNullOrEmpty(cs?.ExtractedDataJson))
+                {
+                    // Fallback: parse ExtractedDataJson — note JsonElement.TryGetProperty is case-sensitive
+                    // so try both PascalCase and camelCase keys
+                    try
+                    {
+                        var json = JsonSerializer.Deserialize<JsonElement>(cs.ExtractedDataJson);
+                        if ((json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                            && nt.ValueKind == JsonValueKind.Number)
+                        {
+                            var extracted = nt.GetInt32();
+                            if (extracted > 0) totalTeams = extracted;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            else
+            {
+                // Fallback: latest cost summary for the package
+                var cs = await _context.CostSummaries
+                    .Where(c => c.PackageId == submissionId.Value && !c.IsDeleted)
+                    .OrderByDescending(c => c.CreatedAt)
+                    .Select(c => new { c.NumberOfTeams, c.ExtractedDataJson })
+                    .FirstOrDefaultAsync(ct);
+
+                if (cs?.NumberOfTeams > 0)
+                {
+                    totalTeams = cs.NumberOfTeams;
+                }
+                else if (!string.IsNullOrEmpty(cs?.ExtractedDataJson))
+                {
+                    try
+                    {
+                        var json = JsonSerializer.Deserialize<JsonElement>(cs.ExtractedDataJson);
+                        if ((json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                            && nt.ValueKind == JsonValueKind.Number)
+                        {
+                            var extracted = nt.GetInt32();
+                            if (extracted > 0) totalTeams = extracted;
+                        }
+                    }
+                    catch { }
+                }
             }
         }
 
@@ -1182,7 +1256,7 @@ public class AssistantController : ControllerBase
         };
     }
 
-    private static AssistantResponse HandleSubmitTeamName(AssistantRequest request)
+    private async Task<AssistantResponse> HandleSubmitTeamName(AssistantRequest request, CancellationToken ct)
     {
         // Read team name from message, carry forward payload
         var teamName = request.Message?.Trim();
@@ -1199,17 +1273,46 @@ public class AssistantController : ControllerBase
         var ctx = ParseTeamPayload(request.PayloadJson);
         ctx["teamName"] = teamName;
 
+        var currentTeam = ctx.TryGetValue("currentTeam", out var ct2) ? (ct2 is JsonElement ct2e ? ct2e.GetInt32() : Convert.ToInt32(ct2)) : 1;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+
+        // Load all dealers for the selected state upfront — no typing required
+        string? activityState = null;
+        var submissionId = ExtractSubmissionId(request);
+        if (submissionId.HasValue)
+        {
+            activityState = await _context.DocumentPackages
+                .Where(p => p.Id == submissionId.Value && !p.IsDeleted)
+                .Select(p => p.ActivityState)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        var dealerQuery = _context.Dealers.Where(d => d.IsActive && !d.IsDeleted);
+        if (!string.IsNullOrEmpty(activityState))
+            dealerQuery = dealerQuery.Where(d => d.State == activityState);
+
+        var dealers = await dealerQuery
+            .OrderBy(d => d.DealerName)
+            .Select(d => new DealerItem
+            {
+                DealerCode = d.DealerCode,
+                DealerName = d.DealerName,
+                City = d.City ?? "",
+                State = d.State,
+            })
+            .ToListAsync(ct);
+
+        var stateLabel = !string.IsNullOrEmpty(activityState) ? $" in {activityState}" : "";
+        var message = dealers.Count > 0
+            ? $"Which dealer was Team {teamName} assigned to? Select from the list below{stateLabel}:"
+            : $"No dealers found{stateLabel}. Please contact support to add dealers for this state.";
+
         return new AssistantResponse
         {
-            Type = "dealer_search",
-            Message = $"Which dealer was Team {teamName} assigned to? Start typing dealer name:",
-            InputHint = "Type dealer name (min 2 chars)...",
-            MinSearchLength = 2,
-            TeamContext = new TeamContextDto
-            {
-                CurrentTeam = ctx.TryGetValue("currentTeam", out var ct2) ? (ct2 is JsonElement ct2e ? ct2e.GetInt32() : Convert.ToInt32(ct2)) : 1,
-                TotalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1,
-            },
+            Type = "dealer_list",
+            Message = message,
+            Dealers = dealers,
+            TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
         };
     }
@@ -1229,25 +1332,46 @@ public class AssistantController : ControllerBase
             };
         }
 
+        // Get the state selected earlier in the chatbot flow
+        string? activityState = null;
+        var submissionId = ExtractSubmissionId(request);
+        if (submissionId.HasValue)
+        {
+            activityState = await _context.DocumentPackages
+                .Where(p => p.Id == submissionId.Value && !p.IsDeleted)
+                .Select(p => p.ActivityState)
+                .FirstOrDefaultAsync(ct);
+        }
+
         var q = query.ToLower();
-        var dealers = await _context.StateMappings
-            .Where(s => s.IsActive && !s.IsDeleted && s.DealerName != null && s.DealerName.ToLower().Contains(q))
+        var dealerQuery = _context.Dealers
+            .Where(d => d.IsActive && !d.IsDeleted &&
+                (d.DealerName.ToLower().Contains(q) ||
+                 d.DealerCode.ToLower().Contains(q) ||
+                 (d.City != null && d.City.ToLower().Contains(q))));
+
+        // Filter by state if we have one from the chatbot flow
+        if (!string.IsNullOrEmpty(activityState))
+            dealerQuery = dealerQuery.Where(d => d.State == activityState);
+
+        var dealers = await dealerQuery
             .Take(10)
-            .Select(s => new DealerItem
+            .Select(d => new DealerItem
             {
-                DealerCode = s.DealerCode ?? "",
-                DealerName = s.DealerName ?? "",
-                City = s.City ?? "",
-                State = s.State,
+                DealerCode = d.DealerCode,
+                DealerName = d.DealerName,
+                City = d.City ?? "",
+                State = d.State,
             })
             .ToListAsync(ct);
 
+        var stateLabel = !string.IsNullOrEmpty(activityState) ? $" in {activityState}" : "";
         return new AssistantResponse
         {
             Type = "dealer_search_results",
-            Message = dealers.Count() > 0
-                ? $"Found {dealers.Count()} dealer(s) matching \"{query}\". Select one:"
-                : $"No dealers found matching \"{query}\". Try a different name.",
+            Message = dealers.Count > 0
+                ? $"Found {dealers.Count} dealer(s) matching \"{query}\"{stateLabel}. Select one:"
+                : $"No dealers found matching \"{query}\"{stateLabel}. Try a different name.",
             Dealers = dealers,
             InputHint = "Type dealer name (min 2 chars)...",
             MinSearchLength = 2,
@@ -2388,13 +2512,17 @@ public class AssistantController : ControllerBase
         var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
         package.SubmissionNumber = submissionNumber;
 
-        package.State = Domain.Enums.PackageState.PendingCH;
+        // Do NOT set state to PendingCH here — let WorkflowOrchestrator handle state transition,
+        // CH assignment, Teams notification, email, and SignalR push.
         package.CurrentStep = 10;
         package.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Package {PackageId} submitted from chat by user {UserId}. SubmissionNumber: {SubNum}",
+        _logger.LogInformation("Package {PackageId} submitted from chat by user {UserId}. SubmissionNumber: {SubNum} — triggering orchestrator",
             submissionId, userId, submissionNumber);
+
+        // Queue workflow via background processor (proper scoped execution, avoids disposed context issues)
+        await _backgroundQueue.QueueWorkflowAsync(package.Id);
 
         return new AssistantResponse
         {
@@ -2755,6 +2883,11 @@ public class AssistantController : ControllerBase
             FailedCount = failCount,
             WarningCount = warnCount,
             SubmissionId = submissionIdFromPayload ?? costSummary.PackageId,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                submissionId = (submissionIdFromPayload ?? costSummary.PackageId).ToString(),
+                costSummaryDocumentId = docId.ToString(),
+            }),
         };
     }
 
@@ -2973,12 +3106,33 @@ public class AssistantController : ControllerBase
     private AssistantResponse HandleContinueAfterCostSummary(AssistantRequest request)
     {
         var submissionId = ExtractSubmissionId(request);
+
+        // Preserve costSummaryDocumentId through the payload chain
+        string? costSummaryDocumentId = null;
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var pl = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (pl.TryGetProperty("costSummaryDocumentId", out var csdProp))
+                    costSummaryDocumentId = csdProp.GetString();
+            }
+            catch { }
+        }
+
+        var payloadJson = JsonSerializer.Serialize(new
+        {
+            submissionId = submissionId?.ToString(),
+            costSummaryDocumentId,
+        });
+
         return new AssistantResponse
         {
             Type = "activity_summary_upload",
             Message = "Cost Summary accepted. Now please upload the Activity Summary document.",
             AllowedFormats = new List<string> { "PDF", "JPG", "PNG", "XLS", "XLSX" },
             SubmissionId = submissionId,
+            PayloadJson = payloadJson,
             Cards = new List<WorkflowCard>
             {
                 new() { Id = "upload_activity", Title = "Upload Activity Summary", Subtitle = "Select a file from your device", Icon = "upload_file", Action = "upload_activity_summary" },
