@@ -19,7 +19,6 @@ import '../../data/models/invoice_summary_data.dart';
 import '../../data/models/invoice_document_row.dart';
 import '../utils/submission_data_transformer.dart';
 import '../widgets/invoice_summary_section.dart';
-import '../widgets/invoice_documents_table.dart';
 import '../widgets/campaign_details_table.dart';
 import '../widgets/ai_analysis_section.dart';
 import '../../data/models/campaign_detail_row.dart';
@@ -63,7 +62,6 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
   // Transformed data for new layout
   InvoiceSummaryData? _invoiceSummary;
-  List<InvoiceDocumentRow> _invoiceDocuments = [];
   List<CampaignDetailRow> _campaignDetails = [];
 
   // Validation data from submission response
@@ -72,6 +70,10 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   Map<String, dynamic> _costSummaryValidation = {};
   Map<String, dynamic> _activityValidation = {};
   Map<String, dynamic> _enquiryValidation = {};
+
+  // Blob URLs for Cost Summary and Activity Summary (fallback when documentId unavailable)
+  String? _costSummaryBlobUrl;
+  String? _activitySummaryBlobUrl;
 
   @override
   void initState() {
@@ -171,30 +173,30 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           }
         }
 
-        print('=== ASM - Validation Data from Submission ===');
-        print('Invoice Validations Count: ${invoiceValidations.length}');
-        print('Photo Validations Count: ${photoValidations.length}');
-        print('Cost Summary Validation: ${costSummaryValidation.isNotEmpty}');
-        print('Activity Validation: ${activityValidation.isNotEmpty}');
-        print('Enquiry Validation: ${enquiryValidation.isNotEmpty}');
-        if (invoiceValidations.isNotEmpty) {
-          print('First Invoice Validation: ${invoiceValidations[0]}');
+        // Extract blob URLs for Cost Summary and Activity Summary from campaigns
+        String? costSummaryBlobUrl;
+        String? activitySummaryBlobUrl;
+        final campaignsList = submissionData['campaigns'] as List<dynamic>? ?? [];
+        if (campaignsList.isNotEmpty) {
+          final firstCampaign = campaignsList[0] as Map<String, dynamic>;
+          costSummaryBlobUrl = firstCampaign['costSummaryBlobUrl']?.toString()
+              ?? firstCampaign['costSummaryUrl']?.toString();
+          activitySummaryBlobUrl = firstCampaign['activitySummaryBlobUrl']?.toString()
+              ?? firstCampaign['activitySummaryUrl']?.toString()
+              ?? firstCampaign['activityBlobUrl']?.toString();
         }
-        if (photoValidations.isNotEmpty) {
-          print('First Photo Validation: ${photoValidations[0]}');
-        }
-        print('======================================');
 
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
-          _invoiceDocuments = invoiceDocuments;
           _campaignDetails = allCampaignDetails;
           _invoiceValidations = invoiceValidations;
           _photoValidations = photoValidations;
           _costSummaryValidation = costSummaryValidation;
           _activityValidation = activityValidation;
           _enquiryValidation = enquiryValidation;
+          _costSummaryBlobUrl = costSummaryBlobUrl;
+          _activitySummaryBlobUrl = activitySummaryBlobUrl;
           _isLoading = false;
         });
       }
@@ -408,7 +410,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                       fontWeight: FontWeight.w600,
                       color: Colors.white)),
               const SizedBox(height: 2),
-              Text('ASM',
+              Text('Circle Head',
                   style: TextStyle(
                       fontSize: 12,
                       color: Colors.white.withValues(alpha: 0.7))),
@@ -443,7 +445,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           drawer: isMobile
               ? AppDrawer(
                   userName: widget.userName,
-                  userRole: 'ASM',
+                  userRole: 'Circle Head',
                   navItems: _getNavItems(context),
                   onLogout: () => handleLogout(context, ref),
                 )
@@ -457,7 +459,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                     if (!isMobile)
                       AppSidebar(
                         userName: widget.userName,
-                        userRole: 'ASM',
+                        userRole: 'Circle Head',
                         navItems: _getNavItems(context),
                         onLogout: () => handleLogout(context, ref),
                         isCollapsed: _isSidebarCollapsed,
@@ -485,21 +487,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                                       AiAnalysisSection(
                                           submission: _submission!),
                                       const SizedBox(height: 24),
-                                      InvoiceDocumentsTable(
-                                        documents: _invoiceDocuments,
-                                        onDocumentTap: (doc) {
-                                          if (doc.documentId != null &&
-                                              doc.documentId!.isNotEmpty) {
-                                            _downloadDocument(doc.documentId,
-                                                doc.documentName);
-                                          } else {
-                                            _downloadDocumentByUrl(
-                                                doc.blobUrl, doc.documentName);
-                                          }
-                                        },
-                                      ),
-                                      const SizedBox(height: 24),
-                                      CampaignDetailsTable(
+                                      Visibility(
+                                        visible: false,
+                                        child: CampaignDetailsTable(
                                         campaignDetails: _campaignDetails,
                                         onPhotoTap: (detail) {
                                           if (detail.downloadPath != null &&
@@ -518,6 +508,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                                                 detail.documentName);
                                           }
                                         },
+                                        ),
                                       ),
                                       const SizedBox(height: 24),
                                       _buildValidationReportSection(),
@@ -667,7 +658,6 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                     ],
                   ),
                 ),
-                _buildStatusBadge(state),
               ],
             ),
             const SizedBox(height: 20),
@@ -1025,6 +1015,119 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
   }
 
+  /// Opens a blob URL in a new browser tab for viewing.
+  void _openBlobUrl(String blobUrl, String filename) {
+    if (blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = blobUrl;
+    anchor.target = '_blank';
+    anchor.click();
+  }
+
+  /// Downloads a file directly from a blob URL.
+  void _downloadByBlobUrl(String blobUrl, String filename) {
+    if (blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    anchor.click();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Downloading $filename...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+      );
+    }
+  }
+
+  Future<void> _viewDocument(String documentId, String filename) async {
+    try {
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = response.data['filename']?.toString() ?? filename;
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+        final bytes = base64.decode(base64Content);
+        if (mounted) _showDocumentPreview(bytes, contentType, name);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load document: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadDocumentDirect(String? documentId, String? filename) async {
+    if (documentId == null || documentId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document not available for download'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    try {
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+        final bytes = base64.decode(base64Content);
+        final blob = web.Blob(
+          [Uint8List.fromList(bytes).toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final url = web.URL.createObjectURL(blob);
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+        web.URL.revokeObjectURL(url);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Downloading $name...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to download: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Future<void> _downloadDocument(String? documentId, String? filename) async {
     if (documentId == null || documentId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1281,6 +1384,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                 title: 'Cost Summary Validation',
                 fileName: _getCostSummaryFileName(),
                 validation: _costSummaryValidation,
+                documentId: _getCostSummaryDocumentId(),
+                blobUrl: _costSummaryBlobUrl,
               ),
               const SizedBox(height: 24),
             ],
@@ -1291,6 +1396,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                 title: 'Activity Validation',
                 fileName: _getActivitySummaryFileName(),
                 validation: _activityValidation,
+                documentId: _getActivitySummaryDocumentId(),
+                blobUrl: _activitySummaryBlobUrl,
               ),
               const SizedBox(height: 24),
             ],
@@ -1352,6 +1459,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
   Widget _buildInvoiceValidationCard(Map<String, dynamic> invoice) {
     final fileName = invoice['fileName'] ?? 'Unknown';
+    final docId = invoice['documentId']?.toString() ?? invoice['id']?.toString() ?? _getDocumentIdByType('Invoice');
     final validationDetailsJson = invoice['validationDetailsJson'] as String?;
 
     Map<String, dynamic>? validationDetails;
@@ -1378,6 +1486,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
+      documentId: docId,
     );
   }
 
@@ -1659,7 +1768,12 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     required int passedCount,
     required int totalCount,
     required List<Map<String, dynamic>> rows,
+    String? documentId,
+    String? blobUrl,
   }) {
+    final resolvedDocId = (documentId != null && documentId.isNotEmpty) ? documentId : '';
+    final resolvedBlobUrl = blobUrl ?? '';
+
     return Card(
       elevation: 1,
       margin: const EdgeInsets.only(bottom: 16),
@@ -1696,25 +1810,72 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                     ],
                   ),
                 ),
-                if (totalCount > 0)
-                  RichText(
-                    text: TextSpan(children: [
-                      TextSpan(
-                        text: '$passedCount/$totalCount ',
-                        style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (totalCount > 0)
+                      RichText(
+                        text: TextSpan(children: [
+                          TextSpan(
+                            text: '$passedCount/$totalCount ',
+                            style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 11),
+                          ),
+                          TextSpan(
+                            text: 'Passed',
+                            style: AppTextStyles.bodySmall.copyWith(
+                                color: const Color(0xFF16A34A),
+                                fontWeight: FontWeight.w600,
+                                fontSize: 11),
+                          ),
+                        ]),
                       ),
-                      TextSpan(
-                        text: 'Passed',
-                        style: AppTextStyles.bodySmall.copyWith(
-                            color: const Color(0xFF16A34A),
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11),
+                    if (resolvedDocId.isNotEmpty || resolvedBlobUrl.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        height: 28,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            if (resolvedDocId.isNotEmpty) {
+                              _viewDocument(resolvedDocId, fileName);
+                            } else {
+                              _openBlobUrl(resolvedBlobUrl, fileName);
+                            }
+                          },
+                          icon: const Icon(Icons.visibility, size: 13),
+                          label: const Text('View', style: TextStyle(fontSize: 11)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: const BorderSide(color: AppColors.primary),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
                       ),
-                    ]),
-                  ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        height: 28,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            if (resolvedDocId.isNotEmpty) {
+                              _downloadDocumentDirect(resolvedDocId, fileName);
+                            } else {
+                              _downloadByBlobUrl(resolvedBlobUrl, fileName);
+                            }
+                          },
+                          icon: const Icon(Icons.download, size: 13),
+                          label: const Text('Download', style: TextStyle(fontSize: 11)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ),
@@ -1831,6 +1992,61 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     );
   }
 
+  String _getDocumentIdByType(String type) {
+    final documents = _submission?['documents'] as List<dynamic>? ?? [];
+    final typeLower = type.toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+    for (final doc in documents) {
+      final docType = (doc['type']?.toString() ?? doc['documentType']?.toString() ?? '')
+          .toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+      if (docType == typeLower) {
+        return doc['id']?.toString() ?? doc['documentId']?.toString() ?? '';
+      }
+    }
+    return '';
+  }
+
+  /// Gets document ID for Cost Summary — checks documents array with multiple aliases,
+  /// then falls back to campaigns array, then the validation object itself.
+  String _getCostSummaryDocumentId() {
+    for (final alias in ['CostSummary', 'Cost Summary', 'costsummary', 'cost_summary']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['costSummaryDocumentId']?.toString()
+            ?? c['costSummaryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    return _costSummaryValidation['documentId']?.toString()
+        ?? _costSummaryValidation['id']?.toString()
+        ?? '';
+  }
+
+  /// Gets document ID for Activity Summary — checks documents array with multiple aliases,
+  /// then falls back to campaigns array, then the validation object itself.
+  String _getActivitySummaryDocumentId() {
+    for (final alias in ['ActivitySummary', 'Activity Summary', 'activitysummary', 'activity_summary', 'Activity']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['activitySummaryDocumentId']?.toString()
+            ?? c['activitySummaryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    return _activityValidation['documentId']?.toString()
+        ?? _activityValidation['id']?.toString()
+        ?? '';
+  }
+
   String _getCostSummaryFileName() {
     if (_submission == null) return '';
     final campaigns = _submission!['campaigns'] as List? ?? [];
@@ -1857,7 +2073,14 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     required String title,
     String? fileName,
     required Map<String, dynamic> validation,
+    String? documentId,
+    String? blobUrl,
   }) {
+    final resolvedDocId = (documentId != null && documentId.isNotEmpty)
+        ? documentId
+        : validation['documentId']?.toString() ?? validation['id']?.toString() ?? '';
+    final resolvedBlobUrl = blobUrl ?? '';
+
     final validationDetailsJson =
         validation['validationDetailsJson'] as String?;
 
@@ -1882,6 +2105,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
+      documentId: resolvedDocId.isNotEmpty ? resolvedDocId : null,
+      blobUrl: resolvedBlobUrl.isNotEmpty ? resolvedBlobUrl : null,
     );
   }
 

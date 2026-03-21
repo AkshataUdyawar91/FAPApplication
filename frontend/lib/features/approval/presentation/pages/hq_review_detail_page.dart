@@ -71,6 +71,10 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
   Map<String, dynamic>? _activityValidation;
   Map<String, dynamic>? _enquiryValidation;
 
+  // Blob URLs for Cost Summary and Activity Summary (fallback when documentId unavailable)
+  String? _costSummaryBlobUrl;
+  String? _activitySummaryBlobUrl;
+
   @override
   void initState() {
     super.initState();
@@ -164,19 +168,18 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           }
         }
 
-        print('=== HQ - Validation Data from Submission ===');
-        print('Invoice Validations Count: ${invoiceValidations.length}');
-        print('Photo Validations Count: ${photoValidations.length}');
-        print('Cost Summary Validation: ${costSummaryValidation != null}');
-        print('Activity Validation: ${activityValidation != null}');
-        print('Enquiry Validation: ${enquiryValidation != null}');
-        if (invoiceValidations.isNotEmpty) {
-          print('First Invoice Validation: ${invoiceValidations[0]}');
+        // Extract blob URLs for Cost Summary and Activity Summary from campaigns
+        String? costSummaryBlobUrl;
+        String? activitySummaryBlobUrl;
+        final campaignsList = submissionData['campaigns'] as List<dynamic>? ?? [];
+        if (campaignsList.isNotEmpty) {
+          final firstCampaign = campaignsList[0] as Map<String, dynamic>;
+          costSummaryBlobUrl = firstCampaign['costSummaryBlobUrl']?.toString()
+              ?? firstCampaign['costSummaryUrl']?.toString();
+          activitySummaryBlobUrl = firstCampaign['activitySummaryBlobUrl']?.toString()
+              ?? firstCampaign['activitySummaryUrl']?.toString()
+              ?? firstCampaign['activityBlobUrl']?.toString();
         }
-        if (photoValidations.isNotEmpty) {
-          print('First Photo Validation: ${photoValidations[0]}');
-        }
-        print('======================================');
 
         setState(() {
           _submission = submissionData;
@@ -188,6 +191,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           _costSummaryValidation = costSummaryValidation;
           _activityValidation = activityValidation;
           _enquiryValidation = enquiryValidation;
+          _costSummaryBlobUrl = costSummaryBlobUrl;
+          _activitySummaryBlobUrl = activitySummaryBlobUrl;
           _isLoading = false;
         });
       }
@@ -511,7 +516,9 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                                                 doc.documentName),
                                       ),
                                       const SizedBox(height: 24),
-                                      CampaignDetailsTable(
+                                      Visibility(
+                                        visible: false,
+                                        child: CampaignDetailsTable(
                                         campaignDetails: _campaignDetails,
                                         onPhotoTap: (detail) {
                                           if (detail.downloadPath != null &&
@@ -524,6 +531,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                                                 detail.documentName);
                                           }
                                         },
+                                        ),
                                       ),
                                       const SizedBox(height: 24),
                                       _buildValidationReportSection(),
@@ -673,7 +681,10 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                     ],
                   ),
                 ),
-                _buildStatusBadge(state),
+                Visibility(
+                  visible: false,
+                  child: _buildStatusBadge(state),
+                ),
               ],
             ),
             const SizedBox(height: 20),
@@ -1066,6 +1077,175 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     }
   }
 
+  String _getDocumentIdByType(String type) {
+    final documents = _submission?['documents'] as List<dynamic>? ?? [];
+    // Normalize for flexible matching (handles "CostSummary" == "Cost Summary" etc.)
+    final typeLower = type.toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+    for (final doc in documents) {
+      final docType = (doc['type']?.toString() ?? doc['documentType']?.toString() ?? '')
+          .toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+      if (docType == typeLower) {
+        return doc['id']?.toString() ?? doc['documentId']?.toString() ?? '';
+      }
+    }
+    return '';
+  }
+
+  /// Gets document ID for Cost Summary — checks documents array with multiple aliases,
+  /// then falls back to campaigns array, then the validation object itself.
+  String _getCostSummaryDocumentId() {
+    for (final alias in ['CostSummary', 'Cost Summary', 'costsummary', 'cost_summary']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['costSummaryDocumentId']?.toString()
+            ?? c['costSummaryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    return _costSummaryValidation?['documentId']?.toString()
+        ?? _costSummaryValidation?['id']?.toString()
+        ?? '';
+  }
+
+  /// Gets document ID for Activity Summary — checks documents array with multiple aliases,
+  /// then falls back to campaigns array, then the validation object itself.
+  String _getActivitySummaryDocumentId() {
+    for (final alias in ['ActivitySummary', 'Activity Summary', 'activitysummary', 'activity_summary', 'Activity']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['activitySummaryDocumentId']?.toString()
+            ?? c['activitySummaryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    return _activityValidation?['documentId']?.toString()
+        ?? _activityValidation?['id']?.toString()
+        ?? '';
+  }
+
+  /// Opens a blob URL in a new browser tab for viewing.
+  void _openBlobUrl(String blobUrl, String filename) {
+    if (blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = blobUrl;
+    anchor.target = '_blank';
+    anchor.click();
+  }
+
+  /// Downloads a file directly from a blob URL.
+  void _downloadByBlobUrl(String blobUrl, String filename) {
+    if (blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    anchor.click();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Downloading $filename...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+      );
+    }
+  }
+
+  Future<void> _viewDocument(String documentId, String filename) async {
+    try {
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = response.data['filename']?.toString() ?? filename;
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+        final bytes = base64.decode(base64Content);
+        if (mounted) _showDocumentPreview(bytes, contentType, name);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load document: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadDocumentDirect(String? documentId, String? filename) async {
+    if (documentId == null || documentId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document not available for download'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    try {
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+        final bytes = base64.decode(base64Content);
+        final blob = web.Blob(
+          [Uint8List.fromList(bytes).toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final url = web.URL.createObjectURL(blob);
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+        web.URL.revokeObjectURL(url);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Downloading $name...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to download: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Future<void> _downloadDocument(String? documentId, String? filename) async {
     if (documentId == null || documentId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1312,6 +1492,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                 'Cost Summary',
                 _getCostSummaryFileName(),
                 _costSummaryValidation!,
+                documentId: _getCostSummaryDocumentId(),
+                blobUrl: _costSummaryBlobUrl,
               ),
               const SizedBox(height: 16),
             ],
@@ -1322,6 +1504,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                 'Activity Summary',
                 _getActivitySummaryFileName(),
                 _activityValidation!,
+                documentId: _getActivitySummaryDocumentId(),
+                blobUrl: _activitySummaryBlobUrl,
               ),
               const SizedBox(height: 16),
             ],
@@ -1390,6 +1574,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     final allPassed = invoice['allPassed'] ?? false;
     final failureReason = invoice['failureReason'];
     final validationDetailsJson = invoice['validationDetailsJson'] as String?;
+    final docId = invoice['documentId']?.toString() ?? invoice['id']?.toString() ?? _getDocumentIdByType('Invoice');
 
     Map<String, dynamic>? validationDetails;
     int passedCount = 0;
@@ -1424,7 +1609,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           }
         }
       } catch (e) {
-        print('Error parsing validation details: $e');
+        debugPrint('Error parsing validation details: $e');
       }
     }
 
@@ -1471,27 +1656,62 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                     ],
                   ),
                 ),
-                RichText(
-                  text: TextSpan(
-                    children: [
-                      TextSpan(
-                        text: '$passedCount/$totalCount ',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RichText(
+                      text: TextSpan(
+                        children: [
+                          TextSpan(
+                            text: '$passedCount/$totalCount ',
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 11,
+                            ),
+                          ),
+                          TextSpan(
+                            text: 'Passed',
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: const Color(0xFF16A34A),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (docId.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        height: 28,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _viewDocument(docId, fileName),
+                          icon: const Icon(Icons.visibility, size: 13),
+                          label: const Text('View', style: TextStyle(fontSize: 11)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: const BorderSide(color: AppColors.primary),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
                         ),
                       ),
-                      TextSpan(
-                        text: 'Passed',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: const Color(0xFF16A34A),
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        height: 28,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _downloadDocumentDirect(docId, fileName),
+                          icon: const Icon(Icons.download, size: 13),
+                          label: const Text('Download', style: TextStyle(fontSize: 11)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
                         ),
                       ),
                     ],
-                  ),
+                  ],
                 ),
               ],
             ),
@@ -1549,7 +1769,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           }
         }
       } catch (e) {
-        print('Error parsing validation details: $e');
+        debugPrint('Error parsing validation details: $e');
       }
     }
 
@@ -1907,12 +2127,15 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
   Widget _buildSingleValidationCard(
     String title,
     String fileName,
-    Map<String, dynamic> validation,
-  ) {
-    final allPassed = validation['allValidationsPassed'] ?? false;
-    final failureReason = validation['failureReason'];
+    Map<String, dynamic> validation, {
+    String? documentId,
+    String? blobUrl,
+  }) {
     final validationDetailsJson =
         validation['validationDetailsJson'] as String?;
+
+    final resolvedDocId = (documentId != null && documentId.isNotEmpty) ? documentId : '';
+    final resolvedBlobUrl = blobUrl ?? '';
 
     Map<String, dynamic>? validationDetails;
     int passedCount = 0;
@@ -1924,76 +2147,49 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
 
         if (validationDetails != null) {
-          // Count fieldPresence validations
           if (validationDetails['fieldPresence'] != null) {
             final fieldPresence =
                 validationDetails['fieldPresence'] as Map<String, dynamic>;
             final missingFields =
                 fieldPresence['missingFields'] as List<dynamic>? ?? [];
 
-            // For enquiry, count based on record presence
             if (title == 'Enquiry Dump') {
               final totalRecords = fieldPresence['totalRecords'] ?? 0;
               if (totalRecords > 0) {
-                // Count each field type
                 final fields = [
-                  'recordsWithState',
-                  'recordsWithDate',
-                  'recordsWithDealerCode',
-                  'recordsWithDealerName',
-                  'recordsWithDistrict',
-                  'recordsWithPincode',
-                  'recordsWithCustomerName',
-                  'recordsWithCustomerNumber',
-                  'recordsWithTestRide',
+                  'recordsWithState', 'recordsWithDate', 'recordsWithDealerCode',
+                  'recordsWithDealerName', 'recordsWithDistrict', 'recordsWithPincode',
+                  'recordsWithCustomerName', 'recordsWithCustomerNumber', 'recordsWithTestRide',
                 ];
                 totalCount = fields.length;
                 for (var field in fields) {
                   final count = fieldPresence[field] ?? 0;
-                  if (count == totalRecords) {
-                    passedCount++;
-                  }
+                  if (count == totalRecords) passedCount++;
                 }
               }
             } else {
-              // For other documents, each missing field is a failed check
               totalCount = missingFields.length;
-              // If no missing fields, all passed
-              if (missingFields.isEmpty) {
-                passedCount = 1;
-                totalCount = 1;
-              }
+              if (missingFields.isEmpty) { passedCount = 1; totalCount = 1; }
             }
           }
 
-          // Count crossDocument validations
           if (validationDetails['crossDocument'] != null) {
             final crossDoc =
                 validationDetails['crossDocument'] as Map<String, dynamic>;
-            final issues = crossDoc['issues'] as List<dynamic>? ?? [];
-
-            // Count individual checks
             final checks = [
-              'allChecksPass',
-              'totalCostValid',
-              'elementCostsValid',
-              'fixedCostsValid',
-              'variableCostsValid',
-              'numberOfDaysMatches',
+              'allChecksPass', 'totalCostValid', 'elementCostsValid',
+              'fixedCostsValid', 'variableCostsValid', 'numberOfDaysMatches',
             ];
-
             for (var check in checks) {
               if (crossDoc.containsKey(check)) {
                 totalCount++;
-                if (crossDoc[check] == true) {
-                  passedCount++;
-                }
+                if (crossDoc[check] == true) passedCount++;
               }
             }
           }
         }
       } catch (e) {
-        print('Error parsing validation details: $e');
+        debugPrint('Error parsing validation details: $e');
       }
     }
 
@@ -2002,10 +2198,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(
-          color: Color(0xFFE5E7EB),
-          width: 1,
-        ),
+        side: const BorderSide(color: Color(0xFFE5E7EB), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2013,10 +2206,9 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           // Header
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color.fromARGB(255, 240, 237, 237),
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(8)),
+            decoration: const BoxDecoration(
+              color: Color.fromARGB(255, 240, 237, 237),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
             ),
             child: Row(
               children: [
@@ -2026,43 +2218,78 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                     children: [
                       Text(
                         '$title Validations',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
+                        style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         fileName,
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
+                        style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary),
                       ),
                     ],
                   ),
                 ),
-                if (totalCount > 0)
-                  RichText(
-                    text: TextSpan(
-                      children: [
-                        TextSpan(
-                          text: '$passedCount/$totalCount ',
-                          style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (totalCount > 0)
+                      RichText(
+                        text: TextSpan(children: [
+                          TextSpan(
+                            text: '$passedCount/$totalCount ',
+                            style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 11),
+                          ),
+                          TextSpan(
+                            text: 'Passed',
+                            style: AppTextStyles.bodySmall.copyWith(
+                                color: const Color(0xFF16A34A), fontWeight: FontWeight.w600, fontSize: 11),
+                          ),
+                        ]),
+                      ),
+                    if (resolvedDocId.isNotEmpty || resolvedBlobUrl.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        height: 28,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            if (resolvedDocId.isNotEmpty) {
+                              _viewDocument(resolvedDocId, fileName);
+                            } else {
+                              _openBlobUrl(resolvedBlobUrl, fileName);
+                            }
+                          },
+                          icon: const Icon(Icons.visibility, size: 13),
+                          label: const Text('View', style: TextStyle(fontSize: 11)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: const BorderSide(color: AppColors.primary),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
                           ),
                         ),
-                        TextSpan(
-                          text: 'Passed',
-                          style: AppTextStyles.bodySmall.copyWith(
-                            color: const Color(0xFF16A34A),
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11,
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        height: 28,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            if (resolvedDocId.isNotEmpty) {
+                              _downloadDocumentDirect(resolvedDocId, fileName);
+                            } else {
+                              _downloadByBlobUrl(resolvedBlobUrl, fileName);
+                            }
+                          },
+                          icon: const Icon(Icons.download, size: 13),
+                          label: const Text('Download', style: TextStyle(fontSize: 11)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
                           ),
                         ),
-                      ],
-                    ),
-                  ),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ),

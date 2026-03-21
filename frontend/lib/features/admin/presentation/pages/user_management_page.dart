@@ -94,7 +94,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const Text(
-                'User Management',
+                'User Master',
                 style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,

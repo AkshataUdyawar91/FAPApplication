@@ -293,7 +293,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
           appBar: isMobile
               ? AppBar(
                   backgroundColor: const Color(0xFF1E3A8A),
-                  title: const Text('ASM Review',
+                  title: const Text('Circle Head Review',
                       style: TextStyle(
                           color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
@@ -303,7 +303,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
           drawer: isMobile
               ? AppDrawer(
                   userName: widget.userName,
-                  userRole: 'ASM',
+                  userRole: 'Circle Head',
                   navItems: _getNavItems(context),
                   onLogout: () => handleLogout(context, ref),
                 )
@@ -317,7 +317,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
                     if (!isMobile)
                       AppSidebar(
                         userName: widget.userName,
-                        userRole: 'ASM',
+                        userRole: 'Circle Head',
                         navItems: _getNavItems(context),
                         onLogout: () => handleLogout(context, ref),
                         isCollapsed: _isSidebarCollapsed,
@@ -419,7 +419,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
                       fontWeight: FontWeight.w600,
                       color: Colors.white)),
               const SizedBox(height: 2),
-              Text('ASM',
+              Text('Circle Head',
                   style: TextStyle(
                       fontSize: 12,
                       color: Colors.white.withValues(alpha: 0.7))),
@@ -447,7 +447,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('ASM Review', style: AppTextStyles.h2),
+                Text('Circle Head Review', style: AppTextStyles.h2),
                 SizedBox(height: 4),
                 Text('Review and approve agency submissions',
                     style: AppTextStyles.bodySmall),
@@ -471,7 +471,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (device == DeviceType.mobile) ...[
-              const Text('ASM Review', style: AppTextStyles.h2),
+              const Text('Circle Head Review', style: AppTextStyles.h2),
               const SizedBox(height: 4),
               const Text('Review and approve agency submissions',
                   style: AppTextStyles.bodySmall),
