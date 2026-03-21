@@ -134,7 +134,8 @@ public class DedicatedTableEdgeCaseTests
         var mockPerceptualHashService = new Mock<IPerceptualHashService>();
         return new ValidationAgent(
             mockContext.Object, mockLogger.Object, mockHttpClientFactory.Object,
-            mockReferenceDataService.Object, mockCorrelationIdService.Object, mockPerceptualHashService.Object);
+            mockReferenceDataService.Object, mockCorrelationIdService.Object, mockPerceptualHashService.Object,
+            new Mock<IPoBalanceService>().Object);
     }
 
     private static DocumentPackage CreatePackage(Guid packageId, bool hasPO, bool hasInvoice, bool hasCostSummary, int photoCount)

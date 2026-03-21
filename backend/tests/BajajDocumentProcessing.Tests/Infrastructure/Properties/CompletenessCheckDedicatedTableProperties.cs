@@ -198,7 +198,8 @@ public class CompletenessCheckDedicatedTableProperties
 
         var agent = new ValidationAgent(
             mockContext.Object, mockLogger.Object, mockHttpClientFactory.Object,
-            mockReferenceDataService.Object, mockCorrelationIdService.Object, mockPerceptualHashService.Object);
+            mockReferenceDataService.Object, mockCorrelationIdService.Object, mockPerceptualHashService.Object,
+            new Mock<IPoBalanceService>().Object);
 
         return (agent, mockContext);
     }

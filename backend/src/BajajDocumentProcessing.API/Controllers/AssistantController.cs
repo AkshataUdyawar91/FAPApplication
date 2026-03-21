@@ -1279,6 +1279,9 @@ public class AssistantController : ControllerBase
         // Load all dealers for the selected state upfront — no typing required
         string? activityState = null;
         var submissionId = ExtractSubmissionId(request);
+        _logger.LogInformation("=== SUBMIT TEAM NAME === Team: {TeamName}, SubmissionId: {SubmissionId}, PayloadJson: {Payload}",
+            teamName, submissionId, request.PayloadJson);
+
         if (submissionId.HasValue)
         {
             activityState = await _context.DocumentPackages
@@ -1286,6 +1289,8 @@ public class AssistantController : ControllerBase
                 .Select(p => p.ActivityState)
                 .FirstOrDefaultAsync(ct);
         }
+
+        _logger.LogInformation("=== SUBMIT TEAM NAME === ActivityState: {ActivityState}", activityState);
 
         var dealerQuery = _context.Dealers.Where(d => d.IsActive && !d.IsDeleted);
         if (!string.IsNullOrEmpty(activityState))
@@ -1303,15 +1308,27 @@ public class AssistantController : ControllerBase
             .ToListAsync(ct);
 
         var stateLabel = !string.IsNullOrEmpty(activityState) ? $" in {activityState}" : "";
-        var message = dealers.Count > 0
-            ? $"Which dealer was Team {teamName} assigned to? Select from the list below{stateLabel}:"
-            : $"No dealers found{stateLabel}. Please contact support to add dealers for this state.";
 
+        // If dealers found, show as selectable list; otherwise fall back to search mode
+        if (dealers.Count > 0)
+        {
+            return new AssistantResponse
+            {
+                Type = "dealer_list",
+                Message = $"Which dealer was Team {teamName} assigned to? Select from the list below{stateLabel}:",
+                Dealers = dealers,
+                TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
+                PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
+            };
+        }
+
+        // No dealers found — fall back to dealer search so user can type to search
         return new AssistantResponse
         {
-            Type = "dealer_list",
-            Message = message,
-            Dealers = dealers,
+            Type = "dealer_search",
+            Message = $"No dealers found{stateLabel}. Type a dealer name to search:",
+            InputHint = "Type dealer name (min 2 chars)...",
+            MinSearchLength = 2,
             TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
         };
@@ -1335,6 +1352,9 @@ public class AssistantController : ControllerBase
         // Get the state selected earlier in the chatbot flow
         string? activityState = null;
         var submissionId = ExtractSubmissionId(request);
+        _logger.LogInformation("=== SEARCH DEALER === Query: {Query}, SubmissionId: {SubmissionId}, PayloadJson: {Payload}",
+            query, submissionId, request.PayloadJson);
+
         if (submissionId.HasValue)
         {
             activityState = await _context.DocumentPackages
@@ -1342,6 +1362,8 @@ public class AssistantController : ControllerBase
                 .Select(p => p.ActivityState)
                 .FirstOrDefaultAsync(ct);
         }
+
+        _logger.LogInformation("=== SEARCH DEALER === ActivityState: {ActivityState}", activityState);
 
         var q = query.ToLower();
         var dealerQuery = _context.Dealers
