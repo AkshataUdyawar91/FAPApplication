@@ -338,14 +338,8 @@ class _AgencySubmissionDetailPageState
 
   bool _canSubmit(String state) {
     final stateLower = state.toLowerCase();
-    // Allow submit for draft/uploaded states that haven't been submitted for review yet
-    return stateLower == 'uploaded' ||
-        stateLower == 'draft' ||
-        stateLower == 'extracting' ||
-        stateLower == 'validating' ||
-        stateLower == 'validated' ||
-        stateLower == 'scoring' ||
-        stateLower == 'recommending';
+    // Only allow submit for draft/uploaded — chatbot submissions are already past this stage
+    return stateLower == 'draft' || stateLower == 'uploaded';
   }
 
   String _getCostSummaryFileName() {

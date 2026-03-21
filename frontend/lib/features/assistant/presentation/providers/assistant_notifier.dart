@@ -242,14 +242,20 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     }
   }
 
-  Future<void> continueAfterActivity() async {
+  Future<void> continueAfterActivity({String? payloadJson}) async {
     _addUserMessage('Continue');
     state = state.copyWith(isLoading: true, error: null);
     try {
       final sid = state.submissionId;
+      // Prefer the payloadJson passed from the activity summary card (contains costSummaryDocumentId)
+      // so the backend can read the exact cost summary document instead of falling back to stale data
+      String? payload = payloadJson;
+      if (payload == null && sid != null) {
+        payload = jsonEncode({'submissionId': sid});
+      }
       final response = await _dataSource.sendMessage(
         action: 'continue_after_activity',
-        payloadJson: sid != null ? jsonEncode({'submissionId': sid}) : null,
+        payloadJson: payload,
       );
       _addBotMessage(response);
     } catch (e) {

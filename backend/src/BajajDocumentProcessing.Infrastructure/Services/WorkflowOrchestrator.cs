@@ -120,25 +120,34 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 return false;
             }
 
-            // Step 2: Validation
-            if (!await ExecuteValidationStepAsync(package, cancellationToken))
+            // Step 2: Validation — non-blocking, failure does not stop workflow
+            try
             {
-                await CompensateAsync(package, "Validation failed", cancellationToken);
-                return false;
+                await ExecuteValidationStepAsync(package, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Validation step failed for package {PackageId} — continuing to PendingCH", package.Id);
             }
 
-            // Step 3: Confidence Scoring
-            if (!await ExecuteScoringStepAsync(package, cancellationToken))
+            // Step 3: Confidence Scoring — non-blocking, failure does not stop workflow
+            try
             {
-                await CompensateAsync(package, "Scoring failed", cancellationToken);
-                return false;
+                await ExecuteScoringStepAsync(package, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Scoring step failed for package {PackageId} — continuing to PendingCH", package.Id);
             }
 
-            // Step 4: Recommendation
-            if (!await ExecuteRecommendationStepAsync(package, cancellationToken))
+            // Step 4: Recommendation — non-blocking, failure does not stop workflow
+            try
             {
-                await CompensateAsync(package, "Recommendation failed", cancellationToken);
-                return false;
+                await ExecuteRecommendationStepAsync(package, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Recommendation step failed for package {PackageId} — continuing to PendingCH", package.Id);
             }
 
             // Step 5: Final state transition
@@ -256,122 +265,161 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             // Extract package-level dedicated entities (PO, CostSummary, ActivitySummary, EnquiryDocument)
             var hasPackageLevelDocs = false;
 
-            if (package.PO != null && !string.IsNullOrEmpty(package.PO.BlobUrl))
+            // For chatbot-submitted packages, documents are already extracted during the conversation.
+            // If ExtractedDataJson is already present, skip re-extraction and count as present.
+            // Note: chatbot flow uses SelectedPOId (no package.PO navigation) — treat that as "has PO".
+            if (package.SelectedPOId.HasValue)
             {
-                if (!await _fileStorageService.IsBlobAccessibleAsync(package.PO.BlobUrl))
-                {
-                    _logger.LogWarning("PO blob not accessible for package {PackageId}, URL: {BlobUrl} — skipping extraction",
-                        package.Id, package.PO.BlobUrl);
-                }
-                else
-                {
-                    try
-                    {
-                        _logger.LogInformation("Extracting PO for package {PackageId}", package.Id);
-                        var poData = await _documentAgent.ExtractPOAsync(package.PO.BlobUrl, cancellationToken);
-                        package.PO.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(poData);
-                        package.PO.UpdatedAt = DateTime.UtcNow;
-                        hasPackageLevelDocs = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error extracting PO for package {PackageId}", package.Id);
-                    }
-                }
+                _logger.LogInformation("Package {PackageId} has SelectedPOId — chatbot flow, PO already handled", package.Id);
+                hasPackageLevelDocs = true;
             }
-
-            if (package.CostSummary != null && !string.IsNullOrEmpty(package.CostSummary.BlobUrl))
+            else if (package.PO != null)
             {
-                if (!await _fileStorageService.IsBlobAccessibleAsync(package.CostSummary.BlobUrl))
+                if (!string.IsNullOrEmpty(package.PO.ExtractedDataJson))
                 {
-                    _logger.LogWarning("CostSummary blob not accessible for package {PackageId}, URL: {BlobUrl} — skipping extraction",
-                        package.Id, package.CostSummary.BlobUrl);
+                    _logger.LogInformation("PO already extracted for package {PackageId}, skipping re-extraction", package.Id);
+                    hasPackageLevelDocs = true;
                 }
-                else
+                else if (!string.IsNullOrEmpty(package.PO.BlobUrl))
                 {
-                    try
+                    if (!await _fileStorageService.IsBlobAccessibleAsync(package.PO.BlobUrl))
                     {
-                        _logger.LogInformation("Extracting CostSummary for package {PackageId}", package.Id);
-                        var costData = await _documentAgent.ExtractCostSummaryAsync(package.CostSummary.BlobUrl, cancellationToken);
-                        package.CostSummary.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(costData);
-                        package.CostSummary.UpdatedAt = DateTime.UtcNow;
-                        hasPackageLevelDocs = true;
+                        _logger.LogWarning("PO blob not accessible for package {PackageId}, URL: {BlobUrl} — skipping extraction",
+                            package.Id, package.PO.BlobUrl);
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        _logger.LogError(ex, "Error extracting CostSummary for package {PackageId}", package.Id);
-                    }
-                }
-            }
-
-            if (package.ActivitySummary != null && !string.IsNullOrEmpty(package.ActivitySummary.BlobUrl))
-            {
-                if (!await _fileStorageService.IsBlobAccessibleAsync(package.ActivitySummary.BlobUrl))
-                {
-                    _logger.LogWarning("ActivitySummary blob not accessible for package {PackageId}, URL: {BlobUrl} — skipping extraction",
-                        package.Id, package.ActivitySummary.BlobUrl);
-                }
-                else
-                {
-                    try
-                    {
-                        _logger.LogInformation("Extracting ActivitySummary for package {PackageId}", package.Id);
-                        var activityData = await _documentAgent.ExtractActivityAsync(package.ActivitySummary.BlobUrl, cancellationToken);
-                        package.ActivitySummary.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(activityData);
-                        package.ActivitySummary.ExtractionConfidence = activityData.FieldConfidences.Values.Any()
-                            ? activityData.FieldConfidences.Values.Average() : 0.5;
-                        package.ActivitySummary.IsFlaggedForReview = activityData.IsFlaggedForReview;
-                        package.ActivitySummary.UpdatedAt = DateTime.UtcNow;
-
-                        // Populate summary fields from extracted rows
-                        if (activityData.Rows != null && activityData.Rows.Count > 0)
+                        try
                         {
-                            package.ActivitySummary.DealerName = activityData.Rows[0].DealerName;
-                            package.ActivitySummary.TotalDays = activityData.Rows.Sum(r => r.Day);
-                            package.ActivitySummary.TotalWorkingDays = activityData.Rows.Sum(r => r.WorkingDay);
-                            var locations = activityData.Rows
-                                .Where(r => !string.IsNullOrWhiteSpace(r.Location))
-                                .Select(r => r.Location)
-                                .Distinct()
-                                .ToList();
-                            if (locations.Any())
-                            {
-                                package.ActivitySummary.ActivityDescription = $"Activity across {locations.Count} location(s): {string.Join(", ", locations)}";
-                            }
+                            _logger.LogInformation("Extracting PO for package {PackageId}", package.Id);
+                            var poData = await _documentAgent.ExtractPOAsync(package.PO.BlobUrl, cancellationToken);
+                            package.PO.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(poData);
+                            package.PO.UpdatedAt = DateTime.UtcNow;
+                            hasPackageLevelDocs = true;
                         }
-
-                        hasPackageLevelDocs = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error extracting ActivitySummary for package {PackageId}", package.Id);
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error extracting PO for package {PackageId}", package.Id);
+                        }
                     }
                 }
             }
 
-            if (package.EnquiryDocument != null && !string.IsNullOrEmpty(package.EnquiryDocument.BlobUrl))
+            if (package.CostSummary != null)
             {
-                if (!await _fileStorageService.IsBlobAccessibleAsync(package.EnquiryDocument.BlobUrl))
+                if (!string.IsNullOrEmpty(package.CostSummary.ExtractedDataJson))
                 {
-                    _logger.LogWarning("EnquiryDocument blob not accessible for package {PackageId}, URL: {BlobUrl} — skipping extraction",
-                        package.Id, package.EnquiryDocument.BlobUrl);
+                    _logger.LogInformation("CostSummary already extracted for package {PackageId}, skipping re-extraction", package.Id);
+                    hasPackageLevelDocs = true;
                 }
-                else
+                else if (!string.IsNullOrEmpty(package.CostSummary.BlobUrl))
                 {
-                    try
+                    if (!await _fileStorageService.IsBlobAccessibleAsync(package.CostSummary.BlobUrl))
                     {
-                        _logger.LogInformation("Extracting EnquiryDocument for package {PackageId}", package.Id);
-                        var enquiryData = await _documentAgent.ExtractEnquiryDumpAsync(package.EnquiryDocument.BlobUrl, cancellationToken);
-                        package.EnquiryDocument.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(enquiryData);
-                        package.EnquiryDocument.ExtractionConfidence = enquiryData.FieldConfidences.Values.Any()
-                            ? enquiryData.FieldConfidences.Values.Average() : 0.5;
-                        package.EnquiryDocument.IsFlaggedForReview = enquiryData.IsFlaggedForReview;
-                        package.EnquiryDocument.UpdatedAt = DateTime.UtcNow;
-                        hasPackageLevelDocs = true;
+                        _logger.LogWarning("CostSummary blob not accessible for package {PackageId}, URL: {BlobUrl} — skipping extraction",
+                            package.Id, package.CostSummary.BlobUrl);
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        _logger.LogError(ex, "Error extracting EnquiryDocument for package {PackageId}", package.Id);
+                        try
+                        {
+                            _logger.LogInformation("Extracting CostSummary for package {PackageId}", package.Id);
+                            var costData = await _documentAgent.ExtractCostSummaryAsync(package.CostSummary.BlobUrl, cancellationToken);
+                            package.CostSummary.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(costData);
+                            package.CostSummary.UpdatedAt = DateTime.UtcNow;
+                            hasPackageLevelDocs = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error extracting CostSummary for package {PackageId}", package.Id);
+                        }
+                    }
+                }
+            }
+
+            if (package.ActivitySummary != null)
+            {
+                if (!string.IsNullOrEmpty(package.ActivitySummary.ExtractedDataJson))
+                {
+                    _logger.LogInformation("ActivitySummary already extracted for package {PackageId}, skipping re-extraction", package.Id);
+                    hasPackageLevelDocs = true;
+                }
+                else if (!string.IsNullOrEmpty(package.ActivitySummary.BlobUrl))
+                {
+                    if (!await _fileStorageService.IsBlobAccessibleAsync(package.ActivitySummary.BlobUrl))
+                    {
+                        _logger.LogWarning("ActivitySummary blob not accessible for package {PackageId}, URL: {BlobUrl} — skipping extraction",
+                            package.Id, package.ActivitySummary.BlobUrl);
+                    }
+                    else
+                    {
+                        try
+                        {
+                            _logger.LogInformation("Extracting ActivitySummary for package {PackageId}", package.Id);
+                            var activityData = await _documentAgent.ExtractActivityAsync(package.ActivitySummary.BlobUrl, cancellationToken);
+                            package.ActivitySummary.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(activityData);
+                            package.ActivitySummary.ExtractionConfidence = activityData.FieldConfidences.Values.Any()
+                                ? activityData.FieldConfidences.Values.Average() : 0.5;
+                            package.ActivitySummary.IsFlaggedForReview = activityData.IsFlaggedForReview;
+                            package.ActivitySummary.UpdatedAt = DateTime.UtcNow;
+
+                            if (activityData.Rows != null && activityData.Rows.Count > 0)
+                            {
+                                package.ActivitySummary.DealerName = activityData.Rows[0].DealerName;
+                                package.ActivitySummary.TotalDays = activityData.Rows.Sum(r => r.Day);
+                                package.ActivitySummary.TotalWorkingDays = activityData.Rows.Sum(r => r.WorkingDay);
+                                var locations = activityData.Rows
+                                    .Where(r => !string.IsNullOrWhiteSpace(r.Location))
+                                    .Select(r => r.Location)
+                                    .Distinct()
+                                    .ToList();
+                                if (locations.Any())
+                                {
+                                    package.ActivitySummary.ActivityDescription = $"Activity across {locations.Count} location(s): {string.Join(", ", locations)}";
+                                }
+                            }
+
+                            hasPackageLevelDocs = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error extracting ActivitySummary for package {PackageId}", package.Id);
+                        }
+                    }
+                }
+            }
+
+            if (package.EnquiryDocument != null)
+            {
+                if (!string.IsNullOrEmpty(package.EnquiryDocument.ExtractedDataJson))
+                {
+                    _logger.LogInformation("EnquiryDocument already extracted for package {PackageId}, skipping re-extraction", package.Id);
+                    hasPackageLevelDocs = true;
+                }
+                else if (!string.IsNullOrEmpty(package.EnquiryDocument.BlobUrl))
+                {
+                    if (!await _fileStorageService.IsBlobAccessibleAsync(package.EnquiryDocument.BlobUrl))
+                    {
+                        _logger.LogWarning("EnquiryDocument blob not accessible for package {PackageId}, URL: {BlobUrl} — skipping extraction",
+                            package.Id, package.EnquiryDocument.BlobUrl);
+                    }
+                    else
+                    {
+                        try
+                        {
+                            _logger.LogInformation("Extracting EnquiryDocument for package {PackageId}", package.Id);
+                            var enquiryData = await _documentAgent.ExtractEnquiryDumpAsync(package.EnquiryDocument.BlobUrl, cancellationToken);
+                            package.EnquiryDocument.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(enquiryData);
+                            package.EnquiryDocument.ExtractionConfidence = enquiryData.FieldConfidences.Values.Any()
+                                ? enquiryData.FieldConfidences.Values.Average() : 0.5;
+                            package.EnquiryDocument.IsFlaggedForReview = enquiryData.IsFlaggedForReview;
+                            package.EnquiryDocument.UpdatedAt = DateTime.UtcNow;
+                            hasPackageLevelDocs = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error extracting EnquiryDocument for package {PackageId}", package.Id);
+                        }
                     }
                 }
             }
@@ -382,8 +430,18 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 _logger.LogInformation("Processing {InvoiceCount} invoices for package {PackageId}", 
                     package.Invoices.Count, package.Id);
 
-                foreach (var invoice in package.Invoices.Where(i => !i.IsDeleted && !string.IsNullOrEmpty(i.BlobUrl)))
+                foreach (var invoice in package.Invoices.Where(i => !i.IsDeleted))
                 {
+                    // Already extracted by chatbot — count as present and skip
+                    if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
+                    {
+                        _logger.LogInformation("Invoice {InvoiceId} already extracted, skipping re-extraction", invoice.Id);
+                        hasPackageLevelDocs = true;
+                        continue;
+                    }
+
+                    if (string.IsNullOrEmpty(invoice.BlobUrl)) continue;
+
                     if (!await _fileStorageService.IsBlobAccessibleAsync(invoice.BlobUrl))
                     {
                         _logger.LogWarning("Invoice blob not accessible for invoice {InvoiceId}, URL: {BlobUrl} — skipping",

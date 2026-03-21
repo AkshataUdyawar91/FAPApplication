@@ -14,10 +14,16 @@ import '../../features/approval/presentation/pages/hq_review_page.dart';
 import '../../features/approval/presentation/pages/hq_review_detail_page.dart';
 import '../../features/admin/presentation/pages/admin_dashboard_page.dart';
 import 'dashboard_wrapper.dart';
+import '../../features/assistant/presentation/providers/assistant_providers.dart';
+import '../network/dio_client.dart';
 
 /// Helper function to handle logout with GoRouter
 /// Call this instead of Navigator.pushReplacementNamed(context, '/')
 void handleLogout(BuildContext context, WidgetRef ref) {
+  // Clear assistant chat history on logout
+  ref.read(assistantNotifierProvider.notifier).reset();
+  // Clear auth token
+  ref.read(authTokenProvider.notifier).state = null;
   // Logout from auth notifier
   ref.read(authNotifierProvider.notifier).logout();
   // Navigate to login page
