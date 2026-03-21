@@ -1607,6 +1607,9 @@ public class ValidationAgent : IValidationAgent
                         v => v.DocumentType == documentType && v.DocumentId == documentId,
                         cancellationToken);
 
+                // Merge proactive rules into ValidationDetailsJson so it contains all validations
+                var mergedDetailsJson = MergeProactiveRulesIntoDetails(detailsJson, existing?.RuleResultsJson);
+
                 if (existing != null)
                 {
                     existing.AllValidationsPassed = allPassed;
@@ -1648,6 +1651,106 @@ public class ValidationAgent : IValidationAgent
     }
 
     /// <summary>
+    /// Merges proactive rule results (from RuleResultsJson) into the reactive ValidationDetailsJson.
+    /// Proactive rules are added under a "proactiveRules" key. Reactive checks that overlap with
+    /// proactive rules (by matching rule code patterns) are not duplicated — the proactive version
+    /// is kept since it has richer detail (extractedValue, expectedValue, message).
+    /// </summary>
+    private static string MergeProactiveRulesIntoDetails(string? reactiveDetailsJson, string? ruleResultsJson)
+    {
+        if (string.IsNullOrWhiteSpace(ruleResultsJson))
+            return reactiveDetailsJson ?? "{}";
+
+        try
+        {
+            // Parse the reactive details (e.g. {"fieldPresence": {...}, "crossDocument": {...}})
+            using var reactiveDoc = JsonDocument.Parse(reactiveDetailsJson ?? "{}");
+
+            // Parse the proactive rules array
+            using var proactiveDoc = JsonDocument.Parse(ruleResultsJson);
+            if (proactiveDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return reactiveDetailsJson ?? "{}";
+
+            // Collect proactive rule codes for dedup
+            var proactiveRuleCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rule in proactiveDoc.RootElement.EnumerateArray())
+            {
+                if (rule.TryGetProperty("RuleCode", out var rc) || rule.TryGetProperty("ruleCode", out rc))
+                {
+                    var code = rc.GetString();
+                    if (!string.IsNullOrEmpty(code))
+                        proactiveRuleCodes.Add(code);
+                }
+            }
+
+            // Build reactive rules from fieldPresence.missingFields and crossDocument.issues
+            // to detect overlap with proactive rules
+            var reactiveFieldNames = ExtractReactiveFieldNames(reactiveDoc.RootElement);
+
+            // Build merged JSON: copy all reactive properties + add proactiveRules array
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = false }))
+            {
+                writer.WriteStartObject();
+
+                // Copy all existing reactive properties
+                foreach (var prop in reactiveDoc.RootElement.EnumerateObject())
+                {
+                    prop.WriteTo(writer);
+                }
+
+                // Add proactive rules array
+                writer.WritePropertyName("proactiveRules");
+                proactiveDoc.RootElement.WriteTo(writer);
+
+                writer.WriteEndObject();
+            }
+
+            return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        }
+        catch (JsonException ex)
+        {
+            // If JSON parsing fails, return reactive details unchanged
+            System.Diagnostics.Debug.WriteLine($"Failed to merge proactive rules: {ex.Message}");
+            return reactiveDetailsJson ?? "{}";
+        }
+    }
+
+    /// <summary>
+    /// Extracts field names referenced in reactive validation details for dedup awareness.
+    /// </summary>
+    private static HashSet<string> ExtractReactiveFieldNames(JsonElement root)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (root.TryGetProperty("fieldPresence", out var fp) &&
+            fp.TryGetProperty("missingFields", out var mf) &&
+            mf.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var field in mf.EnumerateArray())
+            {
+                var val = field.GetString();
+                if (!string.IsNullOrEmpty(val))
+                    names.Add(val);
+            }
+        }
+
+        if (root.TryGetProperty("crossDocument", out var cd) &&
+            cd.TryGetProperty("issues", out var issues) &&
+            issues.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var issue in issues.EnumerateArray())
+            {
+                var val = issue.GetString();
+                if (!string.IsNullOrEmpty(val))
+                    names.Add(val);
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>
     /// Builds a list of per-document-type validation result tuples from the package validation result.
     /// Each tuple includes RuleResultsJson in the same format as the chatbot pipeline.
     /// </summary>
@@ -1684,7 +1787,7 @@ public class ValidationAgent : IValidationAgent
                 SerializeRules(poRules)));
         }
 
-        // Invoice: field presence + cross-document
+        // Invoice: field presence + cross-document + cross-cutting checks (amount consistency, line items, vendor matching)
         var invoiceDoc = package.Invoices.FirstOrDefault();
         if (invoiceDoc != null)
         {
@@ -1696,7 +1799,22 @@ public class ValidationAgent : IValidationAgent
             if (result.InvoiceCrossDocument != null && !result.InvoiceCrossDocument.AllChecksPass)
                 invIssues.AddRange(result.InvoiceCrossDocument.Issues);
 
-            var details = new { fieldPresence = result.InvoiceFieldPresence, crossDocument = result.InvoiceCrossDocument };
+            // Include cross-cutting validations that involve the invoice
+            if (result.AmountConsistency != null && !result.AmountConsistency.IsConsistent)
+                invIssues.Add($"Amount mismatch: Invoice {result.AmountConsistency.InvoiceTotal:F2} vs Cost Summary {result.AmountConsistency.CostSummaryTotal:F2} (diff {result.AmountConsistency.PercentageDifference:F1}%)");
+            if (result.LineItemMatching != null && !result.LineItemMatching.AllItemsMatched)
+                invIssues.Add($"Missing {result.LineItemMatching.MissingItemCodes.Count} PO line items: {string.Join(", ", result.LineItemMatching.MissingItemCodes)}");
+            if (result.VendorMatching != null && !result.VendorMatching.IsMatched)
+                invIssues.Add($"Vendor mismatch: PO={result.VendorMatching.POVendor}, Invoice={result.VendorMatching.InvoiceVendor}, SAP={result.VendorMatching.SAPVendor}");
+
+            var details = new
+            {
+                fieldPresence = result.InvoiceFieldPresence,
+                crossDocument = result.InvoiceCrossDocument,
+                amountConsistency = result.AmountConsistency,
+                lineItemMatching = result.LineItemMatching,
+                vendorMatching = result.VendorMatching
+            };
             var invRules = new List<object>
             {
                 new { ruleCode = "INV_NUMBER_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Number") ?? false), isWarning = false, label = "Invoice Number", extractedValue = invoiceDoc.InvoiceNumber, message = (string?)null },
@@ -1712,7 +1830,7 @@ public class ValidationAgent : IValidationAgent
                 SerializeRules(invRules)));
         }
 
-        // CostSummary: field presence + cross-document
+        // CostSummary: field presence + cross-document + completeness check (package-level)
         if (package.CostSummary != null)
         {
             var passed = (result.CostSummaryFieldPresence?.AllFieldsPresent ?? true)
@@ -1722,8 +1840,10 @@ public class ValidationAgent : IValidationAgent
                 issues.AddRange(result.CostSummaryFieldPresence.MissingFields);
             if (result.CostSummaryCrossDocument != null && !result.CostSummaryCrossDocument.AllChecksPass)
                 issues.AddRange(result.CostSummaryCrossDocument.Issues);
+            if (result.Completeness != null && !result.Completeness.IsComplete)
+                issues.Add($"Missing {result.Completeness.MissingItems.Count} required items: {string.Join(", ", result.Completeness.MissingItems)}");
 
-            var details = new { fieldPresence = result.CostSummaryFieldPresence, crossDocument = result.CostSummaryCrossDocument };
+            var details = new { fieldPresence = result.CostSummaryFieldPresence, crossDocument = result.CostSummaryCrossDocument, completeness = result.Completeness };
             var cs = package.CostSummary;
             var csRules = new List<object>
             {

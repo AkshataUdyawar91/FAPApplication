@@ -752,6 +752,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
               : null,
         );
+      case 'dealer_list':
       case 'dealer_search_results':
         return AssistantBubble(
           message: msg.content,
@@ -1703,7 +1704,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           const SizedBox(width: 8),
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(),
+              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(payloadJson: r.payloadJson),
               icon: const Icon(Icons.arrow_forward, size: 14),
               label: Text(hasIssues ? 'Continue with warnings' : 'Continue →',
                   style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
@@ -1976,6 +1977,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         newMode = 'state';
       } else if (t == 'dealer_search' || t == 'dealer_search_results') {
         newMode = 'dealer';
+      } else if (t == 'dealer_list') {
+        newMode = 'none'; // dropdown — no search bar needed
       } else if (t == 'team_name_input') {
         newMode = 'team_name';
       } else if (t == 'team_count_input') {

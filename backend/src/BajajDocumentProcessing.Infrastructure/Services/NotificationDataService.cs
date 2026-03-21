@@ -160,7 +160,7 @@ public class NotificationDataService : INotificationDataService
         var cardData = new SubmissionCardData
         {
             SubmissionId = package.Id,
-            SubmissionNumber = "FAP-" + package.Id.ToString()[..8].ToUpper(),
+            SubmissionNumber = package.SubmissionNumber ?? ("FAP-" + package.Id.ToString()[..8].ToUpper()),
             NotificationTimestamp = DateTime.UtcNow
         };
 

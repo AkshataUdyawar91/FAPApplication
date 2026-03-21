@@ -1,5 +1,6 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Enums;
+using BajajDocumentProcessing.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -22,20 +23,20 @@ public class AssistantController : ControllerBase
     private readonly ILogger<AssistantController> _logger;
     private readonly IReferenceDataService _referenceData;
     private readonly ISubmissionNumberService _submissionNumberService;
-    private readonly IWorkflowOrchestrator _workflowOrchestrator;
+    private readonly IBackgroundWorkflowQueue _backgroundQueue;
 
     public AssistantController(
         IApplicationDbContext context,
         ILogger<AssistantController> logger,
         IReferenceDataService referenceData,
         ISubmissionNumberService submissionNumberService,
-        IWorkflowOrchestrator workflowOrchestrator)
+        IBackgroundWorkflowQueue backgroundQueue)
     {
         _context = context;
         _logger = logger;
         _referenceData = referenceData;
         _submissionNumberService = submissionNumberService;
-        _workflowOrchestrator = workflowOrchestrator;
+        _backgroundQueue = backgroundQueue;
     }
 
     /// <summary>
@@ -86,7 +87,7 @@ public class AssistantController : ControllerBase
                 "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId!.Value, ct),
                 "start_team_entry" => await HandleStartTeamEntry(request, agencyId!.Value, ct),
                 "submit_team_count" => await HandleSubmitTeamCount(request, agencyId!.Value, ct),
-                "submit_team_name" => HandleSubmitTeamName(request),
+                "submit_team_name" => await HandleSubmitTeamName(request, ct),
                 "search_dealer" => await HandleSearchDealer(request, ct),
                 "select_dealer" => HandleSelectDealer(request),
                 "submit_team_dates" => HandleSubmitTeamDates(request),
@@ -1133,16 +1134,24 @@ public class AssistantController : ControllerBase
                     .Select(c => new { c.NumberOfTeams, c.ExtractedDataJson })
                     .FirstOrDefaultAsync(ct);
 
-                totalTeams = cs?.NumberOfTeams;
-
-                if (totalTeams == null && !string.IsNullOrEmpty(cs?.ExtractedDataJson))
+                // Read from the DB column first (populated by DocumentService during extraction)
+                if (cs?.NumberOfTeams > 0)
                 {
+                    totalTeams = cs.NumberOfTeams;
+                }
+                else if (!string.IsNullOrEmpty(cs?.ExtractedDataJson))
+                {
+                    // Fallback: parse ExtractedDataJson — note JsonElement.TryGetProperty is case-sensitive
+                    // so try both PascalCase and camelCase keys
                     try
                     {
-                        var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                        var json = JsonSerializer.Deserialize<JsonElement>(cs.ExtractedDataJson, opts);
-                        if (json.TryGetProperty("numberOfTeams", out var nt) && nt.ValueKind == JsonValueKind.Number)
-                            totalTeams = nt.GetInt32();
+                        var json = JsonSerializer.Deserialize<JsonElement>(cs.ExtractedDataJson);
+                        if ((json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                            && nt.ValueKind == JsonValueKind.Number)
+                        {
+                            var extracted = nt.GetInt32();
+                            if (extracted > 0) totalTeams = extracted;
+                        }
                     }
                     catch { }
                 }
@@ -1156,16 +1165,21 @@ public class AssistantController : ControllerBase
                     .Select(c => new { c.NumberOfTeams, c.ExtractedDataJson })
                     .FirstOrDefaultAsync(ct);
 
-                totalTeams = cs?.NumberOfTeams;
-
-                if (totalTeams == null && !string.IsNullOrEmpty(cs?.ExtractedDataJson))
+                if (cs?.NumberOfTeams > 0)
+                {
+                    totalTeams = cs.NumberOfTeams;
+                }
+                else if (!string.IsNullOrEmpty(cs?.ExtractedDataJson))
                 {
                     try
                     {
-                        var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                        var json = JsonSerializer.Deserialize<JsonElement>(cs.ExtractedDataJson, opts);
-                        if (json.TryGetProperty("numberOfTeams", out var nt) && nt.ValueKind == JsonValueKind.Number)
-                            totalTeams = nt.GetInt32();
+                        var json = JsonSerializer.Deserialize<JsonElement>(cs.ExtractedDataJson);
+                        if ((json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                            && nt.ValueKind == JsonValueKind.Number)
+                        {
+                            var extracted = nt.GetInt32();
+                            if (extracted > 0) totalTeams = extracted;
+                        }
                     }
                     catch { }
                 }
@@ -1242,7 +1256,7 @@ public class AssistantController : ControllerBase
         };
     }
 
-    private static AssistantResponse HandleSubmitTeamName(AssistantRequest request)
+    private async Task<AssistantResponse> HandleSubmitTeamName(AssistantRequest request, CancellationToken ct)
     {
         // Read team name from message, carry forward payload
         var teamName = request.Message?.Trim();
@@ -1259,17 +1273,46 @@ public class AssistantController : ControllerBase
         var ctx = ParseTeamPayload(request.PayloadJson);
         ctx["teamName"] = teamName;
 
+        var currentTeam = ctx.TryGetValue("currentTeam", out var ct2) ? (ct2 is JsonElement ct2e ? ct2e.GetInt32() : Convert.ToInt32(ct2)) : 1;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+
+        // Load all dealers for the selected state upfront — no typing required
+        string? activityState = null;
+        var submissionId = ExtractSubmissionId(request);
+        if (submissionId.HasValue)
+        {
+            activityState = await _context.DocumentPackages
+                .Where(p => p.Id == submissionId.Value && !p.IsDeleted)
+                .Select(p => p.ActivityState)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        var dealerQuery = _context.Dealers.Where(d => d.IsActive && !d.IsDeleted);
+        if (!string.IsNullOrEmpty(activityState))
+            dealerQuery = dealerQuery.Where(d => d.State == activityState);
+
+        var dealers = await dealerQuery
+            .OrderBy(d => d.DealerName)
+            .Select(d => new DealerItem
+            {
+                DealerCode = d.DealerCode,
+                DealerName = d.DealerName,
+                City = d.City ?? "",
+                State = d.State,
+            })
+            .ToListAsync(ct);
+
+        var stateLabel = !string.IsNullOrEmpty(activityState) ? $" in {activityState}" : "";
+        var message = dealers.Count > 0
+            ? $"Which dealer was Team {teamName} assigned to? Select from the list below{stateLabel}:"
+            : $"No dealers found{stateLabel}. Please contact support to add dealers for this state.";
+
         return new AssistantResponse
         {
-            Type = "dealer_search",
-            Message = $"Which dealer was Team {teamName} assigned to? Start typing dealer name:",
-            InputHint = "Type dealer name (min 2 chars)...",
-            MinSearchLength = 2,
-            TeamContext = new TeamContextDto
-            {
-                CurrentTeam = ctx.TryGetValue("currentTeam", out var ct2) ? (ct2 is JsonElement ct2e ? ct2e.GetInt32() : Convert.ToInt32(ct2)) : 1,
-                TotalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1,
-            },
+            Type = "dealer_list",
+            Message = message,
+            Dealers = dealers,
+            TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
         };
     }
@@ -1289,12 +1332,29 @@ public class AssistantController : ControllerBase
             };
         }
 
+        // Get the state selected earlier in the chatbot flow
+        string? activityState = null;
+        var submissionId = ExtractSubmissionId(request);
+        if (submissionId.HasValue)
+        {
+            activityState = await _context.DocumentPackages
+                .Where(p => p.Id == submissionId.Value && !p.IsDeleted)
+                .Select(p => p.ActivityState)
+                .FirstOrDefaultAsync(ct);
+        }
+
         var q = query.ToLower();
-        var dealers = await _context.Dealers
+        var dealerQuery = _context.Dealers
             .Where(d => d.IsActive && !d.IsDeleted &&
                 (d.DealerName.ToLower().Contains(q) ||
                  d.DealerCode.ToLower().Contains(q) ||
-                 (d.City != null && d.City.ToLower().Contains(q))))
+                 (d.City != null && d.City.ToLower().Contains(q))));
+
+        // Filter by state if we have one from the chatbot flow
+        if (!string.IsNullOrEmpty(activityState))
+            dealerQuery = dealerQuery.Where(d => d.State == activityState);
+
+        var dealers = await dealerQuery
             .Take(10)
             .Select(d => new DealerItem
             {
@@ -1305,12 +1365,13 @@ public class AssistantController : ControllerBase
             })
             .ToListAsync(ct);
 
+        var stateLabel = !string.IsNullOrEmpty(activityState) ? $" in {activityState}" : "";
         return new AssistantResponse
         {
             Type = "dealer_search_results",
-            Message = dealers.Count() > 0
-                ? $"Found {dealers.Count()} dealer(s) matching \"{query}\". Select one:"
-                : $"No dealers found matching \"{query}\". Try a different name.",
+            Message = dealers.Count > 0
+                ? $"Found {dealers.Count} dealer(s) matching \"{query}\"{stateLabel}. Select one:"
+                : $"No dealers found matching \"{query}\"{stateLabel}. Try a different name.",
             Dealers = dealers,
             InputHint = "Type dealer name (min 2 chars)...",
             MinSearchLength = 2,
@@ -2460,18 +2521,8 @@ public class AssistantController : ControllerBase
         _logger.LogInformation("Package {PackageId} submitted from chat by user {UserId}. SubmissionNumber: {SubNum} — triggering orchestrator",
             submissionId, userId, submissionNumber);
 
-        // Fire orchestrator in background so user gets immediate response
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await _workflowOrchestrator.ProcessSubmissionAsync(package.Id, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Background orchestration failed for package {PackageId}", package.Id);
-            }
-        });
+        // Queue workflow via background processor (proper scoped execution, avoids disposed context issues)
+        await _backgroundQueue.QueueWorkflowAsync(package.Id);
 
         return new AssistantResponse
         {

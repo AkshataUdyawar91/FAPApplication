@@ -128,8 +128,9 @@ class _AgencySubmissionDetailPageState
         // Extract validation data from submission response
         final invoiceValidations =
             submissionData['invoiceValidations'] as List<dynamic>? ?? [];
-        final photoValidations =
+        final photoValidationsRaw =
             submissionData['photoValidations'] as List<dynamic>? ?? [];
+        var photoValidations = photoValidationsRaw;
         final costSummaryValidation =
             submissionData['costSummaryValidation'] as Map<String, dynamic>? ??
                 {};
@@ -137,6 +138,28 @@ class _AgencySubmissionDetailPageState
             submissionData['activityValidation'] as Map<String, dynamic>? ?? {};
         final enquiryValidation =
             submissionData['enquiryValidation'] as Map<String, dynamic>? ?? {};
+
+        // Fallback: if photoValidations is empty, fetch from validations endpoint
+        if (photoValidations.isEmpty) {
+          try {
+            final valResponse = await _dio.get(
+              '/submissions/${widget.submissionId}/validations',
+              options: Options(
+                  headers: {'Authorization': 'Bearer ${widget.token}'}),
+            );
+            if (valResponse.statusCode == 200 && valResponse.data != null) {
+              final docs = valResponse.data['documents'] as List<dynamic>? ?? [];
+              final photoDocs = docs
+                  .where((d) => d['documentType'] == 'TeamPhoto')
+                  .toList();
+              if (photoDocs.isNotEmpty) {
+                photoValidations = photoDocs;
+              }
+            }
+          } catch (e2) {
+            debugPrint('Fallback photo validation fetch failed: $e2');
+          }
+        }
 
         print('=== Validation Data from Submission ===');
         print('Invoice Validations Count: ${invoiceValidations.length}');
@@ -315,14 +338,8 @@ class _AgencySubmissionDetailPageState
 
   bool _canSubmit(String state) {
     final stateLower = state.toLowerCase();
-    // Allow submit for draft/uploaded states that haven't been submitted for review yet
-    return stateLower == 'uploaded' ||
-        stateLower == 'draft' ||
-        stateLower == 'extracting' ||
-        stateLower == 'validating' ||
-        stateLower == 'validated' ||
-        stateLower == 'scoring' ||
-        stateLower == 'recommending';
+    // Only allow submit for draft/uploaded — chatbot submissions are already past this stage
+    return stateLower == 'draft' || stateLower == 'uploaded';
   }
 
   String _getCostSummaryFileName() {

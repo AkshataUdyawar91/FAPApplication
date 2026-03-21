@@ -1073,12 +1073,14 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         label = state == 'validationfailed' ? 'Validation Failed' : 'Rejected';
         break;
       case 'rejectedbyasm':
+      case 'chrejected':
         bgColor = const Color(0xFFFEE2E2);
         textColor = const Color(0xFF991B1B);
         label = 'Rejected by CH';
         break;
       case 'rejectedbyhq':
       case 'rejectedbyra':
+      case 'rarejected':
         bgColor = const Color(0xFFFEE2E2);
         textColor = const Color(0xFF991B1B);
         label = 'Rejected by RA';
@@ -1099,12 +1101,14 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         break;
       case 'pendingchapproval':
       case 'pendingwithch':
+      case 'pendingch':
         bgColor = const Color(0xFFDBEAFE);
         textColor = const Color(0xFF1E40AF);
         label = 'Pending with CH';
         break;
       case 'pendinghqapproval':
       case 'pendingwithra':
+      case 'pendingra':
         bgColor = const Color(0xFFFEF3C7);
         textColor = const Color(0xFF92400E);
         label = 'Pending with RA';
