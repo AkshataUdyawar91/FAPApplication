@@ -176,7 +176,9 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.POs.AddAsync(po);
                 break;
@@ -212,7 +214,9 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.Invoices.AddAsync(invoice);
                 break;
@@ -228,7 +232,9 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.CostSummaries.AddAsync(costSummary);
                 break;
@@ -244,7 +250,9 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.ActivitySummaries.AddAsync(activitySummary);
                 break;
@@ -260,7 +268,9 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.EnquiryDocuments.AddAsync(enquiryDocument);
                 break;
@@ -275,12 +285,14 @@ public class DocumentService : IDocumentService
                     .FirstOrDefaultAsync();
                 if (photoTeam == null)
                 {
-                    photoTeam = new Teams
+                    photoTeam = new Domain.Entities.Teams
                     {
                         Id = Guid.NewGuid(),
                         PackageId = actualPackageId,
                         CreatedAt = now,
-                        CreatedBy = createdBy
+                        UpdatedAt = now,
+                        CreatedBy = createdBy,
+                        UpdatedBy = createdBy
                     };
                     await _context.Teams.AddAsync(photoTeam);
                     await _context.SaveChangesAsync();
@@ -297,7 +309,9 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.TeamPhotos.AddAsync(teamPhoto);
                 break;
@@ -562,6 +576,9 @@ public class DocumentService : IDocumentService
                                             parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount }));
                                         csEntity.ElementWiseQuantityJson = System.Text.Json.JsonSerializer.Serialize(
                                             parsed.CostBreakdowns.Select(b => new { b.Category, b.Quantity, b.Unit }));
+                                        // Full breakdown with all fields (cost type flags included)
+                                        csEntity.CostBreakdownJson = System.Text.Json.JsonSerializer.Serialize(
+                                            parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount, b.Quantity, b.Unit, b.IsFixedCost, b.IsVariableCost }));
                                     }
 
                                     _logger.LogInformation(
@@ -811,5 +828,25 @@ public class DocumentService : IDocumentService
                         { "documentType", new[] { $"Unsupported document type: {documentType}" } }
                     });
         }
+    }
+
+    /// <inheritdoc />
+    public async Task TriggerPhotoExtractionAsync(Guid photoId, string blobUrl)
+    {
+        _logger.LogInformation("Triggering photo extraction for {PhotoId}, BlobUrl: {BlobUrl}", photoId, blobUrl);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ExtractDocumentDataAsync(photoId, blobUrl, DocumentType.TeamPhoto);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background photo extraction failed for {PhotoId}", photoId);
+            }
+        });
+
+        await Task.CompletedTask;
     }
 }

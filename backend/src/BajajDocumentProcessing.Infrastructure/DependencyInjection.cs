@@ -1,9 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Bot.Builder;
+using Microsoft.Bot.Builder.Integration.AspNet.Core;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Infrastructure.Persistence;
 using BajajDocumentProcessing.Infrastructure.Services;
+using BajajDocumentProcessing.Infrastructure.Services.Teams;
 
 namespace BajajDocumentProcessing.Infrastructure;
 
@@ -17,9 +20,11 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         // Database configuration
+        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(
-                configuration.GetConnectionString("DefaultConnection"),
+                connectionString,
                 b => b.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName)));
 
         services.AddScoped<IApplicationDbContext>(provider => 
@@ -115,6 +120,11 @@ public static class DependencyInjection
             services.AddScoped<IAnalyticsAgent, NullAnalyticsAgent>();
         }
 
+        // Notification Data Service (Scoped — depends on DbContext)
+        services.AddScoped<INotificationDataService, NotificationDataService>();
+
+        // Notification Dispatcher (Scoped — depends on DbContext)
+        services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
         // Submission Number Service
         services.AddScoped<ISubmissionNumberService, SubmissionNumberService>();
 
@@ -170,6 +180,24 @@ public static class DependencyInjection
         services.AddSingleton<BackgroundWorkflowProcessor>();
         services.AddHostedService(provider => provider.GetRequiredService<BackgroundWorkflowProcessor>());
         services.AddSingleton<IBackgroundWorkflowQueue, BackgroundWorkflowQueue>();
+
+        // Teams Bot Framework (Singleton — required by Bot Framework SDK)
+        services.AddSingleton<IBotFrameworkHttpAdapter, AdapterWithErrorHandler>();
+        services.AddSingleton<PilotTeamsConfig>(sp =>
+        {
+            var config = new PilotTeamsConfig
+            {
+                IsPilotMode = configuration.GetValue<bool>("TeamsBot:IsPilotMode", true)
+            };
+            return config;
+        });
+        services.AddSingleton<IBot, TeamsBotService>();
+
+        // Teams proactive notification service (Singleton — depends on Singleton adapter + PilotConfig)
+        services.AddSingleton<ITeamsNotificationService, TeamsNotificationService>();
+
+        // Teams Adaptive Card templating service (Singleton — stateless, loads templates once)
+        services.AddSingleton<ITeamsCardService, TeamsCardService>();
         
         return services;
     }

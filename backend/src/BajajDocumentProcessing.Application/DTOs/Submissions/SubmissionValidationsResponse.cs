@@ -85,6 +85,12 @@ public class DocumentValidationDto
     /// </summary>
     [JsonPropertyName("validatedAt")]
     public DateTime ValidatedAt { get; set; }
+    
+    /// <summary>
+    /// Detailed validation results JSON with proactive, reactive, and checks
+    /// </summary>
+    [JsonPropertyName("validationDetailsJson")]
+    public string? ValidationDetailsJson { get; set; }
 }
 
 /// <summary>

@@ -48,7 +48,7 @@ public class CircleHeadAssignmentService : ICircleHeadAssignmentService
         // Load-balance: assign to CIRCLE HEAD with fewest pending submissions
         var leastLoaded = await _db.DocumentPackages
             .Where(dp => circleHeadUserIds.Contains(dp.AssignedCircleHeadUserId)
-                          && (dp.State == PackageState.PendingASM || dp.State == PackageState.PendingRA)
+                          && (dp.State == PackageState.PendingCH || dp.State == PackageState.PendingRA)
                           && !dp.IsDeleted)
             .GroupBy(dp => dp.AssignedCircleHeadUserId)
             .Select(g => new { UserId = g.Key, Count = g.Count() })

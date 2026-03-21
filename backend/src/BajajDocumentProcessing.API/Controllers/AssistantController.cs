@@ -39,53 +39,68 @@ public class AssistantController : ControllerBase
     /// Process an assistant message and return the next response.
     /// </summary>
     [HttpPost("message")]
-    [Authorize(Roles = "Agency")]
+    [Authorize(Roles = "Agency,ASM,HQ")]
     public async Task<IActionResult> ProcessMessage(
         [FromBody] AssistantRequest request,
         CancellationToken ct = default)
     {
         var agencyId = await GetAgencyIdAsync(ct);
-        if (agencyId == null) return Forbid();
+        var action = request.Action?.ToLowerInvariant();
+
+        // Actions that don't require an agencyId (available to all roles)
+        var publicActions = new HashSet<string>
+        {
+            "greet", "create_request", "view_requests", "pending_approvals",
+            "search_state", "list_states", "submit_team_name",
+            "search_dealer", "select_dealer", "submit_team_dates",
+            "reupload_invoice", "reupload_activity_summary",
+            "reupload_cost_summary", "reupload_enquiry_dump",
+            "continue_after_cost_summary", "continue_after_teams",
+            "save_draft_from_chat",
+        };
+
+        if (!publicActions.Contains(action ?? "") && agencyId == null)
+            return Forbid();
 
         try
         {
-            var response = request.Action?.ToLowerInvariant() switch
+            var response = action switch
             {
                 "greet" => BuildGreeting(),
                 "create_request" => BuildCreateRequestPrompt(),
                 "view_requests" => BuildViewRequestsPrompt(),
                 "pending_approvals" => BuildPendingApprovalsPrompt(),
-                "search_po" => await HandleSearchPO(request, agencyId.Value, ct),
-                "select_po" => await HandleSelectPO(request, agencyId.Value, ct),
-                "select_state" => await HandleSelectState(request, agencyId.Value, ct),
+                "search_po" => await HandleSearchPO(request, agencyId!.Value, ct),
+                "select_po" => await HandleSelectPO(request, agencyId!.Value, ct),
+                "select_state" => await HandleSelectState(request, agencyId!.Value, ct),
                 "search_state" => HandleSearchState(request, ct),
                 "list_states" => HandleListAllStates(),
-                "invoice_uploaded" => await HandleInvoiceUploaded(request, agencyId.Value, ct),
-                "continue_invoice" => await HandleContinueInvoice(request, agencyId.Value, ct),
+                "invoice_uploaded" => await HandleInvoiceUploaded(request, agencyId!.Value, ct),
+                "continue_invoice" => await HandleContinueInvoice(request, agencyId!.Value, ct),
                 "reupload_invoice" => HandleReuploadInvoice(),
-                "activity_summary_uploaded" => await HandleActivitySummaryUploaded(request, agencyId.Value, ct),
+                "activity_summary_uploaded" => await HandleActivitySummaryUploaded(request, agencyId!.Value, ct),
                 "reupload_activity_summary" => HandleReuploadActivitySummary(),
-                "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId.Value, ct),
-                "start_team_entry" => await HandleStartTeamEntry(request, agencyId.Value, ct),
-                "submit_team_count" => await HandleSubmitTeamCount(request, agencyId.Value, ct),
+                "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId!.Value, ct),
+                "start_team_entry" => await HandleStartTeamEntry(request, agencyId!.Value, ct),
+                "submit_team_count" => await HandleSubmitTeamCount(request, agencyId!.Value, ct),
                 "submit_team_name" => HandleSubmitTeamName(request),
                 "search_dealer" => await HandleSearchDealer(request, ct),
                 "select_dealer" => HandleSelectDealer(request),
                 "submit_team_dates" => HandleSubmitTeamDates(request),
-                "confirm_team" => await HandleConfirmTeam(request, agencyId.Value, ct),
-                "start_photo_upload" => await HandleStartPhotoUpload(request, agencyId.Value, ct),
-                "photos_uploaded" => await HandlePhotosUploaded(request, agencyId.Value, ct),
-                "replace_photo" => await HandleReplacePhoto(request, agencyId.Value, ct),
-                "add_more_photos" => await HandleAddMorePhotos(request, agencyId.Value, ct),
-                "done_team_photos" => await HandleDoneTeamPhotos(request, agencyId.Value, ct),
-                "cost_summary_uploaded" => await HandleCostSummaryUploaded(request, agencyId.Value, ct),
+                "confirm_team" => await HandleConfirmTeam(request, agencyId!.Value, ct),
+                "start_photo_upload" => await HandleStartPhotoUpload(request, agencyId!.Value, ct),
+                "photos_uploaded" => await HandlePhotosUploaded(request, agencyId!.Value, ct),
+                "replace_photo" => await HandleReplacePhoto(request, agencyId!.Value, ct),
+                "add_more_photos" => await HandleAddMorePhotos(request, agencyId!.Value, ct),
+                "done_team_photos" => await HandleDoneTeamPhotos(request, agencyId!.Value, ct),
+                "cost_summary_uploaded" => await HandleCostSummaryUploaded(request, agencyId!.Value, ct),
                 "reupload_cost_summary" => HandleReuploadCostSummary(),
                 "continue_after_cost_summary" => HandleContinueAfterCostSummary(request),
                 "continue_after_teams" => HandleEnquiryDumpUpload(),
-                "enquiry_dump_uploaded" => await HandleEnquiryDumpUploaded(request, agencyId.Value, ct),
+                "enquiry_dump_uploaded" => await HandleEnquiryDumpUploaded(request, agencyId!.Value, ct),
                 "reupload_enquiry_dump" => HandleEnquiryDumpUpload(),
-                "continue_after_enquiry" => await HandleFinalReview(request, agencyId.Value, ct),
-                "submit_from_chat" => await HandleSubmitFromChat(request, agencyId.Value, ct),
+                "continue_after_enquiry" => await HandleFinalReview(request, agencyId!.Value, ct),
+                "submit_from_chat" => await HandleSubmitFromChat(request, agencyId!.Value, ct),
                 "save_draft_from_chat" => HandleSaveDraftFromChat(),
                 _ => BuildGreeting(),
             };
@@ -489,10 +504,13 @@ public class AssistantController : ControllerBase
             var existingResult = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
 
+            var validationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
             if (existingResult != null)
             {
                 existingResult.AllValidationsPassed = failCount == 0;
                 existingResult.RuleResultsJson = ruleResultsJson;
+                existingResult.ValidationDetailsJson = validationDetailsJson;
                 existingResult.FailureReason = failureReason;
                 existingResult.UpdatedAt = DateTime.UtcNow;
             }
@@ -505,6 +523,7 @@ public class AssistantController : ControllerBase
                     DocumentId = docId,
                     AllValidationsPassed = failCount == 0,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = validationDetailsJson,
                     FailureReason = failureReason,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
@@ -870,6 +889,8 @@ public class AssistantController : ControllerBase
                 : warnCount > 0 ? string.Join("; ", rules.Where(r => r.IsWarning).Select(r => r.Message ?? r.Label))
                 : null;
 
+            var validationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
             var existing = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
 
@@ -877,6 +898,7 @@ public class AssistantController : ControllerBase
             {
                 existing.AllValidationsPassed = failCount == 0;
                 existing.RuleResultsJson = ruleResultsJson;
+                existing.ValidationDetailsJson = validationDetailsJson;
                 existing.FailureReason = failureReason;
                 existing.UpdatedAt = DateTime.UtcNow;
             }
@@ -889,6 +911,7 @@ public class AssistantController : ControllerBase
                     DocumentId = docId,
                     AllValidationsPassed = failCount == 0,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = validationDetailsJson,
                     FailureReason = failureReason,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
@@ -1222,8 +1245,8 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "dealer_search_results",
-            Message = dealers.Count > 0
-                ? $"Found {dealers.Count} dealer(s) matching \"{query}\". Select one:"
+            Message = dealers.Count() > 0
+                ? $"Found {dealers.Count()} dealer(s) matching \"{query}\". Select one:"
                 : $"No dealers found matching \"{query}\". Try a different name.",
             Dealers = dealers,
             InputHint = "Type dealer name (min 2 chars)...",
@@ -1562,10 +1585,14 @@ public class AssistantController : ControllerBase
 
                 var existing = await _context.ValidationResults
                     .FirstOrDefaultAsync(v => v.DocumentId == photoId, ct);
+
+                var validationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
                 if (existing != null)
                 {
                     existing.AllValidationsPassed = allPassed;
                     existing.RuleResultsJson = ruleJson;
+                    existing.ValidationDetailsJson = validationDetailsJson;
                     existing.FailureReason = allPassed ? null : string.Join("; ", rules.Where(r => !r.Passed).Select(r => r.Message ?? r.Label));
                     existing.UpdatedAt = DateTime.UtcNow;
                 }
@@ -1578,6 +1605,7 @@ public class AssistantController : ControllerBase
                         DocumentId = photoId,
                         AllValidationsPassed = allPassed,
                         RuleResultsJson = ruleJson,
+                        ValidationDetailsJson = validationDetailsJson,
                         FailureReason = allPassed ? null : string.Join("; ", rules.Where(r => !r.Passed).Select(r => r.Message ?? r.Label)),
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow,
@@ -1700,10 +1728,14 @@ public class AssistantController : ControllerBase
             }));
             var existingVr = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.TeamPhoto && v.DocumentId == newPhotoId, ct);
+
+            var photoValidationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
             if (existingVr != null)
             {
                 existingVr.AllValidationsPassed = !newPhoto.IsFlaggedForReview;
                 existingVr.RuleResultsJson = ruleJson;
+                existingVr.ValidationDetailsJson = photoValidationDetailsJson;
                 existingVr.UpdatedAt = DateTime.UtcNow;
             }
             else
@@ -1715,6 +1747,7 @@ public class AssistantController : ControllerBase
                     DocumentId = newPhotoId,
                     AllValidationsPassed = !newPhoto.IsFlaggedForReview,
                     RuleResultsJson = ruleJson,
+                    ValidationDetailsJson = photoValidationDetailsJson,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
                 });
@@ -1990,6 +2023,8 @@ public class AssistantController : ControllerBase
                 extractedValue = r.ExtractedValue, message = r.Message,
             }));
 
+            var enquiryValidationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
             var existing = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
 
@@ -1997,6 +2032,7 @@ public class AssistantController : ControllerBase
             {
                 existing.AllValidationsPassed = failCount == 0;
                 existing.RuleResultsJson = ruleResultsJson;
+                existing.ValidationDetailsJson = enquiryValidationDetailsJson;
                 existing.FailureReason = failCount > 0 ? string.Join("; ", rules.Where(r => !r.Passed).Select(r => r.Message ?? r.Label)) : null;
                 existing.UpdatedAt = DateTime.UtcNow;
             }
@@ -2009,6 +2045,7 @@ public class AssistantController : ControllerBase
                     DocumentId = docId,
                     AllValidationsPassed = failCount == 0,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = enquiryValidationDetailsJson,
                     FailureReason = failCount > 0 ? string.Join("; ", rules.Where(r => !r.Passed).Select(r => r.Message ?? r.Label)) : null,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
@@ -2351,7 +2388,7 @@ public class AssistantController : ControllerBase
         var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
         package.SubmissionNumber = submissionNumber;
 
-        package.State = Domain.Enums.PackageState.PendingASM;
+        package.State = Domain.Enums.PackageState.PendingCH;
         package.CurrentStep = 10;
         package.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
@@ -2647,6 +2684,8 @@ public class AssistantController : ControllerBase
                 : warnCount > 0 ? string.Join("; ", rules.Where(r => r.IsWarning).Select(r => r.Message ?? r.Label))
                 : null;
 
+            var costValidationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
             var existing = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
 
@@ -2654,6 +2693,7 @@ public class AssistantController : ControllerBase
             {
                 existing.AllValidationsPassed = failCount == 0;
                 existing.RuleResultsJson = ruleResultsJson;
+                existing.ValidationDetailsJson = costValidationDetailsJson;
                 existing.FailureReason = failureReason;
                 existing.UpdatedAt = DateTime.UtcNow;
             }
@@ -2666,6 +2706,7 @@ public class AssistantController : ControllerBase
                     DocumentId = docId,
                     AllValidationsPassed = failCount == 0,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = costValidationDetailsJson,
                     FailureReason = failureReason,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
@@ -3265,6 +3306,39 @@ public class AssistantController : ControllerBase
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                           ?? User.FindFirst("sub")?.Value;
         return Guid.TryParse(userIdClaim, out var userId) ? userId : null;
+    }
+
+    /// <summary>
+    /// Builds a unified ValidationDetailsJson combining source info and rule results.
+    /// Used by both proactive (assistant) and reactive (ValidationAgent) flows.
+    /// </summary>
+    private static string BuildValidationDetailsJson(string source, List<ValidationRuleResult> rules)
+    {
+        var details = new
+        {
+            source,
+            validatedAt = DateTime.UtcNow.ToString("o"),
+            totalRules = rules.Count,
+            passed = rules.Count(r => r.Passed && !r.IsWarning),
+            failed = rules.Count(r => !r.Passed && !r.IsWarning),
+            warnings = rules.Count(r => r.IsWarning),
+            rules = rules.Select(r => new
+            {
+                ruleCode = r.RuleCode,
+                type = r.Type,
+                passed = r.Passed,
+                isWarning = r.IsWarning,
+                label = r.Label,
+                extractedValue = r.ExtractedValue,
+                message = r.Message,
+            })
+        };
+
+        return JsonSerializer.Serialize(details, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        });
     }
 }
 

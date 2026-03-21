@@ -39,8 +39,8 @@ public class DatabaseRedesignEntityTests
         Assert.Equal(1, (int)PackageState.Uploaded);
         Assert.Equal(2, (int)PackageState.Extracting);
         Assert.Equal(3, (int)PackageState.Validating);
-        Assert.Equal(4, (int)PackageState.PendingASM);
-        Assert.Equal(5, (int)PackageState.ASMRejected);
+        Assert.Equal(4, (int)PackageState.PendingCH);
+        Assert.Equal(5, (int)PackageState.CHRejected);
         Assert.Equal(6, (int)PackageState.PendingRA);
         Assert.Equal(7, (int)PackageState.RARejected);
         Assert.Equal(0, (int)PackageState.Draft);
@@ -162,7 +162,7 @@ public class DatabaseRedesignEntityTests
         {
             Id = packageId,
             SubmittedByUserId = userId,
-            State = PackageState.PendingASM,
+            State = PackageState.PendingCH,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -262,7 +262,7 @@ public class DatabaseRedesignEntityTests
         await context.DocumentPackages.AddAsync(new DocumentPackage
         {
             Id = packageId, SubmittedByUserId = userId,
-            State = PackageState.PendingASM, CreatedAt = DateTime.UtcNow
+            State = PackageState.PendingCH, CreatedAt = DateTime.UtcNow
         });
 
         var comment = new RequestComments

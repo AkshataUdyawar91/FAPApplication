@@ -136,6 +136,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
+    var seedLogger = services.GetRequiredService<ILogger<Program>>();
     try
     {
         var context = services.GetRequiredService<ApplicationDbContext>();
@@ -145,20 +146,27 @@ using (var scope = app.Services.CreateScope())
         {
             await context.Database.MigrateAsync();
         }
-        catch (Microsoft.Data.SqlClient.SqlException ex) when (ex.Number == 2714)
+        catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2714)
         {
-            // "There is already an object named 'X' in the database"
-            // Tables exist but __EFMigrationsHistory is out of sync.
-            // Log and continue — the database schema is already correct.
-            var migrationLogger = services.GetRequiredService<ILogger<Program>>();
-            migrationLogger.LogWarning("Migration skipped: tables already exist. Run MARK_MIGRATIONS_APPLIED.sql to sync migration history. Error: {Message}", ex.Message);
+            // Error 2714 = "object already exists" — tables exist but __EFMigrationsHistory is out of sync.
+            // Safe to continue; the schema is already in place.
+            seedLogger.LogWarning("Migration skipped: tables already exist (error 2714). Marking migrations as applied.");
+
+            // Mark all pending migrations as applied so this doesn't repeat
+            var pendingMigrations = await context.Database.GetPendingMigrationsAsync();
+            foreach (var migration in pendingMigrations)
+            {
+                await context.Database.ExecuteSqlRawAsync(
+                    "INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion]) VALUES ({0}, {1})",
+                    migration, "8.0.0");
+                seedLogger.LogInformation("Marked migration {Migration} as applied", migration);
+            }
         }
         await ApplicationDbContextSeed.SeedAsync(context);
     }
     catch (Exception ex)
     {
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred while seeding the database.");
+        seedLogger.LogError(ex, "An error occurred while seeding the database. App will continue starting.");
     }
 }
 
@@ -169,13 +177,12 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
     app.UseSwaggerUI();
 }
 
-app.UseCors("AllowFlutterApp");
-
-// Only redirect to HTTPS in production — breaks Flutter web (Chrome) in development
+// Only redirect to HTTPS in production — breaks Bot Framework Emulator and Flutter web in dev
 if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
+app.UseCors("AllowFlutterApp");
 
 // Correlation ID middleware - must be early in pipeline
 app.UseMiddleware<CorrelationIdMiddleware>();

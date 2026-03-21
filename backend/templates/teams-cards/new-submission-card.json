@@ -1,0 +1,143 @@
+{
+  "type": "AdaptiveCard",
+  "version": "1.4",
+  "body": [
+    {
+      "type": "ColumnSet",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "stretch",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "New Claim Submitted",
+              "size": "Medium",
+              "weight": "Bolder",
+              "color": "Accent"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "auto",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${notificationTimestamp}",
+              "size": "Small",
+              "isSubtle": true,
+              "horizontalAlignment": "Right"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "FactSet",
+      "separator": true,
+      "facts": [
+        { "title": "FAP ID:", "value": "${submissionNumber}" },
+        { "title": "Agency:", "value": "${agencyName}" },
+        { "title": "PO Number:", "value": "${poNumber}" },
+        { "title": "Invoice:", "value": "${invoiceNumber}" },
+        { "title": "Amount:", "value": "${invoiceAmount}" },
+        { "title": "State:", "value": "${state}" },
+        { "title": "Submitted:", "value": "${submittedAtFormatted}" },
+        { "title": "Teams:", "value": "${teamPhotoSummary}" },
+        { "title": "Inquiries:", "value": "${inquirySummary}" }
+      ]
+    },
+    {
+      "type": "Container",
+      "separator": true,
+      "style": "${cardStyle}",
+      "items": [
+        {
+          "type": "TextBlock",
+          "text": "${recommendationEmoji} Recommended: ${recommendation} (${confidenceScoreFormatted})",
+          "weight": "Bolder",
+          "wrap": true
+        },
+        {
+          "type": "TextBlock",
+          "text": "${checksSummary}",
+          "size": "Small",
+          "isSubtle": true,
+          "wrap": true
+        },
+        {
+          "type": "TextBlock",
+          "text": "All checks passed ✅",
+          "size": "Small",
+          "color": "Good",
+          "wrap": true,
+          "$when": "${allChecksPassed}"
+        },
+        {
+          "type": "Container",
+          "$when": "${!allChecksPassed}",
+          "items": [
+            {
+              "type": "TextBlock",
+              "$data": "${topIssues}",
+              "text": "• ${severity}: ${description}",
+              "size": "Small",
+              "wrap": true
+            },
+            {
+              "type": "TextBlock",
+              "text": "${remainingIssueText}",
+              "size": "Small",
+              "isSubtle": true,
+              "wrap": true,
+              "$when": "${remainingIssueCount > 0}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Container",
+      "separator": true,
+      "items": [
+        {
+          "type": "TextBlock",
+          "text": "${poBalanceMessage}",
+          "size": "Small",
+          "isSubtle": true,
+          "wrap": true
+        }
+      ]
+    },
+    {
+      "type": "ActionSet",
+      "separator": true,
+      "actions": [
+        {
+          "type": "Action.Submit",
+          "title": "Quick Approve",
+          "style": "positive",
+          "data": {
+            "action": "quick_approve",
+            "submissionId": "${submissionId}"
+          },
+          "$when": "${showQuickApprove}"
+        },
+        {
+          "type": "Action.Submit",
+          "title": "Review Details",
+          "data": {
+            "action": "review_details",
+            "submissionId": "${submissionId}"
+          }
+        },
+        {
+          "type": "Action.OpenUrl",
+          "title": "Open in Portal",
+          "url": "${portalUrl}"
+        }
+      ]
+    }
+  ]
+}

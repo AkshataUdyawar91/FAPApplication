@@ -428,7 +428,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
                                          && dp.Invoices.Any(i => i.InvoiceNumber == invoice.InvoiceNumber)
                                          && !dp.IsDeleted
                                          && dp.Id != package.Id
-                                         && dp.State != PackageState.ASMRejected
+                                         && dp.State != PackageState.CHRejected
                                          && dp.State != PackageState.RARejected)
                             .FirstOrDefaultAsync(ct);
 
@@ -674,7 +674,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
         if (request.Action == "add_team" && !string.IsNullOrEmpty(request.PayloadJson))
         {
             var payload = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
-            var team = new Teams
+            var team = new Domain.Entities.Teams
             {
                 Id = Guid.NewGuid(),
                 PackageId = package.Id,
@@ -1017,7 +1017,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
             // Load-balance: assign to CIRCLE HEAD with fewest pending submissions
             var leastLoaded = await _db.DocumentPackages
                 .Where(dp => circleHeads.Contains(dp.AssignedCircleHeadUserId)
-                              && (dp.State == PackageState.PendingASM || dp.State == PackageState.PendingRA)
+                              && (dp.State == PackageState.PendingCH || dp.State == PackageState.PendingRA)
                               && !dp.IsDeleted)
                 .GroupBy(dp => dp.AssignedCircleHeadUserId)
                 .Select(g => new { UserId = g.Key, Count = g.Count() })
@@ -1029,7 +1029,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
         // else: no CIRCLE HEAD found — leave null for manual assignment
 
         // Transition to Submitted
-        package.State = PackageState.PendingASM;
+        package.State = PackageState.PendingCH;
         package.CurrentStep = (int)ConversationStep.Submitted;
         package.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
@@ -1304,8 +1304,8 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
 
     private static ConversationResponse BuildTeamLoopResponse(
         DocumentPackage package,
-        List<Teams> allTeams,
-        Teams? currentTeam,
+        List<Domain.Entities.Teams> allTeams,
+        Domain.Entities.Teams? currentTeam,
         string message)
     {
         var photoCount = currentTeam?.Photos.Count(p => !p.IsDeleted) ?? 0;

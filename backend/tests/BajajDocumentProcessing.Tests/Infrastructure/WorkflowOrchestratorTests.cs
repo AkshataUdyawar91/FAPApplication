@@ -13,7 +13,7 @@ namespace BajajDocumentProcessing.Tests.Infrastructure;
 
 /// <summary>
 /// Tests for WorkflowOrchestrator state transitions.
-/// Verifies the complete submission flow: Uploaded → Extracting → Validating → PendingASM.
+/// Verifies the complete submission flow: Uploaded → Extracting → Validating → PendingCH.
 /// Also verifies that workflow failures are handled gracefully.
 /// </summary>
 public class WorkflowOrchestratorTests : IDisposable
@@ -24,10 +24,14 @@ public class WorkflowOrchestratorTests : IDisposable
     private readonly Mock<IConfidenceScoreService> _mockConfidenceScoreService;
     private readonly Mock<IRecommendationAgent> _mockRecommendationAgent;
     private readonly Mock<INotificationAgent> _mockNotificationAgent;
+    private readonly Mock<INotificationDispatcher> _mockNotificationDispatcher;
+    private readonly Mock<IEmailAgent> _mockEmailAgent;
     private readonly Mock<ISubmissionNotificationService> _mockSubmissionNotificationService;
     private readonly Mock<IFileStorageService> _mockFileStorageService;
     private readonly Mock<ILogger<WorkflowOrchestrator>> _mockLogger;
     private readonly Mock<ICorrelationIdService> _mockCorrelationIdService;
+    private readonly Mock<ICircleHeadAssignmentService> _mockCircleHeadAssignmentService;
+    private readonly Mock<ISubmissionNumberService> _mockSubmissionNumberService;
     private readonly WorkflowOrchestrator _orchestrator;
 
     public WorkflowOrchestratorTests()
@@ -42,14 +46,19 @@ public class WorkflowOrchestratorTests : IDisposable
         _mockConfidenceScoreService = new Mock<IConfidenceScoreService>();
         _mockRecommendationAgent = new Mock<IRecommendationAgent>();
         _mockNotificationAgent = new Mock<INotificationAgent>();
+        _mockNotificationDispatcher = new Mock<INotificationDispatcher>();
+        _mockEmailAgent = new Mock<IEmailAgent>();
         _mockSubmissionNotificationService = new Mock<ISubmissionNotificationService>();
         _mockFileStorageService = new Mock<IFileStorageService>();
         _mockLogger = new Mock<ILogger<WorkflowOrchestrator>>();
         _mockCorrelationIdService = new Mock<ICorrelationIdService>();
+        _mockCircleHeadAssignmentService = new Mock<ICircleHeadAssignmentService>();
+        _mockSubmissionNumberService = new Mock<ISubmissionNumberService>();
 
         _mockCorrelationIdService.Setup(c => c.GetCorrelationId()).Returns("test-correlation-id");
         // Default: all blobs are accessible in tests
         _mockFileStorageService.Setup(f => f.IsBlobAccessibleAsync(It.IsAny<string>())).ReturnsAsync(true);
+        _mockSubmissionNumberService.Setup(s => s.GenerateAsync(It.IsAny<CancellationToken>())).ReturnsAsync("CIQ-2026-99999");
 
         _orchestrator = new WorkflowOrchestrator(
             _context,
@@ -58,10 +67,14 @@ public class WorkflowOrchestratorTests : IDisposable
             _mockConfidenceScoreService.Object,
             _mockRecommendationAgent.Object,
             _mockNotificationAgent.Object,
+            _mockNotificationDispatcher.Object,
+            _mockEmailAgent.Object,
             _mockSubmissionNotificationService.Object,
             _mockFileStorageService.Object,
             _mockLogger.Object,
-            _mockCorrelationIdService.Object);
+            _mockCorrelationIdService.Object,
+            _mockCircleHeadAssignmentService.Object,
+            _mockSubmissionNumberService.Object);
     }
 
     public void Dispose()
@@ -155,10 +168,10 @@ public class WorkflowOrchestratorTests : IDisposable
     #region Happy Path Tests
 
     /// <summary>
-    /// A successful workflow must end at PendingASM.
+    /// A successful workflow must end at PendingCH.
     /// </summary>
     [Fact]
-    public async Task ProcessSubmission_HappyPath_EndsAtPendingASM()
+    public async Task ProcessSubmission_HappyPath_EndsAtPendingCH()
     {
         // Arrange
         var package = await SeedUploadedPackageAsync();
@@ -170,14 +183,14 @@ public class WorkflowOrchestratorTests : IDisposable
         // Assert
         Assert.True(result, "Workflow should succeed");
         var updated = await _context.DocumentPackages.FindAsync(package.Id);
-        Assert.Equal(PackageState.PendingASM, updated!.State);
+        Assert.Equal(PackageState.PendingCH, updated!.State);
     }
 
     /// <summary>
-    /// A new submission must NEVER end at ASMRejected on the happy path.
+    /// A new submission must NEVER end at CHRejected on the happy path.
     /// </summary>
     [Fact]
-    public async Task ProcessSubmission_HappyPath_NeverSetsASMRejected()
+    public async Task ProcessSubmission_HappyPath_NeverSetsCHRejected()
     {
         // Arrange
         var package = await SeedUploadedPackageAsync();
@@ -188,7 +201,7 @@ public class WorkflowOrchestratorTests : IDisposable
 
         // Assert
         var updated = await _context.DocumentPackages.FindAsync(package.Id);
-        Assert.NotEqual(PackageState.ASMRejected, updated!.State);
+        Assert.NotEqual(PackageState.CHRejected, updated!.State);
     }
 
     #endregion
@@ -196,10 +209,10 @@ public class WorkflowOrchestratorTests : IDisposable
     #region Failure / Compensation Tests
 
     /// <summary>
-    /// When extraction fails, the package should not end at PendingASM or Approved.
+    /// When extraction fails, the package should not end at PendingCH or Approved.
     /// </summary>
     [Fact]
-    public async Task ProcessSubmission_ExtractionFails_DoesNotReachPendingASM()
+    public async Task ProcessSubmission_ExtractionFails_DoesNotReachPendingCH()
     {
         // Arrange
         var package = await SeedUploadedPackageAsync();
@@ -216,15 +229,15 @@ public class WorkflowOrchestratorTests : IDisposable
         // Assert
         Assert.False(result, "Workflow should fail");
         var updated = await _context.DocumentPackages.FindAsync(package.Id);
-        Assert.NotEqual(PackageState.PendingASM, updated!.State);
+        Assert.NotEqual(PackageState.PendingCH, updated!.State);
         Assert.NotEqual(PackageState.Approved, updated.State);
     }
 
     /// <summary>
-    /// When validation fails, the package should not reach PendingASM.
+    /// When validation fails, the package should not reach PendingCH.
     /// </summary>
     [Fact]
-    public async Task ProcessSubmission_ValidationFails_DoesNotReachPendingASM()
+    public async Task ProcessSubmission_ValidationFails_DoesNotReachPendingCH()
     {
         // Arrange
         var package = await SeedUploadedPackageAsync();
@@ -244,14 +257,14 @@ public class WorkflowOrchestratorTests : IDisposable
         // Assert
         Assert.False(result);
         var updated = await _context.DocumentPackages.FindAsync(package.Id);
-        Assert.NotEqual(PackageState.PendingASM, updated!.State);
+        Assert.NotEqual(PackageState.PendingCH, updated!.State);
     }
 
     /// <summary>
-    /// When scoring fails, the package should not reach PendingASM.
+    /// When scoring fails, the package should not reach PendingCH.
     /// </summary>
     [Fact]
-    public async Task ProcessSubmission_ScoringFails_DoesNotReachPendingASM()
+    public async Task ProcessSubmission_ScoringFails_DoesNotReachPendingCH()
     {
         // Arrange
         var package = await SeedUploadedPackageAsync();
@@ -275,14 +288,14 @@ public class WorkflowOrchestratorTests : IDisposable
         // Assert
         Assert.False(result);
         var updated = await _context.DocumentPackages.FindAsync(package.Id);
-        Assert.NotEqual(PackageState.PendingASM, updated!.State);
+        Assert.NotEqual(PackageState.PendingCH, updated!.State);
     }
 
     /// <summary>
-    /// When recommendation fails, the package should not reach PendingASM.
+    /// When recommendation fails, the package should not reach PendingCH.
     /// </summary>
     [Fact]
-    public async Task ProcessSubmission_RecommendationFails_DoesNotReachPendingASM()
+    public async Task ProcessSubmission_RecommendationFails_DoesNotReachPendingCH()
     {
         // Arrange
         var package = await SeedUploadedPackageAsync();
@@ -309,7 +322,7 @@ public class WorkflowOrchestratorTests : IDisposable
         // Assert
         Assert.False(result);
         var updated = await _context.DocumentPackages.FindAsync(package.Id);
-        Assert.NotEqual(PackageState.PendingASM, updated!.State);
+        Assert.NotEqual(PackageState.PendingCH, updated!.State);
     }
 
     #endregion
@@ -317,14 +330,14 @@ public class WorkflowOrchestratorTests : IDisposable
     #region Idempotency Tests
 
     /// <summary>
-    /// Packages already in PendingASM must not be reprocessed.
+    /// Packages already in PendingCH must not be reprocessed.
     /// </summary>
     [Fact]
-    public async Task ProcessSubmission_AlreadyPendingASM_SkipsProcessing()
+    public async Task ProcessSubmission_AlreadyPendingCH_SkipsProcessing()
     {
         // Arrange
         var package = await SeedUploadedPackageAsync();
-        package.State = PackageState.PendingASM;
+        package.State = PackageState.PendingCH;
         await _context.SaveChangesAsync();
 
         // Act
@@ -333,19 +346,19 @@ public class WorkflowOrchestratorTests : IDisposable
         // Assert
         Assert.True(result);
         var updated = await _context.DocumentPackages.FindAsync(package.Id);
-        Assert.Equal(PackageState.PendingASM, updated!.State);
+        Assert.Equal(PackageState.PendingCH, updated!.State);
         _mockDocumentAgent.Verify(d => d.ExtractPOAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>
-    /// Packages in ASMRejected state must not be reprocessed by the orchestrator.
+    /// Packages in CHRejected state must not be reprocessed by the orchestrator.
     /// </summary>
     [Fact]
-    public async Task ProcessSubmission_ASMRejected_SkipsProcessing()
+    public async Task ProcessSubmission_CHRejected_SkipsProcessing()
     {
         // Arrange
         var package = await SeedUploadedPackageAsync();
-        package.State = PackageState.ASMRejected;
+        package.State = PackageState.CHRejected;
         await _context.SaveChangesAsync();
 
         // Act
@@ -354,7 +367,7 @@ public class WorkflowOrchestratorTests : IDisposable
         // Assert
         Assert.True(result);
         var updated = await _context.DocumentPackages.FindAsync(package.Id);
-        Assert.Equal(PackageState.ASMRejected, updated!.State);
+        Assert.Equal(PackageState.CHRejected, updated!.State);
         _mockDocumentAgent.Verify(d => d.ExtractPOAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -363,12 +376,12 @@ public class WorkflowOrchestratorTests : IDisposable
     #region PackageState Enum Tests
 
     /// <summary>
-    /// PendingASM and ASMRejected must be distinct values.
+    /// PendingCH and CHRejected must be distinct values.
     /// </summary>
     [Fact]
-    public void PackageState_PendingASM_IsDifferentFromASMRejected()
+    public void PackageState_PendingCH_IsDifferentFromCHRejected()
     {
-        Assert.NotEqual((int)PackageState.PendingASM, (int)PackageState.ASMRejected);
+        Assert.NotEqual((int)PackageState.PendingCH, (int)PackageState.CHRejected);
     }
 
     /// <summary>

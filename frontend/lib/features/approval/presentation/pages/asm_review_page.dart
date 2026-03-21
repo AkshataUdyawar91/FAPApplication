@@ -1,6 +1,8 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/responsive/responsive.dart';
@@ -12,9 +14,10 @@ import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/kpi_card.dart';
 import '../../../../core/widgets/quarter_year_filter.dart';
 import '../../../../core/utils/currency_formatter.dart';
+import '../../../../core/router/app_router.dart';
 import '../../../analytics/data/models/quarterly_fap_kpi_model.dart';
 
-class ASMReviewPage extends StatefulWidget {
+class ASMReviewPage extends ConsumerStatefulWidget {
   final String token;
   final String userName;
 
@@ -25,11 +28,12 @@ class ASMReviewPage extends StatefulWidget {
   });
 
   @override
-  State<ASMReviewPage> createState() => _ASMReviewPageState();
+  ConsumerState<ASMReviewPage> createState() => _ASMReviewPageState();
 }
 
-class _ASMReviewPageState extends State<ASMReviewPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
+class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    ..interceptors.add(PrettyDioLogger());
   final _searchController = TextEditingController();
 
   String _statusFilter = 'all';
@@ -50,20 +54,34 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
     // ASM role status normalization
-    if (state == 'pendingasmapproval' || state == 'pendingapproval' || state == 'pendingwithasm') return 'pending';
-    if (state == 'pendinghqapproval' || state == 'pendingwithra') return 'pending-with-ra';
+    if (state == 'pendingasmapproval' ||
+        state == 'pendingapproval' ||
+        state == 'pendingwithasm' ||
+        state == 'pendingch' ||
+        state == 'pendingchapproval') return 'pending';
+    if (state == 'pendinghqapproval' ||
+        state == 'pendingwithra' ||
+        state == 'pendingra' ||
+        state == 'asmapproved') return 'pending-with-ra';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyasm' || state == 'rejected') return 'rejected';
-    if (state == 'rejectedbyhq' || state == 'rejectedbyra') return 'rejected-by-ra';
-    if (state == 'validationfailed' || state == 'reuploadrequested') return 'rejected';
-    if (state == 'uploaded' || state == 'extracting' || state == 'validating' ||
-        state == 'scoring' || state == 'recommending') {
+    if (state == 'rejectedbyasm' ||
+        state == 'rejected' ||
+        state == 'asmrejected' ||
+        state == 'chrejected' ||
+        state == 'rejectedbych') return 'rejected';
+    if (state == 'rejectedbyhq' || state == 'rejectedbyra' || state == 'rarejected')
+      return 'rejected-by-ra';
+    if (state == 'validationfailed' || state == 'reuploadrequested')
+      return 'rejected';
+    if (state == 'uploaded') return 'uploaded';
+    if (state == 'extracting' ||
+        state == 'validating' ||
+        state == 'scoring' ||
+        state == 'recommending') {
       return 'processing';
     }
-    return 'processing';
+    return 'uploaded';
   }
-
-
 
   @override
   void initState() {
@@ -79,28 +97,38 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   }
 
   Future<void> _loadDocuments() async {
+    print(
+        '[ASM Dashboard] Loading documents with token: ${widget.token.substring(0, 20)}...');
     setState(() => _isLoading = true);
     try {
       final response = await _dio.get(
         '/submissions',
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
+      print('[ASM Dashboard] Response status: ${response.statusCode}');
+      print('[ASM Dashboard] Response data: ${response.data}');
+
       if (response.statusCode == 200 && mounted) {
         setState(() {
           final data = response.data;
           if (data is Map && data.containsKey('items')) {
             _documents = List<Map<String, dynamic>>.from(data['items']);
+            print('[ASM Dashboard] Loaded ${_documents.length} documents');
           } else {
             _documents = [];
+            print('[ASM Dashboard] No items in response');
           }
           _isLoading = false;
         });
       }
     } catch (e) {
+      print('[ASM Dashboard] Error loading documents: $e');
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load submissions: $e'), backgroundColor: AppColors.rejectedText),
+          SnackBar(
+              content: Text('Failed to load submissions: $e'),
+              backgroundColor: AppColors.rejectedText),
         );
       }
     }
@@ -119,7 +147,8 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
       );
       if (response.statusCode == 200 && mounted) {
         setState(() {
-          _kpiData = QuarterlyFapKpiModel.fromJson(response.data as Map<String, dynamic>);
+          _kpiData = QuarterlyFapKpiModel.fromJson(
+              response.data as Map<String, dynamic>);
           _isKpiLoading = false;
         });
       }
@@ -137,11 +166,16 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   /// Q1 = Jan-Mar, Q2 = Apr-Jun, Q3 = Jul-Sep, Q4 = Oct-Dec.
   (int, int) _quarterMonthRange(String quarter) {
     switch (quarter) {
-      case 'Q1': return (1, 3);
-      case 'Q2': return (4, 6);
-      case 'Q3': return (7, 9);
-      case 'Q4': return (10, 12);
-      default: return (1, 12);
+      case 'Q1':
+        return (1, 3);
+      case 'Q2':
+        return (4, 6);
+      case 'Q3':
+        return (7, 9);
+      case 'Q4':
+        return (10, 12);
+      default:
+        return (1, 12);
     }
   }
 
@@ -162,12 +196,24 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   List<Map<String, dynamic>> get _filteredDocuments {
     final filtered = _documents.where((doc) {
       final status = _normalizeStatus(doc['state']?.toString() ?? '');
-      if (status == 'processing') return false;
+      // Don't filter out any status - ASM should see all submissions
       if (!_matchesQuarterYear(doc)) return false;
       final matchesSearch = _searchController.text.isEmpty ||
-          doc['id']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true ||
-          doc['invoiceNumber']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true ||
-          doc['poNumber']?.toString().toLowerCase().contains(_searchController.text.toLowerCase()) == true;
+          doc['id']
+                  ?.toString()
+                  .toLowerCase()
+                  .contains(_searchController.text.toLowerCase()) ==
+              true ||
+          doc['invoiceNumber']
+                  ?.toString()
+                  .toLowerCase()
+                  .contains(_searchController.text.toLowerCase()) ==
+              true ||
+          doc['poNumber']
+                  ?.toString()
+                  .toLowerCase()
+                  .contains(_searchController.text.toLowerCase()) ==
+              true;
       final matchesStatus = _statusFilter == 'all' || status == _statusFilter;
       return matchesSearch && matchesStatus;
     }).toList();
@@ -197,8 +243,10 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
           break;
         case 'date':
         default:
-          final aDate = DateTime.tryParse(a['createdAt']?.toString() ?? '') ?? DateTime(2000);
-          final bDate = DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime(2000);
+          final aDate = DateTime.tryParse(a['createdAt']?.toString() ?? '') ??
+              DateTime(2000);
+          final bDate = DateTime.tryParse(b['createdAt']?.toString() ?? '') ??
+              DateTime(2000);
           result = aDate.compareTo(bDate);
       }
       return _sortAscending ? result : -result;
@@ -209,13 +257,27 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
 
   List<NavItem> _getNavItems(BuildContext context) {
     return [
-      NavItem(icon: Icons.dashboard, label: 'Dashboard', isActive: true, onTap: () {}),
-      NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      },),
-      NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      },),
+      NavItem(
+          icon: Icons.dashboard,
+          label: 'Dashboard',
+          isActive: true,
+          onTap: () {}),
+      NavItem(
+        icon: Icons.notifications,
+        label: 'Notifications',
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Notifications coming soon')));
+        },
+      ),
+      NavItem(
+        icon: Icons.settings,
+        label: 'Settings',
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Settings coming soon')));
+        },
+      ),
     ];
   }
 
@@ -231,71 +293,83 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
           appBar: isMobile
               ? AppBar(
                   backgroundColor: const Color(0xFF1E3A8A),
-                  title: const Text('ASM Review', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  title: const Text('ASM Review',
+                      style: TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold)),
                   iconTheme: const IconThemeData(color: Colors.white),
                   actions: const [],
                 )
               : null,
-          drawer: isMobile ? AppDrawer(
-            userName: widget.userName,
-            userRole: 'ASM',
-            navItems: _getNavItems(context),
-            onLogout: () => Navigator.pushReplacementNamed(context, '/'),
-          ) : null,
+          drawer: isMobile
+              ? AppDrawer(
+                  userName: widget.userName,
+                  userRole: 'ASM',
+                  navItems: _getNavItems(context),
+                  onLogout: () => handleLogout(context, ref),
+                )
+              : null,
           body: Column(
             children: [
               if (!isMobile) _buildTopBar(),
               Expanded(
                 child: Row(
                   children: [
-                    if (!isMobile) AppSidebar(
-                      userName: widget.userName,
-                      userRole: 'ASM',
-                      navItems: _getNavItems(context),
-                      onLogout: () => Navigator.pushReplacementNamed(context, '/'),
-                      isCollapsed: _isSidebarCollapsed,
-                      onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
-                    ),
+                    if (!isMobile)
+                      AppSidebar(
+                        userName: widget.userName,
+                        userRole: 'ASM',
+                        navItems: _getNavItems(context),
+                        onLogout: () => handleLogout(context, ref),
+                        isCollapsed: _isSidebarCollapsed,
+                        onToggleCollapse: () => setState(
+                            () => _isSidebarCollapsed = !_isSidebarCollapsed),
+                      ),
                     Expanded(
                       child: Column(
                         children: [
                           if (!isMobile) _buildHeader(device),
                           Expanded(
                             child: _isLoading
-                                ? const Center(child: CircularProgressIndicator())
+                                ? const Center(
+                                    child: CircularProgressIndicator())
                                 : _buildContent(device),
                           ),
                         ],
                       ),
                     ),
-                    if (_isChatOpen && !isMobile) ChatSidePanel(
-                      token: widget.token,
-                      userName: widget.userName,
-                      deviceType: device,
-                      onClose: () => setState(() => _isChatOpen = false),
-                    ),
+                    if (_isChatOpen && !isMobile)
+                      ChatSidePanel(
+                        token: widget.token,
+                        userName: widget.userName,
+                        deviceType: device,
+                        onClose: () => setState(() => _isChatOpen = false),
+                      ),
                   ],
                 ),
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
-          floatingActionButton: (_isChatOpen && !isMobile) ? null : Builder(
-            builder: (scaffoldContext) => Padding(
-              padding: const EdgeInsets.only(bottom: 16, right: 4),
-              child: FloatingActionButton(
-                onPressed: () {
-                  if (isMobile) {
-                    Scaffold.of(scaffoldContext).openEndDrawer();
-                  } else {
-                    setState(() => _isChatOpen = !_isChatOpen);
-                  }
-                },
-                backgroundColor: AppColors.primary,
-                child: const Icon(Icons.smart_toy, color: Colors.white),
-              ),
-            ),
-          ),
+          endDrawer: isMobile
+              ? ChatEndDrawer(token: widget.token, userName: widget.userName)
+              : null,
+          floatingActionButton: (_isChatOpen && !isMobile)
+              ? null
+              : Builder(
+                  builder: (scaffoldContext) => Padding(
+                    padding: const EdgeInsets.only(bottom: 16, right: 4),
+                    child: FloatingActionButton(
+                      onPressed: () {
+                        if (isMobile) {
+                          Scaffold.of(scaffoldContext).openEndDrawer();
+                        } else {
+                          setState(() => _isChatOpen = !_isChatOpen);
+                        }
+                      },
+                      backgroundColor: AppColors.primary,
+                      child: const Icon(Icons.smart_toy, color: Colors.white),
+                    ),
+                  ),
+                ),
           floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         );
       },
@@ -325,8 +399,13 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
             backgroundColor: Colors.white,
             radius: 18,
             child: Text(
-              widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
-              style: const TextStyle(color: Color(0xFF003087), fontWeight: FontWeight.bold, fontSize: 14),
+              widget.userName.isNotEmpty
+                  ? widget.userName[0].toUpperCase()
+                  : '?',
+              style: const TextStyle(
+                  color: Color(0xFF003087),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14),
             ),
           ),
           const SizedBox(width: 12),
@@ -334,9 +413,16 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
+              Text(widget.userName,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white)),
               const SizedBox(height: 2),
-              Text('ASM', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
+              Text('ASM',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.7))),
             ],
           ),
           const SizedBox(width: 12),
@@ -363,7 +449,8 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
               children: [
                 Text('ASM Review', style: AppTextStyles.h2),
                 SizedBox(height: 4),
-                Text('Review and approve agency submissions', style: AppTextStyles.bodySmall),
+                Text('Review and approve agency submissions',
+                    style: AppTextStyles.bodySmall),
               ],
             ),
           ),
@@ -373,7 +460,8 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   }
 
   Widget _buildContent(DeviceType device) {
-    final hPad = responsiveValue<double>(MediaQuery.of(context).size.width, mobile: 12, tablet: 16, desktop: 24);
+    final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
+        mobile: 12, tablet: 16, desktop: 24);
     return RefreshIndicator(
       onRefresh: _loadDocuments,
       child: SingleChildScrollView(
@@ -385,7 +473,8 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
             if (device == DeviceType.mobile) ...[
               const Text('ASM Review', style: AppTextStyles.h2),
               const SizedBox(height: 4),
-              const Text('Review and approve agency submissions', style: AppTextStyles.bodySmall),
+              const Text('Review and approve agency submissions',
+                  style: AppTextStyles.bodySmall),
               const SizedBox(height: 16),
             ],
             _buildKpiSection(),
@@ -403,7 +492,9 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   Widget _buildKpiSection() {
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppColors.border)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -416,7 +507,9 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Quarterly FAP KPIs', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w700)),
+                      Text('Quarterly FAP KPIs',
+                          style: AppTextStyles.bodyMedium
+                              .copyWith(fontWeight: FontWeight.w700)),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 12,
@@ -425,7 +518,8 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                           QuarterYearFilter(
                             selectedQuarter: _selectedQuarter,
                             selectedYear: _selectedYear,
-                            availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                            availableYears: List.generate(
+                                5, (i) => DateTime.now().year - i),
                             onQuarterChanged: (q) {
                               setState(() => _selectedQuarter = q);
                               _loadKpiData();
@@ -444,7 +538,9 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                 }
                 return Row(
                   children: [
-                    Text('Quarterly FAP KPIs', style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w700)),
+                    Text('Quarterly FAP KPIs',
+                        style: AppTextStyles.bodyMedium
+                            .copyWith(fontWeight: FontWeight.w700)),
                     const Spacer(),
                     _buildCompactStatusDropdown(),
                     const SizedBox(width: 12),
@@ -453,7 +549,8 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                     QuarterYearFilter(
                       selectedQuarter: _selectedQuarter,
                       selectedYear: _selectedYear,
-                      availableYears: List.generate(5, (i) => DateTime.now().year - i),
+                      availableYears:
+                          List.generate(5, (i) => DateTime.now().year - i),
                       onQuarterChanged: (q) {
                         setState(() => _selectedQuarter = q);
                         _loadKpiData();
@@ -472,7 +569,9 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
               Center(
                 child: Column(
                   children: [
-                    Text(_kpiError!, style: AppTextStyles.bodySmall.copyWith(color: AppColors.rejectedText)),
+                    Text(_kpiError!,
+                        style: AppTextStyles.bodySmall
+                            .copyWith(color: AppColors.rejectedText)),
                     const SizedBox(height: 8),
                     TextButton.icon(
                       onPressed: _loadKpiData,
@@ -489,7 +588,9 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                   final cards = [
                     KpiCard(
                       label: 'FAP Amount',
-                      value: _isKpiLoading ? '' : formatIndianCurrency(_kpiData?.fapAmount ?? 0),
+                      value: _isKpiLoading
+                          ? ''
+                          : formatIndianCurrency(_kpiData?.fapAmount ?? 0),
                       icon: Icons.currency_rupee,
                       color: const Color(0xFF10B981),
                       isLoading: _isKpiLoading,
@@ -503,11 +604,27 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                     ),
                   ];
                   if (isMobile) {
-                    return Column(children: cards.map((c) => Padding(padding: const EdgeInsets.only(bottom: 12), child: c)).toList());
+                    return Column(
+                        children: cards
+                            .map((c) => Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: c))
+                            .toList());
                   }
-                  return Row(children: cards.asMap().entries.map((e) => Expanded(
-                    child: Padding(padding: EdgeInsets.only(right: e.key == 0 ? 16 : 0), child: e.value),
-                  ),).toList(),);
+                  return Row(
+                    children: cards
+                        .asMap()
+                        .entries
+                        .map(
+                          (e) => Expanded(
+                            child: Padding(
+                                padding:
+                                    EdgeInsets.only(right: e.key == 0 ? 16 : 0),
+                                child: e.value),
+                          ),
+                        )
+                        .toList(),
+                  );
                 },
               ),
           ],
@@ -515,8 +632,6 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
       ),
     );
   }
-
-
 
   Widget _buildCompactStatusDropdown() {
     return SizedBox(
@@ -535,8 +650,10 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
           DropdownMenuItem(value: 'all', child: Text('All')),
           DropdownMenuItem(value: 'pending', child: Text('Pending')),
           DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
-          DropdownMenuItem(value: 'rejected-by-ra', child: Text('Rejected by RA')),
-          DropdownMenuItem(value: 'pending-with-ra', child: Text('Pending with RA')),
+          DropdownMenuItem(
+              value: 'rejected-by-ra', child: Text('Rejected by RA')),
+          DropdownMenuItem(
+              value: 'pending-with-ra', child: Text('Pending with RA')),
           DropdownMenuItem(value: 'approved', child: Text('Approved')),
         ],
         onChanged: (value) {
@@ -599,17 +716,25 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     if (filtered.isEmpty) {
       return Card(
         elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: AppColors.border)),
         child: Padding(
           padding: const EdgeInsets.all(48),
-          child: Center(child: Text('No documents found matching your criteria.', style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary))),
+          child: Center(
+              child: Text('No documents found matching your criteria.',
+                  style: AppTextStyles.bodyMedium
+                      .copyWith(color: AppColors.textSecondary))),
         ),
       );
     }
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth < 900) {
-          return Column(children: filtered.map((doc) => _buildMobileDocumentCard(doc)).toList());
+          return Column(
+              children: filtered
+                  .map((doc) => _buildMobileDocumentCard(doc))
+                  .toList());
         }
         return _buildDesktopTable(filtered);
       },
@@ -618,15 +743,19 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
 
   Widget _buildMobileDocumentCard(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber = 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
+    final fapNumber = doc['submissionNumber']?.toString() ?? 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
     final invoiceAmount = doc['invoiceAmount'];
-    final invoiceAmountStr = invoiceAmount != null ? '₹${double.parse(invoiceAmount.toString()).toStringAsFixed(2)}' : '-';
+    final invoiceAmountStr = invoiceAmount != null
+        ? '₹${double.parse(invoiceAmount.toString()).toStringAsFixed(2)}'
+        : '-';
 
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppColors.border)),
       margin: const EdgeInsets.only(bottom: 12),
       child: InkWell(
         onTap: () => _navigateToDetail(doc['id']),
@@ -635,10 +764,16 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Text(fapNumber, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w700, color: AppColors.primary)),
-                _buildStatusBadge(status),
-              ],),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(fapNumber,
+                      style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary)),
+                  _buildStatusBadge(status),
+                ],
+              ),
               const SizedBox(height: 12),
               _buildInfoRow('PO Number', poNumber),
               _buildInfoRow('Invoice Number', invoiceNumber),
@@ -652,7 +787,9 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
                       onPressed: () => _navigateToDetail(doc['id']),
                       icon: const Icon(Icons.visibility_outlined, size: 18),
                       label: const Text('View Details'),
-                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white),
                     ),
                   ),
                 ],
@@ -667,30 +804,46 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   Widget _buildInfoRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(label, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary)),
-        Text(value, style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600)),
-      ],),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: AppTextStyles.bodySmall
+                  .copyWith(color: AppColors.textSecondary)),
+          Text(value,
+              style: AppTextStyles.bodySmall
+                  .copyWith(fontWeight: FontWeight.w600)),
+        ],
+      ),
     );
   }
 
   void _navigateToDetail(dynamic id) async {
-    final result = await Navigator.pushNamed(context, '/asm/review-detail', arguments: {
-      'submissionId': id,
-      'token': widget.token,
-      'userName': widget.userName,
-    },);
+    final result = await context.pushNamed(
+      'asm-review-detail',
+      extra: {
+        'submissionId': id,
+        'token': widget.token,
+        'userName': widget.userName,
+      },
+    );
     if (result == true || result == null) _loadDocuments();
   }
 
   int? get _sortColumnIndex {
     switch (_sortBy) {
-      case 'poNo': return 1;
-      case 'invoiceNo': return 2;
-      case 'amount': return 3;
-      case 'date': return 4;
-      case 'status': return 5;
-      default: return null;
+      case 'poNo':
+        return 1;
+      case 'invoiceNo':
+        return 2;
+      case 'amount':
+        return 3;
+      case 'date':
+        return 4;
+      case 'status':
+        return 5;
+      default:
+        return null;
     }
   }
 
@@ -704,19 +857,26 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
   Widget _buildDesktopTable(List<Map<String, dynamic>> filtered) {
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppColors.border)),
       child: SizedBox(
         width: double.infinity,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: ConstrainedBox(
-            constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width * 0.95),
+            constraints: BoxConstraints(
+                minWidth: MediaQuery.of(context).size.width * 0.95),
             child: DataTable(
               sortColumnIndex: _sortColumnIndex,
               sortAscending: _sortAscending,
               headingRowColor: WidgetStateProperty.all(AppColors.background),
-              headingTextStyle: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, letterSpacing: 0.3),
-              dataTextStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
+              headingTextStyle: AppTextStyles.bodySmall.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                  letterSpacing: 0.3),
+              dataTextStyle: AppTextStyles.bodyMedium
+                  .copyWith(color: AppColors.textSecondary),
               columnSpacing: 16,
               horizontalMargin: 24,
               dataRowMinHeight: 56,
@@ -724,11 +884,21 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
               dividerThickness: 1,
               columns: [
                 const DataColumn(label: Text('FAP NUMBER')),
-                DataColumn(label: const Text('PO NO.'), onSort: (_, asc) => _onColumnSort('poNo', asc)),
-                DataColumn(label: const Text('INVOICE NO.'), onSort: (_, asc) => _onColumnSort('invoiceNo', asc)),
-                DataColumn(label: const Text('INVOICE AMT'), onSort: (_, asc) => _onColumnSort('amount', asc)),
-                DataColumn(label: const Text('SUBMITTED DATE'), onSort: (_, asc) => _onColumnSort('date', asc)),
-                DataColumn(label: const Text('STATUS'), onSort: (_, asc) => _onColumnSort('status', asc)),
+                DataColumn(
+                    label: const Text('PO NO.'),
+                    onSort: (_, asc) => _onColumnSort('poNo', asc)),
+                DataColumn(
+                    label: const Text('INVOICE NO.'),
+                    onSort: (_, asc) => _onColumnSort('invoiceNo', asc)),
+                DataColumn(
+                    label: const Text('INVOICE AMT'),
+                    onSort: (_, asc) => _onColumnSort('amount', asc)),
+                DataColumn(
+                    label: const Text('SUBMITTED DATE'),
+                    onSort: (_, asc) => _onColumnSort('date', asc)),
+                DataColumn(
+                    label: const Text('STATUS'),
+                    onSort: (_, asc) => _onColumnSort('status', asc)),
                 const DataColumn(label: SizedBox.shrink()),
               ],
               rows: filtered.map((doc) => _buildDocumentDataRow(doc)).toList(),
@@ -741,31 +911,40 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
 
   DataRow _buildDocumentDataRow(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber = 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
+    final fapNumber = doc['submissionNumber']?.toString() ?? 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
     final invoiceAmount = doc['invoiceAmount'];
-    final invoiceAmountStr = invoiceAmount != null ? '₹${double.parse(invoiceAmount.toString()).toStringAsFixed(2)}' : '-';
+    final invoiceAmountStr = invoiceAmount != null
+        ? '₹${double.parse(invoiceAmount.toString()).toStringAsFixed(2)}'
+        : '-';
 
-    return DataRow(cells: [
-      DataCell(Text(fapNumber, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600, color: const Color(0xFF111827)))),
-      DataCell(Text(poNumber)),
-      DataCell(Text(invoiceNumber)),
-      DataCell(Text(invoiceAmountStr, style: const TextStyle(fontWeight: FontWeight.w600))),
-      DataCell(Text(_formatDate(doc['createdAt']))),
-      DataCell(_buildStatusBadge(status)),
-      DataCell(Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.visibility_outlined, size: 20),
-            color: AppColors.primary,
-            onPressed: () => _navigateToDetail(doc['id']),
-            tooltip: 'View Details',
+    return DataRow(
+      cells: [
+        DataCell(Text(fapNumber,
+            style: AppTextStyles.bodyMedium.copyWith(
+                fontWeight: FontWeight.w600, color: const Color(0xFF111827)))),
+        DataCell(Text(poNumber)),
+        DataCell(Text(invoiceNumber)),
+        DataCell(Text(invoiceAmountStr,
+            style: const TextStyle(fontWeight: FontWeight.w600))),
+        DataCell(Text(_formatDate(doc['createdAt']))),
+        DataCell(_buildStatusBadge(status)),
+        DataCell(
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.visibility_outlined, size: 20),
+                color: AppColors.primary,
+                onPressed: () => _navigateToDetail(doc['id']),
+                tooltip: 'View Details',
+              ),
+            ],
           ),
-        ],
-      ),),
-    ],);
+        ),
+      ],
+    );
   }
 
   Widget _buildStatusBadge(String? status) {
@@ -774,22 +953,50 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     // ASM role status labels
     switch (status) {
       case 'pending':
-        bgColor = AppColors.pendingBackground; textColor = AppColors.pendingText; borderColor = AppColors.pendingBorder; label = 'Pending'; break;
+        bgColor = AppColors.pendingBackground;
+        textColor = AppColors.pendingText;
+        borderColor = AppColors.pendingBorder;
+        label = 'Pending';
+        break;
       case 'pending-with-ra':
-        bgColor = const Color(0xFFFEF3C7); textColor = const Color(0xFF92400E); borderColor = const Color(0xFFF59E0B); label = 'Pending with RA'; break;
+        bgColor = const Color(0xFFFEF3C7);
+        textColor = const Color(0xFF92400E);
+        borderColor = const Color(0xFFF59E0B);
+        label = 'Pending with RA';
+        break;
       case 'approved':
-        bgColor = AppColors.approvedBackground; textColor = AppColors.approvedText; borderColor = AppColors.approvedBorder; label = 'Approved'; break;
+        bgColor = AppColors.approvedBackground;
+        textColor = AppColors.approvedText;
+        borderColor = AppColors.approvedBorder;
+        label = 'Approved';
+        break;
       case 'rejected':
-        bgColor = AppColors.rejectedBackground; textColor = AppColors.rejectedText; borderColor = AppColors.rejectedBorder; label = 'Rejected'; break;
+        bgColor = AppColors.rejectedBackground;
+        textColor = AppColors.rejectedText;
+        borderColor = AppColors.rejectedBorder;
+        label = 'Rejected';
+        break;
       case 'rejected-by-ra':
-        bgColor = AppColors.rejectedBackground; textColor = AppColors.rejectedText; borderColor = AppColors.rejectedBorder; label = 'Rejected by RA'; break;
+        bgColor = AppColors.rejectedBackground;
+        textColor = AppColors.rejectedText;
+        borderColor = AppColors.rejectedBorder;
+        label = 'Rejected by RA';
+        break;
       default:
-        bgColor = AppColors.reviewBackground; textColor = AppColors.reviewText; borderColor = AppColors.reviewBorder; label = status ?? 'Unknown';
+        bgColor = AppColors.reviewBackground;
+        textColor = AppColors.reviewText;
+        borderColor = AppColors.reviewBorder;
+        label = status ?? 'Unknown';
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: bgColor, border: Border.all(color: borderColor), borderRadius: BorderRadius.circular(12)),
-      child: Text(label, style: AppTextStyles.bodySmall.copyWith(color: textColor, fontWeight: FontWeight.w600)),
+      decoration: BoxDecoration(
+          color: bgColor,
+          border: Border.all(color: borderColor),
+          borderRadius: BorderRadius.circular(12)),
+      child: Text(label,
+          style: AppTextStyles.bodySmall
+              .copyWith(color: textColor, fontWeight: FontWeight.w600)),
     );
   }
 
@@ -803,4 +1010,3 @@ class _ASMReviewPageState extends State<ASMReviewPage> {
     }
   }
 }
-

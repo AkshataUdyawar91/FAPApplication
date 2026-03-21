@@ -1,7 +1,8 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:go_router/go_router.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:web/web.dart' as web;
@@ -14,13 +15,14 @@ import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
+import '../../../../core/router/app_router.dart';
 import '../../../approval/data/models/invoice_summary_data.dart';
 import '../../../approval/data/models/campaign_detail_row.dart';
 import '../../../approval/presentation/utils/submission_data_transformer.dart';
 import '../../../approval/presentation/widgets/invoice_summary_section.dart';
 import '../../../approval/presentation/widgets/campaign_details_table.dart';
 
-class AgencySubmissionDetailPage extends StatefulWidget {
+class AgencySubmissionDetailPage extends ConsumerStatefulWidget {
   final String submissionId;
   final String token;
   final String userName;
@@ -35,12 +37,14 @@ class AgencySubmissionDetailPage extends StatefulWidget {
   });
 
   @override
-  State<AgencySubmissionDetailPage> createState() =>
+  ConsumerState<AgencySubmissionDetailPage> createState() =>
       _AgencySubmissionDetailPageState();
 }
 
-class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
+class _AgencySubmissionDetailPageState
+    extends ConsumerState<AgencySubmissionDetailPage> {
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    ..interceptors.add(PrettyDioLogger());
 
   bool _isLoading = true;
   Map<String, dynamic>? _submission;
@@ -57,11 +61,51 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
   Map<String, dynamic>? _poBalance;
   String? _balanceError;
 
+  // Submit functionality
+  bool _isSubmitting = false;
+
+  // Validation data from submission response
+  List<dynamic> _invoiceValidations = [];
+  List<dynamic> _photoValidations = [];
+  Map<String, dynamic> _costSummaryValidation = {};
+  Map<String, dynamic> _activityValidation = {};
+  Map<String, dynamic> _enquiryValidation = {};
+
   @override
   void initState() {
     print('poNumber: ${widget.poNumber}');
     super.initState();
+    _debugToken(); // Debug token contents
     _loadSubmissionDetails();
+  }
+
+  void _debugToken() {
+    try {
+      // Decode JWT token to see its contents
+      final parts = widget.token.split('.');
+      if (parts.length == 3) {
+        // Decode the payload (second part)
+        String payload = parts[1];
+
+        // Add padding if needed
+        while (payload.length % 4 != 0) {
+          payload += '=';
+        }
+
+        final decoded = utf8.decode(base64.decode(payload));
+        final tokenData = jsonDecode(decoded);
+
+        print('=== JWT Token Debug ===');
+        print('Token payload: $tokenData');
+        print('Role claim: ${tokenData['role'] ?? 'NOT FOUND'}');
+        print('Sub claim: ${tokenData['sub'] ?? 'NOT FOUND'}');
+        print('Name claim: ${tokenData['name'] ?? 'NOT FOUND'}');
+        print('All claims: ${tokenData.keys.toList()}');
+        print('=====================');
+      }
+    } catch (e) {
+      print('Error decoding token: $e');
+    }
   }
 
   Future<void> _loadSubmissionDetails() async {
@@ -81,10 +125,65 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
             SubmissionDataTransformer.transformToCampaignDetails(
                 submissionData);
 
+        // Extract validation data from submission response
+        final invoiceValidations =
+            submissionData['invoiceValidations'] as List<dynamic>? ?? [];
+        final photoValidationsRaw =
+            submissionData['photoValidations'] as List<dynamic>? ?? [];
+        var photoValidations = photoValidationsRaw;
+        final costSummaryValidation =
+            submissionData['costSummaryValidation'] as Map<String, dynamic>? ??
+                {};
+        final activityValidation =
+            submissionData['activityValidation'] as Map<String, dynamic>? ?? {};
+        final enquiryValidation =
+            submissionData['enquiryValidation'] as Map<String, dynamic>? ?? {};
+
+        // Fallback: if photoValidations is empty, fetch from validations endpoint
+        if (photoValidations.isEmpty) {
+          try {
+            final valResponse = await _dio.get(
+              '/submissions/${widget.submissionId}/validations',
+              options: Options(
+                  headers: {'Authorization': 'Bearer ${widget.token}'}),
+            );
+            if (valResponse.statusCode == 200 && valResponse.data != null) {
+              final docs = valResponse.data['documents'] as List<dynamic>? ?? [];
+              final photoDocs = docs
+                  .where((d) => d['documentType'] == 'TeamPhoto')
+                  .toList();
+              if (photoDocs.isNotEmpty) {
+                photoValidations = photoDocs;
+              }
+            }
+          } catch (e2) {
+            debugPrint('Fallback photo validation fetch failed: $e2');
+          }
+        }
+
+        print('=== Validation Data from Submission ===');
+        print('Invoice Validations Count: ${invoiceValidations.length}');
+        print('Photo Validations Count: ${photoValidations.length}');
+        print('Cost Summary Validation: ${costSummaryValidation.isNotEmpty}');
+        print('Activity Validation: ${activityValidation.isNotEmpty}');
+        print('Enquiry Validation: ${enquiryValidation.isNotEmpty}');
+        if (invoiceValidations.isNotEmpty) {
+          print('First Invoice Validation: ${invoiceValidations[0]}');
+        }
+        if (photoValidations.isNotEmpty) {
+          print('First Photo Validation: ${photoValidations[0]}');
+        }
+        print('======================================');
+
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
           _campaignDetails = campaignDetails;
+          _invoiceValidations = invoiceValidations;
+          _photoValidations = photoValidations;
+          _costSummaryValidation = costSummaryValidation;
+          _activityValidation = activityValidation;
+          _enquiryValidation = enquiryValidation;
           _isLoading = false;
         });
       }
@@ -138,6 +237,94 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     }
   }
 
+  Future<void> _submitSubmission() async {
+    // Show confirmation dialog
+    final confirmed = await _showSubmitConfirmation();
+    if (!confirmed) return;
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final response = await _dio.post(
+        '/submissions/${widget.submissionId}/submit',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Submission submitted successfully!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+
+        // Reload submission details to get updated state
+        await _loadSubmissionDetails();
+      }
+    } catch (e) {
+      print('Submit API Error: $e'); // Debug log
+      if (mounted) {
+        String errorMessage = 'Failed to submit submission';
+
+        // Handle specific error cases
+        if (e is DioException) {
+          if (e.response?.statusCode == 400) {
+            errorMessage =
+                e.response?.data?['message'] ?? 'Invalid submission state';
+          } else if (e.response?.statusCode == 404) {
+            errorMessage = 'Submission not found';
+          } else if (e.response?.statusCode == 409) {
+            errorMessage = 'Submission already submitted or in wrong state';
+          }
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  Future<bool> _showSubmitConfirmation() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          'Submit for Review',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+        ),
+        content: const Text(
+          'Are you sure you want to submit this submission for review? Once submitted, you won\'t be able to edit it unless it\'s rejected.',
+          style: TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   String _formatBalanceDate(String? dateStr) {
     if (dateStr == null) return 'N/A';
     try {
@@ -149,15 +336,1527 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
     }
   }
 
-  void _navigateToUpload() {
-    Navigator.pushNamed(
-      context,
-      '/agency/upload',
-      arguments: {
-        'token': widget.token,
-        'userName': widget.userName,
-      },
+  bool _canSubmit(String state) {
+    final stateLower = state.toLowerCase();
+    // Allow submit for draft/uploaded states that haven't been submitted for review yet
+    return stateLower == 'uploaded' ||
+        stateLower == 'draft' ||
+        stateLower == 'extracting' ||
+        stateLower == 'validating' ||
+        stateLower == 'validated' ||
+        stateLower == 'scoring' ||
+        stateLower == 'recommending';
+  }
+
+  String _getCostSummaryFileName() {
+    if (_submission == null) return '';
+    final campaigns = _submission!['campaigns'] as List? ?? [];
+    if (campaigns.isEmpty) return '';
+    final firstCampaign = campaigns[0] as Map<String, dynamic>;
+    return firstCampaign['costSummaryFileName']?.toString() ??
+        'Cost Summary.pdf';
+  }
+
+  String _getActivitySummaryFileName() {
+    if (_submission == null) return '';
+    final campaigns = _submission!['campaigns'] as List? ?? [];
+    if (campaigns.isEmpty) return '';
+    final firstCampaign = campaigns[0] as Map<String, dynamic>;
+    return firstCampaign['activitySummaryFileName']?.toString() ??
+        'Activity Summary.pdf';
+  }
+
+  String _getEnquiryFileName() {
+    // Enquiry data is typically in a separate file or embedded in activity summary
+    // Based on the API structure, it might be part of the activity summary or a separate document
+    return 'Enquiry Data.xlsx'; // Default name, adjust based on actual API structure
+  }
+
+  Widget _buildValidationReportSection() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.verified_user,
+                    color: AppColors.primary, size: 24),
+                const SizedBox(width: 12),
+                const Text('Document Validations', style: AppTextStyles.h3),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 16),
+
+            // Invoice Validations (from invoiceValidations array)
+            if (_invoiceValidations.isNotEmpty) ...[
+              _buildInvoiceValidationsSection(_invoiceValidations),
+              const SizedBox(height: 24),
+            ],
+
+            // Photo Validations
+            if (_photoValidations.isNotEmpty) ...[
+              _buildPhotoValidationsSection(_photoValidations),
+              const SizedBox(height: 24),
+            ],
+
+            // Cost Summary Validation
+            if (_costSummaryValidation.isNotEmpty) ...[
+              _buildSingleValidationCard(
+                title: 'Cost Summary Validation',
+                fileName: _getCostSummaryFileName(),
+                validation: _costSummaryValidation,
+              ),
+              const SizedBox(height: 24),
+            ],
+
+            // Activity Validation
+            if (_activityValidation.isNotEmpty) ...[
+              _buildSingleValidationCard(
+                title: 'Activity Validation',
+                fileName: _getActivitySummaryFileName(),
+                validation: _activityValidation,
+              ),
+              const SizedBox(height: 24),
+            ],
+
+            // Enquiry Validation
+            if (_enquiryValidation.isNotEmpty) ...[
+              _buildSingleValidationCard(
+                title: 'Enquiry Validation',
+                fileName: _getEnquiryFileName(),
+                validation: _enquiryValidation,
+              ),
+              const SizedBox(height: 24),
+            ],
+
+            // No validations message
+            if (_invoiceValidations.isEmpty &&
+                _photoValidations.isEmpty &&
+                _costSummaryValidation.isEmpty &&
+                _activityValidation.isEmpty &&
+                _enquiryValidation.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF9FAFB),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'No validation data available for this submission',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
+  }
+
+  Color _getConfidenceColor(double confidence) {
+    if (confidence >= 80) return const Color(0xFF16A34A);
+    if (confidence >= 60) return const Color(0xFFF59E0B);
+    return const Color(0xFFDC2626);
+  }
+
+  Widget _buildInvoiceValidationsSection(List<dynamic> invoiceValidations) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...invoiceValidations.map((invoice) {
+          final invoiceData = invoice as Map<String, dynamic>;
+          return _buildInvoiceValidationCard(invoiceData);
+        }),
+      ],
+    );
+  }
+
+  Widget _buildInvoiceValidationCard(Map<String, dynamic> invoice) {
+    final fileName = invoice['fileName'] ?? 'Unknown';
+    final validationDetailsJson = invoice['validationDetailsJson'] as String?;
+
+    Map<String, dynamic>? validationDetails;
+    int passedCount = 0;
+    int totalCount = 0;
+
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+      try {
+        validationDetails =
+            jsonDecode(validationDetailsJson) as Map<String, dynamic>;
+
+        // Calculate passed and total counts
+        if (validationDetails != null) {
+          final fieldPresence =
+              validationDetails['fieldPresence'] as Map<String, dynamic>?;
+          if (fieldPresence != null) {
+            final missingFields =
+                fieldPresence['missingFields'] as List<dynamic>? ?? [];
+            totalCount += missingFields.length;
+            // Missing fields are failed, so passedCount stays 0 for them
+          }
+        }
+      } catch (e) {
+        print('Error parsing validation details: $e');
+      }
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(
+          color: Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: const BoxDecoration(
+              color: Color.fromARGB(255, 240, 237, 237),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Invoice Validations',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        fileName,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (totalCount > 0)
+                  RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '$passedCount/$totalCount ',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                        TextSpan(
+                          text: 'Passed',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFF16A34A),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // Validation Details - Single unified table
+          if (validationDetails != null)
+            _buildUnifiedValidationTable(validationDetails),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhotoValidationsSection(List<dynamic> photoValidations) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...photoValidations.map((photo) {
+          final photoData = photo as Map<String, dynamic>;
+          return _buildPhotoValidationCard(photoData);
+        }),
+      ],
+    );
+  }
+
+  Widget _buildPhotoValidationCard(Map<String, dynamic> photo) {
+    final fileName = photo['fileName'] ?? 'Unknown';
+    final validationDetailsJson = photo['validationDetailsJson'] as String?;
+
+    Map<String, dynamic>? validationDetails;
+    int passedCount = 0;
+    int totalCount = 0;
+
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+      try {
+        validationDetails =
+            jsonDecode(validationDetailsJson) as Map<String, dynamic>;
+
+        // Calculate passed and total counts for photo validations
+        if (validationDetails != null) {
+          final requiredItems =
+              validationDetails['requiredItems'] as List<dynamic>? ?? [];
+          totalCount = requiredItems.length;
+          for (var item in requiredItems) {
+            final itemMap = item as Map<String, dynamic>;
+            final present = itemMap['present'] ?? false;
+            if (present) passedCount++;
+          }
+        }
+      } catch (e) {
+        print('Error parsing validation details: $e');
+      }
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(
+          color: Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: const BoxDecoration(
+              color: Color.fromARGB(255, 240, 237, 237),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Photo Validations',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        fileName,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (totalCount > 0)
+                  RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '$passedCount/$totalCount ',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                        TextSpan(
+                          text: 'Passed',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFF16A34A),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // Validation Details - Single unified table
+          if (validationDetails != null)
+            _buildUnifiedValidationTable(validationDetails),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUnifiedValidationTable(Map<String, dynamic> validationDetails) {
+    // Collect all validations into a single list
+    List<Map<String, dynamic>> allValidations = [];
+
+    // Add missing fields from fieldPresence (for invoice validations)
+    if (validationDetails['fieldPresence'] != null) {
+      final fieldPresence =
+          validationDetails['fieldPresence'] as Map<String, dynamic>;
+      final missingFields =
+          fieldPresence['missingFields'] as List<dynamic>? ?? [];
+
+      // Create a row for each missing field
+      for (var field in missingFields) {
+        allValidations.add({
+          'field': field.toString(),
+          'label': field.toString(),
+          'passed': false,
+          'message': 'Field is missing',
+        });
+      }
+    }
+
+    // Add proactive validations
+    if (validationDetails['proactive'] != null) {
+      final proactive = validationDetails['proactive'] as List<dynamic>;
+      allValidations.addAll(proactive.map((v) => v as Map<String, dynamic>));
+    }
+
+    // Add reactive validations
+    if (validationDetails['reactive'] != null) {
+      final reactive = validationDetails['reactive'] as List<dynamic>;
+      allValidations.addAll(reactive.map((v) => v as Map<String, dynamic>));
+    }
+
+    // Add checks
+    if (validationDetails['checks'] != null) {
+      final checks = validationDetails['checks'] as List<dynamic>;
+      allValidations.addAll(checks.map((v) => v as Map<String, dynamic>));
+    }
+
+    // Add required items (for photos)
+    if (validationDetails['requiredItems'] != null) {
+      final items = validationDetails['requiredItems'] as List<dynamic>;
+      allValidations.addAll(items.map((v) => v as Map<String, dynamic>));
+    }
+
+    if (allValidations.isEmpty) {
+      return const SizedBox();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            // borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'RESULT',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...allValidations.asMap().entries.map((entry) {
+          final index = entry.key;
+          final validation = entry.value;
+          final isLast = index == allValidations.length - 1;
+
+          final field = validation['field'] ?? validation['item'] ?? 'Unknown';
+          final passed = validation['passed'] ?? false;
+          final value = validation['value'];
+          final message = validation['message'];
+          final label = validation['label'];
+          final confidence = validation['confidence'];
+          final present = validation['present'];
+
+          final statusColor =
+              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    label ?? field,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Status
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    passed ? 'Pass' : 'Fail',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: statusColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found
+                Expanded(
+                  flex: 3,
+                  child: _buildWhatWasFoundColumn(
+                    value: value,
+                    message: message,
+                    confidence: confidence,
+                    present: present,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildWhatWasFoundColumn({
+    dynamic value,
+    dynamic message,
+    dynamic confidence,
+    dynamic present,
+  }) {
+    // Handle required items with confidence
+    if (confidence != null) {
+      final isPresent = present ?? false;
+      return Row(
+        children: [
+          Text(
+            isPresent ? 'Detected with ' : 'Not detected, ',
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textPrimary,
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: _getConfidenceColor((confidence as num).toDouble() * 100)
+                  .withOpacity(0.1),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color:
+                    _getConfidenceColor((confidence as num).toDouble() * 100),
+                width: 0.5,
+              ),
+            ),
+            child: Text(
+              '${((confidence as num) * 100).toStringAsFixed(0)}% confidence',
+              style: AppTextStyles.bodySmall.copyWith(
+                color:
+                    _getConfidenceColor((confidence as num).toDouble() * 100),
+                fontWeight: FontWeight.w600,
+                fontSize: 10,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Handle regular validations
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (value != null)
+          Text(
+            value.toString(),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textPrimary,
+            ),
+          ),
+        if (message != null)
+          Text(
+            message.toString(),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: const Color(0xFFDC2626),
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        if (value == null && message == null)
+          Text(
+            '-',
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSingleValidationCard({
+    required String title,
+    String? fileName,
+    required Map<String, dynamic> validation,
+  }) {
+    final validationDetailsJson =
+        validation['validationDetailsJson'] as String?;
+
+    Map<String, dynamic>? validationDetails;
+    int passedCount = 0;
+    int totalCount = 0;
+
+    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+      try {
+        validationDetails =
+            jsonDecode(validationDetailsJson) as Map<String, dynamic>;
+
+        // Calculate passed and total counts
+        if (validationDetails != null) {
+          // Count field presence checks
+          final fieldPresence =
+              validationDetails['fieldPresence'] as Map<String, dynamic>?;
+          if (fieldPresence != null) {
+            final missingFields =
+                fieldPresence['missingFields'] as List<dynamic>? ?? [];
+            final totalRecords = fieldPresence['totalRecords'];
+
+            // Count missing fields
+            totalCount += missingFields.length;
+
+            // Count enquiry field validations
+            if (totalRecords != null) {
+              final recordsWithState = fieldPresence['recordsWithState'];
+              final recordsWithDate = fieldPresence['recordsWithDate'];
+              final recordsWithDealerCode =
+                  fieldPresence['recordsWithDealerCode'];
+              final recordsWithDealerName =
+                  fieldPresence['recordsWithDealerName'];
+              final recordsWithDistrict = fieldPresence['recordsWithDistrict'];
+              final recordsWithPincode = fieldPresence['recordsWithPincode'];
+              final recordsWithCustomerName =
+                  fieldPresence['recordsWithCustomerName'];
+              final recordsWithCustomerNumber =
+                  fieldPresence['recordsWithCustomerNumber'];
+              final recordsWithTestRide = fieldPresence['recordsWithTestRide'];
+
+              if (recordsWithState != null) {
+                totalCount++;
+                if (recordsWithState == totalRecords) passedCount++;
+              }
+              if (recordsWithDate != null) {
+                totalCount++;
+                if (recordsWithDate == totalRecords) passedCount++;
+              }
+              if (recordsWithDealerCode != null) {
+                totalCount++;
+                if (recordsWithDealerCode == totalRecords) passedCount++;
+              }
+              if (recordsWithDealerName != null) {
+                totalCount++;
+                if (recordsWithDealerName == totalRecords) passedCount++;
+              }
+              if (recordsWithDistrict != null) {
+                totalCount++;
+                if (recordsWithDistrict == totalRecords) passedCount++;
+              }
+              if (recordsWithPincode != null) {
+                totalCount++;
+                if (recordsWithPincode == totalRecords) passedCount++;
+              }
+              if (recordsWithCustomerName != null) {
+                totalCount++;
+                if (recordsWithCustomerName == totalRecords) passedCount++;
+              }
+              if (recordsWithCustomerNumber != null) {
+                totalCount++;
+                if (recordsWithCustomerNumber == totalRecords) passedCount++;
+              }
+              if (recordsWithTestRide != null) {
+                totalCount++;
+                if (recordsWithTestRide == totalRecords) passedCount++;
+              }
+            }
+          }
+
+          // Count cross-document checks
+          final crossDocument =
+              validationDetails['crossDocument'] as Map<String, dynamic>?;
+          if (crossDocument != null) {
+            final totalCostValid = crossDocument['totalCostValid'];
+            final elementCostsValid = crossDocument['elementCostsValid'];
+            final fixedCostsValid = crossDocument['fixedCostsValid'];
+            final variableCostsValid = crossDocument['variableCostsValid'];
+            final numberOfDaysMatches = crossDocument['numberOfDaysMatches'];
+
+            if (totalCostValid != null) {
+              totalCount++;
+              if (totalCostValid == true) passedCount++;
+            }
+            if (elementCostsValid != null) {
+              totalCount++;
+              if (elementCostsValid == true) passedCount++;
+            }
+            if (fixedCostsValid != null) {
+              totalCount++;
+              if (fixedCostsValid == true) passedCount++;
+            }
+            if (variableCostsValid != null) {
+              totalCount++;
+              if (variableCostsValid == true) passedCount++;
+            }
+            if (numberOfDaysMatches != null) {
+              totalCount++;
+              if (numberOfDaysMatches == true) passedCount++;
+            }
+
+            // Count issues
+            final issues = crossDocument['issues'] as List<dynamic>? ?? [];
+            totalCount += issues.length;
+          }
+        }
+      } catch (e) {
+        print('Error parsing validation details: $e');
+      }
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(
+          color: Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: const BoxDecoration(
+              color: Color.fromARGB(255, 240, 237, 237),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (fileName != null && fileName.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          fileName,
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (totalCount > 0)
+                  RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '$passedCount/$totalCount ',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                        TextSpan(
+                          text: 'Passed',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFF16A34A),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // Validation Details Table (if available)
+          if (validationDetails != null)
+            _buildSimpleValidationDetailsTable(validationDetails),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSimpleValidationDetailsTable(
+      Map<String, dynamic> validationDetails) {
+    // Extract field presence and cross-document checks
+    final fieldPresence =
+        validationDetails['fieldPresence'] as Map<String, dynamic>?;
+    final crossDocument =
+        validationDetails['crossDocument'] as Map<String, dynamic>?;
+
+    List<Map<String, dynamic>> rows = [];
+
+    // Add field presence checks - ONE ROW PER MISSING FIELD
+    if (fieldPresence != null) {
+      final allFieldsPresent = fieldPresence['allFieldsPresent'] ?? true;
+      final missingFields =
+          fieldPresence['missingFields'] as List<dynamic>? ?? [];
+      final totalRecords = fieldPresence['totalRecords'];
+
+      // For enquiry validation (has totalRecords), don't add missingFields
+      // because we'll add individual field checks below
+      if (totalRecords == null &&
+          !allFieldsPresent &&
+          missingFields.isNotEmpty) {
+        // This is for Invoice/Cost Summary/Activity validations
+        // Create a separate row for each missing field
+        for (var field in missingFields) {
+          rows.add({
+            'label': field.toString(),
+            'passed': false,
+            'message': 'Field is missing',
+          });
+        }
+      }
+
+      // Add other field presence details if available (for enquiry validation)
+      if (totalRecords != null) {
+        // Show ALL fields with their pass/fail status
+        final recordsWithState = fieldPresence['recordsWithState'];
+        final recordsWithDate = fieldPresence['recordsWithDate'];
+        final recordsWithDealerCode = fieldPresence['recordsWithDealerCode'];
+        final recordsWithDealerName = fieldPresence['recordsWithDealerName'];
+        final recordsWithDistrict = fieldPresence['recordsWithDistrict'];
+        final recordsWithPincode = fieldPresence['recordsWithPincode'];
+        final recordsWithCustomerName =
+            fieldPresence['recordsWithCustomerName'];
+        final recordsWithCustomerNumber =
+            fieldPresence['recordsWithCustomerNumber'];
+        final recordsWithTestRide = fieldPresence['recordsWithTestRide'];
+
+        // Add all fields with their status
+        if (recordsWithState != null) {
+          rows.add({
+            'label': 'State',
+            'passed': recordsWithState == totalRecords,
+            'message': 'Present in $recordsWithState/$totalRecords records',
+          });
+        }
+        if (recordsWithDate != null) {
+          rows.add({
+            'label': 'Date',
+            'passed': recordsWithDate == totalRecords,
+            'message': 'Present in $recordsWithDate/$totalRecords records',
+          });
+        }
+        if (recordsWithDealerCode != null) {
+          rows.add({
+            'label': 'Dealer Code',
+            'passed': recordsWithDealerCode == totalRecords,
+            'message':
+                'Present in $recordsWithDealerCode/$totalRecords records',
+          });
+        }
+        if (recordsWithDealerName != null) {
+          rows.add({
+            'label': 'Dealer Name',
+            'passed': recordsWithDealerName == totalRecords,
+            'message':
+                'Present in $recordsWithDealerName/$totalRecords records',
+          });
+        }
+        if (recordsWithDistrict != null) {
+          rows.add({
+            'label': 'District',
+            'passed': recordsWithDistrict == totalRecords,
+            'message': 'Present in $recordsWithDistrict/$totalRecords records',
+          });
+        }
+        if (recordsWithPincode != null) {
+          rows.add({
+            'label': 'Pincode',
+            'passed': recordsWithPincode == totalRecords,
+            'message': 'Present in $recordsWithPincode/$totalRecords records',
+          });
+        }
+        if (recordsWithCustomerName != null) {
+          rows.add({
+            'label': 'Customer Name',
+            'passed': recordsWithCustomerName == totalRecords,
+            'message':
+                'Present in $recordsWithCustomerName/$totalRecords records',
+          });
+        }
+        if (recordsWithCustomerNumber != null) {
+          rows.add({
+            'label': 'Customer Number',
+            'passed': recordsWithCustomerNumber == totalRecords,
+            'message':
+                'Present in $recordsWithCustomerNumber/$totalRecords records',
+          });
+        }
+        if (recordsWithTestRide != null) {
+          rows.add({
+            'label': 'Test Ride',
+            'passed': recordsWithTestRide == totalRecords,
+            'message': 'Present in $recordsWithTestRide/$totalRecords records',
+          });
+        }
+      }
+    }
+
+    // Add cross-document checks
+    if (crossDocument != null) {
+      // Add specific validation checks
+      final totalCostValid = crossDocument['totalCostValid'];
+      final elementCostsValid = crossDocument['elementCostsValid'];
+      final fixedCostsValid = crossDocument['fixedCostsValid'];
+      final variableCostsValid = crossDocument['variableCostsValid'];
+      final numberOfDaysMatches = crossDocument['numberOfDaysMatches'];
+
+      if (totalCostValid != null) {
+        rows.add({
+          'label': 'Total Cost Validation',
+          'passed': totalCostValid,
+          'message': totalCostValid
+              ? 'Total cost matches invoice'
+              : 'Total cost does not match invoice',
+        });
+      }
+
+      if (elementCostsValid != null) {
+        rows.add({
+          'label': 'Element Costs Validation',
+          'passed': elementCostsValid,
+          'message': elementCostsValid
+              ? 'Element costs are valid'
+              : 'Element costs are invalid',
+        });
+      }
+
+      if (fixedCostsValid != null) {
+        rows.add({
+          'label': 'Fixed Costs Validation',
+          'passed': fixedCostsValid,
+          'message': fixedCostsValid
+              ? 'Fixed costs are valid'
+              : 'Fixed costs are invalid',
+        });
+      }
+
+      if (variableCostsValid != null) {
+        rows.add({
+          'label': 'Variable Costs Validation',
+          'passed': variableCostsValid,
+          'message': variableCostsValid
+              ? 'Variable costs are valid'
+              : 'Variable costs are invalid',
+        });
+      }
+
+      if (numberOfDaysMatches != null) {
+        rows.add({
+          'label': 'Number of Days Match',
+          'passed': numberOfDaysMatches,
+          'message': numberOfDaysMatches
+              ? 'Number of days matches between documents'
+              : 'Number of days mismatch between documents',
+        });
+      }
+
+      // Add issues as separate rows
+      final issues = crossDocument['issues'] as List<dynamic>? ?? [];
+      for (var issue in issues) {
+        rows.add({
+          'label': 'Cross-document Issue',
+          'passed': false,
+          'message': issue.toString(),
+        });
+      }
+    }
+
+    if (rows.isEmpty) {
+      return const SizedBox();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'RESULT',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...rows.asMap().entries.map((entry) {
+          final index = entry.key;
+          final row = entry.value;
+          final isLast = index == rows.length - 1;
+
+          final label = row['label'] ?? 'Unknown';
+          final passed = row['passed'] ?? false;
+          final message = row['message'] ?? '';
+
+          final statusColor =
+              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    label,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Status
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    passed ? 'Pass' : 'Fail',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: statusColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    message,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: passed
+                          ? const Color(0xFF16A34A)
+                          : const Color(0xFFDC2626),
+                      fontStyle: passed ? FontStyle.normal : FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildValidationSection(String title, List<dynamic> validations) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: AppTextStyles.bodySmall.copyWith(
+            fontWeight: FontWeight.w600,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'RESULT',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...validations.asMap().entries.map((entry) {
+          final index = entry.key;
+          final validation = entry.value as Map<String, dynamic>;
+          final isLast = index == validations.length - 1;
+
+          final field = validation['field'] ?? validation['item'] ?? 'Unknown';
+          final passed = validation['passed'] ?? false;
+          final value = validation['value'];
+          final message = validation['message'];
+          final label = validation['label'];
+
+          final statusColor =
+              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    label ?? field,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Status
+                SizedBox(
+                  width: 80,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        passed ? Icons.check_circle : Icons.cancel,
+                        color: statusColor,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        passed ? 'Pass' : 'Fail',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: statusColor,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found
+                Expanded(
+                  flex: 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (value != null)
+                        Text(
+                          value.toString(),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      if (message != null)
+                        Text(
+                          message.toString(),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFFDC2626),
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      if (value == null && message == null)
+                        Text(
+                          '-',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildRequiredItemsSection(List<dynamic> requiredItems) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Required Items in Photo',
+          style: AppTextStyles.bodySmall.copyWith(
+            fontWeight: FontWeight.w600,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'RESULT',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...requiredItems.asMap().entries.map((entry) {
+          final index = entry.key;
+          final item = entry.value as Map<String, dynamic>;
+          final isLast = index == requiredItems.length - 1;
+
+          final itemName = item['item'] ?? 'Unknown';
+          final present = item['present'] ?? false;
+          final confidence = item['confidence'];
+
+          final statusColor =
+              present ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    itemName,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Status
+                SizedBox(
+                  width: 80,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        present ? Icons.check_circle : Icons.cancel,
+                        color: statusColor,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        present ? 'Pass' : 'Fail',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: statusColor,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found (confidence score)
+                Expanded(
+                  flex: 3,
+                  child: confidence != null
+                      ? Row(
+                          children: [
+                            Text(
+                              present ? 'Detected with ' : 'Not detected, ',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: _getConfidenceColor(
+                                        (confidence as num).toDouble() * 100)
+                                    .withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(
+                                  color: _getConfidenceColor(
+                                      (confidence as num).toDouble() * 100),
+                                  width: 0.5,
+                                ),
+                              ),
+                              child: Text(
+                                '${((confidence as num) * 100).toStringAsFixed(0)}% confidence',
+                                style: AppTextStyles.bodySmall.copyWith(
+                                  color: _getConfidenceColor(
+                                      (confidence as num).toDouble() * 100),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : Text(
+                          present ? 'Detected' : 'Not detected',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  void _navigateToUpload() {
+    context.pushNamed('agency-upload', extra: {
+      'token': widget.token,
+      'userName': widget.userName,
+      'submissionId': widget.submissionId,
+    });
   }
 
   List<NavItem> _getNavItems(BuildContext context) {
@@ -277,7 +1976,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                   userName: widget.userName,
                   userRole: 'Agency',
                   navItems: _getNavItems(context),
-                  onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                  onLogout: () => handleLogout(context, ref),
                 )
               : null,
           body: Column(
@@ -291,8 +1990,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                         userName: widget.userName,
                         userRole: 'Agency',
                         navItems: _getNavItems(context),
-                        onLogout: () =>
-                            Navigator.pushReplacementNamed(context, '/'),
+                        onLogout: () => handleLogout(context, ref),
                         isCollapsed: _isSidebarCollapsed,
                         onToggleCollapse: () => setState(
                             () => _isSidebarCollapsed = !_isSidebarCollapsed),
@@ -486,6 +2184,9 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
           ),
           const SizedBox(height: 24),
 
+          // Validation Report API Result Section
+          _buildValidationReportSection(),
+
           const SizedBox(height: 80),
         ],
       ),
@@ -611,6 +2312,40 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                         _formatDate(_submission!['updatedAt']))),
               ],
             ),
+            // Submit button - show only for draft/uploaded states
+            if (_canSubmit(state)) ...[
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isSubmitting ? null : _submitSubmission,
+                  icon: _isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Icon(Icons.send),
+                  label: Text(
+                      _isSubmitting ? 'Submitting...' : 'Submit for Review'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    textStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -748,42 +2483,12 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         .join(' ');
   }
 
-  final bool _isResubmitting = false;
-
   void _enterEditMode() {
-    Navigator.pushNamed(
-      context,
-      '/agency/upload',
-      arguments: {
-        'token': widget.token,
-        'userName': widget.userName,
-        'submissionId': widget.submissionId,
-      },
-    );
-  }
-
-  Future<bool> _showDeleteConfirmation(String title, String message) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-        content: Text(message, style: const TextStyle(fontSize: 14)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.rejectedText,
-                foregroundColor: Colors.white),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    return result ?? false;
+    context.pushNamed('agency-upload', extra: {
+      'token': widget.token,
+      'userName': widget.userName,
+      'submissionId': widget.submissionId,
+    });
   }
 
   Widget _buildRejectionCard(
@@ -1236,10 +2941,10 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
                       ? const Color(0xFFDC2626)
                       : const Color(0xFF9CA3AF),
               title: asmStatus == 'approved'
-                  ? 'Approved by ASM'
+                  ? 'Approved by CH'
                   : asmStatus == 'rejected'
-                      ? 'Rejected by ASM'
-                      : 'Pending ASM Review',
+                      ? 'Rejected by CH'
+                      : 'Pending CH Review',
               date: asmReviewedAt != null ? _formatDate(asmReviewedAt) : null,
               comment: asmReviewNotes,
               isCompleted: asmStatus != 'pending',
@@ -1379,7 +3084,7 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
       };
     } else if (stateLower == 'rejectedbyasm') {
       return {
-        'label': 'Rejected by ASM',
+        'label': 'Rejected by CH',
         'color': const Color(0xFFDC2626),
         'bgColor': const Color(0xFFFEE2E2),
         'borderColor': const Color(0xFFFCA5A5),
@@ -1418,10 +3123,10 @@ class _AgencySubmissionDetailPageState extends State<AgencySubmissionDetailPage>
         'borderColor': const Color(0xFFFCD34D),
         'icon': Icons.warning_amber,
       };
-    } else if (stateLower.contains('pendingasm') ||
+    } else if (stateLower.contains('pendingch') ||
         stateLower.contains('pendingapproval')) {
       return {
-        'label': 'Pending with ASM',
+        'label': 'Pending with CH',
         'color': const Color(0xFFF59E0B),
         'bgColor': const Color(0xFFFEF3C7),
         'borderColor': const Color(0xFFFCD34D),

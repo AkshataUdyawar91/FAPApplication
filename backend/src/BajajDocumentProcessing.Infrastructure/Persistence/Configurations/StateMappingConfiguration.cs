@@ -26,11 +26,12 @@ public class StateMappingConfiguration : IEntityTypeConfiguration<StateMapping>
         builder.Property(e => e.IsActive)
             .HasDefaultValue(true);
 
-        // One Circle Head per state (unique, nullable filtered)
+        builder.Property(e => e.IsDeleted)
+            .HasDefaultValue(false);
+
+        // Index for CircleHead lookup (non-unique: one CH can cover multiple states)
         builder.HasIndex(e => e.CircleHeadUserId)
-            .IsUnique()
-            .HasDatabaseName("IX_StateMappings_CircleHeadUserId")
-            .HasFilter("[CircleHeadUserId] IS NOT NULL");
+            .HasDatabaseName("IX_StateMappings_CircleHeadUserId");
 
         builder.HasIndex(e => e.RAUserId)
             .HasDatabaseName("IX_StateMappings_RAUserId");

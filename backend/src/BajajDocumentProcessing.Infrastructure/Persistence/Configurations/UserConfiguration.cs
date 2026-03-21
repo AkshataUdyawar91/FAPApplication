@@ -41,6 +41,13 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .IsRequired()
             .HasDefaultValue(true);
 
+        builder.Property(u => u.AadObjectId)
+            .HasMaxLength(128);
+
+        builder.HasIndex(u => u.AadObjectId)
+            .IsUnique()
+            .HasFilter("[AadObjectId] IS NOT NULL");
+
         // Index on AgencyId for filtering users by agency
         builder.HasIndex(u => u.AgencyId);
 

@@ -1,6 +1,7 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import '../../../../core/constants/api_constants.dart';
 
 class NewLoginPage extends StatefulWidget {
   const NewLoginPage({super.key});
@@ -11,7 +12,8 @@ class NewLoginPage extends StatefulWidget {
 class _NewLoginPageState extends State<NewLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
+  final _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))..interceptors.add(PrettyDioLogger());
+
   bool _isLoading = false;
   String? _errorMessage;
   bool _obscurePassword = true;
@@ -31,6 +33,8 @@ class _NewLoginPageState extends State<NewLoginPage> {
   }
 
   Future<void> _handleLogin() async {
+    debugPrint('=== LOGIN ATTEMPT === URL: ${_dio.options.baseUrl}/auth/login');
+    debugPrint('Email: ${_emailController.text}');
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       setState(() => _errorMessage = 'Please enter email and password');
       return;
@@ -42,16 +46,27 @@ class _NewLoginPageState extends State<NewLoginPage> {
         'password': _passwordController.text,
       });
       if (response.statusCode == 200 && mounted) {
-        final role = (response.data['role'] ?? '').toString().toLowerCase();
+        final role = (response.data['role'] as String?)?.toLowerCase() ?? 'agency';
         final args = {
           'token': response.data['token'],
           'userName': response.data['email'] ?? '',
         };
-        if (role == 'admin') {
-          Navigator.pushReplacementNamed(context, '/admin/dashboard', arguments: args);
-        } else {
-          Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: args);
+
+        String route;
+        switch (role) {
+          case 'asm':
+            route = '/asm/dashboard';
+            break;
+          case 'ra':
+            route = '/ra/dashboard';
+            break;
+          case 'admin':
+            route = '/ra/dashboard';
+            break;
+          default:
+            route = '/agency/dashboard';
         }
+        Navigator.pushReplacementNamed(context, route, arguments: args);
       }
     } on DioException catch (e) {
       debugPrint('Login DioException: type=${e.type}, message=${e.message}, statusCode=${e.response?.statusCode}, responseData=${e.response?.data}');
@@ -63,6 +78,11 @@ class _NewLoginPageState extends State<NewLoginPage> {
         } else {
           _errorMessage = 'Login failed: ${e.message}';
         }
+      });
+    } catch (e) {
+      debugPrint('Login unexpected error: $e');
+      setState(() {
+        _errorMessage = 'Unexpected error: $e';
       });
     } finally {
       if (mounted) setState(() => _isLoading = false);

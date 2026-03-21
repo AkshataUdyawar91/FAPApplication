@@ -63,13 +63,16 @@ class AuthResponse {
   });
 
   factory AuthResponse.fromJson(Map<String, dynamic> json) {
+    // Backend returns flat: { token, userId, email, fullName, role, expiresAt }
+    final user = UserModel(
+      id: json['userId'] as String,
+      email: json['email'] as String,
+      name: json['fullName'] as String,
+      role: json['role'] as String,
+    );
+
     return AuthResponse(
-      user: UserModel(
-        id: json['userId'].toString(),
-        email: json['email'] as String,
-        name: json['email'] as String, // Backend doesn't return fullName, use email
-        role: json['role'] as String,
-      ),
+      user: user,
       token: json['token'] as String,
     );
   }
