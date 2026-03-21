@@ -15,6 +15,7 @@ import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/pagination_bar.dart';
+import '../../../../core/network/dio_client.dart';
 
 class AgencyDashboardPage extends ConsumerStatefulWidget {
   final String token;
@@ -52,6 +53,11 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   @override
   void initState() {
     super.initState();
+    // Set the shared auth token so AssistantChatPanel (and other widgets
+    // using dioProvider) can attach the Bearer token to their requests.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(authTokenProvider.notifier).state = widget.token;
+    });
     _loadRequests();
   }
 
