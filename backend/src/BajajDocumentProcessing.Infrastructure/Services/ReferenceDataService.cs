@@ -159,6 +159,57 @@ public class ReferenceDataService : IReferenceDataService
         return GetStateRateValue(elementName, stateCode);
     }
 
+    /// <inheritdoc />
+    public string? GetStateCodeByName(string stateName)
+    {
+        if (string.IsNullOrWhiteSpace(stateName)) return null;
+
+        // Static map of common Indian state names to GST state codes
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Jammu & Kashmir"] = "01", ["Jammu and Kashmir"] = "01",
+            ["Himachal Pradesh"] = "02",
+            ["Punjab"] = "03",
+            ["Chandigarh"] = "04",
+            ["Uttarakhand"] = "05", ["Uttaranchal"] = "05",
+            ["Haryana"] = "06",
+            ["Delhi"] = "07",
+            ["Rajasthan"] = "08",
+            ["Uttar Pradesh"] = "09", ["UP"] = "09",
+            ["Bihar"] = "10",
+            ["Sikkim"] = "11",
+            ["Arunachal Pradesh"] = "12",
+            ["Nagaland"] = "13",
+            ["Manipur"] = "14",
+            ["Mizoram"] = "15",
+            ["Tripura"] = "16",
+            ["Meghalaya"] = "17",
+            ["Assam"] = "18",
+            ["West Bengal"] = "19",
+            ["Jharkhand"] = "20",
+            ["Odisha"] = "21", ["Orissa"] = "21",
+            ["Chhattisgarh"] = "22",
+            ["Madhya Pradesh"] = "23", ["MP"] = "23",
+            ["Gujarat"] = "24",
+            ["Daman & Diu"] = "25", ["Daman and Diu"] = "25",
+            ["Dadra & Nagar Haveli"] = "26",
+            ["Maharashtra"] = "27",
+            ["Andhra Pradesh"] = "28",
+            ["Karnataka"] = "29",
+            ["Goa"] = "30",
+            ["Lakshadweep"] = "31",
+            ["Kerala"] = "32",
+            ["Tamil Nadu"] = "33",
+            ["Puducherry"] = "34", ["Pondicherry"] = "34",
+            ["Andaman & Nicobar"] = "35",
+            ["Telangana"] = "36",
+            ["Andhra Pradesh (New)"] = "37",
+            ["Ladakh"] = "38",
+        };
+
+        return map.TryGetValue(stateName.Trim(), out var code) ? code : null;
+    }
+
     // --- Private cache helpers ---
 
     private Dictionary<string, decimal> GetGstMappings()

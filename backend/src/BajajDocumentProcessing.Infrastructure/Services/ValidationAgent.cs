@@ -1920,12 +1920,37 @@ public class ValidationAgent : IValidationAgent
                 lineItemMatching = result.LineItemMatching,
                 vendorMatching = result.VendorMatching
             };
+            // Read agency/billing/state from ExtractedDataJson (not stored as dedicated columns on Invoice entity)
+            string? invAgencyName = null, invAgencyAddr = null, invBillingName = null, invBillingAddr = null, invStateVal = null;
+            if (!string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
+            {
+                try
+                {
+                    var invJson = JsonSerializer.Deserialize<JsonElement>(invoiceDoc.ExtractedDataJson);
+                    if (invJson.TryGetProperty("AgencyName", out var an) || invJson.TryGetProperty("agencyName", out an)) invAgencyName = an.GetString();
+                    if (invJson.TryGetProperty("AgencyAddress", out var aa) || invJson.TryGetProperty("agencyAddress", out aa)) invAgencyAddr = aa.GetString();
+                    if (invJson.TryGetProperty("BillingName", out var bn) || invJson.TryGetProperty("billingName", out bn)) invBillingName = bn.GetString();
+                    if (invJson.TryGetProperty("BillingAddress", out var ba) || invJson.TryGetProperty("billingAddress", out ba)) invBillingAddr = ba.GetString();
+                    if (invJson.TryGetProperty("StateName", out var sn) || invJson.TryGetProperty("stateName", out sn)) invStateVal = sn.GetString();
+                    if (string.IsNullOrWhiteSpace(invStateVal) && (invJson.TryGetProperty("StateCode", out var sc) || invJson.TryGetProperty("stateCode", out sc))) invStateVal = sc.GetString();
+                }
+                catch { }
+            }
+            var invAgencyOk = !string.IsNullOrWhiteSpace(invAgencyName) && !string.IsNullOrWhiteSpace(invAgencyAddr);
+            var invAgencyExtracted = invAgencyOk ? $"{invAgencyName}, {invAgencyAddr}" : invAgencyName ?? invAgencyAddr;
+            var invBillingOk = !string.IsNullOrWhiteSpace(invBillingName) && !string.IsNullOrWhiteSpace(invBillingAddr);
+            var invBillingExtracted = invBillingOk ? $"{invBillingName}, {invBillingAddr}" : invBillingName ?? invBillingAddr;
+            var invStateOk = !string.IsNullOrWhiteSpace(invStateVal);
+
             var invRules = new List<object>
             {
                 new { ruleCode = "INV_NUMBER_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Number") ?? false), isWarning = false, label = "Invoice Number", extractedValue = invoiceDoc.InvoiceNumber, message = (string?)null },
                 new { ruleCode = "INV_DATE_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Date") ?? false), isWarning = false, label = "Invoice Date", extractedValue = invoiceDoc.InvoiceDate?.ToString("dd-MMM-yyyy"), message = (string?)null },
                 new { ruleCode = "INV_AMOUNT_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Amount") ?? false), isWarning = false, label = "Invoice Amount", extractedValue = invoiceDoc.TotalAmount.HasValue ? $"₹{invoiceDoc.TotalAmount:N0}" : null, message = (string?)null },
                 new { ruleCode = "INV_GST_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("GST Number") ?? false), isWarning = false, label = "GST Number", extractedValue = invoiceDoc.GSTNumber, message = (string?)null },
+                new { ruleCode = "INV_AGENCY_NAME_ADDRESS", type = "Required", passed = invAgencyOk, isWarning = false, label = "Agency Name & Address", extractedValue = invAgencyExtracted, message = invAgencyOk ? null : (string.IsNullOrWhiteSpace(invAgencyName) ? "Supplier name not detected" : "Supplier address not detected") },
+                new { ruleCode = "INV_BILLING_NAME_ADDRESS", type = "Required", passed = invBillingOk, isWarning = false, label = "Billing Name & Address", extractedValue = invBillingExtracted, message = invBillingOk ? null : (string.IsNullOrWhiteSpace(invBillingName) ? "Recipient name not detected" : "Recipient address not detected") },
+                new { ruleCode = "INV_SUPPLIER_STATE", type = "Required", passed = invStateOk, isWarning = false, label = "Supplier State", extractedValue = invStateVal, message = invStateOk ? null : "Supplier state not detected" },
                 new { ruleCode = "INV_PO_MATCH", type = "Required", passed = result.InvoiceCrossDocument?.PONumberMatches ?? true, isWarning = false, label = "PO Number Match", extractedValue = (string?)null, message = result.InvoiceCrossDocument?.PONumberMatches == false ? "PO number mismatch" : null },
             };
             // Only include PO balance rule when the balance was actually checked (PoBalanceAmount has a value).
@@ -1970,7 +1995,9 @@ public class ValidationAgent : IValidationAgent
                 new { ruleCode = "CS_NUMBER_OF_ACTIVATIONS", type = "Required", passed = cs.NumberOfActivations.HasValue && cs.NumberOfActivations > 0, isWarning = false, label = "No. of Activations", extractedValue = cs.NumberOfActivations?.ToString(), message = (string?)null },
                 new { ruleCode = "CS_NUMBER_OF_TEAMS", type = "Required", passed = cs.NumberOfTeams.HasValue && cs.NumberOfTeams > 0, isWarning = false, label = "No. of Teams", extractedValue = cs.NumberOfTeams?.ToString(), message = (string?)null },
                 new { ruleCode = "CS_ELEMENT_WISE_COST", type = "Required", passed = !string.IsNullOrWhiteSpace(cs.ElementWiseCostsJson) && cs.ElementWiseCostsJson != "[]", isWarning = false, label = "Element-wise Cost", extractedValue = "Cost breakdown detected", message = (string?)null },
-                new { ruleCode = "CS_ELEMENT_WISE_QTY", type = "Required", passed = !string.IsNullOrWhiteSpace(cs.ElementWiseQuantityJson) && cs.ElementWiseQuantityJson != "[]", isWarning = false, label = "Element-wise Quantity", extractedValue = "Quantity breakdown detected", message = (string?)null }
+                new { ruleCode = "CS_ELEMENT_WISE_QTY", type = "Required", passed = !string.IsNullOrWhiteSpace(cs.ElementWiseQuantityJson) && cs.ElementWiseQuantityJson != "[]", isWarning = false, label = "Element-wise Quantity", extractedValue = "Quantity breakdown detected", message = (string?)null },
+                new { ruleCode = "CS_FIXED_COST_LIMITS", type = "Check", passed = result.CostSummaryCrossDocument?.FixedCostsValid ?? true, isWarning = !(result.CostSummaryCrossDocument?.FixedCostsValid ?? true), label = "Fixed Cost Limits", extractedValue = (string?)null, message = (result.CostSummaryCrossDocument?.FixedCostsValid ?? true) ? "Fixed cost items within state limits" : "One or more fixed cost items exceed state limit" },
+                new { ruleCode = "CS_VARIABLE_COST_LIMITS", type = "Check", passed = result.CostSummaryCrossDocument?.VariableCostsValid ?? true, isWarning = !(result.CostSummaryCrossDocument?.VariableCostsValid ?? true), label = "Variable Cost Limits", extractedValue = (string?)null, message = (result.CostSummaryCrossDocument?.VariableCostsValid ?? true) ? "Variable cost items within state limits" : "One or more variable cost items exceed state limit" }
             };
             items.Add((DocumentType.CostSummary, package.CostSummary.Id, passed,
                 issues.Count > 0 ? string.Join("; ", issues) : null,

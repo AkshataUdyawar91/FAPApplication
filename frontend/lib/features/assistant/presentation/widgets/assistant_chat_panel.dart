@@ -1906,7 +1906,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Section header with PASS/FAIL badge
+          // Section header — PASS/FAIL badge hidden for PO section
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
             child: Row(children: [
@@ -1914,21 +1914,22 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 child: Text(section.title,
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: section.passed ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  section.passed ? 'PASS' : 'FAIL',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: section.passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+              if (section.title != 'Purchase Order')
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: section.passed ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    section.passed ? 'PASS' : 'FAIL',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: section.passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                    ),
                   ),
                 ),
-              ),
             ]),
           ),
           const Divider(height: 1, color: Color(0xFFE5E7EB)),
@@ -2025,7 +2026,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Field Activity Assistant',
+                      Text('ClaimsIQ Assistant',
                           style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
                       Text('Online', style: TextStyle(fontSize: 12, color: Color(0xFF90CAF9))),
                     ],

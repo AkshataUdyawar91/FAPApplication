@@ -811,7 +811,266 @@ public class NotificationDataService : INotificationDataService
 
         // === Section order: Invoice → Cost Summary → Activity Summary → Enquiry Dump → Photos ===
 
-        // Invoice: use the same 9 specific checks as the conversational chatbot.
+        // Cost Summary: use the same validation as the conversational chatbot (8 checks)
+        var costSummary = package.CostSummary;
+        if (costSummary != null && !costSummary.IsDeleted)
+        {
+            string? placeOfSupply = costSummary.PlaceOfSupply;
+            int? numberOfDays = costSummary.NumberOfDays;
+            int? numberOfActivations = costSummary.NumberOfActivations;
+            int? numberOfTeams = costSummary.NumberOfTeams;
+            string? elementWiseCosts = costSummary.ElementWiseCostsJson;
+            string? elementWiseQuantity = costSummary.ElementWiseQuantityJson;
+
+            // Fallback: parse from ExtractedDataJson if dedicated columns are empty
+            if (!string.IsNullOrEmpty(costSummary.ExtractedDataJson))
+            {
+                try
+                {
+                    var json = JsonDocument.Parse(costSummary.ExtractedDataJson).RootElement;
+
+                    if (string.IsNullOrWhiteSpace(placeOfSupply))
+                    {
+                        if (json.TryGetProperty("PlaceOfSupply", out var pos) || json.TryGetProperty("placeOfSupply", out pos))
+                            placeOfSupply = pos.GetString();
+                        if (string.IsNullOrWhiteSpace(placeOfSupply))
+                            if (json.TryGetProperty("State", out var st) || json.TryGetProperty("state", out st))
+                                placeOfSupply = st.GetString();
+                    }
+                    if (numberOfDays == null)
+                        if (json.TryGetProperty("NumberOfDays", out var nd) || json.TryGetProperty("numberOfDays", out nd))
+                            try { numberOfDays = nd.GetInt32(); } catch { }
+                    if (numberOfActivations == null)
+                        if (json.TryGetProperty("NumberOfActivations", out var na) || json.TryGetProperty("numberOfActivations", out na))
+                            try { numberOfActivations = na.GetInt32(); } catch { }
+                    if (numberOfTeams == null)
+                        if (json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                            try { numberOfTeams = nt.GetInt32(); } catch { }
+                    if (string.IsNullOrWhiteSpace(elementWiseCosts))
+                        if (json.TryGetProperty("ElementWiseCostsJson", out var ewc) || json.TryGetProperty("elementWiseCostsJson", out ewc))
+                            elementWiseCosts = ewc.GetString();
+                    if (string.IsNullOrWhiteSpace(elementWiseQuantity))
+                        if (json.TryGetProperty("ElementWiseQuantityJson", out var ewq) || json.TryGetProperty("elementWiseQuantityJson", out ewq))
+                            elementWiseQuantity = ewq.GetString();
+                }
+                catch { /* malformed JSON */ }
+            }
+
+            // 1. Place of Supply
+            bool posPresent = !string.IsNullOrWhiteSpace(placeOfSupply);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = posPresent ? "Pass" : "Fail",
+                Details = "Place of Supply",
+                Evidence = posPresent ? placeOfSupply! : "Place of supply / state not detected"
+            });
+
+            // 2. No. of Days
+            bool daysPresent = numberOfDays.HasValue && numberOfDays.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = daysPresent ? "Pass" : "Fail",
+                Details = "No. of Days",
+                Evidence = daysPresent ? numberOfDays.ToString()! : "Total number of days not detected"
+            });
+
+            // 3. No. of Activations
+            bool activationsPresent = numberOfActivations.HasValue && numberOfActivations.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = activationsPresent ? "Pass" : "Fail",
+                Details = "No. of Activations",
+                Evidence = activationsPresent ? numberOfActivations.ToString()! : "Number of activations not detected"
+            });
+
+            // 4. No. of Teams
+            bool teamsPresent = numberOfTeams.HasValue && numberOfTeams.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = teamsPresent ? "Pass" : "Fail",
+                Details = "No. of Teams",
+                Evidence = teamsPresent ? numberOfTeams.ToString()! : "Number of teams not detected"
+            });
+
+            // 5. Element-wise Cost
+            bool costsPresent = !string.IsNullOrWhiteSpace(elementWiseCosts) && elementWiseCosts != "[]";
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = costsPresent ? "Pass" : "Fail",
+                Details = "Element-wise Cost",
+                Evidence = costsPresent ? "Cost breakdown detected" : "Element-wise cost breakdown not detected"
+            });
+
+            // 6. Element-wise Quantity
+            bool qtyPresent = !string.IsNullOrWhiteSpace(elementWiseQuantity) && elementWiseQuantity != "[]";
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = "Cost Summary",
+                Status = qtyPresent ? "Pass" : "Fail",
+                Details = "Element-wise Quantity",
+                Evidence = qtyPresent ? "Quantity breakdown detected" : "Element-wise quantity breakdown not detected"
+            });
+
+            // 7. Fixed Cost Limits — read from CostBreakdownJson or ExtractedDataJson.costBreakdowns
+            string? csBreakdownJson = !string.IsNullOrWhiteSpace(costSummary.CostBreakdownJson)
+                ? costSummary.CostBreakdownJson
+                : null;
+            if (csBreakdownJson == null && !string.IsNullOrEmpty(costSummary.ExtractedDataJson))
+            {
+                try
+                {
+                    var root = JsonDocument.Parse(costSummary.ExtractedDataJson).RootElement;
+                    if (root.TryGetProperty("costBreakdowns", out var cb) && cb.ValueKind == JsonValueKind.Array)
+                        csBreakdownJson = cb.GetRawText();
+                }
+                catch { }
+            }
+
+            var fixedItems = ParseCostBreakdownItems(csBreakdownJson, isFixed: true);
+            var varItems = ParseCostBreakdownItems(csBreakdownJson, isFixed: false);
+
+            if (fixedItems.Count == 0)
+            {
+                groups.Add(new ValidationCheckGroup { GroupName = "Cost Summary", Status = "Pass", Details = "Fixed Cost Limits", Evidence = "No fixed cost items to validate" });
+            }
+            else if (string.IsNullOrWhiteSpace(placeOfSupply))
+            {
+                groups.Add(new ValidationCheckGroup { GroupName = "Cost Summary", Status = "Fail", Details = "Fixed Cost Limits", Evidence = "State not identified — cannot check limits" });
+            }
+            else
+            {
+                groups.Add(new ValidationCheckGroup { GroupName = "Cost Summary", Status = "Pass", Details = "Fixed Cost Limits", Evidence = $"{fixedItems.Count} fixed cost item(s) present" });
+            }
+
+            // 8. Variable Cost Limits
+            if (varItems.Count == 0)
+            {
+                groups.Add(new ValidationCheckGroup { GroupName = "Cost Summary", Status = "Pass", Details = "Variable Cost Limits", Evidence = "No variable cost items to validate" });
+            }
+            else if (string.IsNullOrWhiteSpace(placeOfSupply))
+            {
+                groups.Add(new ValidationCheckGroup { GroupName = "Cost Summary", Status = "Fail", Details = "Variable Cost Limits", Evidence = "State not identified — cannot check limits" });
+            }
+            else
+            {
+                groups.Add(new ValidationCheckGroup { GroupName = "Cost Summary", Status = "Pass", Details = "Variable Cost Limits", Evidence = $"{varItems.Count} variable cost item(s) present" });
+            }
+        }
+
+        // Activity Summary: read from ValidationResults.RuleResultsJson (same pattern as Enquiry Dump)
+        var actSummary = package.ActivitySummary;
+        if (actSummary != null && !actSummary.IsDeleted)
+        {
+            var actVr = allResults.FirstOrDefault(vr =>
+                vr.DocumentId == actSummary.Id ||
+                vr.DocumentType == Domain.Enums.DocumentType.ActivitySummary);
+
+            bool builtFromRules = false;
+            if (actVr?.RuleResultsJson != null)
+            {
+                try
+                {
+                    var rules = JsonSerializer.Deserialize<List<EnquiryRuleResult>>(
+                        actVr.RuleResultsJson,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                    if (rules != null && rules.Count > 0)
+                    {
+                        foreach (var rule in rules)
+                        {
+                            groups.Add(new ValidationCheckGroup
+                            {
+                                GroupName = "Activity Summary",
+                                Status = rule.Passed ? "Pass" : "Fail",
+                                Details = rule.Label ?? rule.RuleCode ?? "Check",
+                                Evidence = rule.ExtractedValue
+                                    ?? (rule.Passed ? "Present" : rule.Message ?? "Not detected")
+                            });
+                        }
+                        builtFromRules = true;
+                    }
+                }
+                catch { /* malformed JSON — fall through to hardcoded */ }
+            }
+
+            // Fallback: hardcoded 3-row layout if no RuleResultsJson available
+            if (!builtFromRules)
+            {
+                string? dealerName = actSummary.DealerName;
+                string? location = null;
+
+                if (!string.IsNullOrEmpty(actSummary.ExtractedDataJson))
+                {
+                    try
+                    {
+                        var json = JsonDocument.Parse(actSummary.ExtractedDataJson).RootElement;
+                        if (string.IsNullOrWhiteSpace(dealerName))
+                        {
+                            if (json.TryGetProperty("DealerName", out var dn) || json.TryGetProperty("dealerName", out dn))
+                                dealerName = dn.GetString();
+                        }
+                        if (json.TryGetProperty("Rows", out var rows) || json.TryGetProperty("rows", out rows))
+                        {
+                            if (rows.ValueKind == JsonValueKind.Array && rows.GetArrayLength() > 0)
+                            {
+                                var first = rows[0];
+                                if (string.IsNullOrWhiteSpace(dealerName))
+                                {
+                                    if (first.TryGetProperty("DealerName", out var rdn) || first.TryGetProperty("dealerName", out rdn))
+                                        dealerName = rdn.GetString();
+                                }
+                                if (first.TryGetProperty("Location", out var loc) || first.TryGetProperty("location", out loc))
+                                    location = loc.GetString();
+                            }
+                        }
+                    }
+                    catch { /* malformed JSON */ }
+                }
+
+                bool dealerPresent = !string.IsNullOrWhiteSpace(dealerName);
+                bool locationPresent = !string.IsNullOrWhiteSpace(location);
+                bool dealerLocationPassed = dealerPresent && locationPresent;
+
+                string evidence;
+                if (dealerLocationPassed)
+                    evidence = string.Join(", ", new[] { dealerName, location }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                else if (!dealerPresent && !locationPresent)
+                    evidence = "Dealer name and location not detected";
+                else if (!dealerPresent)
+                    evidence = $"Location: {location} — Dealer name not detected";
+                else
+                    evidence = $"Dealer: {dealerName} — Location not detected";
+
+                groups.Add(new ValidationCheckGroup
+                {
+                    GroupName = "Activity Summary",
+                    Status = dealerLocationPassed ? "Pass" : "Fail",
+                    Details = "Dealer & Location Details",
+                    Evidence = evidence
+                });
+                groups.Add(new ValidationCheckGroup
+                {
+                    GroupName = "Activity Summary",
+                    Status = "Pass",
+                    Details = "Total No. of Days",
+                    Evidence = actSummary.TotalDays.HasValue ? actSummary.TotalDays.ToString()! : "Not extracted"
+                });
+                groups.Add(new ValidationCheckGroup
+                {
+                    GroupName = "Activity Summary",
+                    Status = "Pass",
+                    Details = "Total No. of Working Days",
+                    Evidence = actSummary.TotalWorkingDays.HasValue ? actSummary.TotalWorkingDays.ToString()! : "Not extracted"
+                });
+            }
+        }
+
+        // Invoice: use the same 12 specific checks as the conversational chatbot.
         // Check both direct Invoices and CampaignInvoices (via Teams) since seed data
         // uses CampaignInvoices linked through Teams, not direct Invoices.
         var directInvoices = package.Invoices.Where(i => !i.IsDeleted).ToList();
@@ -930,7 +1189,59 @@ public class NotificationDataService : INotificationDataService
                 Evidence = hsnPresent ? hsnSac! : "HSN/SAC code not detected"
             });
 
-            // 7. Vendor Code
+            // 7. Agency Name & Address (Supplier)
+            string? agencyName = null, agencyAddress = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("AgencyName", out var an) || extractedJson.Value.TryGetProperty("agencyName", out an)) agencyName = an.GetString();
+                if (extractedJson.Value.TryGetProperty("AgencyAddress", out var aa) || extractedJson.Value.TryGetProperty("agencyAddress", out aa)) agencyAddress = aa.GetString();
+            }
+            var agencyOk = !string.IsNullOrWhiteSpace(agencyName) && !string.IsNullOrWhiteSpace(agencyAddress);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = agencyOk ? "Pass" : "Fail",
+                Details = "Agency Name & Address",
+                Evidence = agencyOk
+                    ? $"{agencyName}, {agencyAddress}"
+                    : (string.IsNullOrWhiteSpace(agencyName) ? "Supplier name not detected" : "Supplier address not detected")
+            });
+
+            // 8. Billing Name & Address (Recipient)
+            string? billingName = null, billingAddress = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("BillingName", out var bn) || extractedJson.Value.TryGetProperty("billingName", out bn)) billingName = bn.GetString();
+                if (extractedJson.Value.TryGetProperty("BillingAddress", out var ba) || extractedJson.Value.TryGetProperty("billingAddress", out ba)) billingAddress = ba.GetString();
+            }
+            var billingOk = !string.IsNullOrWhiteSpace(billingName) && !string.IsNullOrWhiteSpace(billingAddress);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = billingOk ? "Pass" : "Fail",
+                Details = "Billing Name & Address",
+                Evidence = billingOk
+                    ? $"{billingName}, {billingAddress}"
+                    : (string.IsNullOrWhiteSpace(billingName) ? "Recipient name not detected" : "Recipient address not detected")
+            });
+
+            // 9. Supplier State
+            string? supplierState = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("StateName", out var sn) || extractedJson.Value.TryGetProperty("stateName", out sn)) supplierState = sn.GetString();
+                if (string.IsNullOrWhiteSpace(supplierState) && (extractedJson.Value.TryGetProperty("StateCode", out var sc) || extractedJson.Value.TryGetProperty("stateCode", out sc))) supplierState = sc.GetString();
+            }
+            var stateOk = !string.IsNullOrWhiteSpace(supplierState);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = stateOk ? "Pass" : "Fail",
+                Details = "Supplier State",
+                Evidence = stateOk ? supplierState! : "Supplier state not detected"
+            });
+
+            // 10. Vendor Code
             string? vendorCode = null;
             if (extractedJson.HasValue)
             {
@@ -949,7 +1260,7 @@ public class NotificationDataService : INotificationDataService
                 Evidence = vendorCodePresent ? vendorCode! : "Vendor code not detected"
             });
 
-            // 8. PO Number (cross-check against PO)
+            // 11. PO Number (cross-check against PO)
             string? extractedPoNumber = null;
             if (extractedJson.HasValue)
             {
@@ -986,7 +1297,7 @@ public class NotificationDataService : INotificationDataService
                 Evidence = poEvidence
             });
 
-            // 9. Amount vs PO Balance
+            // 12. Amount vs PO Balance
             bool amountOk;
             string balanceEvidence;
             if (po == null || !invAmount.HasValue)
@@ -1009,220 +1320,6 @@ public class NotificationDataService : INotificationDataService
                 Details = "Amount vs PO Balance",
                 Evidence = balanceEvidence
             });
-        }
-
-        // Cost Summary: use the same validation as the conversational chatbot (6 checks)
-        var costSummary = package.CostSummary;
-        if (costSummary != null && !costSummary.IsDeleted)
-        {
-            string? placeOfSupply = costSummary.PlaceOfSupply;
-            int? numberOfDays = costSummary.NumberOfDays;
-            int? numberOfActivations = costSummary.NumberOfActivations;
-            int? numberOfTeams = costSummary.NumberOfTeams;
-            string? elementWiseCosts = costSummary.ElementWiseCostsJson;
-            string? elementWiseQuantity = costSummary.ElementWiseQuantityJson;
-
-            // Fallback: parse from ExtractedDataJson if dedicated columns are empty
-            if (!string.IsNullOrEmpty(costSummary.ExtractedDataJson))
-            {
-                try
-                {
-                    var json = JsonDocument.Parse(costSummary.ExtractedDataJson).RootElement;
-
-                    if (string.IsNullOrWhiteSpace(placeOfSupply))
-                    {
-                        if (json.TryGetProperty("PlaceOfSupply", out var pos) || json.TryGetProperty("placeOfSupply", out pos))
-                            placeOfSupply = pos.GetString();
-                        if (string.IsNullOrWhiteSpace(placeOfSupply))
-                            if (json.TryGetProperty("State", out var st) || json.TryGetProperty("state", out st))
-                                placeOfSupply = st.GetString();
-                    }
-                    if (numberOfDays == null)
-                        if (json.TryGetProperty("NumberOfDays", out var nd) || json.TryGetProperty("numberOfDays", out nd))
-                            try { numberOfDays = nd.GetInt32(); } catch { }
-                    if (numberOfActivations == null)
-                        if (json.TryGetProperty("NumberOfActivations", out var na) || json.TryGetProperty("numberOfActivations", out na))
-                            try { numberOfActivations = na.GetInt32(); } catch { }
-                    if (numberOfTeams == null)
-                        if (json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
-                            try { numberOfTeams = nt.GetInt32(); } catch { }
-                    if (string.IsNullOrWhiteSpace(elementWiseCosts))
-                        if (json.TryGetProperty("ElementWiseCostsJson", out var ewc) || json.TryGetProperty("elementWiseCostsJson", out ewc))
-                            elementWiseCosts = ewc.GetString();
-                    if (string.IsNullOrWhiteSpace(elementWiseQuantity))
-                        if (json.TryGetProperty("ElementWiseQuantityJson", out var ewq) || json.TryGetProperty("elementWiseQuantityJson", out ewq))
-                            elementWiseQuantity = ewq.GetString();
-                }
-                catch { /* malformed JSON */ }
-            }
-
-            // 1. Place of Supply
-            bool posPresent = !string.IsNullOrWhiteSpace(placeOfSupply);
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = "Cost Summary",
-                Status = posPresent ? "Pass" : "Fail",
-                Details = "Place of Supply",
-                Evidence = posPresent ? placeOfSupply! : "Place of supply / state not detected"
-            });
-
-            // 2. No. of Days
-            bool daysPresent = numberOfDays.HasValue && numberOfDays.Value > 0;
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = "Cost Summary",
-                Status = daysPresent ? "Pass" : "Fail",
-                Details = "No. of Days",
-                Evidence = daysPresent ? numberOfDays.ToString()! : "Total number of days not detected"
-            });
-
-            // 3. No. of Activations
-            bool activationsPresent = numberOfActivations.HasValue && numberOfActivations.Value > 0;
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = "Cost Summary",
-                Status = activationsPresent ? "Pass" : "Fail",
-                Details = "No. of Activations",
-                Evidence = activationsPresent ? numberOfActivations.ToString()! : "Number of activations not detected"
-            });
-
-            // 4. No. of Teams
-            bool teamsPresent = numberOfTeams.HasValue && numberOfTeams.Value > 0;
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = "Cost Summary",
-                Status = teamsPresent ? "Pass" : "Fail",
-                Details = "No. of Teams",
-                Evidence = teamsPresent ? numberOfTeams.ToString()! : "Number of teams not detected"
-            });
-
-            // 5. Element-wise Cost
-            bool costsPresent = !string.IsNullOrWhiteSpace(elementWiseCosts) && elementWiseCosts != "[]";
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = "Cost Summary",
-                Status = costsPresent ? "Pass" : "Fail",
-                Details = "Element-wise Cost",
-                Evidence = costsPresent ? "Cost breakdown detected" : "Element-wise cost breakdown not detected"
-            });
-
-            // 6. Element-wise Quantity
-            bool qtyPresent = !string.IsNullOrWhiteSpace(elementWiseQuantity) && elementWiseQuantity != "[]";
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = "Cost Summary",
-                Status = qtyPresent ? "Pass" : "Fail",
-                Details = "Element-wise Quantity",
-                Evidence = qtyPresent ? "Quantity breakdown detected" : "Element-wise quantity breakdown not detected"
-            });
-        }
-
-        // Activity Summary: read from ValidationResults.RuleResultsJson (same pattern as Enquiry Dump)
-        var actSummary = package.ActivitySummary;
-        if (actSummary != null && !actSummary.IsDeleted)
-        {
-            var actVr = allResults.FirstOrDefault(vr =>
-                vr.DocumentId == actSummary.Id ||
-                vr.DocumentType == Domain.Enums.DocumentType.ActivitySummary);
-
-            bool builtFromRules = false;
-            if (actVr?.RuleResultsJson != null)
-            {
-                try
-                {
-                    var rules = JsonSerializer.Deserialize<List<EnquiryRuleResult>>(
-                        actVr.RuleResultsJson,
-                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                    if (rules != null && rules.Count > 0)
-                    {
-                        foreach (var rule in rules)
-                        {
-                            groups.Add(new ValidationCheckGroup
-                            {
-                                GroupName = "Activity Summary",
-                                Status = rule.Passed ? "Pass" : "Fail",
-                                Details = rule.Label ?? rule.RuleCode ?? "Check",
-                                Evidence = rule.ExtractedValue
-                                    ?? (rule.Passed ? "Present" : rule.Message ?? "Not detected")
-                            });
-                        }
-                        builtFromRules = true;
-                    }
-                }
-                catch { /* malformed JSON — fall through to hardcoded */ }
-            }
-
-            // Fallback: hardcoded 3-row layout if no RuleResultsJson available
-            if (!builtFromRules)
-            {
-                string? dealerName = actSummary.DealerName;
-                string? location = null;
-
-                if (!string.IsNullOrEmpty(actSummary.ExtractedDataJson))
-                {
-                    try
-                    {
-                        var json = JsonDocument.Parse(actSummary.ExtractedDataJson).RootElement;
-                        if (string.IsNullOrWhiteSpace(dealerName))
-                        {
-                            if (json.TryGetProperty("DealerName", out var dn) || json.TryGetProperty("dealerName", out dn))
-                                dealerName = dn.GetString();
-                        }
-                        if (json.TryGetProperty("Rows", out var rows) || json.TryGetProperty("rows", out rows))
-                        {
-                            if (rows.ValueKind == JsonValueKind.Array && rows.GetArrayLength() > 0)
-                            {
-                                var first = rows[0];
-                                if (string.IsNullOrWhiteSpace(dealerName))
-                                {
-                                    if (first.TryGetProperty("DealerName", out var rdn) || first.TryGetProperty("dealerName", out rdn))
-                                        dealerName = rdn.GetString();
-                                }
-                                if (first.TryGetProperty("Location", out var loc) || first.TryGetProperty("location", out loc))
-                                    location = loc.GetString();
-                            }
-                        }
-                    }
-                    catch { /* malformed JSON */ }
-                }
-
-                bool dealerPresent = !string.IsNullOrWhiteSpace(dealerName);
-                bool locationPresent = !string.IsNullOrWhiteSpace(location);
-                bool dealerLocationPassed = dealerPresent && locationPresent;
-
-                string evidence;
-                if (dealerLocationPassed)
-                    evidence = string.Join(", ", new[] { dealerName, location }.Where(s => !string.IsNullOrWhiteSpace(s)));
-                else if (!dealerPresent && !locationPresent)
-                    evidence = "Dealer name and location not detected";
-                else if (!dealerPresent)
-                    evidence = $"Location: {location} — Dealer name not detected";
-                else
-                    evidence = $"Dealer: {dealerName} — Location not detected";
-
-                groups.Add(new ValidationCheckGroup
-                {
-                    GroupName = "Activity Summary",
-                    Status = dealerLocationPassed ? "Pass" : "Fail",
-                    Details = "Dealer & Location Details",
-                    Evidence = evidence
-                });
-                groups.Add(new ValidationCheckGroup
-                {
-                    GroupName = "Activity Summary",
-                    Status = "Pass",
-                    Details = "Total No. of Days",
-                    Evidence = actSummary.TotalDays.HasValue ? actSummary.TotalDays.ToString()! : "Not extracted"
-                });
-                groups.Add(new ValidationCheckGroup
-                {
-                    GroupName = "Activity Summary",
-                    Status = "Pass",
-                    Details = "Total No. of Working Days",
-                    Evidence = actSummary.TotalWorkingDays.HasValue ? actSummary.TotalWorkingDays.ToString()! : "Not extracted"
-                });
-            }
         }
 
         if (groups.Count == 0)
@@ -1532,6 +1629,34 @@ public class NotificationDataService : INotificationDataService
             // Malformed JSON — return empty
         }
 
+        return result;
+    }
+
+    /// <summary>
+    /// Parses fixed or variable cost items from a cost breakdown JSON array.
+    /// </summary>
+    private static List<(string elem, decimal amt)> ParseCostBreakdownItems(string? json, bool isFixed)
+    {
+        var result = new List<(string, decimal)>();
+        if (string.IsNullOrWhiteSpace(json)) return result;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var arr = doc.RootElement;
+            if (arr.ValueKind != JsonValueKind.Array) return result;
+            foreach (var b in arr.EnumerateArray())
+            {
+                var flag = isFixed
+                    ? (b.TryGetProperty("isFixedCost", out var fc) && fc.GetBoolean())
+                    : (b.TryGetProperty("isVariableCost", out var vc) && vc.GetBoolean());
+                if (!flag) continue;
+                var elem = (b.TryGetProperty("elementName", out var en) ? en.GetString() : null)
+                        ?? (b.TryGetProperty("category", out var cat) ? cat.GetString() : null) ?? "";
+                var amt = b.TryGetProperty("amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0;
+                if (!string.IsNullOrWhiteSpace(elem)) result.Add((elem, amt));
+            }
+        }
+        catch { }
         return result;
     }
 }
