@@ -319,6 +319,7 @@ public class NotificationDataService : INotificationDataService
 
         cardData.Recommendation = package.Recommendation.Type.ToString();
         cardData.RecommendationEmoji = emoji;
+        cardData.RecommendationEvidence = package.Recommendation.Evidence ?? string.Empty;
         cardData.CardStyle = cardStyle;
         cardData.ConfidenceScore = package.ConfidenceScore?.OverallConfidence ?? 0;
         cardData.ConfidenceScoreFormatted = $"{cardData.ConfidenceScore:0}/100";
@@ -808,7 +809,9 @@ public class NotificationDataService : INotificationDataService
     {
         var groups = new List<ValidationCheckGroup>();
 
-        // Cost Summary: use the same validation as the conversational chatbot (6 checks)
+        // === Section order: Invoice → Cost Summary → Activity Summary → Enquiry Dump → Photos ===
+
+        // Cost Summary: use the same validation as the conversational chatbot (8 checks)
         var costSummary = package.CostSummary;
         if (costSummary != null && !costSummary.IsDeleted)
         {
@@ -1067,7 +1070,7 @@ public class NotificationDataService : INotificationDataService
             }
         }
 
-        // Invoice: use the same 9 specific checks as the conversational chatbot.
+        // Invoice: use the same 12 specific checks as the conversational chatbot.
         // Check both direct Invoices and CampaignInvoices (via Teams) since seed data
         // uses CampaignInvoices linked through Teams, not direct Invoices.
         var directInvoices = package.Invoices.Where(i => !i.IsDeleted).ToList();
@@ -1324,15 +1327,18 @@ public class NotificationDataService : INotificationDataService
             return BuildCheckGroups(allResults.FirstOrDefault());
         }
 
-        // Enquiry Dump validation section — read from ValidationResults.RuleResultsJson
+        // Enquiry Dump validation section — read from RuleResultsJson first,
+        // fall back to ValidationDetailsJson (same source the portal uses) for consistency.
         var enquiry = package.EnquiryDocument;
         if (enquiry != null && !enquiry.IsDeleted)
         {
-            // Find the ValidationResult for this enquiry document
             var enquiryVr = allResults.FirstOrDefault(vr =>
                 vr.DocumentId == enquiry.Id ||
                 vr.DocumentType == Domain.Enums.DocumentType.EnquiryDocument);
 
+            bool builtFromRules = false;
+
+            // Primary: RuleResultsJson (structured rule results with extracted values)
             if (enquiryVr?.RuleResultsJson != null)
             {
                 try
@@ -1341,9 +1347,8 @@ public class NotificationDataService : INotificationDataService
                         enquiryVr.RuleResultsJson,
                         new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-                    if (rules != null)
+                    if (rules != null && rules.Count > 0)
                     {
-                        // Display in the required order
                         var orderedCodes = new[]
                         {
                             "EQ_STATE", "EQ_DATE", "EQ_DEALER_CODE", "EQ_DEALER_NAME",
@@ -1366,13 +1371,62 @@ public class NotificationDataService : INotificationDataService
                                     ?? (rule.Passed ? "Present" : rule.Message ?? "Not detected")
                             });
                         }
+
+                        builtFromRules = groups.Any(g => g.GroupName == "Enquiry Dump");
                     }
                 }
-                catch { /* malformed JSON — fall through to basic check */ }
+                catch { /* malformed JSON — fall through to ValidationDetailsJson */ }
             }
 
-            // Fallback if no ValidationResult found
-            if (!groups.Any(g => g.GroupName == "Enquiry Dump"))
+            // Fallback: ValidationDetailsJson → EnquiryDumpFieldPresence.MissingFields
+            // (same data source the portal's BuildEnquiryDumpChecks uses)
+            if (!builtFromRules && !string.IsNullOrWhiteSpace(enquiryVr?.ValidationDetailsJson))
+            {
+                try
+                {
+                    using var detailsDoc = JsonDocument.Parse(enquiryVr.ValidationDetailsJson);
+                    var root = detailsDoc.RootElement;
+
+                    if (root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("EnquiryDumpFieldPresence", out var section) &&
+                        section.ValueKind == JsonValueKind.Object &&
+                        section.TryGetProperty("MissingFields", out var missingArray) &&
+                        missingArray.ValueKind == JsonValueKind.Array)
+                    {
+                        var missingFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var item in missingArray.EnumerateArray())
+                        {
+                            var val = item.GetString();
+                            if (!string.IsNullOrEmpty(val)) missingFields.Add(val);
+                        }
+
+                        var fields = new[]
+                        {
+                            "State", "Date", "Dealer Code", "Dealer Name",
+                            "District", "Pincode", "Customer Name",
+                            "Customer Number", "Test Ride"
+                        };
+
+                        foreach (var field in fields)
+                        {
+                            var isMissing = missingFields.Any(mf => mf.StartsWith(field, StringComparison.OrdinalIgnoreCase));
+                            groups.Add(new ValidationCheckGroup
+                            {
+                                GroupName = "Enquiry Dump",
+                                Status = isMissing ? "Fail" : "Pass",
+                                Details = field,
+                                Evidence = isMissing ? "Missing" : "Present"
+                            });
+                        }
+
+                        builtFromRules = true;
+                    }
+                }
+                catch { /* malformed ValidationDetailsJson */ }
+            }
+
+            // Final fallback if neither JSON source produced results
+            if (!builtFromRules && !groups.Any(g => g.GroupName == "Enquiry Dump"))
             {
                 groups.Add(new ValidationCheckGroup
                 {
