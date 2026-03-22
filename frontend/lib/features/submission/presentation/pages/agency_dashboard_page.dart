@@ -344,14 +344,21 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           floatingActionButton: isMobile
               ? Padding(
                   padding: const EdgeInsets.only(bottom: 16, right: 4),
-                  child: FloatingActionButton(
-                    onPressed: _navigateToChatbot,
-                    backgroundColor: AppColors.primary,
-                    tooltip: 'New Submission',
-                    child: const Icon(Icons.smart_toy, color: Colors.white),
+                  child: Builder(
+                    builder: (ctx) => FloatingActionButton(
+                      onPressed: () => Scaffold.of(ctx).openEndDrawer(),
+                      backgroundColor: AppColors.primary,
+                      tooltip: 'Open Assistant',
+                      child: const Icon(Icons.smart_toy, color: Colors.white),
+                    ),
                   ),
                 )
-              : null,
+              : FloatingActionButton(
+                      onPressed: _navigateToChatbot,
+                      backgroundColor: AppColors.primary,
+                      tooltip: 'Open Assistant',
+                      child: const Icon(Icons.smart_toy, color: Colors.white),
+                    ),
           floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         );
       },
@@ -377,15 +384,11 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     return [
       NavItem(
           icon: Icons.dashboard,
-          label: 'Dashboard',
+          label: 'Home',
           isActive: true,
           onTap: () {}),
       NavItem(
-          icon: Icons.chat_bubble_outline,
-          label: 'New Claim (Chat)',
-          onTap: _navigateToChatbot),
-      NavItem(
-          icon: Icons.upload_file, label: 'Upload', onTap: _navigateToUpload),
+          icon: Icons.upload_file, label: 'New Claim', onTap: _navigateToUpload),
       NavItem(
           icon: Icons.notifications,
           label: 'Notifications',
@@ -423,37 +426,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
             ),
           ),
           const Spacer(),
-          CircleAvatar(
-            backgroundColor: Colors.white,
-            radius: 18,
-            child: Text(
-              widget.userName.isNotEmpty
-                  ? widget.userName[0].toUpperCase()
-                  : '?',
-              style: const TextStyle(
-                  color: Color(0xFF003087),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(widget.userName,
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white)),
-              const SizedBox(height: 2),
-              Text('Agency',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.7))),
-            ],
-          ),
-          const SizedBox(width: 12),
         ],
       ),
     );
@@ -476,7 +448,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('All Requests', style: AppTextStyles.h2),
+                Text('My Requests', style: AppTextStyles.h2),
                 const SizedBox(height: 4),
                 Text('View and track all your reimbursement requests',
                     style: AppTextStyles.bodySmall),
@@ -508,7 +480,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (device == DeviceType.mobile) ...[
-              Text('All Requests', style: AppTextStyles.h2),
+              Text('My Requests', style: AppTextStyles.h2),
               const SizedBox(height: 4),
               Text('View and track all your reimbursement requests',
                   style: AppTextStyles.bodySmall),

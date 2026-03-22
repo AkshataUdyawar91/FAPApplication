@@ -406,37 +406,6 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                 letterSpacing: 0.5),
           ),
           const Spacer(),
-          CircleAvatar(
-            backgroundColor: Colors.white,
-            radius: 18,
-            child: Text(
-              widget.userName.isNotEmpty
-                  ? widget.userName[0].toUpperCase()
-                  : '?',
-              style: const TextStyle(
-                  color: Color(0xFF003087),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(widget.userName,
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white)),
-              const SizedBox(height: 2),
-              Text('HQ/RA',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.7))),
-            ],
-          ),
-          const SizedBox(width: 12),
         ],
       ),
     );
@@ -1473,7 +1442,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                 const Icon(Icons.verified_user,
                     color: AppColors.primary, size: 24),
                 const SizedBox(width: 12),
-                const Text('Document Validations', style: AppTextStyles.h3),
+                const Text('Validation Summary', style: AppTextStyles.h3),
               ],
             ),
             const SizedBox(height: 16),
@@ -1510,6 +1479,12 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
               const SizedBox(height: 16),
             ],
 
+            // Photo Validations
+            if (_photoValidations.isNotEmpty) ...[
+              _buildPhotoValidationsSection(_photoValidations),
+              const SizedBox(height: 16),
+            ],
+
             // Enquiry Validation
             if (_enquiryValidation != null) ...[
               _buildSingleValidationCard(
@@ -1519,10 +1494,6 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
               ),
               const SizedBox(height: 16),
             ],
-
-            // Photo Validations
-            if (_photoValidations.isNotEmpty)
-              _buildPhotoValidationsSection(_photoValidations),
 
             // No validations message
             if (_invoiceValidations.isEmpty &&
