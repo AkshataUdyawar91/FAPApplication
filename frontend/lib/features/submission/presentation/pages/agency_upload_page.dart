@@ -930,11 +930,11 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
     return [
       NavItem(
           icon: Icons.dashboard,
-          label: 'Dashboard',
+          label: 'Home',
           onTap: _navigateToDashboard),
       NavItem(
           icon: Icons.upload_file,
-          label: 'Upload',
+          label: 'New Claim',
           isActive: true,
           onTap: () {}),
       NavItem(
@@ -976,37 +976,6 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             ),
           ),
           const Spacer(),
-          CircleAvatar(
-            backgroundColor: Colors.white,
-            radius: 18,
-            child: Text(
-              widget.userName.isNotEmpty
-                  ? widget.userName[0].toUpperCase()
-                  : '?',
-              style: const TextStyle(
-                  color: Color(0xFF003087),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(widget.userName,
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white)),
-              const SizedBox(height: 2),
-              Text('Agency',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.7))),
-            ],
-          ),
-          const SizedBox(width: 12),
         ],
       ),
     );
