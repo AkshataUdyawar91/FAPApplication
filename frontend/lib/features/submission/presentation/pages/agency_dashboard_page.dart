@@ -353,7 +353,9 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                     ),
                   ),
                 )
-              : FloatingActionButton(
+              : (_isChatOpen || _isChatbotOpen)
+                  ? null
+                  : FloatingActionButton(
                       onPressed: _navigateToChatbot,
                       backgroundColor: AppColors.primary,
                       tooltip: 'Open Assistant',
