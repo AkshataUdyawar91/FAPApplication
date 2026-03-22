@@ -8,6 +8,12 @@
     <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
+  <!-- Exclude Teams app packaging output from build -->
+  <ItemGroup>
+    <Content Remove="teams-app\dist\**" />
+    <None Remove="teams-app\dist\**" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\BajajDocumentProcessing.Application\BajajDocumentProcessing.Application.csproj" />
     <ProjectReference Include="..\BajajDocumentProcessing.Infrastructure\BajajDocumentProcessing.Infrastructure.csproj" />
