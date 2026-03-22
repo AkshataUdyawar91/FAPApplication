@@ -367,11 +367,49 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     );
   }
 
-  void _navigateToUpload() {
-    context.pushNamed('agency-upload', extra: {
-      'token': widget.token,
-      'userName': widget.userName,
-    });
+  // void _navigateToUpload() {
+  //   context.pushNamed('agency-upload', extra: {
+  //     'token': widget.token,
+  //     'userName': widget.userName,
+  //   });
+  // }
+
+  void _navigateToUpload() async {
+    // Show loading indicator
+    if (!mounted) return;
+
+    // Create draft submission first
+    try {
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final response = await dio.post(
+        '/submissions/draft',
+        data: {}, // Empty body - will use authenticated user's agency
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 201 && mounted) {
+        final submissionId = response.data['submissionId'];
+        debugPrint('Draft submission created: $submissionId');
+
+        // Navigate to upload page with submissionId
+        context.pushNamed('agency-upload', extra: {
+          'token': widget.token,
+          'userName': widget.userName,
+          'submissionId': submissionId,
+        });
+      }
+    } catch (e) {
+      debugPrint('Error creating draft submission: $e');
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to create submission: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _navigateToChatbot() {
@@ -385,12 +423,11 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(
-          icon: Icons.dashboard,
-          label: 'Home',
-          isActive: true,
-          onTap: () {}),
+          icon: Icons.dashboard, label: 'Home', isActive: true, onTap: () {}),
       NavItem(
-          icon: Icons.upload_file, label: 'New Claim', onTap: _navigateToUpload),
+          icon: Icons.upload_file,
+          label: 'New Claim',
+          onTap: _navigateToUpload),
       NavItem(
           icon: Icons.notifications,
           label: 'Notifications',
@@ -463,7 +500,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
             icon: const Icon(Icons.add, size: 20),
             label: const Text('New Request'),
           ),
-
         ],
       ),
     );
@@ -1175,7 +1211,8 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     if (['pendingra', 'pendinghqapproval', 'pendingwithra'].contains(state))
       return 'pending_hq';
     if (state == 'approved') return 'approved';
-    if (['chrejected', 'rejectedbyasm'].contains(state)) return 'rejected_by_asm';
+    if (['chrejected', 'rejectedbyasm'].contains(state))
+      return 'rejected_by_asm';
     if (['rarejected', 'rejectedbyhq', 'rejectedbyra'].contains(state))
       return 'rejected_by_hq';
     if (['rejected', 'validationfailed', 'reuploadrequested'].contains(state))

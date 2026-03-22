@@ -1,0 +1,1181 @@
+import 'dart:convert';
+import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:intl/intl.dart';
+import '../../../../core/theme/app_colors.dart';
+
+/// Extraction status for UI feedback
+enum ExtractionStatus { none, extracting, success, failed }
+
+/// Data class for an invoice (child of campaign)
+class InvoiceItemData {
+  final String id;
+  PlatformFile? file;
+  String invoiceNumber;
+  String invoiceDate;
+  String totalAmount;
+  String gstNumber;
+  bool isExtracting;
+  ExtractionStatus extractionStatus;
+  String? extractionError;
+  String? existingFileName;
+
+  // Controllers so programmatic updates (extraction) reflect in the UI
+  late final TextEditingController invoiceNumberController;
+  late final TextEditingController invoiceDateController;
+  late final TextEditingController totalAmountController;
+  late final TextEditingController gstNumberController;
+
+  InvoiceItemData({
+    required this.id,
+    this.file,
+    this.invoiceNumber = '',
+    this.invoiceDate = '',
+    this.totalAmount = '',
+    this.gstNumber = '',
+    this.isExtracting = false,
+    this.extractionStatus = ExtractionStatus.none,
+    this.extractionError,
+    this.existingFileName,
+  }) {
+    invoiceNumberController = TextEditingController(text: invoiceNumber);
+    invoiceDateController = TextEditingController(text: invoiceDate);
+    totalAmountController = TextEditingController(text: totalAmount);
+    gstNumberController = TextEditingController(text: gstNumber);
+  }
+
+  /// Dispose controllers when this invoice is removed
+  void dispose() {
+    invoiceNumberController.dispose();
+    invoiceDateController.dispose();
+    totalAmountController.dispose();
+    gstNumberController.dispose();
+  }
+}
+
+/// Data class for a team/campaign
+class CampaignItemData {
+  String id; // mutable: updated with server-assigned campaignId after creation
+  String campaignName; // used as "Dealer Code" in the new UI
+  String startDate;
+  String endDate;
+  String workingDays;
+  String dealershipName;
+  String dealershipAddress; // used as "City" in the new UI
+  PlatformFile? costSummaryFile;
+  PlatformFile? activitySummaryFile;
+  List<PlatformFile> photos;
+  List<InvoiceItemData> invoices;
+  String? existingCostSummaryFileName;
+  String? existingActivitySummaryFileName;
+  List<String>? existingPhotoFileNames;
+
+  /// Tracks which photo indices are currently uploading
+  final Set<int> uploadingPhotoIndices = {};
+
+  /// Tracks which photo indices have been successfully uploaded to the server
+  final Set<int> uploadedPhotoIndices = {};
+
+  CampaignItemData({
+    required this.id,
+    this.campaignName = '',
+    this.startDate = '',
+    this.endDate = '',
+    this.workingDays = '',
+    this.dealershipName = '',
+    this.dealershipAddress = '',
+    this.costSummaryFile,
+    this.activitySummaryFile,
+    List<PlatformFile>? photos,
+    List<InvoiceItemData>? invoices,
+    this.existingCostSummaryFileName,
+    this.existingActivitySummaryFileName,
+    this.existingPhotoFileNames,
+  })  : photos = photos ?? [],
+        invoices = invoices ?? [InvoiceItemData(id: '${id}_invoice_1')];
+
+  static const int maxPhotos = 50;
+}
+
+class CampaignListSection extends StatefulWidget {
+  final List<CampaignItemData> campaigns;
+  final Function(List<CampaignItemData>) onCampaignsChanged;
+  final String? token;
+  final String? packageId;
+
+  /// Called when photos are picked and the team needs to exist on the server.
+  /// The parent must create the team (and package if needed) and return the
+  /// server-assigned campaignId, or null on failure.
+  final Future<String?> Function(CampaignItemData campaign)?
+      onEnsureTeamCreated;
+
+  const CampaignListSection({
+    super.key,
+    required this.campaigns,
+    required this.onCampaignsChanged,
+    this.token,
+    this.packageId,
+    this.onEnsureTeamCreated,
+  });
+
+  @override
+  State<CampaignListSection> createState() => _CampaignListSectionState();
+}
+
+class _CampaignListSectionState extends State<CampaignListSection> {
+  late List<CampaignItemData> _campaigns;
+
+  // Controllers keyed by "campaignId_fieldName" so they survive setState rebuilds
+  final Map<String, TextEditingController> _controllers = {};
+
+  TextEditingController _ctrl(
+      String campaignId, String field, String initialValue) {
+    final key = '${campaignId}_$field';
+    if (!_controllers.containsKey(key)) {
+      _controllers[key] = TextEditingController(text: initialValue);
+    }
+    return _controllers[key]!;
+  }
+
+  void _disposeControllersForCampaign(String campaignId) {
+    final keys =
+        _controllers.keys.where((k) => k.startsWith('${campaignId}_')).toList();
+    for (final k in keys) {
+      _controllers.remove(k)?.dispose();
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _campaigns = widget.campaigns.isEmpty
+        ? [CampaignItemData(id: 'campaign_1')]
+        : widget.campaigns;
+    // Sync the default team back to the parent so validation sees it
+    if (widget.campaigns.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        widget.onCampaignsChanged(_campaigns);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  // ─── Mutations ───────────────────────────────────────────────────────
+
+  void _addCampaign() {
+    setState(() => _campaigns
+        .add(CampaignItemData(id: 'campaign_${_campaigns.length + 1}')));
+    widget.onCampaignsChanged(_campaigns);
+  }
+
+  Future<void> _removeCampaign(int index) async {
+    if (_campaigns.length <= 1) return;
+    final name = _campaigns[index].dealershipName.isNotEmpty
+        ? _campaigns[index].dealershipName
+        : 'Team ${index + 1}';
+    final confirmed = await _confirm('Delete Team', 'Delete "$name"?');
+    if (!confirmed || !mounted) return;
+    final removed = _campaigns[index];
+    setState(() => _campaigns.removeAt(index));
+    _disposeControllersForCampaign(removed.id);
+    widget.onCampaignsChanged(_campaigns);
+  }
+
+  Future<void> _pickPhotos(int campaignIndex) async {
+    final campaign = _campaigns[campaignIndex];
+    final existing = campaign.existingPhotoFileNames?.length ?? 0;
+    final remaining =
+        CampaignItemData.maxPhotos - campaign.photos.length - existing;
+    if (remaining <= 0) {
+      _showError('Maximum ${CampaignItemData.maxPhotos} photos reached');
+      return;
+    }
+    try {
+      final result = await FilePicker.platform
+          .pickFiles(type: FileType.image, allowMultiple: true);
+      if (result == null || result.files.isEmpty) return;
+
+      final toAdd = result.files.take(remaining).toList();
+      // Record the starting index before adding so we know which indices to upload
+      final startIndex = campaign.photos.length;
+      setState(() => campaign.photos.addAll(toAdd));
+      widget.onCampaignsChanged(_campaigns);
+
+      // Immediately upload — ensure the team exists on the server first
+      await _uploadPhotosImmediately(campaignIndex, startIndex, toAdd);
+    } catch (e) {
+      debugPrint('Error picking photos: $e');
+    }
+  }
+
+  /// Ensures the team has a server-side campaignId, then uploads the given photos.
+  Future<void> _uploadPhotosImmediately(
+      int campaignIndex, int startIndex, List<PlatformFile> photos) async {
+    if (widget.token == null) return;
+
+    final campaign = _campaigns[campaignIndex];
+
+    // Resolve packageId — either already known or obtained via parent callback
+    String? packageId = widget.packageId;
+    String? campaignId =
+        (campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_'))
+            ? campaign.id
+            : null;
+
+    // If team not yet created on server, ask the parent to create it
+    if (campaignId == null && widget.onEnsureTeamCreated != null) {
+      if (!mounted) return;
+      campaignId = await widget.onEnsureTeamCreated!(campaign);
+      if (campaignId == null) {
+        if (mounted) {
+          _showError(
+              'Could not create team. Please fill in team details and try again.');
+        }
+        return;
+      }
+      // Persist the server-assigned id back into the campaign
+      if (mounted) {
+        setState(() => campaign.id = campaignId!);
+        widget.onCampaignsChanged(_campaigns);
+      }
+    }
+
+    if (campaignId == null || packageId == null) {
+      // No package yet (PO not selected) — photos stay in memory, uploaded at submit
+      return;
+    }
+
+    // Mark indices as uploading
+    final indices = List.generate(photos.length, (i) => startIndex + i);
+    if (mounted) {
+      setState(() => campaign.uploadingPhotoIndices.addAll(indices));
+    }
+
+    try {
+      final photoFiles = photos
+          .where((p) => p.bytes != null)
+          .map((p) => MultipartFile.fromBytes(p.bytes!, filename: p.name))
+          .toList();
+
+      if (photoFiles.isEmpty) return;
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final response = await dio.post(
+        '/hierarchical/$packageId/campaigns/$campaignId/photos',
+        data: FormData.fromMap({'files': photoFiles}),
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        setState(() {
+          campaign.uploadingPhotoIndices.removeAll(indices);
+          campaign.uploadedPhotoIndices.addAll(indices);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error uploading photos immediately: $e');
+      if (mounted) {
+        setState(() => campaign.uploadingPhotoIndices.removeAll(indices));
+        _showError('Photo upload failed. Photos will be uploaded on submit.');
+      }
+    }
+  }
+
+  Future<void> _removePhoto(int campaignIndex, int photoIndex) async {
+    final confirmed = await _confirm('Delete Photo',
+        'Delete "${_campaigns[campaignIndex].photos[photoIndex].name}"?');
+    if (!confirmed || !mounted) return;
+    setState(() => _campaigns[campaignIndex].photos.removeAt(photoIndex));
+    widget.onCampaignsChanged(_campaigns);
+  }
+
+  void _calculateWorkingDays(CampaignItemData campaign) {
+    if (campaign.startDate.isEmpty || campaign.endDate.isEmpty) return;
+    try {
+      final s = _parseDate(campaign.startDate);
+      final e = _parseDate(campaign.endDate);
+      if (s == null || e == null) return;
+      int days = 0;
+      for (var d = s; !d.isAfter(e); d = d.add(const Duration(days: 1))) {
+        if (d.weekday != DateTime.saturday && d.weekday != DateTime.sunday)
+          days++;
+      }
+      setState(() => campaign.workingDays = days.toString());
+      widget.onCampaignsChanged(_campaigns);
+    } catch (e) {
+      debugPrint('Error calculating working days: $e');
+    }
+  }
+
+  DateTime? _parseDate(String value) {
+    if (value.isEmpty) return null;
+    try {
+      final p = value.split('-');
+      if (p.length == 3)
+        return DateTime(int.parse(p[2]), int.parse(p[1]), int.parse(p[0]));
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _selectDate(String current, Function(String) onSelected,
+      {DateTime? minDate}) async {
+    final first = minDate ?? DateTime(2020);
+    DateTime initial = DateTime.now();
+    final parsed = _parseDate(current);
+    if (parsed != null) initial = parsed;
+    if (initial.isBefore(first)) initial = first;
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: DateTime(2030),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+            colorScheme: const ColorScheme.light(primary: AppColors.primary)),
+        child: child!,
+      ),
+    );
+    if (date != null) onSelected(DateFormat('dd-MM-yyyy').format(date));
+  }
+
+  Future<bool> _confirm(String title, String message) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        content: Text(message, style: const TextStyle(fontSize: 14)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.rejectedText,
+                foregroundColor: Colors.white),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: AppColors.rejectedText));
+
+  // ─── Invoice methods ─────────────────────────────────────────────────
+
+  void _addInvoice(int campaignIndex) {
+    setState(() {
+      final campaign = _campaigns[campaignIndex];
+      campaign.invoices.add(InvoiceItemData(
+        id: '${campaign.id}_invoice_${campaign.invoices.length + 1}',
+      ));
+    });
+    widget.onCampaignsChanged(_campaigns);
+  }
+
+  Future<void> _removeInvoice(int campaignIndex, int invoiceIndex) async {
+    if (_campaigns[campaignIndex].invoices.length > 1) {
+      final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
+      final label = invoice.invoiceNumber.isNotEmpty
+          ? 'Invoice #${invoice.invoiceNumber}'
+          : 'Invoice ${invoiceIndex + 1}';
+      final confirmed = await _confirm(
+          'Delete Invoice', 'Are you sure you want to delete "$label"?');
+      if (!confirmed || !mounted) return;
+      setState(() {
+        _campaigns[campaignIndex].invoices.removeAt(invoiceIndex);
+      });
+      widget.onCampaignsChanged(_campaigns);
+    }
+  }
+
+  Future<void> _pickInvoiceFile(int campaignIndex, int invoiceIndex) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        setState(
+            () => _campaigns[campaignIndex].invoices[invoiceIndex].file = file);
+        widget.onCampaignsChanged(_campaigns);
+        await _uploadAndExtractInvoice(campaignIndex, invoiceIndex, file);
+      }
+    } catch (e) {
+      debugPrint('Error picking invoice file: $e');
+    }
+  }
+
+  Future<void> _uploadAndExtractInvoice(
+      int campaignIndex, int invoiceIndex, PlatformFile file) async {
+    if (file.bytes == null || widget.token == null) return;
+
+    final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
+    if (mounted) setState(() => invoice.isExtracting = true);
+
+    try {
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+
+      final uploadResponse = await dio.post(
+        '/documents/upload',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
+          'documentType': 'Invoice',
+          if (widget.packageId != null) 'packageId': widget.packageId,
+        }),
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (uploadResponse.statusCode == 200) {
+        final packageId = uploadResponse.data['packageId']?.toString();
+        final documentId = uploadResponse.data['documentId']?.toString();
+
+        if (packageId != null && documentId != null) {
+          await _pollForInvoiceExtraction(
+              packageId, documentId, campaignIndex, invoiceIndex);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error uploading/extracting invoice: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (campaignIndex < _campaigns.length &&
+              invoiceIndex < _campaigns[campaignIndex].invoices.length) {
+            _campaigns[campaignIndex].invoices[invoiceIndex].isExtracting =
+                false;
+          }
+        });
+      }
+    }
+  }
+
+  Future<void> _pollForInvoiceExtraction(String packageId, String documentId,
+      int campaignIndex, int invoiceIndex) async {
+    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+    const maxAttempts = 25;
+
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+
+      try {
+        final response = await dio.get(
+          '/submissions/$packageId',
+          options:
+              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+        );
+
+        if (!mounted) return;
+
+        if (response.statusCode == 200 && response.data != null) {
+          final documents = response.data['documents'] as List?;
+          if (documents != null) {
+            final invoiceDoc = documents.firstWhere(
+              (doc) => doc['id']?.toString() == documentId,
+              orElse: () => null,
+            );
+
+            if (invoiceDoc != null && invoiceDoc['extractedData'] != null) {
+              var extractedData = invoiceDoc['extractedData'];
+
+              if (extractedData is String && extractedData.isNotEmpty) {
+                try {
+                  extractedData = jsonDecode(extractedData);
+                } catch (_) {}
+              }
+
+              if (extractedData is Map) {
+                final invNumber = extractedData['InvoiceNumber'] ??
+                    extractedData['invoiceNumber'] ??
+                    '';
+                final invDate = extractedData['InvoiceDate'] ??
+                    extractedData['invoiceDate'] ??
+                    '';
+                final amount = extractedData['TotalAmount'] ??
+                    extractedData['totalAmount'] ??
+                    '';
+                final gst = extractedData['GSTNumber'] ??
+                    extractedData['gstNumber'] ??
+                    extractedData['GSTIN'] ??
+                    extractedData['gstin'] ??
+                    extractedData['VendorGSTIN'] ??
+                    extractedData['vendorGSTIN'] ??
+                    extractedData['SellerGSTIN'] ??
+                    extractedData['sellerGSTIN'] ??
+                    '';
+
+                if (invNumber.toString().isNotEmpty ||
+                    amount.toString().isNotEmpty) {
+                  if (!mounted) return;
+
+                  if (campaignIndex < _campaigns.length &&
+                      invoiceIndex <
+                          _campaigns[campaignIndex].invoices.length) {
+                    final invoice =
+                        _campaigns[campaignIndex].invoices[invoiceIndex];
+                    setState(() {
+                      if (invNumber.toString().isNotEmpty)
+                        invoice.invoiceNumber = invNumber.toString();
+                      if (invDate.toString().isNotEmpty)
+                        invoice.invoiceDate =
+                            _formatExtractedDate(invDate.toString());
+                      if (amount.toString().isNotEmpty) {
+                        final amountNum = double.tryParse(amount.toString());
+                        if (amountNum != null) {
+                          invoice.totalAmount = _formatCurrency(amountNum);
+                        } else {
+                          invoice.totalAmount = amount.toString();
+                        }
+                      }
+                      if (gst.toString().isNotEmpty)
+                        invoice.gstNumber = gst.toString();
+                      invoice.isExtracting = false;
+                    });
+                    widget.onCampaignsChanged(_campaigns);
+                    return;
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        if (!mounted) return;
+        debugPrint('Invoice polling attempt $attempt failed: $e');
+      }
+    }
+  }
+
+  String _formatExtractedDate(String dateStr) {
+    if (dateStr.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(dateStr);
+      return '${dt.day.toString().padLeft(2, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.year}';
+    } catch (_) {
+      return dateStr;
+    }
+  }
+
+  String _formatCurrency(double amount) {
+    final formatter = NumberFormat.currency(
+      symbol: '₹ ',
+      decimalDigits: 2,
+      locale: 'en_IN',
+    );
+    return formatter.format(amount);
+  }
+
+  Future<void> _pickCostSummaryFile(int campaignIndex) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'xlsx', 'xls'],
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() =>
+            _campaigns[campaignIndex].costSummaryFile = result.files.first);
+        widget.onCampaignsChanged(_campaigns);
+
+        // Auto-upload cost summary file if packageId is available
+        if (widget.packageId != null && widget.packageId!.isNotEmpty) {
+          await _uploadCostSummaryFile(campaignIndex, result.files.first);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error picking cost summary file: $e');
+    }
+  }
+
+  Future<void> _uploadCostSummaryFile(
+      int campaignIndex, PlatformFile file) async {
+    if (file.bytes == null || widget.token == null || widget.packageId == null)
+      return;
+
+    // Get the campaign ID
+    final campaign = _campaigns[campaignIndex];
+    String? campaignId = campaign.id;
+
+    // If campaign doesn't have an ID yet, we can't upload
+    if (campaignId.isEmpty || campaignId.startsWith('campaign_')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Please save the team first before uploading cost summary'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      debugPrint('Auto-uploading cost summary: ${file.name}');
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
+      });
+
+      final response = await dio.post(
+        '/hierarchical/${widget.packageId}/campaigns/$campaignId/cost-summary',
+        data: formData,
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        debugPrint('Cost summary uploaded successfully');
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cost summary uploaded and extraction started!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error uploading cost summary: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Cost summary upload failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _pickActivitySummaryFile(int campaignIndex) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'xlsx', 'xls'],
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() =>
+            _campaigns[campaignIndex].activitySummaryFile = result.files.first);
+        widget.onCampaignsChanged(_campaigns);
+      }
+    } catch (e) {
+      debugPrint('Error picking activity summary file: $e');
+    }
+  }
+
+  // ─── BUILD ───────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final totalPhotos = _campaigns.fold<int>(
+        0,
+        (sum, c) =>
+            sum + c.photos.length + (c.existingPhotoFileNames?.length ?? 0));
+    final totalMax = _campaigns.length * CampaignItemData.maxPhotos;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Teams',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF111827))),
+                  const SizedBox(height: 2),
+                  const Text('Add each team that executed the activation.',
+                      style: TextStyle(
+                          fontSize: 13, color: AppColors.textSecondary)),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_campaigns.length} team${_campaigns.length != 1 ? 's' : ''} added — $totalPhotos / $totalMax photos uploaded',
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: _addCampaign,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('+ Add Team',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                side: const BorderSide(color: AppColors.primary),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        ...List.generate(
+            _campaigns.length, (i) => _buildTeamCard(_campaigns[i], i)),
+      ],
+    );
+  }
+
+  Widget _buildTeamCard(CampaignItemData campaign, int index) {
+    final photoCount =
+        campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border.withValues(alpha: 0.5)),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Team header
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: const BoxDecoration(
+                      color: AppColors.primary, shape: BoxShape.circle),
+                  child: Center(
+                      child: Text('${index + 1}',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700))),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    campaign.dealershipName.isNotEmpty
+                        ? 'Team ${index + 1} — ${campaign.dealershipName}'
+                        : 'Team ${index + 1}',
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF111827)),
+                  ),
+                ),
+                if (campaign.dealershipAddress.isNotEmpty)
+                  Text('(${campaign.dealershipAddress})',
+                      style: const TextStyle(
+                          fontSize: 13, color: AppColors.textSecondary)),
+                if (_campaigns.length > 1) ...[
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () => _removeCampaign(index),
+                    style: TextButton.styleFrom(
+                        foregroundColor: AppColors.rejectedText,
+                        padding: EdgeInsets.zero),
+                    child: const Text('Remove', style: TextStyle(fontSize: 13)),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Fields grid
+            LayoutBuilder(builder: (ctx, constraints) {
+              final narrow = constraints.maxWidth < 500;
+              if (narrow) {
+                return Column(children: [
+                  _teamField('Dealership Name', campaign.id, 'dealershipName',
+                      campaign.dealershipName, (v) {
+                    campaign.dealershipName = v;
+                    widget.onCampaignsChanged(_campaigns);
+                  }, required: true),
+                  const SizedBox(height: 12),
+                  _teamField('Dealer Code', campaign.id, 'campaignName',
+                      campaign.campaignName, (v) {
+                    campaign.campaignName = v;
+                    widget.onCampaignsChanged(_campaigns);
+                  }, required: true),
+                  const SizedBox(height: 12),
+                  _teamField('City', campaign.id, 'dealershipAddress',
+                      campaign.dealershipAddress, (v) {
+                    campaign.dealershipAddress = v;
+                    widget.onCampaignsChanged(_campaigns);
+                  }, required: true),
+                  const SizedBox(height: 12),
+                  _teamDateField('Start Date', campaign.startDate, (v) {
+                    setState(() {
+                      campaign.startDate = v;
+                      _calculateWorkingDays(campaign);
+                    });
+                  }, required: true),
+                  const SizedBox(height: 12),
+                  _teamDateField('End Date', campaign.endDate, (v) {
+                    setState(() {
+                      campaign.endDate = v;
+                      _calculateWorkingDays(campaign);
+                    });
+                  }, required: true, minDate: _parseDate(campaign.startDate)),
+                  const SizedBox(height: 12),
+                  _teamReadonly(
+                      'Working Days',
+                      campaign.workingDays.isNotEmpty
+                          ? campaign.workingDays
+                          : '—'),
+                ]);
+              }
+              return Column(children: [
+                Row(children: [
+                  Expanded(
+                      child: _teamField('Dealership Name', campaign.id,
+                          'dealershipName', campaign.dealershipName, (v) {
+                    campaign.dealershipName = v;
+                    widget.onCampaignsChanged(_campaigns);
+                  }, required: true)),
+                  const SizedBox(width: 16),
+                  Expanded(
+                      child: _teamField('Dealer Code', campaign.id,
+                          'campaignName', campaign.campaignName, (v) {
+                    campaign.campaignName = v;
+                    widget.onCampaignsChanged(_campaigns);
+                  }, required: true)),
+                  const SizedBox(width: 16),
+                  Expanded(
+                      child: _teamField('City', campaign.id,
+                          'dealershipAddress', campaign.dealershipAddress, (v) {
+                    campaign.dealershipAddress = v;
+                    widget.onCampaignsChanged(_campaigns);
+                  }, required: true)),
+                ]),
+                const SizedBox(height: 12),
+                Row(children: [
+                  Expanded(
+                      child:
+                          _teamDateField('Start Date', campaign.startDate, (v) {
+                    setState(() {
+                      campaign.startDate = v;
+                      _calculateWorkingDays(campaign);
+                    });
+                  }, required: true)),
+                  const SizedBox(width: 16),
+                  Expanded(
+                      child: _teamDateField('End Date', campaign.endDate, (v) {
+                    setState(() {
+                      campaign.endDate = v;
+                      _calculateWorkingDays(campaign);
+                    });
+                  }, required: true, minDate: _parseDate(campaign.startDate))),
+                  const SizedBox(width: 16),
+                  Expanded(
+                      child: _teamReadonly(
+                          'Working Days',
+                          campaign.workingDays.isNotEmpty
+                              ? campaign.workingDays
+                              : '—')),
+                ]),
+              ]);
+            }),
+            const SizedBox(height: 16),
+
+            // State note
+            RichText(
+                text: const TextSpan(
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              children: [
+                TextSpan(text: 'State: '),
+                TextSpan(
+                    text: 'Maharashtra',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w600, color: Color(0xFF111827))),
+                TextSpan(text: '  (all teams share the activation state)'),
+              ],
+            )),
+            const SizedBox(height: 16),
+
+            // Photos
+            _buildPhotosSection(campaign, index, photoCount),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Field helpers ────────────────────────────────────────────────────
+
+  Widget _teamField(String label, String campaignId, String field, String value,
+      Function(String) onChanged,
+      {bool required = false}) {
+    final controller = _ctrl(campaignId, field, value);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF374151))),
+          if (required)
+            const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
+        ]),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: controller,
+          onChanged: onChanged,
+          style: const TextStyle(fontSize: 14),
+          decoration: InputDecoration(
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide:
+                    const BorderSide(color: AppColors.primary, width: 1.5)),
+            isDense: true,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _teamDateField(String label, String value, Function(String) onChanged,
+      {bool required = false, DateTime? minDate}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF374151))),
+          if (required)
+            const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
+        ]),
+        const SizedBox(height: 6),
+        TextFormField(
+          readOnly: true,
+          controller: TextEditingController(text: value),
+          style: const TextStyle(fontSize: 14),
+          decoration: InputDecoration(
+            hintText: 'dd-mm-yyyy',
+            hintStyle: const TextStyle(color: Color(0xFF9E9E9E), fontSize: 14),
+            suffixIcon: const Icon(Icons.calendar_today,
+                color: AppColors.primary, size: 18),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide:
+                    const BorderSide(color: AppColors.primary, width: 1.5)),
+            isDense: true,
+          ),
+          onTap: () => _selectDate(value, onChanged, minDate: minDate),
+        ),
+      ],
+    );
+  }
+
+  Widget _teamReadonly(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF374151))),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF9FAFB),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Text(value,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF374151))),
+        ),
+      ],
+    );
+  }
+
+  // ─── Photos section ───────────────────────────────────────────────────
+
+  Widget _buildPhotosSection(
+      CampaignItemData campaign, int campaignIndex, int totalCount) {
+    final max = CampaignItemData.maxPhotos;
+    final canAdd = totalCount < max;
+    final existingNames = campaign.existingPhotoFileNames ?? [];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Photos ($totalCount / $max)',
+            style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF374151))),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ...existingNames.map((name) => _photoTile(name,
+                isUploading: false, isUploaded: true, onRemove: null)),
+            ...List.generate(
+                campaign.photos.length,
+                (i) => _photoTile(
+                      campaign.photos[i].name,
+                      isUploading: campaign.uploadingPhotoIndices.contains(i),
+                      isUploaded: campaign.uploadedPhotoIndices.contains(i),
+                      onRemove: campaign.uploadingPhotoIndices.contains(i)
+                          ? null
+                          : () => _removePhoto(campaignIndex, i),
+                    )),
+            if (canAdd) _addPhotoTile(() => _pickPhotos(campaignIndex)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _photoTile(String name,
+      {required bool isUploading,
+      required bool isUploaded,
+      required VoidCallback? onRemove}) {
+    final display = name.length > 12 ? '${name.substring(0, 12)}...' : name;
+
+    final Color borderColor = isUploading
+        ? const Color(0xFF93C5FD)
+        : isUploaded
+            ? const Color(0xFF86EFAC)
+            : AppColors.border;
+    final Color bgColor = isUploading
+        ? const Color(0xFFEFF6FF)
+        : isUploaded
+            ? const Color(0xFFF0FDF4)
+            : const Color(0xFFF9FAFB);
+    final Color iconColor = isUploading
+        ? const Color(0xFF3B82F6)
+        : isUploaded
+            ? const Color(0xFF16A34A)
+            : AppColors.textSecondary;
+    final String statusLabel = isUploading
+        ? 'Uploading...'
+        : isUploaded
+            ? 'Uploaded'
+            : 'Pending';
+    final Color statusColor = isUploading
+        ? const Color(0xFF3B82F6)
+        : isUploaded
+            ? const Color(0xFF16A34A)
+            : AppColors.textSecondary;
+
+    return Container(
+      width: 110,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: borderColor, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            isUploading
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.5, color: Color(0xFF3B82F6)),
+                  )
+                : Icon(Icons.image, size: 14, color: iconColor),
+            const Spacer(),
+            if (onRemove != null)
+              GestureDetector(
+                  onTap: onRemove,
+                  child: const Icon(Icons.close,
+                      size: 14, color: AppColors.rejectedText)),
+          ]),
+          const SizedBox(height: 4),
+          Text(display,
+              style: TextStyle(
+                  fontSize: 11, fontWeight: FontWeight.w500, color: iconColor)),
+          const SizedBox(height: 2),
+          Text(statusLabel, style: TextStyle(fontSize: 10, color: statusColor)),
+        ],
+      ),
+    );
+  }
+
+  Widget _addPhotoTile(VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        width: 110,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: AppColors.border, width: 1.5),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.add_photo_alternate,
+                size: 22, color: AppColors.primary.withValues(alpha: 0.6)),
+            const SizedBox(height: 4),
+            const Text('+ Add Photo',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ),
+    );
+  }
+}
