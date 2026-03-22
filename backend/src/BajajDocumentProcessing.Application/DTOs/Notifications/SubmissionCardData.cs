@@ -149,6 +149,11 @@ public class SubmissionCardData
     public string RemainingIssueText { get; set; } = string.Empty;
 
     /// <summary>
+    /// AI-generated evidence text supporting the recommendation (from Recommendation.Evidence).
+    /// </summary>
+    public string RecommendationEvidence { get; set; } = string.Empty;
+
+    /// <summary>
     /// Per-document validation check groups with individual check status and evidence.
     /// Used for the detailed validation table on the new submission card.
     /// </summary>

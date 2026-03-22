@@ -99,7 +99,7 @@ public class TeamsCardService : ITeamsCardService
                 }
             });
 
-            // Recommendation header
+            // Recommendation header + evidence
             var recommendationItems = new Newtonsoft.Json.Linq.JArray
             {
                 new Newtonsoft.Json.Linq.JObject
@@ -110,6 +110,32 @@ public class TeamsCardService : ITeamsCardService
                     ["wrap"] = true
                 }
             };
+
+            // Confidence score
+            if (data.ConfidenceScore > 0)
+            {
+                recommendationItems.Add(new Newtonsoft.Json.Linq.JObject
+                {
+                    ["type"] = "TextBlock",
+                    ["text"] = $"Confidence: {NullFallback(data.ConfidenceScoreFormatted, "Pending")}",
+                    ["size"] = "Small",
+                    ["isSubtle"] = true,
+                    ["wrap"] = true
+                });
+            }
+
+            // AI evidence
+            if (!string.IsNullOrWhiteSpace(data.RecommendationEvidence))
+            {
+                recommendationItems.Add(new Newtonsoft.Json.Linq.JObject
+                {
+                    ["type"] = "TextBlock",
+                    ["text"] = data.RecommendationEvidence,
+                    ["size"] = "Small",
+                    ["wrap"] = true,
+                    ["isSubtle"] = true
+                });
+            }
 
             bodyItems.Add(new Newtonsoft.Json.Linq.JObject
             {
