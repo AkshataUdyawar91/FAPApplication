@@ -1807,6 +1807,9 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       'INV_GST_PERCENT_PRESENT': 'GST Percentage',
       'INV_HSN_SAC_PRESENT': 'HSN/SAC Code',
       'INV_VENDOR_CODE_PRESENT': 'Vendor Code',
+      'INV_AGENCY_NAME_ADDRESS': 'Agency Name & Address',
+      'INV_BILLING_NAME_ADDRESS': 'Billing Name & Address',
+      'INV_SUPPLIER_STATE': 'Supplier State',
       'INV_PO_NUMBER_MATCH': 'PO Number Match',
       'INV_AMOUNT_VS_PO_BALANCE': 'Amount vs PO Balance',
       // Web workflow rule codes (from BuildPerDocumentResults)
@@ -1830,6 +1833,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       'CS_NUMBER_OF_TEAMS': 'No. of Teams',
       'CS_ELEMENT_WISE_COST': 'Element-wise Cost',
       'CS_ELEMENT_WISE_QTY': 'Element-wise Quantity',
+      'CS_FIXED_COST_LIMITS': 'Fixed Cost Limits',
+      'CS_VARIABLE_COST_LIMITS': 'Variable Cost Limits',
       'CS_TOTAL_DAYS_PRESENT': 'Total Days',
       'CS_TOTAL_VS_INVOICE': 'Total vs Invoice',
       'CS_ELEMENT_COST_VS_RATES': 'Element Cost vs Rates',

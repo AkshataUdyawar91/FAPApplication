@@ -127,12 +127,12 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "greeting",
-            Message = "Hello! I am your Field Activity Assistant. I can help you manage campaign requests.",
+            Message = "Hey! I'm your ClaimsIQ assistant. I can help you submit claims and track approvals.",
             Cards = new List<WorkflowCard>
             {
-                new() { Id = "create_request", Title = "Create Request", Subtitle = "Start a new campaign claim", Icon = "add_circle_outline", Action = "create_request" },
-                new() { Id = "view_requests", Title = "View My Requests", Subtitle = "Track your submissions", Icon = "list_alt", Action = "view_requests" },
-                new() { Id = "pending_approvals", Title = "Pending Approvals", Subtitle = "Items awaiting action", Icon = "pending_actions", Action = "pending_approvals" },
+                new() { Id = "create_request", Title = "Start a new submission", Subtitle = "I'll guide you step by step", Icon = "add_circle_outline", Action = "create_request" },
+                new() { Id = "view_requests", Title = "Show my pending claims", Subtitle = "Track under review claims", Icon = "list_alt", Action = "view_requests" },
+                new() { Id = "pending_approvals", Title = "Why was my claim returned", Subtitle = "Get correction guidance", Icon = "pending_actions", Action = "pending_approvals" },
             },
         };
     }
@@ -481,9 +481,9 @@ public class AssistantController : ControllerBase
         // Short summary message — the validation card widget shows the detail
         string botMessage;
         if (failCount == 0 && warnCount == 0)
-            botMessage = $"Invoice analysed. All {totalChecks} checks passed!";
+            botMessage = $"Invoice reviewed. All {totalChecks} checks passed!";
         else
-            botMessage = $"Invoice analysed. {passCount} of {totalChecks} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")} Review below and continue or re-upload.";
+            botMessage = $"Invoice reviewed. {passCount} of {totalChecks} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")} Review below and continue or re-upload.";
 
         // Always persist validation results to ValidationResults table — regardless of pass/fail
         try
@@ -693,7 +693,91 @@ public class AssistantController : ControllerBase
             Message = hsnPresent ? null : "HSN/SAC code not detected",
         });
 
-        // 7. INV_VENDOR_CODE_PRESENT — Required
+        // 7. INV_AGENCY_NAME_ADDRESS — Supplier name & address (Agency = Supplier on invoice)
+        string? agencyName = null;
+        string? agencyAddress = null;
+        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
+                if (json.TryGetProperty("AgencyName", out var an) || json.TryGetProperty("agencyName", out an))
+                    agencyName = an.GetString();
+                if (json.TryGetProperty("AgencyAddress", out var aa) || json.TryGetProperty("agencyAddress", out aa))
+                    agencyAddress = aa.GetString();
+            }
+            catch { }
+        }
+        var agencyNamePresent = !string.IsNullOrWhiteSpace(agencyName);
+        var agencyAddressPresent = !string.IsNullOrWhiteSpace(agencyAddress);
+        var agencyNameAddressOk = agencyNamePresent && agencyAddressPresent;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "INV_AGENCY_NAME_ADDRESS",
+            Type = "Required",
+            Passed = agencyNameAddressOk,
+            IsWarning = false,
+            Label = "Agency Name & Address",
+            ExtractedValue = agencyNamePresent ? $"{agencyName}, {agencyAddress}" : agencyName,
+            Message = agencyNameAddressOk ? null
+                : (!agencyNamePresent ? "Supplier name not detected" : "Supplier address not detected"),
+        });
+
+        // 8. INV_BILLING_NAME_ADDRESS — Recipient name & address (Billing = Recipient on invoice)
+        string? billingName = null;
+        string? billingAddress = null;
+        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
+                if (json.TryGetProperty("BillingName", out var bn) || json.TryGetProperty("billingName", out bn))
+                    billingName = bn.GetString();
+                if (json.TryGetProperty("BillingAddress", out var ba) || json.TryGetProperty("billingAddress", out ba))
+                    billingAddress = ba.GetString();
+            }
+            catch { }
+        }
+        var billingNamePresent = !string.IsNullOrWhiteSpace(billingName);
+        var billingAddressPresent = !string.IsNullOrWhiteSpace(billingAddress);
+        var billingNameAddressOk = billingNamePresent && billingAddressPresent;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "INV_BILLING_NAME_ADDRESS",
+            Type = "Required",
+            Passed = billingNameAddressOk,
+            IsWarning = false,
+            Label = "Billing Name & Address",
+            ExtractedValue = billingNamePresent ? $"{billingName}, {billingAddress}" : billingName,
+            Message = billingNameAddressOk ? null
+                : (!billingNamePresent ? "Recipient name not detected" : "Recipient address not detected"),
+        });
+
+        // 9. INV_SUPPLIER_STATE — Supplier state name/code (Place of Supply)
+        string? supplierState = null;
+        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
+                if (json.TryGetProperty("StateName", out var sn) || json.TryGetProperty("stateName", out sn))
+                    supplierState = sn.GetString();
+            }
+            catch { }
+        }
+        var supplierStatePresent = !string.IsNullOrWhiteSpace(supplierState);
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "INV_SUPPLIER_STATE",
+            Type = "Required",
+            Passed = supplierStatePresent,
+            IsWarning = false,
+            Label = "Supplier State",
+            ExtractedValue = supplierState,
+            Message = supplierStatePresent ? null : "Supplier state name/code not detected",
+        });
+
+        // 10. INV_VENDOR_CODE_PRESENT — Required
         string? vendorCode = null;
         if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
         {
@@ -717,7 +801,7 @@ public class AssistantController : ControllerBase
             Message = vendorCodePresent ? null : "Vendor code not detected",
         });
 
-        // 8. INV_PO_NUMBER_MATCH — Check (extracted PO number == POs.PONumber)
+        // 11. INV_PO_NUMBER_MATCH — Check (extracted PO number == POs.PONumber)
         string? extractedPoNumber = null;
         if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
         {
@@ -760,7 +844,7 @@ public class AssistantController : ControllerBase
             Message = poMatchMsg,
         });
 
-        // 9. INV_AMOUNT_VS_PO_BALANCE — Check (warning if exceeded, not hard block)
+        // 12. INV_AMOUNT_VS_PO_BALANCE — Check (warning if exceeded, not hard block)
         // Uses live balance computed at this exact moment: PO.TotalAmount - sum of other invoices on this PO
         bool amountOk;
         bool isAmountWarning;
@@ -1422,7 +1506,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "date_picker_start",
-            Message = $"Dealer: {dealerName}, {city}\n\nActivity period for Team {teamName}?\nPick start date:",
+            Message = $"Dealer: {dealerName}, {city}\n\nActivity period for Team {teamName}?\nPick start & end date:",
             TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
         };
@@ -1475,7 +1559,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "team_dates_confirm",
-            Message = $"Start: {startDate.Value:dd-MMM-yyyy} | End: {endDate.Value:dd-MMM-yyyy}\nWorking days (auto-calculated): {workingDays}",
+            Message = $"Start: {startDate.Value:dd-MMM-yyyy} | End: {endDate.Value:dd-MMM-yyyy}\nWorking days: {workingDays}",
             TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
         };
@@ -3074,6 +3158,182 @@ public class AssistantController : ControllerBase
             Message = qtyPresent ? null : "Element-wise quantity breakdown not detected",
         });
 
+        // CS_FIXED_COST_LIMITS: Check fixed cost elements against state rates
+        {
+            string? stateCode = null;
+            if (!string.IsNullOrWhiteSpace(placeOfSupply))
+            {
+                // Try to resolve state code from place of supply via reference data
+                stateCode = _referenceData.GetStateCodeByName(placeOfSupply) ?? placeOfSupply;
+            }
+
+            List<(string element, decimal amount)> fixedItems = new();
+            List<(string element, decimal amount)> failedFixed = new();
+
+            // Prefer CostBreakdownJson; fall back to ExtractedDataJson.costBreakdowns
+            var breakdownSource = !string.IsNullOrWhiteSpace(costSummary.CostBreakdownJson)
+                ? costSummary.CostBreakdownJson
+                : TryExtractBreakdownFromJson(costSummary.ExtractedDataJson);
+
+            if (!string.IsNullOrWhiteSpace(breakdownSource))
+            {
+                try
+                {
+                    var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var breakdowns = JsonSerializer.Deserialize<JsonElement>(breakdownSource, opts);
+                    if (breakdowns.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var b in breakdowns.EnumerateArray())
+                        {
+                            var isFixed = b.TryGetProperty("isFixedCost", out var fc) && fc.GetBoolean();
+                            if (!isFixed) continue;
+                            var elem = (b.TryGetProperty("elementName", out var en) ? en.GetString() : null)
+                                    ?? (b.TryGetProperty("category", out var cat) ? cat.GetString() : null)
+                                    ?? "";
+                            var amt = b.TryGetProperty("amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0;
+                            if (!string.IsNullOrWhiteSpace(elem))
+                                fixedItems.Add((elem, amt));
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (fixedItems.Count == 0)
+            {
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_FIXED_COST_LIMITS",
+                    Type = "Check",
+                    Passed = true,
+                    IsWarning = false,
+                    Label = "Fixed Cost Limits",
+                    ExtractedValue = null,
+                    Message = "No fixed cost items found to validate",
+                });
+            }
+            else if (string.IsNullOrWhiteSpace(stateCode))
+            {
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_FIXED_COST_LIMITS",
+                    Type = "Check",
+                    Passed = false,
+                    IsWarning = true,
+                    Label = "Fixed Cost Limits",
+                    ExtractedValue = null,
+                    Message = "State not identified — cannot check fixed cost limits",
+                });
+            }
+            else
+            {
+                foreach (var (elem, amt) in fixedItems)
+                {
+                    if (!_referenceData.ValidateFixedCostLimit(elem, amt, stateCode))
+                        failedFixed.Add((elem, amt));
+                }
+                bool fixedOk = failedFixed.Count == 0;
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_FIXED_COST_LIMITS",
+                    Type = "Check",
+                    Passed = fixedOk,
+                    IsWarning = !fixedOk,
+                    Label = "Fixed Cost Limits",
+                    ExtractedValue = $"{fixedItems.Count} fixed cost item(s) checked",
+                    Message = fixedOk
+                        ? $"All {fixedItems.Count} fixed cost item(s) within state limits"
+                        : $"{failedFixed.Count} item(s) exceed state limit: {string.Join(", ", failedFixed.Select(f => f.element))}",
+                });
+            }
+        }
+
+        // CS_VARIABLE_COST_LIMITS: Check variable cost elements against state rates
+        {
+            string? stateCode = null;
+            if (!string.IsNullOrWhiteSpace(placeOfSupply))
+                stateCode = _referenceData.GetStateCodeByName(placeOfSupply) ?? placeOfSupply;
+
+            List<(string element, decimal amount)> varItems = new();
+            List<(string element, decimal amount)> failedVar = new();
+
+            var breakdownSource = !string.IsNullOrWhiteSpace(costSummary.CostBreakdownJson)
+                ? costSummary.CostBreakdownJson
+                : TryExtractBreakdownFromJson(costSummary.ExtractedDataJson);
+
+            if (!string.IsNullOrWhiteSpace(breakdownSource))
+            {
+                try
+                {
+                    var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var breakdowns = JsonSerializer.Deserialize<JsonElement>(breakdownSource, opts);
+                    if (breakdowns.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var b in breakdowns.EnumerateArray())
+                        {
+                            var isVar = b.TryGetProperty("isVariableCost", out var vc) && vc.GetBoolean();
+                            if (!isVar) continue;
+                            var elem = (b.TryGetProperty("elementName", out var en) ? en.GetString() : null)
+                                    ?? (b.TryGetProperty("category", out var cat) ? cat.GetString() : null)
+                                    ?? "";
+                            var amt = b.TryGetProperty("amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0;
+                            if (!string.IsNullOrWhiteSpace(elem))
+                                varItems.Add((elem, amt));
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (varItems.Count == 0)
+            {
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_VARIABLE_COST_LIMITS",
+                    Type = "Check",
+                    Passed = true,
+                    IsWarning = false,
+                    Label = "Variable Cost Limits",
+                    ExtractedValue = null,
+                    Message = "No variable cost items found to validate",
+                });
+            }
+            else if (string.IsNullOrWhiteSpace(stateCode))
+            {
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_VARIABLE_COST_LIMITS",
+                    Type = "Check",
+                    Passed = false,
+                    IsWarning = true,
+                    Label = "Variable Cost Limits",
+                    ExtractedValue = null,
+                    Message = "State not identified — cannot check variable cost limits",
+                });
+            }
+            else
+            {
+                foreach (var (elem, amt) in varItems)
+                {
+                    if (!_referenceData.ValidateVariableCostLimit(elem, amt, stateCode))
+                        failedVar.Add((elem, amt));
+                }
+                bool varOk = failedVar.Count == 0;
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_VARIABLE_COST_LIMITS",
+                    Type = "Check",
+                    Passed = varOk,
+                    IsWarning = !varOk,
+                    Label = "Variable Cost Limits",
+                    ExtractedValue = $"{varItems.Count} variable cost item(s) checked",
+                    Message = varOk
+                        ? $"All {varItems.Count} variable cost item(s) within state limits"
+                        : $"{failedVar.Count} item(s) exceed state limit: {string.Join(", ", failedVar.Select(f => f.element))}",
+                });
+            }
+        }
+
         // CS_TOTAL_VS_INVOICE: Total Cost <= Invoice Amount
         if (totalCost == null || invoiceAmount == null)
         {
@@ -3460,6 +3720,24 @@ public class AssistantController : ControllerBase
         }
 
         return NotFound(new { status = "not_found" });
+    }
+
+    /// <summary>
+    /// Extracts the costBreakdowns array JSON string from ExtractedDataJson.
+    /// Returns null if not found or not an array.
+    /// </summary>
+    private static string? TryExtractBreakdownFromJson(string? extractedDataJson)
+    {
+        if (string.IsNullOrWhiteSpace(extractedDataJson)) return null;
+        try
+        {
+            var json = JsonSerializer.Deserialize<JsonElement>(extractedDataJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (json.TryGetProperty("costBreakdowns", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                return arr.GetRawText();
+        }
+        catch { }
+        return null;
     }
 
     private async Task<Guid?> GetAgencyIdAsync(CancellationToken ct)
