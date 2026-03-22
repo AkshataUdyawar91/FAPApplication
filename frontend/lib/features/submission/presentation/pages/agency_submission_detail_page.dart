@@ -71,11 +71,14 @@ class _AgencySubmissionDetailPageState
   Map<String, dynamic> _activityValidation = {};
   Map<String, dynamic> _enquiryValidation = {};
 
+  // Blob URLs for Cost Summary and Activity Summary (from campaigns array)
+  String? _costSummaryBlobUrl;
+  String? _activitySummaryBlobUrl;
+
   @override
   void initState() {
-    print('poNumber: ${widget.poNumber}');
     super.initState();
-    _debugToken(); // Debug token contents
+    _debugToken();
     _loadSubmissionDetails();
   }
 
@@ -94,17 +97,9 @@ class _AgencySubmissionDetailPageState
 
         final decoded = utf8.decode(base64.decode(payload));
         final tokenData = jsonDecode(decoded);
-
-        print('=== JWT Token Debug ===');
-        print('Token payload: $tokenData');
-        print('Role claim: ${tokenData['role'] ?? 'NOT FOUND'}');
-        print('Sub claim: ${tokenData['sub'] ?? 'NOT FOUND'}');
-        print('Name claim: ${tokenData['name'] ?? 'NOT FOUND'}');
-        print('All claims: ${tokenData.keys.toList()}');
-        print('=====================');
       }
     } catch (e) {
-      print('Error decoding token: $e');
+      // Token decode failed silently
     }
   }
 
@@ -161,19 +156,18 @@ class _AgencySubmissionDetailPageState
           }
         }
 
-        print('=== Validation Data from Submission ===');
-        print('Invoice Validations Count: ${invoiceValidations.length}');
-        print('Photo Validations Count: ${photoValidations.length}');
-        print('Cost Summary Validation: ${costSummaryValidation.isNotEmpty}');
-        print('Activity Validation: ${activityValidation.isNotEmpty}');
-        print('Enquiry Validation: ${enquiryValidation.isNotEmpty}');
-        if (invoiceValidations.isNotEmpty) {
-          print('First Invoice Validation: ${invoiceValidations[0]}');
+        // Extract blob URLs for Cost Summary and Activity Summary from campaigns
+        String? costSummaryBlobUrl;
+        String? activitySummaryBlobUrl;
+        final campaignsList = submissionData['campaigns'] as List<dynamic>? ?? [];
+        if (campaignsList.isNotEmpty) {
+          final firstCampaign = campaignsList[0] as Map<String, dynamic>;
+          costSummaryBlobUrl = firstCampaign['costSummaryBlobUrl']?.toString()
+              ?? firstCampaign['costSummaryUrl']?.toString();
+          activitySummaryBlobUrl = firstCampaign['activitySummaryBlobUrl']?.toString()
+              ?? firstCampaign['activitySummaryUrl']?.toString()
+              ?? firstCampaign['activityBlobUrl']?.toString();
         }
-        if (photoValidations.isNotEmpty) {
-          print('First Photo Validation: ${photoValidations[0]}');
-        }
-        print('======================================');
 
         setState(() {
           _submission = submissionData;
@@ -184,6 +178,8 @@ class _AgencySubmissionDetailPageState
           _costSummaryValidation = costSummaryValidation;
           _activityValidation = activityValidation;
           _enquiryValidation = enquiryValidation;
+          _costSummaryBlobUrl = costSummaryBlobUrl;
+          _activitySummaryBlobUrl = activitySummaryBlobUrl;
           _isLoading = false;
         });
       }
@@ -220,14 +216,12 @@ class _AgencySubmissionDetailPageState
 
       if (response.statusCode == 200 && mounted) {
         final balanceData = response.data as Map<String, dynamic>;
-        print('PO Balance API Response: $balanceData'); // Debug log
         setState(() {
           _poBalance = balanceData;
           _isLoadingBalance = false;
         });
       }
     } catch (e) {
-      print('PO Balance API Error: $e'); // Debug log
       if (mounted) {
         setState(() {
           _balanceError = 'Failed to fetch PO balance';
@@ -263,7 +257,6 @@ class _AgencySubmissionDetailPageState
         await _loadSubmissionDetails();
       }
     } catch (e) {
-      print('Submit API Error: $e'); // Debug log
       if (mounted) {
         String errorMessage = 'Failed to submit submission';
 
@@ -361,9 +354,52 @@ class _AgencySubmissionDetailPageState
   }
 
   String _getEnquiryFileName() {
-    // Enquiry data is typically in a separate file or embedded in activity summary
-    // Based on the API structure, it might be part of the activity summary or a separate document
-    return 'Enquiry Data.xlsx'; // Default name, adjust based on actual API structure
+    return 'Enquiry Data.xlsx';
+  }
+
+  /// Gets document ID for Cost Summary — checks documents array with multiple type aliases,
+  /// then falls back to campaigns array fields.
+  String _getCostSummaryDocumentId() {
+    // Try documents array with all known type strings
+    for (final alias in ['CostSummary', 'Cost Summary', 'costsummary', 'cost_summary']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    // Try campaigns array
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['costSummaryDocumentId']?.toString()
+            ?? c['costSummaryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    // Try costSummaryValidation object itself
+    return _costSummaryValidation['documentId']?.toString()
+        ?? _costSummaryValidation['id']?.toString()
+        ?? '';
+  }
+
+  /// Gets document ID for Activity Summary — checks documents array with multiple type aliases,
+  /// then falls back to campaigns array fields.
+  String _getActivitySummaryDocumentId() {
+    for (final alias in ['ActivitySummary', 'Activity Summary', 'activitysummary', 'activity_summary', 'Activity']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['activitySummaryDocumentId']?.toString()
+            ?? c['activitySummaryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    return _activityValidation['documentId']?.toString()
+        ?? _activityValidation['id']?.toString()
+        ?? '';
   }
 
   Widget _buildValidationReportSection() {
@@ -408,6 +444,8 @@ class _AgencySubmissionDetailPageState
                 title: 'Cost Summary Validation',
                 fileName: _getCostSummaryFileName(),
                 validation: _costSummaryValidation,
+                documentId: _getCostSummaryDocumentId(),
+                blobUrl: _costSummaryBlobUrl,
               ),
               const SizedBox(height: 24),
             ],
@@ -418,6 +456,8 @@ class _AgencySubmissionDetailPageState
                 title: 'Activity Validation',
                 fileName: _getActivitySummaryFileName(),
                 validation: _activityValidation,
+                documentId: _getActivitySummaryDocumentId(),
+                blobUrl: _activitySummaryBlobUrl,
               ),
               const SizedBox(height: 24),
             ],
@@ -480,6 +520,7 @@ class _AgencySubmissionDetailPageState
   Widget _buildInvoiceValidationCard(Map<String, dynamic> invoice) {
     final fileName = invoice['fileName'] ?? 'Unknown';
     final validationDetailsJson = invoice['validationDetailsJson'] as String?;
+    final docId = invoice['documentId']?.toString() ?? invoice['id']?.toString() ?? _getDocumentIdByType('Invoice');
 
     List<Map<String, dynamic>> allRows = [];
 
@@ -489,19 +530,17 @@ class _AgencySubmissionDetailPageState
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
         allRows = _extractAllValidationRows(validationDetails);
       } catch (e) {
-        print('Error parsing validation details: $e');
+        debugPrint('Error parsing validation details: $e');
       }
     }
-
-    final passedCount = allRows.where((r) => r['passed'] == true).length;
-    final totalCount = allRows.length;
 
     return _buildValidationCardWidget(
       title: 'Invoice Validations',
       fileName: fileName,
-      passedCount: passedCount,
-      totalCount: totalCount,
+      passedCount: allRows.where((r) => r['passed'] == true).length,
+      totalCount: allRows.length,
       rows: allRows,
+      resolvedDocId: docId,
     );
   }
 
@@ -530,7 +569,7 @@ class _AgencySubmissionDetailPageState
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
         allRows = _extractAllValidationRows(validationDetails);
       } catch (e) {
-        print('Error parsing validation details: $e');
+        debugPrint('Error parsing validation details: $e');
       }
     }
 
@@ -619,7 +658,15 @@ class _AgencySubmissionDetailPageState
     required String title,
     String? fileName,
     required Map<String, dynamic> validation,
+    String? documentId,
+    String? blobUrl,
   }) {
+    // Resolve: prefer documentId, then validation map, then blobUrl is handled separately
+    final resolvedDocId = (documentId != null && documentId.isNotEmpty)
+        ? documentId
+        : validation['documentId']?.toString() ?? validation['id']?.toString() ?? '';
+    final resolvedBlobUrl = blobUrl ?? '';
+
     final validationDetailsJson =
         validation['validationDetailsJson'] as String?;
 
@@ -847,6 +894,8 @@ class _AgencySubmissionDetailPageState
     required int passedCount,
     required int totalCount,
     required List<Map<String, dynamic>> rows,
+    String resolvedDocId = '',
+    String resolvedBlobUrl = '',
   }) {
     return Card(
       elevation: 1,
@@ -883,25 +932,76 @@ class _AgencySubmissionDetailPageState
                     ],
                   ),
                 ),
-                if (totalCount > 0)
-                  RichText(
-                    text: TextSpan(children: [
-                      TextSpan(
-                        text: '$passedCount/$totalCount ',
-                        style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (totalCount > 0)
+                      RichText(
+                        text: TextSpan(
+                          children: [
+                            TextSpan(
+                              text: '$passedCount/$totalCount ',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 11,
+                              ),
+                            ),
+                            TextSpan(
+                              text: 'Passed',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: const Color(0xFF16A34A),
+                                fontWeight: FontWeight.w600,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      TextSpan(
-                        text: 'Passed',
-                        style: AppTextStyles.bodySmall.copyWith(
-                            color: const Color(0xFF16A34A),
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11),
+                    if (resolvedDocId.isNotEmpty || resolvedBlobUrl.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        height: 28,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            if (resolvedDocId.isNotEmpty) {
+                              _viewDocument(resolvedDocId, fileName ?? title);
+                            } else {
+                              _openBlobUrl(resolvedBlobUrl, fileName ?? title);
+                            }
+                          },
+                          icon: const Icon(Icons.visibility, size: 13),
+                          label: const Text('View', style: TextStyle(fontSize: 11)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: const BorderSide(color: AppColors.primary),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
                       ),
-                    ]),
-                  ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        height: 28,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            if (resolvedDocId.isNotEmpty) {
+                              _downloadDocumentDirect(resolvedDocId, fileName ?? title);
+                            } else {
+                              _downloadByBlobUrl(resolvedBlobUrl, fileName ?? title);
+                            }
+                          },
+                          icon: const Icon(Icons.download, size: 13),
+                          label: const Text('Download', style: TextStyle(fontSize: 11)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ),
@@ -1667,7 +1767,10 @@ class _AgencySubmissionDetailPageState
             ),
             const SizedBox(height: 16),
           ],
-          _buildStatusCard(state, fapNumber),
+          Visibility(
+            visible: false,
+            child: _buildStatusCard(state, fapNumber),
+          ),
           if (state.toLowerCase() == 'rejectedbyasm') ...[
             const SizedBox(height: 16),
             _buildRejectionCard(
@@ -1697,10 +1800,13 @@ class _AgencySubmissionDetailPageState
           const SizedBox(height: 24),
 
           // Campaign Details Table (ASM-style)
-          CampaignDetailsTable(
+          Visibility(
+            visible: false,
+            child: CampaignDetailsTable(
             campaignDetails: _campaignDetails,
             onPhotoTap: (detail) =>
                 _downloadDocument(detail.documentId, detail.documentName),
+            ),
           ),
           const SizedBox(height: 24),
 
@@ -2670,6 +2776,133 @@ class _AgencySubmissionDetailPageState
       return '${dt.day}/${dt.month}/${dt.year} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
     } catch (e) {
       return 'N/A';
+    }
+  }
+
+  String _getDocumentIdByType(String type) {
+    final documents = _submission?['documents'] as List<dynamic>? ?? [];
+    // Normalize for flexible matching
+    final typeLower = type.toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+    for (final doc in documents) {
+      final docType = (doc['type']?.toString() ?? doc['documentType']?.toString() ?? '')
+          .toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+      if (docType == typeLower) {
+        return doc['id']?.toString() ?? doc['documentId']?.toString() ?? '';
+      }
+    }
+    return '';
+  }
+
+  /// Opens a blob URL in a new browser tab for viewing.
+  void _openBlobUrl(String blobUrl, String filename) {
+    if (blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = blobUrl;
+    anchor.target = '_blank';
+    anchor.click();
+  }
+
+  /// Downloads a file directly from a blob URL.
+  void _downloadByBlobUrl(String blobUrl, String filename) {
+    if (blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    anchor.click();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Downloading $filename...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+      );
+    }
+  }
+
+  Future<void> _viewDocument(String documentId, String filename) async {
+    try {
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = response.data['filename']?.toString() ?? filename;
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+        final bytes = base64.decode(base64Content);
+        if (mounted) _showDocumentPreview(bytes, contentType, name);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load document: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadDocumentDirect(String? documentId, String? filename) async {
+    if (documentId == null || documentId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document not available for download'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    try {
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+        final bytes = base64.decode(base64Content);
+        final blob = web.Blob(
+          [Uint8List.fromList(bytes).toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final url = web.URL.createObjectURL(blob);
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+        web.URL.revokeObjectURL(url);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Downloading $name...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to download: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 

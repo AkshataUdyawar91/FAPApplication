@@ -71,6 +71,10 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
   Map<String, dynamic>? _activityValidation;
   Map<String, dynamic>? _enquiryValidation;
 
+  // Blob URLs for Cost Summary and Activity Summary (fallback when documentId unavailable)
+  String? _costSummaryBlobUrl;
+  String? _activitySummaryBlobUrl;
+
   @override
   void initState() {
     super.initState();
@@ -164,19 +168,18 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           }
         }
 
-        print('=== HQ - Validation Data from Submission ===');
-        print('Invoice Validations Count: ${invoiceValidations.length}');
-        print('Photo Validations Count: ${photoValidations.length}');
-        print('Cost Summary Validation: ${costSummaryValidation != null}');
-        print('Activity Validation: ${activityValidation != null}');
-        print('Enquiry Validation: ${enquiryValidation != null}');
-        if (invoiceValidations.isNotEmpty) {
-          print('First Invoice Validation: ${invoiceValidations[0]}');
+        // Extract blob URLs for Cost Summary and Activity Summary from campaigns
+        String? costSummaryBlobUrl;
+        String? activitySummaryBlobUrl;
+        final campaignsList = submissionData['campaigns'] as List<dynamic>? ?? [];
+        if (campaignsList.isNotEmpty) {
+          final firstCampaign = campaignsList[0] as Map<String, dynamic>;
+          costSummaryBlobUrl = firstCampaign['costSummaryBlobUrl']?.toString()
+              ?? firstCampaign['costSummaryUrl']?.toString();
+          activitySummaryBlobUrl = firstCampaign['activitySummaryBlobUrl']?.toString()
+              ?? firstCampaign['activitySummaryUrl']?.toString()
+              ?? firstCampaign['activityBlobUrl']?.toString();
         }
-        if (photoValidations.isNotEmpty) {
-          print('First Photo Validation: ${photoValidations[0]}');
-        }
-        print('======================================');
 
         setState(() {
           _submission = submissionData;
@@ -188,6 +191,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           _costSummaryValidation = costSummaryValidation;
           _activityValidation = activityValidation;
           _enquiryValidation = enquiryValidation;
+          _costSummaryBlobUrl = costSummaryBlobUrl;
+          _activitySummaryBlobUrl = activitySummaryBlobUrl;
           _isLoading = false;
         });
       }
@@ -511,7 +516,9 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                                                 doc.documentName),
                                       ),
                                       const SizedBox(height: 24),
-                                      CampaignDetailsTable(
+                                      Visibility(
+                                        visible: false,
+                                        child: CampaignDetailsTable(
                                         campaignDetails: _campaignDetails,
                                         onPhotoTap: (detail) {
                                           if (detail.downloadPath != null &&
@@ -524,6 +531,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                                                 detail.documentName);
                                           }
                                         },
+                                        ),
                                       ),
                                       const SizedBox(height: 24),
                                       _buildValidationReportSection(),
@@ -673,7 +681,10 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                     ],
                   ),
                 ),
-                _buildStatusBadge(state),
+                Visibility(
+                  visible: false,
+                  child: _buildStatusBadge(state),
+                ),
               ],
             ),
             const SizedBox(height: 20),
@@ -1066,6 +1077,175 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     }
   }
 
+  String _getDocumentIdByType(String type) {
+    final documents = _submission?['documents'] as List<dynamic>? ?? [];
+    // Normalize for flexible matching (handles "CostSummary" == "Cost Summary" etc.)
+    final typeLower = type.toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+    for (final doc in documents) {
+      final docType = (doc['type']?.toString() ?? doc['documentType']?.toString() ?? '')
+          .toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+      if (docType == typeLower) {
+        return doc['id']?.toString() ?? doc['documentId']?.toString() ?? '';
+      }
+    }
+    return '';
+  }
+
+  /// Gets document ID for Cost Summary — checks documents array with multiple aliases,
+  /// then falls back to campaigns array, then the validation object itself.
+  String _getCostSummaryDocumentId() {
+    for (final alias in ['CostSummary', 'Cost Summary', 'costsummary', 'cost_summary']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['costSummaryDocumentId']?.toString()
+            ?? c['costSummaryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    return _costSummaryValidation?['documentId']?.toString()
+        ?? _costSummaryValidation?['id']?.toString()
+        ?? '';
+  }
+
+  /// Gets document ID for Activity Summary — checks documents array with multiple aliases,
+  /// then falls back to campaigns array, then the validation object itself.
+  String _getActivitySummaryDocumentId() {
+    for (final alias in ['ActivitySummary', 'Activity Summary', 'activitysummary', 'activity_summary', 'Activity']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['activitySummaryDocumentId']?.toString()
+            ?? c['activitySummaryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    return _activityValidation?['documentId']?.toString()
+        ?? _activityValidation?['id']?.toString()
+        ?? '';
+  }
+
+  /// Opens a blob URL in a new browser tab for viewing.
+  void _openBlobUrl(String blobUrl, String filename) {
+    if (blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = blobUrl;
+    anchor.target = '_blank';
+    anchor.click();
+  }
+
+  /// Downloads a file directly from a blob URL.
+  void _downloadByBlobUrl(String blobUrl, String filename) {
+    if (blobUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    anchor.click();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Downloading $filename...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+      );
+    }
+  }
+
+  Future<void> _viewDocument(String documentId, String filename) async {
+    try {
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = response.data['filename']?.toString() ?? filename;
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+        final bytes = base64.decode(base64Content);
+        if (mounted) _showDocumentPreview(bytes, contentType, name);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load document: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadDocumentDirect(String? documentId, String? filename) async {
+    if (documentId == null || documentId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document not available for download'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    try {
+      final response = await _dio.get(
+        '/documents/$documentId/download',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200) {
+        final base64Content = response.data['base64Content']?.toString() ?? '';
+        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+        if (base64Content.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+            );
+          }
+          return;
+        }
+        final bytes = base64.decode(base64Content);
+        final blob = web.Blob(
+          [Uint8List.fromList(bytes).toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final url = web.URL.createObjectURL(blob);
+        final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+        web.URL.revokeObjectURL(url);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Downloading $name...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to download: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Future<void> _downloadDocument(String? documentId, String? filename) async {
     if (documentId == null || documentId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1312,6 +1492,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                 'Cost Summary',
                 _getCostSummaryFileName(),
                 _costSummaryValidation!,
+                documentId: _getCostSummaryDocumentId(),
+                blobUrl: _costSummaryBlobUrl,
               ),
               const SizedBox(height: 16),
             ],
@@ -1322,6 +1504,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                 'Activity Summary',
                 _getActivitySummaryFileName(),
                 _activityValidation!,
+                documentId: _getActivitySummaryDocumentId(),
+                blobUrl: _activitySummaryBlobUrl,
               ),
               const SizedBox(height: 16),
             ],
@@ -1382,6 +1566,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
   Widget _buildInvoiceValidationCard(Map<String, dynamic> invoice) {
     final fileName = invoice['fileName'] ?? 'Unknown';
     final validationDetailsJson = invoice['validationDetailsJson'] as String?;
+    final docId = invoice['documentId']?.toString() ?? invoice['id']?.toString() ?? _getDocumentIdByType('Invoice');
 
     Map<String, dynamic>? validationDetails;
     List<Map<String, dynamic>> allRows = [];
@@ -1394,18 +1579,15 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           allRows = _extractAllValidationRows(validationDetails);
         }
       } catch (e) {
-        debugPrint('Error parsing invoice validation details: $e');
+        debugPrint('Error parsing validation details: $e');
       }
     }
-
-    final passedCount = allRows.where((r) => r['passed'] == true).length;
-    final totalCount = allRows.length;
 
     return _buildValidationCard(
       title: 'Invoice Validations',
       fileName: fileName,
-      passedCount: passedCount,
-      totalCount: totalCount,
+      passedCount: allRows.where((r) => r['passed'] == true).length,
+      totalCount: allRows.length,
       rows: allRows,
     );
   }
@@ -1784,8 +1966,10 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
   Widget _buildSingleValidationCard(
     String title,
     String fileName,
-    Map<String, dynamic> validation,
-  ) {
+    Map<String, dynamic> validation, {
+    String? documentId,
+    String? blobUrl,
+  }) {
     final validationDetailsJson = validation['validationDetailsJson'] as String?;
     List<Map<String, dynamic>> allRows = [];
 
@@ -1829,5 +2013,273 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
 
   String _getEnquiryFileName() {
     return 'Enquiry Dump.xlsx';
+  }
+
+  // Build simple validation details table for field presence and cross-document checks
+  Widget _buildSimpleValidationDetailsTable(
+    Map<String, dynamic> validationDetails,
+    String documentType,
+  ) {
+    List<Map<String, dynamic>> rows = [];
+
+    // Add field presence checks
+    if (validationDetails['fieldPresence'] != null) {
+      final fieldPresence =
+          validationDetails['fieldPresence'] as Map<String, dynamic>;
+      final missingFields =
+          fieldPresence['missingFields'] as List<dynamic>? ?? [];
+      final totalRecords = fieldPresence['totalRecords'];
+
+      if (documentType == 'Enquiry Dump' && totalRecords != null) {
+        // For enquiry, show ALL record-level presence checks
+        final fieldChecks = {
+          'State': fieldPresence['recordsWithState'] ?? 0,
+          'Date': fieldPresence['recordsWithDate'] ?? 0,
+          'Dealer Code': fieldPresence['recordsWithDealerCode'] ?? 0,
+          'Dealer Name': fieldPresence['recordsWithDealerName'] ?? 0,
+          'District': fieldPresence['recordsWithDistrict'] ?? 0,
+          'Pincode': fieldPresence['recordsWithPincode'] ?? 0,
+          'Customer Name': fieldPresence['recordsWithCustomerName'] ?? 0,
+          'Customer Number': fieldPresence['recordsWithCustomerNumber'] ?? 0,
+          'Test Ride': fieldPresence['recordsWithTestRide'] ?? 0,
+        };
+
+        fieldChecks.forEach((field, count) {
+          final passed = count == totalRecords;
+          rows.add({
+            'field': field,
+            'passed': passed,
+            'value': 'Present in $count/$totalRecords records',
+            'message': null,
+          });
+        });
+      } else {
+        // For other documents (Invoice, Cost Summary, Activity), show missing fields
+        if (missingFields.isNotEmpty) {
+          for (var field in missingFields) {
+            rows.add({
+              'field': field.toString(),
+              'passed': false,
+              'value': null,
+              'message': 'Field is missing',
+            });
+          }
+        }
+      }
+    }
+
+    // Add cross-document checks
+    if (validationDetails['crossDocument'] != null) {
+      final crossDoc =
+          validationDetails['crossDocument'] as Map<String, dynamic>;
+      final issues = crossDoc['issues'] as List<dynamic>? ?? [];
+
+      // Add specific validation checks
+      final checkLabels = {
+        'totalCostValid': 'Total Cost Validation',
+        'elementCostsValid': 'Element Costs Validation',
+        'fixedCostsValid': 'Fixed Costs Validation',
+        'variableCostsValid': 'Variable Costs Validation',
+        'numberOfDaysMatches': 'Number of Days Match',
+      };
+
+      checkLabels.forEach((key, label) {
+        if (crossDoc.containsKey(key)) {
+          final passed = crossDoc[key] == true;
+          rows.add({
+            'field': label,
+            'passed': passed,
+            'value': passed
+                ? (key == 'totalCostValid'
+                    ? 'Total cost matches invoice'
+                    : key == 'elementCostsValid'
+                        ? 'Element costs are valid'
+                        : key == 'fixedCostsValid'
+                            ? 'Fixed costs are valid'
+                            : key == 'variableCostsValid'
+                                ? 'Variable costs are valid'
+                                : 'Number of days matches between documents')
+                : null,
+            'message': !passed
+                ? (key == 'totalCostValid'
+                    ? 'Total cost does not match invoice'
+                    : key == 'elementCostsValid'
+                        ? 'Element costs are invalid'
+                        : key == 'fixedCostsValid'
+                            ? 'Fixed costs are invalid'
+                            : key == 'variableCostsValid'
+                                ? 'Variable costs are invalid'
+                                : 'Number of days mismatch between documents')
+                : null,
+          });
+        }
+      });
+
+      // Add issues as separate rows
+      for (var issue in issues) {
+        rows.add({
+          'field': 'Cross-document Issue',
+          'passed': false,
+          'value': null,
+          'message': issue.toString(),
+        });
+      }
+    }
+
+    if (rows.isEmpty) {
+      return const SizedBox();
+    }
+
+    return Column(
+      children: [
+        // Table Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS CHECKED',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  'RESULT',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'WHAT WAS FOUND',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Table Rows
+        ...rows.asMap().entries.map((entry) {
+          final index = entry.key;
+          final row = entry.value;
+          final isLast = index == rows.length - 1;
+
+          final field = row['field'] ?? 'Unknown';
+          final passed = row['passed'] ?? false;
+          final value = row['value'];
+          final message = row['message'];
+
+          final statusColor =
+              passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                left: BorderSide(color: const Color(0xFFE5E7EB)),
+                right: BorderSide(color: const Color(0xFFE5E7EB)),
+                bottom: BorderSide(
+                  color: const Color(0xFFE5E7EB),
+                  width: isLast ? 1 : 0.5,
+                ),
+              ),
+              borderRadius: isLast
+                  ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                  : BorderRadius.zero,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Column 1: What was checked
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    field,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+
+                // Column 2: Result
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    passed ? 'Pass' : 'Fail',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: statusColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Column 3: What was found
+                Expanded(
+                  flex: 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (value != null)
+                        Text(
+                          value.toString(),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: passed
+                                ? const Color(0xFF16A34A)
+                                : AppColors.textPrimary,
+                            fontStyle:
+                                passed ? FontStyle.normal : FontStyle.italic,
+                          ),
+                        ),
+                      if (message != null)
+                        Text(
+                          message.toString(),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: const Color(0xFFDC2626),
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      if (value == null && message == null)
+                        Text(
+                          '-',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
   }
 }
