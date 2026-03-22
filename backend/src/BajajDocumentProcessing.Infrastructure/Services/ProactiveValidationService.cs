@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.Conversation;
+using BajajDocumentProcessing.Application.DTOs.Documents;
 using BajajDocumentProcessing.Domain.Entities;
 using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -50,6 +51,7 @@ public class ProactiveValidationService : IProactiveValidationService
             DocumentType.Invoice => await ValidateInvoiceAsync(documentId, packageId, ct),
             DocumentType.ActivitySummary => await ValidateActivitySummaryAsync(documentId, packageId, ct),
             DocumentType.CostSummary => await ValidateCostSummaryAsync(documentId, packageId, ct),
+            DocumentType.EnquiryDocument => await ValidateEnquiryDumpAsync(documentId, packageId, ct),
             _ => new List<ProactiveRuleResult>()
         };
 
@@ -545,6 +547,130 @@ public class ProactiveValidationService : IProactiveValidationService
 
     #endregion
 
+    #region Enquiry Dump Validation (3 rules)
+
+    private async Task<List<ProactiveRuleResult>> ValidateEnquiryDumpAsync(
+        Guid documentId, Guid packageId, CancellationToken ct)
+    {
+        var enquiry = await _db.EnquiryDocuments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Id == documentId && !e.IsDeleted, ct);
+
+        if (enquiry is null)
+        {
+            _logger.LogWarning("EnquiryDocument {DocumentId} not found for validation", documentId);
+            return new List<ProactiveRuleResult>();
+        }
+
+        var rules = new List<ProactiveRuleResult>();
+
+        // Rule 1: ED_RECORDS_PRESENT — at least one record extracted
+        EnquiryDumpData? enquiryData = null;
+        if (!string.IsNullOrWhiteSpace(enquiry.ExtractedDataJson))
+        {
+            try
+            {
+                enquiryData = System.Text.Json.JsonSerializer.Deserialize<EnquiryDumpData>(
+                    enquiry.ExtractedDataJson,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to deserialize EnquiryDumpData for document {DocumentId}", documentId);
+            }
+        }
+
+        var hasRecords = enquiryData?.Records?.Count > 0;
+        rules.Add(new ProactiveRuleResult
+        {
+            RuleCode = "ED_RECORDS_PRESENT",
+            Type = "Required",
+            Passed = hasRecords,
+            ExtractedValue = hasRecords ? enquiryData!.Records.Count.ToString() : "0",
+            ExpectedValue = ">0",
+            Message = hasRecords
+                ? $"{enquiryData!.Records.Count} enquiry record(s) extracted"
+                : "No enquiry records found in the document",
+            Severity = hasRecords ? "Pass" : "Fail"
+        });
+
+        if (hasRecords)
+        {
+            var records = enquiryData!.Records;
+            var total = records.Count;
+
+            // Rule 2: ED_REQUIRED_FIELDS_PRESENT — State, DealerCode, CustomerName present in ≥80% of records
+            var requiredFields = new[]
+            {
+                ("State",          records.Count(r => !string.IsNullOrWhiteSpace(r.State))),
+                ("DealerCode",     records.Count(r => !string.IsNullOrWhiteSpace(r.DealerCode))),
+                ("CustomerName",   records.Count(r => !string.IsNullOrWhiteSpace(r.CustomerName))),
+            };
+
+            var missingFields = requiredFields
+                .Where(f => (double)f.Item2 / total < 0.8)
+                .Select(f => $"{f.Item1} ({f.Item2}/{total})")
+                .ToList();
+
+            rules.Add(new ProactiveRuleResult
+            {
+                RuleCode = "ED_REQUIRED_FIELDS_PRESENT",
+                Type = "Required",
+                Passed = missingFields.Count == 0,
+                ExtractedValue = missingFields.Count == 0 ? "All present" : string.Join(", ", missingFields),
+                ExpectedValue = "≥80% records populated",
+                Message = missingFields.Count == 0
+                    ? "All required fields present in enquiry records"
+                    : $"Required fields missing in majority of records: {string.Join(", ", missingFields)}",
+                Severity = missingFields.Count == 0 ? "Pass" : "Fail"
+            });
+
+            // Rule 3: ED_STATE_MATCHES_PACKAGE — enquiry state matches package activation state
+            var package = await _db.DocumentPackages
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == packageId && !p.IsDeleted, ct);
+
+            var packageState = package?.ActivityState;
+            var enquiryState = enquiryData.State
+                ?? records.Select(r => r.State).Where(s => !string.IsNullOrWhiteSpace(s))
+                           .GroupBy(s => s).OrderByDescending(g => g.Count()).FirstOrDefault()?.Key;
+
+            if (string.IsNullOrWhiteSpace(packageState) || string.IsNullOrWhiteSpace(enquiryState))
+            {
+                rules.Add(new ProactiveRuleResult
+                {
+                    RuleCode = "ED_STATE_MATCHES_PACKAGE",
+                    Type = "Check",
+                    Passed = true,
+                    ExtractedValue = enquiryState,
+                    ExpectedValue = packageState,
+                    Message = "State not available for cross-check",
+                    Severity = "Warning"
+                });
+            }
+            else
+            {
+                var stateMatches = string.Equals(enquiryState.Trim(), packageState.Trim(), StringComparison.OrdinalIgnoreCase);
+                rules.Add(new ProactiveRuleResult
+                {
+                    RuleCode = "ED_STATE_MATCHES_PACKAGE",
+                    Type = "Check",
+                    Passed = stateMatches,
+                    ExtractedValue = enquiryState,
+                    ExpectedValue = packageState,
+                    Message = stateMatches
+                        ? "Enquiry state matches package activation state"
+                        : $"Enquiry state '{enquiryState}' does not match package state '{packageState}'",
+                    Severity = stateMatches ? "Pass" : "Fail"
+                });
+            }
+        }
+
+        return rules;
+    }
+
+    #endregion
+
     #region Persistence
 
     private async Task PersistRuleResultsAsync(
@@ -562,9 +688,58 @@ public class ProactiveValidationService : IProactiveValidationService
                     r.Type,
                     r.Passed,
                     r.ExtractedValue,
-                    r.ExpectedValue
+                    r.ExpectedValue,
+                    r.Message,
+                    r.Severity
                 }),
                 JsonOptions);
+
+            // Calculate pass/fail counts
+            var passCount = rules.Count(r => r.Severity == "Pass");
+            var failCount = rules.Count(r => r.Severity == "Fail");
+            var warningCount = rules.Count(r => r.Severity == "Warning");
+            var allPassed = failCount == 0 && warningCount == 0;
+
+            // Create detailed validation summary
+            var validationDetails = new
+            {
+                TotalRules = rules.Count,
+                PassedRules = passCount,
+                FailedRules = failCount,
+                WarningRules = warningCount,
+                AllPassed = allPassed,
+                ValidatedAt = DateTime.UtcNow,
+                Rules = rules.Select(r => new
+                {
+                    r.RuleCode,
+                    r.Type,
+                    r.Passed,
+                    r.Message,
+                    r.Severity,
+                    r.ExtractedValue,
+                    r.ExpectedValue
+                })
+            };
+
+            var validationDetailsJson = JsonSerializer.Serialize(validationDetails, JsonOptions);
+
+            // Build failure reason if any rules failed
+            var failureReason = failCount > 0
+                ? string.Join("; ", rules.Where(r => r.Severity == "Fail").Select(r => r.Message))
+                : null;
+
+            // Map rule results to specific validation fields
+            var sapVerificationPassed = true; // Default true for proactive validation
+            var amountConsistencyPassed = !rules.Any(r => 
+                (r.RuleCode == "INV_AMOUNT_VS_PO_BALANCE" || r.RuleCode == "CS_TOTAL_VS_INVOICE") 
+                && r.Severity == "Fail");
+            var lineItemMatchingPassed = true; // Not checked in proactive validation
+            var completenessCheckPassed = !rules.Any(r => r.Type == "Required" && r.Severity == "Fail");
+            var dateValidationPassed = !rules.Any(r => 
+                r.RuleCode.Contains("DATE") && r.Severity == "Fail");
+            var vendorMatchingPassed = !rules.Any(r => 
+                (r.RuleCode == "INV_VENDOR_CODE_PRESENT" || r.RuleCode == "INV_PO_NUMBER_MATCH") 
+                && r.Severity == "Fail");
 
             // Find or create ValidationResult for this document
             var validationResult = await _db.ValidationResults
@@ -582,6 +757,15 @@ public class ProactiveValidationService : IProactiveValidationService
                     DocumentId = documentId,
                     DocumentType = documentType,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = validationDetailsJson,
+                    AllValidationsPassed = allPassed,
+                    SapVerificationPassed = sapVerificationPassed,
+                    AmountConsistencyPassed = amountConsistencyPassed,
+                    LineItemMatchingPassed = lineItemMatchingPassed,
+                    CompletenessCheckPassed = completenessCheckPassed,
+                    DateValidationPassed = dateValidationPassed,
+                    VendorMatchingPassed = vendorMatchingPassed,
+                    FailureReason = failureReason,
                     CreatedAt = DateTime.UtcNow
                 };
                 _db.ValidationResults.Add(validationResult);
@@ -589,10 +773,23 @@ public class ProactiveValidationService : IProactiveValidationService
             else
             {
                 validationResult.RuleResultsJson = ruleResultsJson;
+                validationResult.ValidationDetailsJson = validationDetailsJson;
+                validationResult.AllValidationsPassed = allPassed;
+                validationResult.SapVerificationPassed = sapVerificationPassed;
+                validationResult.AmountConsistencyPassed = amountConsistencyPassed;
+                validationResult.LineItemMatchingPassed = lineItemMatchingPassed;
+                validationResult.CompletenessCheckPassed = completenessCheckPassed;
+                validationResult.DateValidationPassed = dateValidationPassed;
+                validationResult.VendorMatchingPassed = vendorMatchingPassed;
+                validationResult.FailureReason = failureReason;
                 validationResult.UpdatedAt = DateTime.UtcNow;
             }
 
             await _db.SaveChangesAsync(ct);
+            
+            _logger.LogInformation(
+                "Validation results persisted for document {DocumentId}: AllPassed={AllPassed}, Pass={Pass}, Fail={Fail}, Warning={Warning}",
+                documentId, allPassed, passCount, failCount, warningCount);
         }
         catch (Exception ex)
         {

@@ -34,6 +34,8 @@ public class PhotoUploadLimitProperties
     {
         var fileMock = new Mock<IFormFile>();
         var content = new byte[1024]; // 1KB
+        // Add JPEG magic bytes
+        content[0] = 0xFF; content[1] = 0xD8; content[2] = 0xFF; content[3] = 0xE0;
         var ms = new MemoryStream(content);
         
         fileMock.Setup(f => f.FileName).Returns(fileName);
@@ -186,10 +188,12 @@ public class PhotoUploadLimitProperties
 
         // Act - Upload non-photo documents should still work
         var pdfMock = new Mock<IFormFile>();
+        var pdfContent = new byte[1024];
+        pdfContent[0] = 0x25; pdfContent[1] = 0x50; pdfContent[2] = 0x44; pdfContent[3] = 0x46; // %PDF
         pdfMock.Setup(f => f.FileName).Returns("document.pdf");
         pdfMock.Setup(f => f.Length).Returns(1024);
         pdfMock.Setup(f => f.ContentType).Returns("application/pdf");
-        pdfMock.Setup(f => f.OpenReadStream()).Returns(new MemoryStream(new byte[1024]));
+        pdfMock.Setup(f => f.OpenReadStream()).Returns(new MemoryStream(pdfContent));
 
         var response = await service.UploadDocumentAsync(pdfMock.Object, DocumentType.PO, packageId, userId);
 

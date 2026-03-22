@@ -9,16 +9,14 @@ namespace BajajDocumentProcessing.Application.DTOs.Submissions;
 public class CreateDraftRequest
 {
     /// <summary>
-    /// PO ID selected during conversational submission
+    /// PO ID selected during conversational submission (optional - can be set later)
     /// </summary>
-    [Required(ErrorMessage = "PO ID is required")]
     [JsonPropertyName("poId")]
-    public Guid PoId { get; set; }
+    public Guid? PoId { get; set; }
 
     /// <summary>
-    /// Agency ID creating the draft
+    /// Agency ID creating the draft (optional - will use authenticated user's agency)
     /// </summary>
-    [Required(ErrorMessage = "Agency ID is required")]
     [JsonPropertyName("agencyId")]
-    public Guid AgencyId { get; set; }
+    public Guid? AgencyId { get; set; }
 }

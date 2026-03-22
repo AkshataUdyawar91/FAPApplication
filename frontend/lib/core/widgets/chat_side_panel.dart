@@ -1,5 +1,7 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:go_router/go_router.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:web/web.dart' as web;
@@ -29,7 +31,8 @@ class ChatSidePanel extends StatefulWidget {
 }
 
 class _ChatSidePanelState extends State<ChatSidePanel> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    ..interceptors.add(PrettyDioLogger());
   final _chatController = TextEditingController();
   final List<Map<String, dynamic>> _chatMessages = [];
   bool _isSendingMessage = false;
@@ -78,7 +81,8 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
                   color: Colors.white.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.smart_toy, color: Colors.white, size: 20),
+                child:
+                    const Icon(Icons.smart_toy, color: Colors.white, size: 20),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -181,7 +185,8 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.chat_bubble_outline, size: 56, color: AppColors.textTertiary),
+            const Icon(Icons.chat_bubble_outline,
+                size: 56, color: AppColors.textTertiary),
             const SizedBox(height: 16),
             Text(
               'Start a conversation',
@@ -190,7 +195,8 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
             const SizedBox(height: 8),
             Text(
               'Ask about your submissions, status updates, or any questions',
-              style: AppTextStyles.bodySmall.copyWith(color: AppColors.textTertiary),
+              style: AppTextStyles.bodySmall
+                  .copyWith(color: AppColors.textTertiary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -263,35 +269,43 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
     for (final match in linkPattern.allMatches(text)) {
       // Add text before the link
       if (match.start > lastEnd) {
-        spans.add(TextSpan(
-          text: text.substring(lastEnd, match.start),
-          style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
-        ),);
+        spans.add(
+          TextSpan(
+            text: text.substring(lastEnd, match.start),
+            style:
+                AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
+          ),
+        );
       }
       // Add the clickable link
       final linkText = match.group(1)!;
       final linkUrl = match.group(2)!;
-      spans.add(WidgetSpan(
-        child: GestureDetector(
-          onTap: () => _handleLinkTap(linkUrl),
-          child: Text(
-            linkText,
-            style: AppTextStyles.bodyMedium.copyWith(
-              color: const Color(0xFF2563EB),
-              decoration: TextDecoration.underline,
+      spans.add(
+        WidgetSpan(
+          child: GestureDetector(
+            onTap: () => _handleLinkTap(linkUrl),
+            child: Text(
+              linkText,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: const Color(0xFF2563EB),
+                decoration: TextDecoration.underline,
+              ),
             ),
           ),
         ),
-      ),);
+      );
       lastEnd = match.end;
     }
 
     // Add remaining text
     if (lastEnd < text.length) {
-      spans.add(TextSpan(
-        text: text.substring(lastEnd),
-        style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
-      ),);
+      spans.add(
+        TextSpan(
+          text: text.substring(lastEnd),
+          style:
+              AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
+        ),
+      );
     }
 
     // If no links found, return simple text
@@ -317,22 +331,25 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
       if (parts.length >= 2) {
         final route = parts[0]; // e.g. "asm-review" or "hq-review"
         final submissionId = parts[1];
-        String routePath;
+        String routeName;
         if (route == 'asm-review') {
-          routePath = '/asm/review-detail';
+          routeName = 'asm-review-detail';
         } else if (route == 'hq-review') {
-          routePath = '/hq/review-detail';
+          routeName = 'hq-review-detail';
         } else if (route == 'agency-detail') {
-          routePath = '/agency/submission-detail';
+          routeName = 'submission-detail';
         } else {
-          routePath = '/agency/submission-detail';
+          routeName = 'submission-detail';
         }
         if (mounted) {
-          Navigator.pushNamed(context, routePath, arguments: {
-            'submissionId': submissionId,
-            'token': widget.token,
-            'userName': widget.userName,
-          },);
+          context.pushNamed(
+            routeName,
+            extra: {
+              'submissionId': submissionId,
+              'token': widget.token,
+              'userName': widget.userName,
+            },
+          );
         }
       }
     } else {
@@ -358,7 +375,8 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
 
       if (response.statusCode == 200 && response.data != null) {
         final base64Content = response.data['base64Content']?.toString() ?? '';
-        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final contentType = response.data['contentType']?.toString() ??
+            'application/octet-stream';
 
         if (base64Content.isEmpty) {
           _showSnackBar('Document content is empty.');
@@ -417,18 +435,22 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
         if (convId != null && convId.isNotEmpty) {
           _conversationId = convId;
         }
-        setState(() => _chatMessages.add({
-              'text': response.data['message'] ?? 'I received your message.',
-              'isUser': false,
-            }),);
+        setState(
+          () => _chatMessages.add({
+            'text': response.data['message'] ?? 'I received your message.',
+            'isUser': false,
+          }),
+        );
       }
     } catch (e) {
       await Future.delayed(const Duration(seconds: 1));
       if (mounted) {
-        setState(() => _chatMessages.add({
-              'text': _getMockResponse(userMessage),
-              'isUser': false,
-            }),);
+        setState(
+          () => _chatMessages.add({
+            'text': _getMockResponse(userMessage),
+            'isUser': false,
+          }),
+        );
       }
     } finally {
       if (mounted) setState(() => _isSendingMessage = false);

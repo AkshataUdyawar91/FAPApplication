@@ -455,7 +455,7 @@ public class ValidationAgent : IValidationAgent
             await SaveValidationResultsAsync(result, package, cancellationToken);
 
             // Update package state - validation no longer sets state (removed Validated/ValidationFailed states)
-            // Package remains in Validating state, workflow orchestrator will move to PendingASM
+            // Package remains in Validating state, workflow orchestrator will move to PendingCH
 
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -1598,7 +1598,7 @@ public class ValidationAgent : IValidationAgent
 
         var documentResults = BuildPerDocumentResults(result, package);
 
-        foreach (var (documentType, documentId, allPassed, detailsJson, failureReason) in documentResults)
+        foreach (var (documentType, documentId, allPassed, failureReason, detailsJson) in documentResults)
         {
             try
             {
@@ -1610,8 +1610,8 @@ public class ValidationAgent : IValidationAgent
                 if (existing != null)
                 {
                     existing.AllValidationsPassed = allPassed;
-                    existing.ValidationDetailsJson = detailsJson;
                     existing.FailureReason = failureReason;
+                    existing.ValidationDetailsJson = detailsJson;
                     existing.UpdatedAt = DateTime.UtcNow;
                 }
                 else
@@ -1622,8 +1622,8 @@ public class ValidationAgent : IValidationAgent
                         DocumentType = documentType,
                         DocumentId = documentId,
                         AllValidationsPassed = allPassed,
-                        ValidationDetailsJson = detailsJson,
                         FailureReason = failureReason,
+                        ValidationDetailsJson = detailsJson,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     });
@@ -1648,91 +1648,96 @@ public class ValidationAgent : IValidationAgent
     /// <summary>
     /// Builds a list of per-document-type validation result tuples from the package validation result.
     /// </summary>
-    private static List<(DocumentType Type, Guid DocumentId, bool AllPassed, string DetailsJson, string? FailureReason)>
+    private static List<(DocumentType Type, Guid DocumentId, bool AllPassed, string? FailureReason, string? DetailsJson)>
         BuildPerDocumentResults(PackageValidationResult result, Domain.Entities.DocumentPackage package)
     {
-        var items = new List<(DocumentType, Guid, bool, string, string?)>();
+        var items = new List<(DocumentType, Guid, bool, string?, string?)>();
+        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
 
         // PO: SAP verification + date validation
-        if (package.PO != null && (result.SAPVerification != null || result.DateValidation != null))
+        if (package.PO != null)
         {
             var passed = (result.SAPVerification?.IsVerified ?? true || result.SAPVerification?.SAPConnectionFailed == true)
                          && (result.DateValidation?.IsValid ?? true);
-            var details = new { result.SAPVerification, result.DateValidation };
             var issues = new List<string>();
             if (result.SAPVerification != null && !result.SAPVerification.IsVerified && !result.SAPVerification.SAPConnectionFailed)
                 issues.AddRange(result.SAPVerification.Discrepancies);
             if (result.DateValidation != null && !result.DateValidation.IsValid)
                 issues.AddRange(result.DateValidation.DateIssues);
 
+            var details = new { sapVerification = result.SAPVerification, dateValidation = result.DateValidation };
             items.Add((DocumentType.PO, package.PO.Id, passed,
-                JsonSerializer.Serialize(details),
-                issues.Count > 0 ? string.Join("; ", issues) : null));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions)));
         }
 
         // Invoice: field presence + cross-document
         var invoiceDoc = package.Invoices.FirstOrDefault();
-        if (invoiceDoc != null && (result.InvoiceFieldPresence != null || result.InvoiceCrossDocument != null))
+        if (invoiceDoc != null)
         {
             var invPassed = (result.InvoiceFieldPresence?.AllFieldsPresent ?? true)
                             && (result.InvoiceCrossDocument?.AllChecksPass ?? true);
-            var invDetails = new { result.InvoiceFieldPresence, result.InvoiceCrossDocument };
             var invIssues = new List<string>();
             if (result.InvoiceFieldPresence != null && !result.InvoiceFieldPresence.AllFieldsPresent)
                 invIssues.AddRange(result.InvoiceFieldPresence.MissingFields);
             if (result.InvoiceCrossDocument != null && !result.InvoiceCrossDocument.AllChecksPass)
                 invIssues.AddRange(result.InvoiceCrossDocument.Issues);
 
+            var details = new { fieldPresence = result.InvoiceFieldPresence, crossDocument = result.InvoiceCrossDocument };
             items.Add((DocumentType.Invoice, invoiceDoc.Id, invPassed,
-                JsonSerializer.Serialize(invDetails),
-                invIssues.Count > 0 ? string.Join("; ", invIssues) : null));
+                invIssues.Count > 0 ? string.Join("; ", invIssues) : null,
+                JsonSerializer.Serialize(details, jsonOptions)));
         }
 
         // CostSummary: field presence + cross-document
-        if (package.CostSummary != null && (result.CostSummaryFieldPresence != null || result.CostSummaryCrossDocument != null))
+        if (package.CostSummary != null)
         {
             var passed = (result.CostSummaryFieldPresence?.AllFieldsPresent ?? true)
                          && (result.CostSummaryCrossDocument?.AllChecksPass ?? true);
-            var details = new { result.CostSummaryFieldPresence, result.CostSummaryCrossDocument };
             var issues = new List<string>();
             if (result.CostSummaryFieldPresence != null && !result.CostSummaryFieldPresence.AllFieldsPresent)
                 issues.AddRange(result.CostSummaryFieldPresence.MissingFields);
             if (result.CostSummaryCrossDocument != null && !result.CostSummaryCrossDocument.AllChecksPass)
                 issues.AddRange(result.CostSummaryCrossDocument.Issues);
 
+            var details = new { fieldPresence = result.CostSummaryFieldPresence, crossDocument = result.CostSummaryCrossDocument };
             items.Add((DocumentType.CostSummary, package.CostSummary.Id, passed,
-                JsonSerializer.Serialize(details),
-                issues.Count > 0 ? string.Join("; ", issues) : null));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions)));
         }
 
         // ActivitySummary: field presence + cross-document
-        if (package.ActivitySummary != null && (result.ActivityFieldPresence != null || result.ActivityCrossDocument != null))
+        if (package.ActivitySummary != null)
         {
             var passed = (result.ActivityFieldPresence?.AllFieldsPresent ?? true)
                          && (result.ActivityCrossDocument?.AllChecksPass ?? true);
-            var details = new { result.ActivityFieldPresence, result.ActivityCrossDocument };
             var issues = new List<string>();
             if (result.ActivityFieldPresence != null && !result.ActivityFieldPresence.AllFieldsPresent)
                 issues.AddRange(result.ActivityFieldPresence.MissingFields);
             if (result.ActivityCrossDocument != null && !result.ActivityCrossDocument.AllChecksPass)
                 issues.AddRange(result.ActivityCrossDocument.Issues);
 
+            var details = new { fieldPresence = result.ActivityFieldPresence, crossDocument = result.ActivityCrossDocument };
             items.Add((DocumentType.ActivitySummary, package.ActivitySummary.Id, passed,
-                JsonSerializer.Serialize(details),
-                issues.Count > 0 ? string.Join("; ", issues) : null));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions)));
         }
 
-        // EnquiryDocument: field presence only
-        if (package.EnquiryDocument != null && result.EnquiryDumpFieldPresence != null)
+        // EnquiryDocument: field presence + cross-document
+        if (package.EnquiryDocument != null)
         {
-            var passed = result.EnquiryDumpFieldPresence.AllFieldsPresent;
-            var details = new { result.EnquiryDumpFieldPresence };
-            var issues = result.EnquiryDumpFieldPresence.AllFieldsPresent
-                ? null
-                : string.Join("; ", result.EnquiryDumpFieldPresence.MissingFields);
+            var passed = (result.EnquiryDumpFieldPresence?.AllFieldsPresent ?? true)
+                         && (result.EnquiryDumpCrossDocument?.AllChecksPass ?? true);
+            var issues = new List<string>();
+            if (result.EnquiryDumpFieldPresence != null && !result.EnquiryDumpFieldPresence.AllFieldsPresent)
+                issues.AddRange(result.EnquiryDumpFieldPresence.MissingFields);
+            if (result.EnquiryDumpCrossDocument != null && !result.EnquiryDumpCrossDocument.AllChecksPass)
+                issues.AddRange(result.EnquiryDumpCrossDocument.Issues);
 
+            var details = new { fieldPresence = result.EnquiryDumpFieldPresence, crossDocument = result.EnquiryDumpCrossDocument };
             items.Add((DocumentType.EnquiryDocument, package.EnquiryDocument.Id, passed,
-                JsonSerializer.Serialize(details), issues));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions)));
         }
 
         // TeamPhotos: field presence + cross-document (use package ID as the "document" since photos are a collection)
@@ -1740,16 +1745,16 @@ public class ValidationAgent : IValidationAgent
         {
             var passed = (result.PhotoFieldPresence?.AllFieldsPresent ?? true)
                          && (result.PhotoCrossDocument?.AllChecksPass ?? true);
-            var details = new { result.PhotoFieldPresence, result.PhotoCrossDocument };
             var issues = new List<string>();
             if (result.PhotoFieldPresence != null && !result.PhotoFieldPresence.AllFieldsPresent)
                 issues.AddRange(result.PhotoFieldPresence.MissingFields);
             if (result.PhotoCrossDocument != null && !result.PhotoCrossDocument.AllChecksPass)
                 issues.AddRange(result.PhotoCrossDocument.Issues);
 
+            var details = new { fieldPresence = result.PhotoFieldPresence, crossDocument = result.PhotoCrossDocument };
             items.Add((DocumentType.TeamPhoto, package.Id, passed,
-                JsonSerializer.Serialize(details),
-                issues.Count > 0 ? string.Join("; ", issues) : null));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions)));
         }
 
         return items;

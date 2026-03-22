@@ -21,20 +21,23 @@ public class HierarchicalSubmissionController : ControllerBase
     private readonly IApplicationDbContext _context;
     private readonly IFileStorageService _fileStorage;
     private readonly IDocumentAgent _documentAgent;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IDocumentService _documentService;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly ILogger<HierarchicalSubmissionController> _logger;
 
     public HierarchicalSubmissionController(
         IApplicationDbContext context,
         IFileStorageService fileStorage,
         IDocumentAgent documentAgent,
-        IServiceProvider serviceProvider,
+        IDocumentService documentService,
+        IServiceScopeFactory serviceScopeFactory,
         ILogger<HierarchicalSubmissionController> logger)
     {
         _context = context;
         _fileStorage = fileStorage;
         _documentAgent = documentAgent;
-        _serviceProvider = serviceProvider;
+        _documentService = documentService;
+        _serviceScopeFactory = serviceScopeFactory;
         _logger = logger;
     }
 
@@ -58,6 +61,10 @@ public class HierarchicalSubmissionController : ControllerBase
             if (package == null)
                 return NotFound(new { error = "Package not found" });
 
+            // Auto-assign TeamNumber based on existing teams in this package
+            var existingTeamCount = await _context.Campaigns
+                .CountAsync(t => t.PackageId == packageId && !t.IsDeleted, cancellationToken);
+
             var campaign = new Teams
             {
                 Id = Guid.NewGuid(),
@@ -71,7 +78,7 @@ public class HierarchicalSubmissionController : ControllerBase
                 DealershipAddress = request.DealershipAddress,
                 GPSLocation = request.GPSLocation,
                 State = request.State,
-                TeamsJson = request.TeamsJson,
+                TeamNumber = existingTeamCount + 1,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -252,29 +259,25 @@ public class HierarchicalSubmissionController : ControllerBase
 
             foreach (var file in files)
             {
-                var blobUrl = await _fileStorage.UploadFileAsync(file, "photos", $"{Guid.NewGuid()}_{file.FileName}");
+                // Route through DocumentService for blob upload + background EXIF/AI extraction
+                var uploadResult = await _documentService.UploadDocumentAsync(
+                    file, DocumentType.TeamPhoto, packageId, userId);
 
-                var photo = new TeamPhotos
+                // Link to the correct team and set display order
+                var photo = await _context.TeamPhotos.FindAsync(uploadResult.DocumentId);
+                if (photo != null)
                 {
-                    Id = Guid.NewGuid(),
-                    TeamId = campaignId,
-                    PackageId = packageId,
-                    FileName = file.FileName,
-                    BlobUrl = blobUrl,
-                    FileSizeBytes = file.Length,
-                    ContentType = file.ContentType,
-                    DisplayOrder = displayOrder++,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
+                    photo.TeamId = campaignId;
+                    photo.DisplayOrder = displayOrder++;
+                    photo.UpdatedAt = DateTime.UtcNow;
+                }
 
-                _context.CampaignPhotos.Add(photo);
-                photoIds.Add(photo.Id);
+                photoIds.Add(uploadResult.DocumentId);
             }
 
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("{Count} photos added to campaign {CampaignId}", files.Count, campaignId);
+            _logger.LogInformation("{Count} photos added to campaign {CampaignId} via DocumentService", files.Count, campaignId);
 
             return Ok(new { photoIds, message = $"{files.Count} photos added successfully" });
         }
@@ -282,6 +285,42 @@ public class HierarchicalSubmissionController : ControllerBase
         {
             _logger.LogError(ex, "Error adding photos to campaign {CampaignId}", campaignId);
             return StatusCode(500, new { error = "Failed to add photos" });
+        }
+    }
+
+    /// <summary>
+    /// Backfill EXIF + AI metadata for photos that were uploaded without extraction.
+    /// Finds all TeamPhotos in the given package with NULL ExtractedMetadataJson and triggers extraction.
+    /// </summary>
+    [HttpPost("{packageId}/photos/backfill-extraction")]
+    [Authorize(Roles = "Agency,ASM,HQ")]
+    public async Task<IActionResult> BackfillPhotoExtraction(
+        Guid packageId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var photos = await _context.TeamPhotos
+                .Where(p => p.PackageId == packageId && !p.IsDeleted && p.ExtractedMetadataJson == null)
+                .Select(p => new { p.Id, p.BlobUrl })
+                .ToListAsync(cancellationToken);
+
+            if (photos.Count == 0)
+                return Ok(new { message = "No photos need extraction backfill.", count = 0 });
+
+            foreach (var photo in photos)
+            {
+                await _documentService.TriggerPhotoExtractionAsync(photo.Id, photo.BlobUrl);
+            }
+
+            _logger.LogInformation("Triggered extraction backfill for {Count} photos in package {PackageId}", photos.Count, packageId);
+
+            return Ok(new { message = $"Extraction triggered for {photos.Count} photos.", count = photos.Count });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error backfilling photo extraction for package {PackageId}", packageId);
+            return StatusCode(500, new { error = "Failed to trigger photo extraction backfill." });
         }
     }
 
@@ -307,11 +346,14 @@ public class HierarchicalSubmissionController : ControllerBase
             if (package == null)
                 return NotFound(new { error = "Package not found" });
 
-            // Verify campaign belongs to this package
-            var campaignExists = await _context.Teams
-                .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
-            if (!campaignExists)
-                return NotFound(new { error = "Campaign not found" });
+            // Verify campaign belongs to this package (only if campaignId is not empty)
+            if (campaignId != Guid.Empty)
+            {
+                var campaignExists = await _context.Teams
+                    .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+                if (!campaignExists)
+                    return NotFound(new { error = "Campaign not found" });
+            }
 
             var blobUrl = await _fileStorage.UploadFileAsync(file, "cost-summaries", $"{Guid.NewGuid()}_{file.FileName}");
 
@@ -345,6 +387,67 @@ public class HierarchicalSubmissionController : ControllerBase
 
             _logger.LogInformation("Cost summary uploaded for package {PackageId}", packageId);
 
+            // Trigger background extraction so extracted fields are populated
+            var csEntity = package.CostSummary!;
+            var csBlobUrl = csEntity.BlobUrl;
+            var csDocId = csEntity.Id;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = _serviceScopeFactory.CreateScope();
+                    var agent = scope.ServiceProvider.GetRequiredService<IDocumentAgent>();
+                    var ctx = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+                    var validationService = scope.ServiceProvider.GetService<IProactiveValidationService>();
+
+                    var costData = await agent.ExtractCostSummaryAsync(csBlobUrl);
+                    var json = System.Text.Json.JsonSerializer.Serialize(costData);
+                    var confidence = costData.FieldConfidences.Values.Any()
+                        ? costData.FieldConfidences.Values.Average() : 0.5;
+
+                    var entity = await ctx.CostSummaries.FindAsync(csDocId);
+                    if (entity != null)
+                    {
+                        entity.ExtractedDataJson = json;
+                        entity.ExtractionConfidence = confidence;
+                        entity.UpdatedAt = DateTime.UtcNow;
+
+                        var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                        var parsed = System.Text.Json.JsonSerializer.Deserialize<Application.DTOs.Documents.CostSummaryData>(json, opts);
+                        if (parsed != null)
+                        {
+                            entity.PlaceOfSupply = parsed.PlaceOfSupply ?? parsed.State;
+                            entity.NumberOfDays = parsed.NumberOfDays;
+                            entity.NumberOfActivations = parsed.NumberOfActivations;
+                            entity.NumberOfTeams = parsed.NumberOfTeams;
+                            if (parsed.TotalCost > 0) entity.TotalCost = parsed.TotalCost;
+                            if (parsed.CostBreakdowns?.Count > 0)
+                            {
+                                entity.ElementWiseCostsJson = System.Text.Json.JsonSerializer.Serialize(
+                                    parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount }));
+                                entity.ElementWiseQuantityJson = System.Text.Json.JsonSerializer.Serialize(
+                                    parsed.CostBreakdowns.Select(b => new { b.Category, b.Quantity, b.Unit }));
+                                // Full breakdown with all fields (cost type flags included)
+                                entity.CostBreakdownJson = System.Text.Json.JsonSerializer.Serialize(
+                                    parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount, b.Quantity, b.Unit, b.IsFixedCost, b.IsVariableCost }));
+                            }
+                        }
+                        await ctx.SaveChangesAsync(CancellationToken.None);
+
+                        // Trigger validation to create ValidationResult
+                        if (validationService != null)
+                        {
+                            _logger.LogInformation("Triggering validation for cost summary {CostSummaryId}", csDocId);
+                            await validationService.ValidateDocumentAsync(csDocId, Domain.Enums.DocumentType.CostSummary, packageId);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Background cost summary extraction failed for {DocId}", csDocId);
+                }
+            });
+
             return Ok(new { message = "Cost summary uploaded successfully" });
         }
         catch (Exception ex)
@@ -376,11 +479,14 @@ public class HierarchicalSubmissionController : ControllerBase
             if (package == null)
                 return NotFound(new { error = "Package not found" });
 
-            // Verify campaign belongs to this package
-            var campaignExists = await _context.Teams
-                .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
-            if (!campaignExists)
-                return NotFound(new { error = "Campaign not found" });
+            // Verify campaign belongs to this package (only if campaignId is not empty)
+            if (campaignId != Guid.Empty)
+            {
+                var campaignExists = await _context.Teams
+                    .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+                if (!campaignExists)
+                    return NotFound(new { error = "Campaign not found" });
+            }
 
             var blobUrl = await _fileStorage.UploadFileAsync(file, "activity-summaries", $"{Guid.NewGuid()}_{file.FileName}");
 
@@ -396,7 +502,9 @@ public class HierarchicalSubmissionController : ControllerBase
                     FileSizeBytes = file.Length,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
+                    UpdatedAt = DateTime.UtcNow,
+                    CreatedBy = userId.ToString(),
+                    UpdatedBy = userId.ToString()
                 };
                 _context.ActivitySummaries.Add(activitySummary);
             }
@@ -407,12 +515,73 @@ public class HierarchicalSubmissionController : ControllerBase
                 package.ActivitySummary.ContentType = file.ContentType;
                 package.ActivitySummary.FileSizeBytes = file.Length;
                 package.ActivitySummary.UpdatedAt = DateTime.UtcNow;
+                package.ActivitySummary.UpdatedBy = userId.ToString();
             }
 
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Activity summary uploaded for package {PackageId}", packageId);
+
+            // Trigger background extraction so extracted fields are populated
+            var actEntity = package.ActivitySummary!;
+            var actBlobUrl = actEntity.BlobUrl;
+            var actDocId = actEntity.Id;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = _serviceScopeFactory.CreateScope();
+                    var agent = scope.ServiceProvider.GetRequiredService<IDocumentAgent>();
+                    var ctx = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+
+                    var activityData = await agent.ExtractActivityAsync(actBlobUrl);
+                    var json = System.Text.Json.JsonSerializer.Serialize(activityData);
+                    var confidence = activityData.FieldConfidences.Values.Any()
+                        ? activityData.FieldConfidences.Values.Average() : 0.5;
+
+                    var entity = await ctx.ActivitySummaries.FindAsync(actDocId);
+                    if (entity != null)
+                    {
+                        entity.ExtractedDataJson = json;
+                        entity.ExtractionConfidence = confidence;
+                        entity.IsFlaggedForReview = activityData.IsFlaggedForReview;
+                        entity.UpdatedAt = DateTime.UtcNow;
+
+                        var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                        var parsed = System.Text.Json.JsonSerializer.Deserialize<Application.DTOs.Documents.ActivityData>(json, opts);
+                        if (parsed?.Rows != null && parsed.Rows.Count > 0)
+                        {
+                            entity.DealerName = parsed.Rows[0].DealerName;
+                            entity.TotalDays = parsed.Rows.Sum(r => r.Day);
+                            entity.TotalWorkingDays = parsed.Rows.Sum(r => r.WorkingDay);
+                            // Build a brief activity description from extracted locations
+                            var locations = parsed.Rows
+                                .Where(r => !string.IsNullOrWhiteSpace(r.Location))
+                                .Select(r => r.Location)
+                                .Distinct()
+                                .ToList();
+                            if (locations.Any())
+                            {
+                                entity.ActivityDescription = $"Activity across {locations.Count} location(s): {string.Join(", ", locations)}";
+                            }
+                        }
+                        await ctx.SaveChangesAsync(CancellationToken.None);
+
+                        // Trigger validation to create ValidationResult
+                        var validationService = scope.ServiceProvider.GetService<IProactiveValidationService>();
+                        if (validationService != null)
+                        {
+                            _logger.LogInformation("Triggering validation for activity summary {ActivitySummaryId}", actDocId);
+                            await validationService.ValidateDocumentAsync(actDocId, Domain.Enums.DocumentType.ActivitySummary, packageId);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Background activity summary extraction failed for {DocId}", actDocId);
+                }
+            });
 
             return Ok(new { message = "Activity summary uploaded successfully" });
         }
@@ -457,8 +626,11 @@ public class HierarchicalSubmissionController : ControllerBase
                     BlobUrl = blobUrl,
                     ContentType = file.ContentType,
                     FileSizeBytes = file.Length,
+                    VersionNumber = package.VersionNumber,
                     CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
+                    UpdatedAt = DateTime.UtcNow,
+                    CreatedBy = userId.ToString(),
+                    UpdatedBy = userId.ToString()
                 };
                 _context.EnquiryDocuments.Add(enquiryDoc);
             }
@@ -469,12 +641,51 @@ public class HierarchicalSubmissionController : ControllerBase
                 package.EnquiryDocument.ContentType = file.ContentType;
                 package.EnquiryDocument.FileSizeBytes = file.Length;
                 package.EnquiryDocument.UpdatedAt = DateTime.UtcNow;
+                package.EnquiryDocument.UpdatedBy = userId.ToString();
             }
 
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Enquiry document uploaded for package {PackageId}", packageId);
+
+            // Trigger background extraction
+            var enqEntity = package.EnquiryDocument!;
+            var enqBlobUrl = enqEntity.BlobUrl;
+            var enqDocId = enqEntity.Id;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = _serviceScopeFactory.CreateScope();
+                    var agent = scope.ServiceProvider.GetRequiredService<IDocumentAgent>();
+                    var ctx = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+
+                    var enquiryData = await agent.ExtractEnquiryDumpAsync(enqBlobUrl);
+                    var json = System.Text.Json.JsonSerializer.Serialize(enquiryData);
+                    var confidence = enquiryData.FieldConfidences.Values.Any()
+                        ? enquiryData.FieldConfidences.Values.Average() : 0.5;
+
+                    var entity = await ctx.EnquiryDocuments.FindAsync(enqDocId);
+                    if (entity != null)
+                    {
+                        entity.ExtractedDataJson = json;
+                        entity.ExtractionConfidence = confidence;
+                        entity.IsFlaggedForReview = enquiryData.IsFlaggedForReview;
+                        entity.UpdatedAt = DateTime.UtcNow;
+                        await ctx.SaveChangesAsync(CancellationToken.None);
+
+                        // Trigger proactive validation so ValidationResults row is created
+                        var validationService = scope.ServiceProvider.GetRequiredService<IProactiveValidationService>();
+                        await validationService.ValidateDocumentAsync(
+                            enqDocId, DocumentType.EnquiryDocument, packageId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Background enquiry doc extraction failed for {DocId}", enqDocId);
+                }
+            });
 
             return Ok(new { message = "Enquiry document uploaded successfully" });
         }
@@ -498,7 +709,7 @@ public class HierarchicalSubmissionController : ControllerBase
 
             var package = await _context.DocumentPackages
                 .Include(p => p.PO)
-                    .ThenInclude(po => po!.Invoices.Where(i => !i.IsDeleted))
+                .Include(p => p.Invoices.Where(i => !i.IsDeleted))
                 .Include(p => p.EnquiryDocument)
                 .Include(p => p.CostSummary)
                 .Include(p => p.ActivitySummary)
@@ -528,14 +739,14 @@ public class HierarchicalSubmissionController : ControllerBase
                     FileName = package.EnquiryDocument.FileName,
                     BlobUrl = package.EnquiryDocument.BlobUrl
                 } : null,
-                Invoices = package.PO?.Invoices?.Where(i => !i.IsDeleted).Select(i => new InvoiceInfo
+                Invoices = package.Invoices.Where(i => !i.IsDeleted).Select(i => new InvoiceInfo
                 {
                     InvoiceId = i.Id,
                     InvoiceNumber = i.InvoiceNumber,
                     InvoiceDate = i.InvoiceDate,
                     TotalAmount = i.TotalAmount,
                     FileName = i.FileName
-                }).ToList() ?? new List<InvoiceInfo>(),
+                }).ToList(),
                 Campaigns = package.Teams.Select(c => new CampaignInfo
                 {
                     CampaignId = c.Id,
@@ -1033,7 +1244,6 @@ public class AddCampaignRequest
     public string? GPSLocation { get; set; }
     public string? State { get; set; }
     public decimal? TotalCost { get; set; }
-    public string? TeamsJson { get; set; }
 }
 
 // Response DTOs

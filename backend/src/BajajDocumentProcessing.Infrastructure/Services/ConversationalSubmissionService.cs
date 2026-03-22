@@ -428,7 +428,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
                                          && dp.Invoices.Any(i => i.InvoiceNumber == invoice.InvoiceNumber)
                                          && !dp.IsDeleted
                                          && dp.Id != package.Id
-                                         && dp.State != PackageState.ASMRejected
+                                         && dp.State != PackageState.CHRejected
                                          && dp.State != PackageState.RARejected)
                             .FirstOrDefaultAsync(ct);
 
@@ -541,6 +541,13 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
             }
         }
 
+        // Allow continuing past validation warnings without re-uploading
+        if (request.Action == "continue_with_warnings")
+        {
+            await TransitionStepAsync(package, ConversationStep.ActivitySummaryUpload, ct);
+            return BuildUploadPrompt(package, "ActivitySummary");
+        }
+
         // Default: prompt for invoice upload
         return new ConversationResponse
         {
@@ -579,6 +586,13 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
             }
         }
 
+        // Allow continuing past warnings without re-uploading
+        if (request.Action == "continue_with_warnings")
+        {
+            await TransitionStepAsync(package, ConversationStep.CostSummaryUpload, ct);
+            return BuildUploadPrompt(package, "CostSummary");
+        }
+
         return new ConversationResponse
         {
             SubmissionId = package.Id,
@@ -614,6 +628,24 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
                 return BuildValidationResponse(package, validation, "Cost Summary",
                     ConversationStep.TeamDetailsLoop, null);
             }
+        }
+
+        // Allow continuing past warnings without re-uploading
+        if (request.Action == "continue_with_warnings")
+        {
+            await TransitionStepAsync(package, ConversationStep.TeamDetailsLoop, ct);
+            return new ConversationResponse
+            {
+                SubmissionId = package.Id,
+                CurrentStep = (int)ConversationStep.TeamDetailsLoop,
+                BotMessage = "Let's add your team details. Provide team name, dealer, dates, and working days.",
+                Buttons = new List<ActionButton>
+                {
+                    new() { Label = "Add team", Action = "prompt_team" }
+                },
+                RequiresFileUpload = false,
+                ProgressPercent = StepProgress[(int)ConversationStep.TeamDetailsLoop]
+            };
         }
 
         return new ConversationResponse
@@ -985,7 +1017,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
             // Load-balance: assign to CIRCLE HEAD with fewest pending submissions
             var leastLoaded = await _db.DocumentPackages
                 .Where(dp => circleHeads.Contains(dp.AssignedCircleHeadUserId)
-                              && (dp.State == PackageState.PendingASM || dp.State == PackageState.PendingRA)
+                              && (dp.State == PackageState.PendingCH || dp.State == PackageState.PendingRA)
                               && !dp.IsDeleted)
                 .GroupBy(dp => dp.AssignedCircleHeadUserId)
                 .Select(g => new { UserId = g.Key, Count = g.Count() })
@@ -997,7 +1029,7 @@ public class ConversationalSubmissionService : IConversationalSubmissionService
         // else: no CIRCLE HEAD found — leave null for manual assignment
 
         // Transition to Submitted
-        package.State = PackageState.Uploaded; // Draft -> Uploaded (Submitted)
+        package.State = PackageState.PendingCH;
         package.CurrentStep = (int)ConversationStep.Submitted;
         package.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);

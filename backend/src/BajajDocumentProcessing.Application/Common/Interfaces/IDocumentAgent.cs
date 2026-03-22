@@ -33,6 +33,15 @@ public interface IDocumentAgent
     Task<InvoiceData> ExtractInvoiceAsync(string blobUrl, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Extracts structured data from an Invoice document with filename context
+    /// </summary>
+    /// <param name="blobUrl">URL of the Invoice document in blob storage</param>
+    /// <param name="fileName">Original filename for context</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Extracted Invoice data with field-level confidence scores</returns>
+    Task<InvoiceData> ExtractInvoiceDataAsync(string blobUrl, string fileName, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Extracts structured data from a Cost Summary document
     /// </summary>
     /// <param name="blobUrl">URL of the Cost Summary document in blob storage</param>

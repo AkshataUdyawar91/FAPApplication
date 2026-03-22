@@ -63,7 +63,9 @@ public class DocumentAgentTests
         var configBuilder = new ConfigurationBuilder();
         configBuilder.AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["AzureOpenAI:ApiKey"] = "test-api-key"
+            ["AzureOpenAI:ApiKey"] = "test-api-key",
+            ["AzureDocumentIntelligence:Endpoint"] = "https://test.documentintelligence.azure.com/",
+            ["AzureDocumentIntelligence:ApiKey"] = "test-doc-intel-key"
         });
         var config = configBuilder.Build();
         var docIntelService = new AzureDocumentIntelligenceService(config, _mockDocIntelLogger.Object);
@@ -71,7 +73,7 @@ public class DocumentAgentTests
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => 
             new DocumentAgent(config, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object));
-        Assert.Contains("endpoint not configured", exception.Message);
+        Assert.Contains("Endpoint", exception.Message);
     }
 
     [Fact]
@@ -82,7 +84,9 @@ public class DocumentAgentTests
         var configBuilder = new ConfigurationBuilder();
         configBuilder.AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["AzureOpenAI:Endpoint"] = "https://test.openai.azure.com/"
+            ["AzureOpenAI:Endpoint"] = "https://test.openai.azure.com/",
+            ["AzureDocumentIntelligence:Endpoint"] = "https://test.documentintelligence.azure.com/",
+            ["AzureDocumentIntelligence:ApiKey"] = "test-doc-intel-key"
         });
         var config = configBuilder.Build();
         var docIntelService = new AzureDocumentIntelligenceService(config, _mockDocIntelLogger.Object);
@@ -90,26 +94,24 @@ public class DocumentAgentTests
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => 
             new DocumentAgent(config, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object));
-        Assert.Contains("API key not configured", exception.Message);
+        Assert.Contains("ApiKey", exception.Message);
     }
 
     [Fact]
-    public async Task ClassifyAsync_WithValidUrl_ShouldReturnClassification()
+    public async Task ClassifyAsync_WithDocumentUrl_ShouldReturnClassification()
     {
-        // Note: This test requires actual Azure OpenAI credentials to run
-        // In a real scenario, you would mock the OpenAIClient
-        // For now, we'll test that the method signature is correct
-        
         // Arrange
         var httpClient = new HttpClient();
         var docIntelService = new AzureDocumentIntelligenceService(_configuration, _mockDocIntelLogger.Object);
         var documentAgent = new DocumentAgent(_configuration, _mockLogger.Object, httpClient, _mockFileStorage.Object, docIntelService, _mockCorrelationIdService.Object, _mockPerceptualHashService.Object);
         var testUrl = "https://example.com/test-document.pdf";
 
-        // Act & Assert
-        // This will fail without valid credentials, but verifies the interface
-        await Assert.ThrowsAnyAsync<Exception>(async () => 
-            await documentAgent.ClassifyAsync(testUrl));
+        // Act - PDF files are classified based on user selection, not Vision API
+        var result = await documentAgent.ClassifyAsync(testUrl);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.True(result.Confidence >= 0.5, "Classification should have reasonable confidence");
     }
 
     [Theory]

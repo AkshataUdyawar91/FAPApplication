@@ -22,12 +22,14 @@ public class DocumentsController : ControllerBase
     private readonly IFileStorageService _fileStorageService;
     private readonly IProactiveValidationService? _proactiveValidationService;
     private readonly IProactiveValidator _proactiveValidator;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
 
     public DocumentsController(
         IDocumentService documentService, 
         ILogger<DocumentsController> logger,
         IApplicationDbContext context,
         IFileStorageService fileStorageService,
+        IServiceScopeFactory serviceScopeFactory,
         IProactiveValidationService? proactiveValidationService = null,
         IProactiveValidator proactiveValidator = null!)
     {
@@ -35,6 +37,7 @@ public class DocumentsController : ControllerBase
         _logger = logger;
         _context = context;
         _fileStorageService = fileStorageService;
+        _serviceScopeFactory = serviceScopeFactory;
         _proactiveValidationService = proactiveValidationService;
         _proactiveValidator = proactiveValidator;
     }
@@ -67,7 +70,7 @@ public class DocumentsController : ControllerBase
         [FromForm] string? dealershipName = null,
         [FromForm] string? dealershipAddress = null,
         [FromForm] string? gpsLocation = null,
-        [FromForm] string? teamsJson = null)
+        [FromForm] string? activityState = null)
     {
         try
         {
@@ -103,7 +106,8 @@ public class DocumentsController : ControllerBase
             // Update package with campaign and dealership data if provided
             if (response.PackageId != Guid.Empty && 
                 (campaignStartDate.HasValue || campaignEndDate.HasValue || campaignWorkingDays.HasValue ||
-                 !string.IsNullOrEmpty(dealershipName) || !string.IsNullOrEmpty(dealershipAddress) || !string.IsNullOrEmpty(gpsLocation)))
+                 !string.IsNullOrEmpty(dealershipName) || !string.IsNullOrEmpty(dealershipAddress) || 
+                 !string.IsNullOrEmpty(gpsLocation) || !string.IsNullOrEmpty(activityState)))
             {
                 var package = await _context.DocumentPackages
                     .Include(p => p.Teams)
@@ -111,6 +115,17 @@ public class DocumentsController : ControllerBase
                 
                 if (package != null)
                 {
+                    // Update activity state if provided
+                    if (!string.IsNullOrEmpty(activityState))
+                    {
+                        _logger.LogInformation("Setting ActivityState to '{State}' for package {PackageId}", activityState, response.PackageId);
+                        package.ActivityState = activityState;
+                    }
+                    else
+                    {
+                        _logger.LogWarning("ActivityState parameter is null or empty for package {PackageId}", response.PackageId);
+                    }
+                    
                     // Update first team's fields (or create a team if none exists)
                     var team = package.Teams.FirstOrDefault();
                     if (team == null)
@@ -134,9 +149,6 @@ public class DocumentsController : ControllerBase
                     if (!string.IsNullOrEmpty(dealershipAddress)) team.DealershipAddress = dealershipAddress;
                     if (!string.IsNullOrEmpty(gpsLocation)) team.GPSLocation = gpsLocation;
                     
-                    // Note: TeamsJson is now stored at Team level
-                    if (!string.IsNullOrEmpty(teamsJson)) team.TeamsJson = teamsJson;
-                    
                     team.UpdatedAt = DateTime.UtcNow;
                     package.UpdatedAt = DateTime.UtcNow;
                     
@@ -151,6 +163,70 @@ public class DocumentsController : ControllerBase
             _logger.LogInformation(
                 "Document uploaded by user {UserId}: {DocumentId}",
                 userId, response.DocumentId);
+
+            // Trigger automatic processing for Invoice documents
+            if (documentType == DocumentType.Invoice && effectivePackageId.HasValue)
+            {
+                try
+                {
+                    // Process invoice immediately in background
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            using var scope = _serviceScopeFactory.CreateScope();
+                            var documentAgent = scope.ServiceProvider.GetRequiredService<IDocumentAgent>();
+                            var context = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+                            
+                            // Load invoice entity
+                            var invoice = await context.Invoices
+                                .FirstOrDefaultAsync(i => i.Id == response.DocumentId);
+                            
+                            if (invoice != null)
+                            {
+                                _logger.LogInformation("Starting automatic processing for invoice {InvoiceId}", invoice.Id);
+                                
+                                // Extract data using DocumentAgent
+                                var extractionResult = await documentAgent.ExtractInvoiceDataAsync(
+                                    invoice.BlobUrl, invoice.FileName);
+                                
+                                // Update invoice with extracted data
+                                invoice.InvoiceNumber = extractionResult.InvoiceNumber;
+                                invoice.InvoiceDate = extractionResult.InvoiceDate;
+                                invoice.VendorName = extractionResult.VendorName;
+                                invoice.GSTNumber = extractionResult.GSTNumber;
+                                invoice.SubTotal = extractionResult.SubTotal;
+                                invoice.TaxAmount = extractionResult.TaxAmount;
+                                invoice.TotalAmount = extractionResult.TotalAmount;
+                                
+                                // Serialize extracted data to JSON
+                                invoice.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(extractionResult);
+                                
+                                // Get overall confidence from FieldConfidences dictionary
+                                invoice.ExtractionConfidence = extractionResult.FieldConfidences?.GetValueOrDefault("Overall", 0.0) ?? 0.0;
+                                invoice.UpdatedAt = DateTime.UtcNow;
+                                
+                                await context.SaveChangesAsync(default);
+                                
+                                _logger.LogInformation(
+                                    "Invoice {InvoiceId} processed successfully. Confidence: {Confidence}",
+                                    invoice.Id, invoice.ExtractionConfidence);
+                            }
+                        }
+                        catch (Exception procEx)
+                        {
+                            _logger.LogError(procEx, "Automatic processing failed for invoice {DocumentId}", response.DocumentId);
+                        }
+                    });
+                    
+                    _logger.LogInformation("Automatic processing triggered for invoice {DocumentId}", response.DocumentId);
+                }
+                catch (Exception triggerEx)
+                {
+                    _logger.LogError(triggerEx, "Failed to trigger automatic processing for invoice {DocumentId}", response.DocumentId);
+                    // Don't fail the upload if processing trigger fails
+                }
+            }
 
             // Trigger proactive validation for conversational flow documents
             if (effectivePackageId.HasValue && _proactiveValidationService != null &&
@@ -190,6 +266,258 @@ public class DocumentsController : ControllerBase
         {
             _logger.LogError(ex, "Error uploading document");
             return StatusCode(500, new { message = "An error occurred while uploading the document" });
+        }
+    }
+
+    /// <summary>
+    /// Extract data from a document without creating any DB entities.
+    /// Uploads the file to a temp blob, runs AI extraction, and returns the extracted fields.
+    /// Used by the upload form to auto-populate fields before the submission is created.
+    /// </summary>
+    /// <param name="file">Document file to extract data from</param>
+    /// <param name="documentType">Type of document (Invoice, CostSummary, etc.)</param>
+    /// <param name="documentAgent">Document agent for AI extraction</param>
+    /// <returns>Extracted data as JSON</returns>
+    /// <response code="200">Extraction successful</response>
+    /// <response code="400">Bad request - no file or unsupported type</response>
+    /// <response code="500">Extraction failed</response>
+    [HttpPost("extract")]
+    [Authorize]
+    [RequestSizeLimit(52428800)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ExtractDocument(
+        [FromForm] IFormFile file,
+        [FromForm] string documentType,
+        [FromForm] Guid? packageId,
+        [FromServices] IDocumentAgent documentAgent,
+        CancellationToken cancellationToken)
+    {
+        var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        _logger.LogInformation("=== EXTRACTION STARTED === Document Type: {DocType}, File: {FileName}, Size: {FileSize} bytes, PackageId: {PackageId}", 
+            documentType, file?.FileName, file?.Length, packageId);
+
+        if (file == null || file.Length == 0)
+            return BadRequest(new { error = "No file provided" });
+
+        // Get user ID from claims
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+        {
+            return Unauthorized(new { error = "User ID not found in token" });
+        }
+
+        string? blobUrl = null;
+        bool isPermanentUpload = packageId.HasValue && packageId.Value != Guid.Empty;
+        
+        try
+        {
+            // Step 1: Upload to blob storage (permanent if packageId provided, temp otherwise)
+            var uploadStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var ext = Path.GetExtension(file.FileName);
+            string fileName;
+            
+            if (isPermanentUpload)
+            {
+                // Permanent upload with unique name
+                fileName = $"{Guid.NewGuid()}{ext}";
+            }
+            else
+            {
+                // Temp upload for extraction only
+                fileName = $"temp-extract/{Guid.NewGuid()}{ext}";
+            }
+            
+            blobUrl = await _fileStorageService.UploadFileAsync(file, "documents", fileName);
+            uploadStopwatch.Stop();
+            _logger.LogInformation("⏱️ [STEP 1] File Upload ({UploadType}): {ElapsedMs}ms", 
+                isPermanentUpload ? "Permanent" : "Temp", uploadStopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("📤 [STEP 1 OUTPUT] Blob URL: {BlobUrl}", blobUrl);
+
+            // Step 2: Extract data using AI
+            var extractionStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            object? extracted = null;
+            var docTypeLower = documentType.Trim().ToLowerInvariant();
+
+            _logger.LogInformation("📥 [STEP 2 INPUT] Starting {DocType} extraction from blob: {BlobUrl}", documentType, blobUrl);
+
+            if (docTypeLower == "invoice")
+            {
+                extracted = await documentAgent.ExtractInvoiceAsync(blobUrl, cancellationToken);
+            }
+            else if (docTypeLower == "costsummary")
+            {
+                extracted = await documentAgent.ExtractCostSummaryAsync(blobUrl, cancellationToken);
+            }
+            else if (docTypeLower == "activitysummary")
+            {
+                extracted = await documentAgent.ExtractActivityAsync(blobUrl, cancellationToken);
+            }
+            else if (docTypeLower == "po")
+            {
+                extracted = await documentAgent.ExtractPOAsync(blobUrl, cancellationToken);
+            }
+            else
+            {
+                return BadRequest(new { error = $"Extraction not supported for document type: {documentType}" });
+            }
+            extractionStopwatch.Stop();
+            _logger.LogInformation("⏱️ [STEP 2] AI Extraction: {ElapsedMs}ms - {DocType} data extracted", 
+                extractionStopwatch.ElapsedMilliseconds, documentType);
+
+            // Step 3: Save to database if packageId provided
+            Guid? documentId = null;
+            if (isPermanentUpload && extracted != null)
+            {
+                var saveStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                _logger.LogInformation("📥 [STEP 3 INPUT] Saving to database - PackageId: {PackageId}, DocType: {DocType}", 
+                    packageId, documentType);
+
+                // Verify package exists and load it with all needed data
+                var package = await _context.DocumentPackages
+                    .FirstOrDefaultAsync(p => p.Id == packageId.Value && !p.IsDeleted, cancellationToken);
+                
+                if (package == null)
+                {
+                    return BadRequest(new { error = "Package not found" });
+                }
+
+                var now = DateTime.UtcNow;
+                var createdBy = userId.ToString();
+
+                // Create invoice entity with extracted data
+                if (docTypeLower == "invoice" && extracted is InvoiceData invoiceData)
+                {
+                    // CRITICAL: Validate PO exists (same as upload API)
+                    // First try: PO linked via package's SelectedPOId (assistant/dropdown flow)
+                    // Second try: PO uploaded directly to this package (file upload flow)
+                    var existingPo = package.SelectedPOId.HasValue
+                        ? await _context.POs.FirstOrDefaultAsync(p => p.Id == package.SelectedPOId.Value, cancellationToken)
+                        : await _context.POs.FirstOrDefaultAsync(p => p.PackageId == packageId.Value, cancellationToken);
+
+                    if (existingPo == null)
+                    {
+                        _logger.LogWarning("No PO found for invoice upload — package {PkgId}, SelectedPOId: {SelPO}. Invoice will be rejected.",
+                            packageId, package.SelectedPOId);
+                        return BadRequest(new { error = "Cannot upload invoice: no Purchase Order is linked to this submission. Please select a PO first." });
+                    }
+
+                    _logger.LogInformation("=== INVOICE: PO found === POId: {POId}, PONumber: {PONum}", existingPo.Id, existingPo.PONumber);
+
+                    var invoice = new Domain.Entities.Invoice
+                    {
+                        Id = Guid.NewGuid(),
+                        PackageId = packageId.Value,
+                        POId = existingPo.Id,  // Link to existing PO
+                        VersionNumber = package.VersionNumber,  // Match package version
+                        InvoiceNumber = invoiceData.InvoiceNumber,
+                        InvoiceDate = invoiceData.InvoiceDate,
+                        VendorName = invoiceData.VendorName,
+                        GSTNumber = invoiceData.GSTNumber,
+                        SubTotal = invoiceData.SubTotal,
+                        TaxAmount = invoiceData.TaxAmount,
+                        TotalAmount = invoiceData.TotalAmount,
+                        FileName = file.FileName,
+                        BlobUrl = blobUrl,
+                        FileSizeBytes = file.Length,
+                        ContentType = file.ContentType,
+                        ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(invoiceData),
+                        ExtractionConfidence = invoiceData.FieldConfidences?.GetValueOrDefault("Overall", 0.0) ?? 0.0,
+                        IsFlaggedForReview = invoiceData.IsFlaggedForReview,
+                        CreatedAt = now,
+                        UpdatedAt = now,
+                        CreatedBy = createdBy,
+                        UpdatedBy = createdBy
+                    };
+                    
+                    _context.Invoices.Add(invoice);
+                    await _context.SaveChangesAsync(cancellationToken);
+                    documentId = invoice.Id;
+                    
+                    _logger.LogInformation("✅ Invoice saved to database: {InvoiceId}, POId: {POId}, InvoiceNumber: {InvoiceNumber}, Total: {Total}", 
+                        invoice.Id, invoice.POId, invoice.InvoiceNumber, invoice.TotalAmount);
+                    
+                    // Step 3.5: Trigger proactive validation for the invoice
+                    if (_proactiveValidationService != null)
+                    {
+                        try
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    using var scope = _serviceScopeFactory.CreateScope();
+                                    var validationService = scope.ServiceProvider.GetRequiredService<IProactiveValidationService>();
+                                    
+                                    _logger.LogInformation("🔍 [STEP 3.5] Starting proactive validation for invoice {InvoiceId}", invoice.Id);
+                                    
+                                    await validationService.ValidateDocumentAsync(
+                                        invoice.Id,
+                                        DocumentType.Invoice,
+                                        packageId.Value,
+                                        default);
+                                    
+                                    _logger.LogInformation("✅ [STEP 3.5] Proactive validation completed for invoice {InvoiceId}", invoice.Id);
+                                }
+                                catch (Exception valEx)
+                                {
+                                    _logger.LogError(valEx, "❌ [STEP 3.5] Proactive validation failed for invoice {InvoiceId}", invoice.Id);
+                                }
+                            });
+                        }
+                        catch (Exception triggerEx)
+                        {
+                            _logger.LogError(triggerEx, "Failed to trigger proactive validation for invoice {InvoiceId}", invoice.Id);
+                            // Don't fail the extraction if validation trigger fails
+                        }
+                    }
+                }
+                
+                saveStopwatch.Stop();
+                _logger.LogInformation("⏱️ [STEP 3] Database Save: {ElapsedMs}ms", saveStopwatch.ElapsedMilliseconds);
+            }
+
+            totalStopwatch.Stop();
+            _logger.LogInformation("=== EXTRACTION COMPLETED === Total Time: {TotalMs}ms", 
+                totalStopwatch.ElapsedMilliseconds);
+
+            var response = new 
+            { 
+                extractedData = extracted,
+                documentId = documentId,
+                packageId = packageId,
+                blobUrl = isPermanentUpload ? blobUrl : null
+            };
+            
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            totalStopwatch.Stop();
+            _logger.LogError(ex, "=== EXTRACTION FAILED === Total Time: {TotalMs}ms, DocType: {DocType}, Error: {Error}", 
+                totalStopwatch.ElapsedMilliseconds, documentType, ex.Message);
+            return StatusCode(500, new { error = "Extraction failed. You can enter details manually." });
+        }
+        finally
+        {
+            // Step 4: Clean up temp blob (only if not permanent upload)
+            if (blobUrl != null && !isPermanentUpload)
+            {
+                var cleanupStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                try 
+                { 
+                    await _fileStorageService.DeleteFileAsync(blobUrl); 
+                    cleanupStopwatch.Stop();
+                    _logger.LogInformation("⏱️ [STEP 4] Cleanup: {ElapsedMs}ms - Temp blob deleted", 
+                        cleanupStopwatch.ElapsedMilliseconds);
+                }
+                catch (Exception delEx) 
+                { 
+                    cleanupStopwatch.Stop();
+                    _logger.LogWarning(delEx, "⏱️ [STEP 4] Cleanup: {ElapsedMs}ms - Failed to delete temp blob {BlobUrl}", 
+                        cleanupStopwatch.ElapsedMilliseconds, blobUrl); 
+                }
+            }
         }
     }
 
@@ -249,7 +577,7 @@ public class DocumentsController : ControllerBase
                 return NotFound(new { message = "Document not found" });
             }
 
-            // Verify resource ownership for Agency users
+            // Verify resource ownership for Agency users — scoped to agency, not individual user
             if (userRole == "Agency")
             {
                 var package = await _context.DocumentPackages
@@ -261,11 +589,18 @@ public class DocumentsController : ControllerBase
                     return NotFound(new { message = "Document not found" });
                 }
 
-                if (package.SubmittedByUserId != userId)
+                // Look up the user's agency from the Users table
+                var userAgencyId = await _context.Users
+                    .AsNoTracking()
+                    .Where(u => u.Id == userId && !u.IsDeleted)
+                    .Select(u => u.AgencyId)
+                    .FirstOrDefaultAsync();
+
+                if (userAgencyId == null || package.AgencyId != userAgencyId.Value)
                 {
                     _logger.LogWarning(
-                        "User {UserId} attempted to access document {DocumentId} owned by {OwnerId}",
-                        userId, id, package.SubmittedByUserId);
+                        "User {UserId} (Agency {UserAgencyId}) attempted to access document {DocumentId} owned by Agency {PackageAgencyId}",
+                        userId, userAgencyId, id, package.AgencyId);
                     return StatusCode(403, new { message = "You do not have permission to access this document" });
                 }
             }

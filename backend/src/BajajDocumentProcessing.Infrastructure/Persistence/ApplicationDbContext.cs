@@ -21,7 +21,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     // Core entities
     public DbSet<User> Users => Set<User>();
     public DbSet<Agency> Agencies => Set<Agency>();
-    public DbSet<ASM> ASMs => Set<ASM>();
     public DbSet<DocumentPackage> DocumentPackages => Set<DocumentPackage>();
     
     // Document entities
@@ -59,11 +58,22 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<StateMapping> StateMappings => Set<StateMapping>();
     public DbSet<SubmissionSequence> SubmissionSequences => Set<SubmissionSequence>();
 
+    // Dealer and state/city master data
+    public DbSet<Dealer> Dealers => Set<Dealer>();
+    public DbSet<StateCity> StateCities => Set<StateCity>();
+
     // Reference data
     public DbSet<StateGstMaster> StateGstMasters => Set<StateGstMaster>();
     public DbSet<HsnMaster> HsnMasters => Set<HsnMaster>();
     public DbSet<CostMaster> CostMasters => Set<CostMaster>();
     public DbSet<CostMasterStateRate> CostMasterStateRates => Set<CostMasterStateRate>();
+
+    // Audit logs
+    public DbSet<PoBalanceLog> POBalanceLogs => Set<PoBalanceLog>();
+    public DbSet<POSyncLog> POSyncLogs => Set<POSyncLog>();
+
+    // Email delivery audit
+    public DbSet<EmailDeliveryLog> EmailDeliveryLogs => Set<EmailDeliveryLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -75,7 +85,6 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         // Global query filter for soft delete
         modelBuilder.Entity<User>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Agency>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<ASM>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<DocumentPackage>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<PO>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<Invoice>().HasQueryFilter(e => !e.IsDeleted);
@@ -95,6 +104,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<Conversation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ConversationMessage>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<StateMapping>().HasQueryFilter(e => !e.IsDeleted);
+
+        modelBuilder.Entity<POSyncLog>().HasQueryFilter(e => !e.IsDeleted);
 
         // Reference data soft-delete filters
         modelBuilder.Entity<StateGstMaster>().HasQueryFilter(e => !e.IsDeleted);

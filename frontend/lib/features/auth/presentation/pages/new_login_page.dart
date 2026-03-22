@@ -1,3 +1,4 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 
@@ -10,7 +11,7 @@ class NewLoginPage extends StatefulWidget {
 class _NewLoginPageState extends State<NewLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
   bool _isLoading = false;
   String? _errorMessage;
   bool _obscurePassword = true;
@@ -41,14 +42,38 @@ class _NewLoginPageState extends State<NewLoginPage> {
         'password': _passwordController.text,
       });
       if (response.statusCode == 200 && mounted) {
-        Navigator.pushReplacementNamed(context, '/agency/assistant', arguments: {
+        final role = (response.data['role'] as String?)?.toLowerCase() ?? 'agency';
+        final args = {
           'token': response.data['token'],
-          'userName': response.data['fullName'],
-        });
+          'userName': response.data['email'] ?? '',
+        };
+
+        String route;
+        switch (role) {
+          case 'asm':
+            route = '/asm/dashboard';
+            break;
+          case 'ra':
+            route = '/ra/dashboard';
+            break;
+          case 'admin':
+            route = '/ra/dashboard';
+            break;
+          default:
+            route = '/agency/dashboard';
+        }
+        Navigator.pushReplacementNamed(context, route, arguments: args);
       }
     } on DioException catch (e) {
+      debugPrint('Login DioException: type=${e.type}, message=${e.message}, statusCode=${e.response?.statusCode}, responseData=${e.response?.data}');
       setState(() {
-        _errorMessage = e.response?.statusCode == 401 ? 'Invalid email or password' : 'Login failed. Please try again.';
+        if (e.response?.statusCode == 401) {
+          _errorMessage = 'Invalid email or password';
+        } else if (e.type == DioExceptionType.connectionError || e.type == DioExceptionType.connectionTimeout) {
+          _errorMessage = 'Cannot connect to server at http://localhost:5000. Is the backend running?';
+        } else {
+          _errorMessage = 'Login failed: ${e.message}';
+        }
       });
     } finally {
       if (mounted) setState(() => _isLoading = false);

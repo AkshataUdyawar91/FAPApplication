@@ -61,14 +61,14 @@ public class Teams : BaseEntity
     public string? State { get; set; }
     
     /// <summary>
-    /// Gets or sets the JSON representation of teams/members data for this campaign
-    /// </summary>
-    public string? TeamsJson { get; set; }
-
-    /// <summary>
     /// Gets or sets the version number for tracking resubmissions
     /// </summary>
     public int VersionNumber { get; set; } = 1;
+
+    /// <summary>
+    /// Gets or sets the sequential team number within the package (1, 2, 3...)
+    /// </summary>
+    public int? TeamNumber { get; set; }
 
     // ============ REMOVED FIELDS (now separate entities) ============
     // Cost Summary fields moved to CostSummary entity

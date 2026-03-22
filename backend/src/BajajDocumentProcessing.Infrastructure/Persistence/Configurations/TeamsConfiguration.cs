@@ -35,12 +35,11 @@ public class TeamsConfiguration : IEntityTypeConfiguration<Teams>
         builder.Property(t => t.State)
             .HasMaxLength(100);
 
-        builder.Property(t => t.TeamsJson)
-            .HasColumnType("nvarchar(max)");
-
         builder.Property(t => t.VersionNumber)
             .IsRequired()
             .HasDefaultValue(1);
+
+        builder.Property(t => t.TeamNumber);
 
         // Relationships - Teams belongs directly to Package
         builder.HasOne(t => t.Package)

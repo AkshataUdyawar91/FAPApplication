@@ -385,46 +385,72 @@ Be precise and confident in your classification."),
     public async Task<POData> ExtractPOAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
+        var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
             _logger.LogInformation(
-                "Starting PO extraction for URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                "🔍 [PO EXTRACTION START] URL: {BlobUrl}, CorrelationId: {CorrelationId}",
                 blobUrl, correlationId);
 
             // CHANGE: Switched from direct Document Intelligence to hybrid approach (Doc Intelligence extracts text → OpenAI analyzes text)
             // For document files (PDF, Word), use Azure Document Intelligence to extract text, then OpenAI to analyze
             if (IsDocumentFile(blobUrl))
             {
-                _logger.LogInformation("Document file detected - using hybrid extraction (Document Intelligence + OpenAI)");
+                _logger.LogInformation("📄 [PO] Document file detected - using hybrid extraction (Document Intelligence + OpenAI)");
+                
+                var sasStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var sasUrl = await _fileStorageService.GetPublicUrlWithSasAsync(blobUrl, TimeSpan.FromHours(1));
+                sasStopwatch.Stop();
+                _logger.LogInformation("⏱️ [PO - Step 1] SAS URL Generation: {ElapsedMs}ms", sasStopwatch.ElapsedMilliseconds);
                 
                 try
                 {
                     // CHANGE: Extract raw text from PDF using Document Intelligence
+                    var textExtractionStopwatch = System.Diagnostics.Stopwatch.StartNew();
                     var extractedText = await ExtractTextFromPdfAsync(new Uri(sasUrl), cancellationToken);
+                    textExtractionStopwatch.Stop();
+                    _logger.LogInformation("⏱️ [PO - Step 2] Document Intelligence Text Extraction: {ElapsedMs}ms, Text Length: {TextLength} chars", 
+                        textExtractionStopwatch.ElapsedMilliseconds, extractedText?.Length ?? 0);
                     
                     // CHANGE: Send extracted text to OpenAI for detailed field extraction
+                    var openAIStopwatch = System.Diagnostics.Stopwatch.StartNew();
                     var result = await AnalyzePOTextAsync(extractedText, cancellationToken);
+                    openAIStopwatch.Stop();
+                    _logger.LogInformation("⏱️ [PO - Step 3] OpenAI Text Analysis: {ElapsedMs}ms", openAIStopwatch.ElapsedMilliseconds);
+                    
+                    totalStopwatch.Stop();
                     _logger.LogInformation(
-                        "PO hybrid extraction completed. PO: {PONumber}, Amount: {Amount}",
+                        "✅ [PO EXTRACTION COMPLETE] Total: {TotalMs}ms (SAS: {SasMs}ms, DocIntel: {DocIntelMs}ms, OpenAI: {OpenAIMs}ms) - PO: {PONumber}, Amount: {Amount}",
+                        totalStopwatch.ElapsedMilliseconds, sasStopwatch.ElapsedMilliseconds, 
+                        textExtractionStopwatch.ElapsedMilliseconds, openAIStopwatch.ElapsedMilliseconds,
                         result.PONumber, result.TotalAmount);
                     return result;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error in hybrid PO extraction, falling back to Document Intelligence only");
+                    _logger.LogError(ex, "❌ [PO] Error in hybrid extraction, falling back to Document Intelligence only");
+                    var fallbackStopwatch = System.Diagnostics.Stopwatch.StartNew();
                     var result = await _documentIntelligenceService.ExtractPOAsync(new Uri(sasUrl), cancellationToken);
+                    fallbackStopwatch.Stop();
+                    _logger.LogInformation("⏱️ [PO - Fallback] Document Intelligence Only: {ElapsedMs}ms", fallbackStopwatch.ElapsedMilliseconds);
+                    totalStopwatch.Stop();
+                    _logger.LogInformation("✅ [PO EXTRACTION COMPLETE - Fallback] Total: {TotalMs}ms", totalStopwatch.ElapsedMilliseconds);
                     return result;
                 }
             }
 
             // For images, use GPT-4 Vision
+            _logger.LogInformation("🖼️ [PO] Image file detected - using GPT-4 Vision");
+            
+            var imageStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var imageData = await PrepareImageDataAsync(blobUrl);
+            imageStopwatch.Stop();
+            _logger.LogInformation("⏱️ [PO - Step 1] Image Preparation: {ElapsedMs}ms", imageStopwatch.ElapsedMilliseconds);
             
             if (imageData == null)
             {
-                _logger.LogWarning("Could not prepare image data for PO extraction");
+                _logger.LogWarning("⚠️ [PO] Could not prepare image data for extraction");
                 return new POData
                 {
                     FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
@@ -432,6 +458,7 @@ Be precise and confident in your classification."),
                 };
             }
 
+            var visionStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var chatCompletionsOptions = new ChatCompletionsOptions
             {
                 DeploymentName = _deploymentName,
@@ -500,24 +527,33 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
             var response = await _openAIClient.GetChatCompletionsAsync(
                 chatCompletionsOptions, 
                 cancellationToken);
+            visionStopwatch.Stop();
+            _logger.LogInformation("⏱️ [PO - Step 2] GPT-4 Vision API Call: {ElapsedMs}ms", visionStopwatch.ElapsedMilliseconds);
 
+            var parseStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var content = response.Value.Choices[0].Message.Content;
-            _logger.LogInformation("Received PO extraction response: {Response}", content);
+            _logger.LogInformation("📝 [PO] Received extraction response: {ResponseLength} chars", content?.Length ?? 0);
 
             var poData = ParsePOResponse(content);
+            parseStopwatch.Stop();
+            _logger.LogInformation("⏱️ [PO - Step 3] Response Parsing: {ElapsedMs}ms", parseStopwatch.ElapsedMilliseconds);
 
+            totalStopwatch.Stop();
             _logger.LogInformation(
-                "PO extraction completed. PO Number: {PONumber}, Total Amount: {TotalAmount}, Line Items: {ItemCount}, Flagged: {Flagged}. CorrelationId: {CorrelationId}",
+                "✅ [PO EXTRACTION COMPLETE] Total: {TotalMs}ms (ImagePrep: {ImageMs}ms, Vision: {VisionMs}ms, Parse: {ParseMs}ms) - PO: {PONumber}, Amount: {TotalAmount}, Items: {ItemCount}, Flagged: {Flagged}, CorrelationId: {CorrelationId}",
+                totalStopwatch.ElapsedMilliseconds, imageStopwatch.ElapsedMilliseconds, 
+                visionStopwatch.ElapsedMilliseconds, parseStopwatch.ElapsedMilliseconds,
                 poData.PONumber, poData.TotalAmount, poData.LineItems.Count, poData.IsFlaggedForReview, correlationId);
 
             return poData;
         }
         catch (Exception ex)
         {
+            totalStopwatch.Stop();
             _logger.LogError(
                 ex,
-                "Error extracting PO data from URL: {BlobUrl}. CorrelationId: {CorrelationId}",
-                blobUrl, correlationId);
+                "❌ [PO EXTRACTION FAILED] Total: {TotalMs}ms, URL: {BlobUrl}, CorrelationId: {CorrelationId}",
+                totalStopwatch.ElapsedMilliseconds, blobUrl, correlationId);
             throw;
         }
     }
@@ -646,46 +682,149 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
     public async Task<InvoiceData> ExtractInvoiceAsync(string blobUrl, CancellationToken cancellationToken = default)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
+        var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
         
         try
         {
             _logger.LogInformation(
-                "Starting Invoice extraction for URL: {BlobUrl}. CorrelationId: {CorrelationId}",
+                "🔍 [INVOICE EXTRACTION START] URL: {BlobUrl}, CorrelationId: {CorrelationId}",
                 blobUrl, correlationId);
 
             // CHANGE: Switched from direct Document Intelligence to hybrid approach (Doc Intelligence extracts text → OpenAI analyzes text)
             // For document files (PDF, Word), use Azure Document Intelligence to extract text, then OpenAI to analyze
             if (IsDocumentFile(blobUrl))
             {
-                _logger.LogInformation("Document file detected - using hybrid extraction (Document Intelligence + OpenAI)");
+                _logger.LogInformation("📄 [INVOICE] Document file detected - using hybrid extraction (Document Intelligence + OpenAI)");
+                
+                // ============================================
+                // STEP 1: Generate SAS URL
+                // ============================================
+                _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                _logger.LogInformation("STEP 1: Generate SAS URL");
+                _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                _logger.LogInformation("� INPUT: Blob URL = {BlobUrl}", blobUrl);
+                
+                var sasStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var sasUrl = await _fileStorageService.GetPublicUrlWithSasAsync(blobUrl, TimeSpan.FromHours(1));
+                sasStopwatch.Stop();
+                
+                _logger.LogInformation("📤 OUTPUT: SAS URL = {SasUrl}", sasUrl);
+                _logger.LogInformation("⏱️ TIME TAKEN: {ElapsedMs}ms", sasStopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
                 
                 try
                 {
-                    // CHANGE: Extract raw text from PDF using Document Intelligence
-                    var extractedText = await ExtractTextFromPdfAsync(new Uri(sasUrl), cancellationToken);
+                    // ============================================
+                    // STEP 2: Extract Text using Document Intelligence
+                    // ============================================
+                    _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    _logger.LogInformation("STEP 2: Document Intelligence Text Extraction");
+                    _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    _logger.LogInformation("📥 INPUT: Document URI = {DocumentUri}", sasUrl);
                     
-                    // CHANGE: Send extracted text to OpenAI for detailed field extraction
+                    var textExtractionStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                    var extractedText = await ExtractTextFromPdfAsync(new Uri(sasUrl), cancellationToken);
+                    textExtractionStopwatch.Stop();
+                    
+                    _logger.LogInformation("📤 OUTPUT: Extracted Text ({TextLength} characters):", extractedText?.Length ?? 0);
+                    _logger.LogInformation("─────────────────────────────────────────");
+                    _logger.LogInformation("{ExtractedText}", extractedText ?? "[NULL]");
+                    _logger.LogInformation("─────────────────────────────────────────");
+                    _logger.LogInformation("⏱️ TIME TAKEN: {ElapsedMs}ms", textExtractionStopwatch.ElapsedMilliseconds);
+                    _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+                    
+                    // ============================================
+                    // STEP 3: Analyze Text with OpenAI
+                    // ============================================
+                    _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    _logger.LogInformation("STEP 3: OpenAI Text Analysis");
+                    _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    _logger.LogInformation("📥 INPUT: Extracted Text ({TextLength} characters)", extractedText?.Length ?? 0);
+                    _logger.LogInformation("📥 INPUT: Deployment Name = {DeploymentName}", _deploymentName);
+                    
+                    var openAIStopwatch = System.Diagnostics.Stopwatch.StartNew();
                     var result = await AnalyzeInvoiceTextAsync(extractedText, cancellationToken);
+                    openAIStopwatch.Stop();
+                    
+                    _logger.LogInformation("� OUTPUT: Structured Invoice Data:");
+                    _logger.LogInformation("─────────────────────────────────────────");
+                    _logger.LogInformation("  Invoice Number: {InvoiceNumber}", result.InvoiceNumber);
+                    _logger.LogInformation("  Vendor Name: {VendorName}", result.VendorName);
+                    _logger.LogInformation("  Vendor Code: {VendorCode}", result.VendorCode);
+                    _logger.LogInformation("  Invoice Date: {InvoiceDate}", result.InvoiceDate);
+                    _logger.LogInformation("  Agency Name: {AgencyName}", result.AgencyName);
+                    _logger.LogInformation("  Agency Code: {AgencyCode}", result.AgencyCode);
+                    _logger.LogInformation("  Agency Address: {AgencyAddress}", result.AgencyAddress);
+                    _logger.LogInformation("  Billing Name: {BillingName}", result.BillingName);
+                    _logger.LogInformation("  Billing Address: {BillingAddress}", result.BillingAddress);
+                    _logger.LogInformation("  State: {StateName} ({StateCode})", result.StateName, result.StateCode);
+                    _logger.LogInformation("  GST Number: {GSTNumber}", result.GSTNumber);
+                    _logger.LogInformation("  GST Percentage: {GSTPercentage}%", result.GSTPercentage);
+                    _logger.LogInformation("  HSN/SAC Code: {HSNSACCode}", result.HSNSACCode);
+                    _logger.LogInformation("  PO Number: {PONumber}", result.PONumber);
+                    _logger.LogInformation("  Sub Total: ₹{SubTotal}", result.SubTotal);
+                    _logger.LogInformation("  Tax Amount: ₹{TaxAmount}", result.TaxAmount);
+                    _logger.LogInformation("  Total Amount: ₹{TotalAmount}", result.TotalAmount);
+                    _logger.LogInformation("  Line Items: {LineItemCount} items", result.LineItems?.Count ?? 0);
+                    if (result.LineItems?.Any() == true)
+                    {
+                        foreach (var item in result.LineItems)
+                        {
+                            _logger.LogInformation("    - {Description} | Qty: {Qty} | Unit Price: ₹{UnitPrice} | Total: ₹{LineTotal}", 
+                                item.Description, item.Quantity, item.UnitPrice, item.LineTotal);
+                        }
+                    }
+                    _logger.LogInformation("  Confidence: {Confidence}", result.FieldConfidences?.GetValueOrDefault("Overall", 0));
+                    _logger.LogInformation("  Flagged for Review: {Flagged}", result.IsFlaggedForReview);
+                    _logger.LogInformation("─────────────────────────────────────────");
+                    _logger.LogInformation("⏱️ TIME TAKEN: {ElapsedMs}ms", openAIStopwatch.ElapsedMilliseconds);
+                    _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+                    
+                    totalStopwatch.Stop();
                     _logger.LogInformation(
-                        "Invoice hybrid extraction completed. Invoice: {InvoiceNumber}, Amount: {Amount}",
-                        result.InvoiceNumber, result.TotalAmount);
+                        "✅ [INVOICE EXTRACTION COMPLETE] Total: {TotalMs}ms (SAS: {SasMs}ms, DocIntel: {DocIntelMs}ms, OpenAI: {OpenAIMs}ms)",
+                        totalStopwatch.ElapsedMilliseconds, sasStopwatch.ElapsedMilliseconds, 
+                        textExtractionStopwatch.ElapsedMilliseconds, openAIStopwatch.ElapsedMilliseconds);
                     return result;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error in hybrid invoice extraction, falling back to Document Intelligence only");
+                    _logger.LogError(ex, "❌ [INVOICE] Error in hybrid extraction, falling back to Document Intelligence only");
+                    var fallbackStopwatch = System.Diagnostics.Stopwatch.StartNew();
                     var result = await _documentIntelligenceService.ExtractInvoiceAsync(new Uri(sasUrl), cancellationToken);
+                    fallbackStopwatch.Stop();
+                    _logger.LogInformation("⏱️ [INVOICE - Fallback] Document Intelligence Only: {ElapsedMs}ms", fallbackStopwatch.ElapsedMilliseconds);
+                    totalStopwatch.Stop();
+                    _logger.LogInformation("✅ [INVOICE EXTRACTION COMPLETE - Fallback] Total: {TotalMs}ms", totalStopwatch.ElapsedMilliseconds);
                     return result;
                 }
             }
 
             // For images, use GPT-4 Vision
+            _logger.LogInformation("🖼️ [INVOICE] Image file detected - using GPT-4 Vision");
+            
+            // ============================================
+            // STEP 1: Prepare Image Data
+            // ============================================
+            _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            _logger.LogInformation("STEP 1: Image Preparation");
+            _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            _logger.LogInformation("📥 INPUT: Blob URL = {BlobUrl}", blobUrl);
+            
+            var imageStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var imageData = await PrepareImageDataAsync(blobUrl);
+            imageStopwatch.Stop();
+            
+            _logger.LogInformation("📤 OUTPUT: Image Data Length = {ImageDataLength} characters", imageData?.Length ?? 0);
+            _logger.LogInformation("📤 OUTPUT: Format = {Format}", imageData?.StartsWith("data:image") == true ? "Base64 Data URL" : "Unknown");
+            _logger.LogInformation("📤 OUTPUT: Image Data Preview (first 200 chars): {ImageDataPreview}...", 
+                imageData?.Substring(0, Math.Min(200, imageData?.Length ?? 0)));
+            _logger.LogInformation("⏱️ TIME TAKEN: {ElapsedMs}ms", imageStopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
             
             if (imageData == null)
             {
-                _logger.LogWarning("Could not prepare image data for invoice extraction");
+                _logger.LogWarning("⚠️ [INVOICE] Could not prepare image data for extraction");
                 return new InvoiceData
                 {
                     FieldConfidences = new Dictionary<string, double> { ["Overall"] = 0.3 },
@@ -693,287 +832,64 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible in
                 };
             }
 
+            // ============================================
+            // STEP 2: GPT-4 Vision API Call
+            // ============================================
+            _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            _logger.LogInformation("STEP 2: GPT-4 Vision API Call");
+            _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            _logger.LogInformation("📥 INPUT: Deployment Name = {DeploymentName}", _deploymentName);
+            _logger.LogInformation("📥 INPUT: Image Data Length = {ImageDataLength} characters", imageData?.Length ?? 0);
+            _logger.LogInformation("📥 INPUT: System Prompt = Invoice extraction with step-by-step instructions");
+            
+            var visionStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var chatCompletionsOptions = new ChatCompletionsOptions
             {
                 DeploymentName = _deploymentName,
                 Messages =
                 {
-                    new ChatRequestSystemMessage(@"You are an AI Invoice Data Extraction Engine specialized in invoices.
-
-Your task is to analyze OCR-extracted text from an invoice document and extract structured information with maximum accuracy.
-
-Extract only the information present in the document. Do NOT guess or hallucinate values.
-
-Think step-by-step and carefully verify each extracted value before producing the final JSON output.
-
---------------------------------------------------
-STEP 1 — UNDERSTAND DOCUMENT STRUCTURE
---------------------------------------------------
-
-First analyze the invoice text and identify these sections if present:
-
-1. Vendor / Supplier details
-2. Customer / Agency details
-3. Billing information (Bill To)
-4. Invoice metadata (Invoice number, invoice date)
-5. GST information
-6. Purchase order references
-7. Line item table
-8. Tax summary and totals
-
-After identifying these sections, extract the required fields.
-
---------------------------------------------------
-STEP 2 — INVOICE METADATA
---------------------------------------------------
-
-Extract the Invoice Number.
-
-Look for keywords:
-Invoice No
-Invoice Number
-Inv No
-Bill No
-Tax Invoice No
-
-Return the exact value.
-
-Extract the Invoice Date and normalize it to ISO format:
-
-YYYY-MM-DD
-
-Handle formats like:
-12/03/2025
-12-03-25
-12 March 2025
-Mar 12 2025
-
---------------------------------------------------
-STEP 3 — AGENCY / CUSTOMER DETAILS
---------------------------------------------------
-
-Extract:
-Agency Name
-Agency Address
-Agency Code
-
-Possible labels:
-Customer
-Client
-Agency
-Ship To
-Consignee
-
-Agency Code is typically:
-Alphanumeric
-Length between 4–10 characters
-
-Example:
-AGT104
-CUS9087
-
---------------------------------------------------
-STEP 4 — BILLING DETAILS
---------------------------------------------------
-
-Extract:
-Billing Name
-Billing Address
-
-Look near sections labeled:
-Bill To
-Billed To
-Invoice To
-Billing Address
-
-Billing name may be the same as agency name.
-
---------------------------------------------------
-STEP 5 — VENDOR / SUPPLIER DETAILS
---------------------------------------------------
-
-Extract:
-Vendor Name
-Vendor Code
-
-Look near:
-Supplier
-Vendor
-Company Name
-Registered Office
-From
-
-Vendor code may appear close to the vendor name.
-
---------------------------------------------------
-STEP 6 — GST INFORMATION (CRITICAL)
---------------------------------------------------
-
-Extract the GSTIN.
-
-GSTIN format:
-15 characters
-
-Example:
-27ABCDE1234F1Z5
-
-Structure:
-First 2 digits = State Code
-Next 10 = PAN
-Next 1 = Entity number
-Next 1 = Z
-Last 1 = checksum
-
-Rules:
-Extract the first valid GSTIN.
-If both vendor and customer GSTIN exist, prefer Vendor GSTIN.
-
-Also extract:
-State Code → first two digits of GSTIN
-State Name → derive using state code
-
-Example state mapping:
-27 = Maharashtra
-29 = Karnataka
-07 = Delhi
-33 = Tamil Nadu
-24 = Gujarat
-19 = West Bengal
-
---------------------------------------------------
-STEP 7 — HSN / SAC CODE
---------------------------------------------------
-
-Extract the HSN or SAC code.
-
-Possible labels:
-HSN
-SAC
-HSN/SAC
-HSN Code
-
-Typical formats:
-9983
-998314
-847130
-
-Remove spaces if present.
-
---------------------------------------------------
-STEP 8 — PURCHASE ORDER NUMBER
---------------------------------------------------
-
-Extract PO Number.
-
-Look for:
-PO No
-PO Number
-Purchase Order
-PO Ref
-Ref PO
-Purchase No
-
-Return the first valid PO reference.
-
---------------------------------------------------
-STEP 9 — TAX DETAILS
---------------------------------------------------
-
-Extract:
-GST Percentage
-Tax Amount
-Sub Total
-Total Amount
-
-Common GST rates:
-5
-12
-18
-28
-
-Currency normalization:
-Remove symbols like:
-₹
-INR
-Rs.
-,
-
-Example:
-₹12,450.00 → 12450
-
-Total Amount Rule:
-If multiple totals exist, select the FINAL payable amount or the largest value.
-
-Ignore:
-Round Off
-Adjustment
-Discount
-
---------------------------------------------------
-STEP 10 — LINE ITEM TABLE EXTRACTION
---------------------------------------------------
-
-Identify the invoice item table.
-
-Possible headers:
-Description
-Item
-Product
-Qty
-Quantity
-Rate
-Unit Price
-Amount
-HSN
-GST
-
-Extract ALL rows.
-
-For each line item extract:
-
-description
-quantity
-unit_price
-amount
-hsn_sac_code
-gst_percentage
-
-Rules:
-Quantity must be numeric.
-Unit price must be numeric.
-Amount must be numeric.
-
-If any field is missing, return empty or zero.
-
---------------------------------------------------
-STEP 11 — CROSS VALIDATION
---------------------------------------------------
-
-Validate totals:
-
-Sub Total + Tax Amount ≈ Total Amount
-
-If mismatch occurs, prefer the explicit totals shown in the invoice summary.
-
---------------------------------------------------
-STEP 12 — MISSING FIELD HANDLING
---------------------------------------------------
-
-If a field is not present in the document:
-
-Return:
-"" for text fields
-0 for numeric fields
-
---------------------------------------------------
-STEP 13 — OUTPUT JSON SCHEMA
---------------------------------------------------
-
-Return ONLY valid JSON in the following structure:
-
+                    new ChatRequestSystemMessage(@"You are an Invoice data extraction specialist. Azure Document Intelligence has already parsed the document text. Your task is to analyze this pre-extracted text and structure it into the required JSON format.
+
+EXTRACTION RULES:
+1. Extract ONLY information present in the provided text
+2. Do NOT guess or invent values
+3. Normalize dates to YYYY-MM-DD format
+4. Remove currency symbols (₹, INR, Rs.) and commas from amounts
+5. For GSTIN: extract the 15-character code, derive state code (first 2 digits) and state name
+6. If multiple totals exist, use the final/largest amount
+7. Return empty string for missing text fields, 0 for missing numeric fields
+
+KEY FIELDS TO EXTRACT:
+- Invoice Number (look for: Invoice No, Inv No, Bill No, Tax Invoice No)
+- Invoice Date (normalize to YYYY-MM-DD)
+- Vendor Name & Code
+- Agency/Customer Name, Address & Code
+- Billing Name & Address
+- GST Number (15 chars), State Code (first 2 digits), State Name
+- HSN/SAC Code
+- PO Number (look for: PO No, Purchase Order, PO Ref)
+- Sub Total, Tax Amount, Total Amount
+- GST Percentage (common: 5%, 12%, 18%, 28%)
+- Line Items: description, quantity, unit_price, amount, hsn_sac_code, gst_percentage
+
+STATE CODE MAPPING:
+07=Delhi, 19=West Bengal, 24=Gujarat, 27=Maharashtra, 29=Karnataka, 33=Tamil Nadu
+
+VALIDATION:
+- Verify: Sub Total + Tax Amount ≈ Total Amount
+- If mismatch, use explicit totals from invoice summary
+
+CONFIDENCE SCORING (0.0-1.0):
+0.9-1.0: All key fields extracted clearly
+0.75-0.9: Minor fields missing
+0.6-0.75: Some important fields missing
+0.4-0.6: Partial extraction only
+<0.4: Poor quality data
+
+OUTPUT FORMAT (JSON only, no explanations):
 {
-  ""invoice_number"": "" "",
-  ""invoice_date"": "" "",
+  ""invoice_number"": """",
+  ""invoice_date"": ""YYYY-MM-DD"",
   ""agency_name"": """",
   ""agency_address"": """",
   ""agency_code"": """",
@@ -1001,33 +917,7 @@ Return ONLY valid JSON in the following structure:
     }
   ],
   ""confidence"": 0.0
-}
-
---------------------------------------------------
-STEP 14 — CONFIDENCE SCORE
---------------------------------------------------
-
-Return a confidence score between 0.0 and 1.0.
-
-Guidelines:
-
-0.9 – 1.0 → Clear structured invoice  
-0.75 – 0.9 → Minor OCR noise  
-0.6 – 0.75 → Some fields missing  
-0.4 – 0.6 → Partial extraction  
-<0.4 → Poor quality OCR
-
---------------------------------------------------
-FINAL RULES
---------------------------------------------------
-
-Return ONLY valid JSON.
-
-Do NOT include explanations.
-Do NOT add extra text.
-Do NOT invent values.
-
-Ensure the JSON strictly follows the schema above."),
+}"),
 
 //                     (@"You are an Invoice data extraction expert with exceptional OCR capabilities.
 // Carefully analyze the provided invoice document image and extract ALL visible information with high accuracy.
@@ -1073,26 +963,93 @@ Ensure the JSON strictly follows the schema above."),
             var response = await _openAIClient.GetChatCompletionsAsync(
                 chatCompletionsOptions, 
                 cancellationToken);
-
+            visionStopwatch.Stop();
+            
             var content = response.Value.Choices[0].Message.Content;
-            _logger.LogInformation("Received Invoice extraction response: {Response}", content);
+            _logger.LogInformation("📤 OUTPUT: Raw API Response ({ResponseLength} characters):", content?.Length ?? 0);
+            _logger.LogInformation("─────────────────────────────────────────");
+            _logger.LogInformation("{RawResponse}", content ?? "[NULL]");
+            _logger.LogInformation("─────────────────────────────────────────");
+            _logger.LogInformation("⏱️ TIME TAKEN: {ElapsedMs}ms", visionStopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
+            // ============================================
+            // STEP 3: Parse Response
+            // ============================================
+            _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            _logger.LogInformation("STEP 3: Parse Response");
+            _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            _logger.LogInformation("📥 INPUT: Raw JSON Response ({ResponseLength} characters)", content?.Length ?? 0);
+            
+            var parseStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var invoiceData = ParseInvoiceResponse(content);
+            parseStopwatch.Stop();
+            
+            _logger.LogInformation("📤 OUTPUT: Structured Invoice Data:");
+            _logger.LogInformation("─────────────────────────────────────────");
+            _logger.LogInformation("  Invoice Number: {InvoiceNumber}", invoiceData.InvoiceNumber);
+            _logger.LogInformation("  Vendor Name: {VendorName}", invoiceData.VendorName);
+            _logger.LogInformation("  Vendor Code: {VendorCode}", invoiceData.VendorCode);
+            _logger.LogInformation("  Invoice Date: {InvoiceDate}", invoiceData.InvoiceDate);
+            _logger.LogInformation("  Agency Name: {AgencyName}", invoiceData.AgencyName);
+            _logger.LogInformation("  Agency Code: {AgencyCode}", invoiceData.AgencyCode);
+            _logger.LogInformation("  Agency Address: {AgencyAddress}", invoiceData.AgencyAddress);
+            _logger.LogInformation("  Billing Name: {BillingName}", invoiceData.BillingName);
+            _logger.LogInformation("  Billing Address: {BillingAddress}", invoiceData.BillingAddress);
+            _logger.LogInformation("  State: {StateName} ({StateCode})", invoiceData.StateName, invoiceData.StateCode);
+            _logger.LogInformation("  GST Number: {GSTNumber}", invoiceData.GSTNumber);
+            _logger.LogInformation("  GST Percentage: {GSTPercentage}%", invoiceData.GSTPercentage);
+            _logger.LogInformation("  HSN/SAC Code: {HSNSACCode}", invoiceData.HSNSACCode);
+            _logger.LogInformation("  PO Number: {PONumber}", invoiceData.PONumber);
+            _logger.LogInformation("  Sub Total: ₹{SubTotal}", invoiceData.SubTotal);
+            _logger.LogInformation("  Tax Amount: ₹{TaxAmount}", invoiceData.TaxAmount);
+            _logger.LogInformation("  Total Amount: ₹{TotalAmount}", invoiceData.TotalAmount);
+            _logger.LogInformation("  Line Items: {LineItemCount} items", invoiceData.LineItems?.Count ?? 0);
+            if (invoiceData.LineItems?.Any() == true)
+            {
+                foreach (var item in invoiceData.LineItems)
+                {
+                    _logger.LogInformation("    - {Description} | Qty: {Qty} | Unit Price: ₹{UnitPrice} | Total: ₹{LineTotal}", 
+                        item.Description, item.Quantity, item.UnitPrice, item.LineTotal);
+                }
+            }
+            _logger.LogInformation("  Confidence: {Confidence}", invoiceData.FieldConfidences?.GetValueOrDefault("Overall", 0));
+            _logger.LogInformation("  Flagged for Review: {Flagged}", invoiceData.IsFlaggedForReview);
+            _logger.LogInformation("─────────────────────────────────────────");
+            _logger.LogInformation("⏱️ TIME TAKEN: {ElapsedMs}ms", parseStopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
+            totalStopwatch.Stop();
             _logger.LogInformation(
-                "Invoice extraction completed. Invoice Number: {InvoiceNumber}, Total Amount: {TotalAmount}, Line Items: {ItemCount}, Flagged: {Flagged}. CorrelationId: {CorrelationId}",
-                invoiceData.InvoiceNumber, invoiceData.TotalAmount, invoiceData.LineItems.Count, invoiceData.IsFlaggedForReview, correlationId);
+                "✅ [INVOICE EXTRACTION COMPLETE] Total: {TotalMs}ms (ImagePrep: {ImageMs}ms, Vision: {VisionMs}ms, Parse: {ParseMs}ms), CorrelationId: {CorrelationId}",
+                totalStopwatch.ElapsedMilliseconds, imageStopwatch.ElapsedMilliseconds, 
+                visionStopwatch.ElapsedMilliseconds, parseStopwatch.ElapsedMilliseconds, correlationId);
 
             return invoiceData;
         }
         catch (Exception ex)
         {
+            totalStopwatch.Stop();
             _logger.LogError(
                 ex,
-                "Error extracting Invoice data from URL: {BlobUrl}. CorrelationId: {CorrelationId}",
-                blobUrl, correlationId);
+                "❌ [INVOICE EXTRACTION FAILED] Total: {TotalMs}ms, URL: {BlobUrl}, CorrelationId: {CorrelationId}",
+                totalStopwatch.ElapsedMilliseconds, blobUrl, correlationId);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Extracts structured data from an Invoice document with filename context.
+    /// Wrapper method that calls ExtractInvoiceAsync with additional logging.
+    /// </summary>
+    /// <param name="blobUrl">The blob URL of the Invoice document</param>
+    /// <param name="fileName">Original filename for context</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>InvoiceData containing all extracted invoice information</returns>
+    public async Task<InvoiceData> ExtractInvoiceDataAsync(string blobUrl, string fileName, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Starting invoice data extraction for file: {FileName}, URL: {BlobUrl}", fileName, blobUrl);
+        return await ExtractInvoiceAsync(blobUrl, cancellationToken);
     }
 
     private InvoiceData ParseInvoiceResponse(string content)
@@ -1118,7 +1075,7 @@ Ensure the JSON strictly follows the schema above."),
                 InvoiceNumber = parsed.InvoiceNumber ?? string.Empty,
                 VendorName = parsed.VendorName ?? string.Empty,
                 VendorCode = parsed.VendorCode ?? string.Empty,
-                InvoiceDate = parsed.InvoiceDate ?? DateTime.Now,
+                InvoiceDate = DateTime.TryParse(parsed.InvoiceDate, out var parsedDate) ? parsedDate : DateTime.Now,
                 AgencyName = parsed.AgencyName ?? string.Empty,
                 AgencyAddress = parsed.AgencyAddress ?? string.Empty,
                 AgencyCode = parsed.AgencyCode ?? string.Empty,
@@ -1167,7 +1124,7 @@ Ensure the JSON strictly follows the schema above."),
         public string? InvoiceNumber { get; set; }
         public string? VendorName { get; set; }
         public string? VendorCode { get; set; }
-        public DateTime? InvoiceDate { get; set; }
+        public string? InvoiceDate { get; set; }
         public string? AgencyName { get; set; }
         public string? AgencyAddress { get; set; }
         public string? AgencyCode { get; set; }
@@ -1858,67 +1815,71 @@ If GPS overlay is not visible, set photoDateFromOverlay to empty string and lat/
             DeploymentName = _deploymentName,
             Messages =
             {
-                new ChatRequestSystemMessage(@"You are an Invoice data extraction expert specializing in invoices.
-Analyze the provided text extracted from an invoice document and extract ALL structured information with maximum accuracy.
+                new ChatRequestSystemMessage(@"You are an Invoice data extraction specialist. Azure Document Intelligence has already parsed the document text. Your task is to analyze this pre-extracted text and structure it into the required JSON format.
 
-REQUIRED FIELDS TO EXTRACT:
-1. Invoice Number - Look for: 'Invoice No', 'Invoice Number', 'Bill No', 'Inv No', 'Document No'
-2. Invoice Date - Date of invoice (format: YYYY-MM-DD)
-3. Agency Name - Name of the agency/customer/recipient receiving the invoice
-4. Agency Address - Full address of the agency/recipient
-5. Agency Code - Agency identifier code (alphanumeric, 4-10 characters)
-6. Billing Name - Bill to party name (may be same as agency)
-7. Billing Address - Bill to address
-8. Vendor Name - Supplier/vendor company name (look near 'Supplier', 'From', 'M/S')
-9. Vendor Code - Vendor identifier code
-10. State Name - State where service/goods supplied (e.g., 'Maharashtra', 'Bihar', 'Karnataka')
-11. State Code - 2-digit state code (e.g., '27' for Maharashtra, '10' for Bihar)
-12. GST Number - 15-character GSTIN (format: 2 digits state + 10 chars PAN + 1 digit + 1 letter + 1 check)
-13. GST Percentage - GST rate applied (common: 5, 12, 18, 28)
-14. HSN/SAC Code - 4-8 digit code for goods/services classification
-15. PO Number - Reference Purchase Order number
-16. Sub Total - Amount before tax (look for 'Taxable Amount', 'Sub Total')
-17. Tax Amount - Total GST/tax amount (CGST + SGST or IGST)
-18. Total Amount - Final invoice amount (look for 'Tot Inv. Amt', 'Grand Total', 'Total')
-19. Line Items - ALL items with description, quantity, unit price, amount, HSN, GST%
+EXTRACTION RULES:
+1. Extract ONLY information present in the provided text
+2. Do NOT guess or invent values
+3. Normalize dates to YYYY-MM-DD format
+4. Remove currency symbols (₹, INR, Rs.) and commas from amounts
+5. For GSTIN: extract the 15-character code, derive state code (first 2 digits) and state name
+6. If multiple totals exist, use the final/largest amount
+7. Return empty string for missing text fields, 0 for missing numeric fields
 
-CRITICAL INSTRUCTIONS FOR INDIAN INVOICES:
-- GSTIN: Must be 15 characters. First 2 digits = state code.
-- If both supplier and recipient GSTIN exist, extract SUPPLIER GSTIN as gstNumber.
-- State Code: First 2 digits of GSTIN. Common: 10=Bihar, 27=Maharashtra, 29=Karnataka, 07=Delhi, 33=Tamil Nadu.
-- State Name: Derive from state code or 'Place of Supply' field.
-- HSN/SAC Code: Usually in the line items table header.
-- Total Amount: If multiple totals exist, use the FINAL payable amount.
-- Agency = Recipient/Customer/Bill To party.
-- If a field is not found, use empty string for text, 0 for numbers.
+KEY FIELDS TO EXTRACT:
+- Invoice Number (look for: Invoice No, Inv No, Bill No, Tax Invoice No)
+- Invoice Date (normalize to YYYY-MM-DD)
+- Vendor Name & Code (supplier/from party)
+- Agency/Customer Name, Address & Code (recipient/bill to party)
+- Billing Name & Address
+- GST Number (15 chars - prefer SUPPLIER GSTIN), State Code (first 2 digits), State Name
+- HSN/SAC Code
+- PO Number (look for: PO No, Purchase Order, PO Ref)
+- Sub Total, Tax Amount, Total Amount
+- GST Percentage (common: 5%, 12%, 18%, 28%)
+- Line Items: itemCode, description, quantity, unitPrice, lineTotal
 
-Respond ONLY with a JSON object in this exact format:
+STATE CODE MAPPING:
+07=Delhi, 10=Bihar, 19=West Bengal, 24=Gujarat, 27=Maharashtra, 29=Karnataka, 33=Tamil Nadu
+
+VALIDATION:
+- Verify: Sub Total + Tax Amount ≈ Total Amount
+- If mismatch, use explicit totals from invoice summary
+
+CONFIDENCE SCORING (0.0-1.0):
+0.9-1.0: All key fields extracted clearly
+0.75-0.9: Minor fields missing
+0.6-0.75: Some important fields missing
+0.4-0.6: Partial extraction only
+<0.4: Poor quality data
+
+OUTPUT FORMAT (JSON only, no explanations):
 {
-  ""invoiceNumber"": ""string"",
+  ""invoiceNumber"": """",
   ""invoiceDate"": ""YYYY-MM-DD"",
-  ""agencyName"": ""string"",
-  ""agencyAddress"": ""string"",
-  ""agencyCode"": ""string"",
-  ""billingName"": ""string"",
-  ""billingAddress"": ""string"",
-  ""vendorName"": ""string"",
-  ""vendorCode"": ""string"",
-  ""stateName"": ""string"",
-  ""stateCode"": ""string"",
-  ""gstNumber"": ""string"",
+  ""agencyName"": """",
+  ""agencyAddress"": """",
+  ""agencyCode"": """",
+  ""billingName"": """",
+  ""billingAddress"": """",
+  ""vendorName"": """",
+  ""vendorCode"": """",
+  ""stateName"": """",
+  ""stateCode"": """",
+  ""gstNumber"": """",
   ""gstPercentage"": 0,
-  ""hsnSacCode"": ""string"",
-  ""poNumber"": ""string"",
-  ""subTotal"": 0.00,
-  ""taxAmount"": 0.00,
-  ""totalAmount"": 0.00,
+  ""hsnSacCode"": """",
+  ""poNumber"": """",
+  ""subTotal"": 0,
+  ""taxAmount"": 0,
+  ""totalAmount"": 0,
   ""lineItems"": [
     {
-      ""itemCode"": ""string"",
-      ""description"": ""string"",
+      ""itemCode"": """",
+      ""description"": """",
       ""quantity"": 0,
-      ""unitPrice"": 0.00,
-      ""lineTotal"": 0.00
+      ""unitPrice"": 0,
+      ""lineTotal"": 0
     }
   ],
   ""confidence"": 0.0
@@ -2446,8 +2407,8 @@ Respond ONLY with a JSON object in this exact format:
     // CHANGE: Simple single-call approach for EnquiryDump extraction via OpenAI, prompt updated to match actual Excel columns
     private async Task<EnquiryDumpData> AnalyzeEnquiryDumpTextAsync(string extractedText, CancellationToken cancellationToken)
     {
-        // CHANGE: Truncate text if too large to avoid token limits — send first 30000 chars
-        var textToSend = extractedText.Length > 30000 ? extractedText.Substring(0, 30000) : extractedText;
+        // CHANGE: Truncate text if too large to avoid token limits — send first 60000 chars
+        var textToSend = extractedText.Length > 60000 ? extractedText.Substring(0, 60000) : extractedText;
         DebugLog($"[ENQUIRY] Sending text length: {textToSend.Length} (original: {extractedText.Length})");
 
         var chatCompletionsOptions = new ChatCompletionsOptions
@@ -2455,33 +2416,36 @@ Respond ONLY with a JSON object in this exact format:
             DeploymentName = _deploymentName,
             Messages =
             {
-                new ChatRequestSystemMessage(@"You are a data extraction expert. Extract structured records from the tabular text below.
+                new ChatRequestSystemMessage(@"You are a data extraction expert. Extract structured records from tabular Excel data.
 
-The text is from an Excel file with enquiry records. The columns may include:
-Sr No, Date, Dealership Name, District, Segment, Company Name, Brand, Address, Principal Name, Contact, Secondary Name, Contact, 3W, EV, 4W, Total Van, Category, Remark, Age, Test Drive, Visit, and possibly others.
+The Excel columns are (in order):
+Sr No | Date | Dealership Name | District | Segment | Company Name | Brand | Address | Principal Name | Contact | Secondary Name | Secondary Contact | (possibly more columns like 3W, EV, 4W, Category, Remark, Age, Test Drive, Visit)
 
-For EACH row, extract these fields (map from whatever columns exist):
-- state: State name from document context (e.g. Bihar)
-- date: Date value, convert to YYYY-MM-DD format
-- dealerCode: Dealer code if present, otherwise empty string
-- dealerName: Dealership Name or Dealer Name
-- district: District
-- pincode: Pincode if present, otherwise empty string
-- customerName: Principal Name or Company Name or Customer Name
-- customerNumber: Contact number (first contact column)
-- testRideTaken: Test Drive value, normalize to Yes or No
+Map each row to these fields:
+- state: Infer the state from district names in the data (e.g. Muzaffarpur → Bihar). Use one state for all records.
+- date: From ""Date"" column, convert to YYYY-MM-DD format
+- dealerCode: Empty string (not present in this format)
+- dealerName: From ""Dealership Name"" column
+- district: From ""District"" column
+- pincode: Empty string (not present)
+- customerName: From ""Principal Name"" column (or ""Company Name"" if Principal Name is empty)
+- customerNumber: From ""Contact"" column (first contact column, column J)
+- testRideTaken: From ""Test Drive"" or ""Visit"" column if present, normalize to Yes/No. If not present use empty string.
 
-CRITICAL: Extract EVERY row. Do NOT skip any rows. Do NOT summarize.
-If a field is missing, use empty string.
+CRITICAL RULES:
+- Extract EVERY data row. Do NOT skip rows. Do NOT summarize.
+- Skip only the header row and any completely blank rows.
+- If a field is missing or N/A, use empty string.
+- Phone numbers may appear as scientific notation (e.g. 9.63E+09) — convert to full number string (e.g. ""9630000000"").
 
-Return ONLY valid JSON:
+Return ONLY valid JSON (no markdown, no explanation):
 {
-  ""state"": ""overall state"",
-  ""totalRecords"": number,
-  ""records"": [{""state"":"""",""date"":"""",""dealerCode"":"""",""dealerName"":"""",""district"":"""",""pincode"":"""",""customerName"":"""",""customerNumber"":"""",""testRideTaken"":""""}],
-  ""confidence"": 0.8
+  ""state"": ""Bihar"",
+  ""totalRecords"": 479,
+  ""records"": [{""state"":""Bihar"",""date"":""2025-02-15"",""dealerCode"":"""",""dealerName"":""HY Motors"",""district"":""Muzaffarpur"",""pincode"":"""",""customerName"":""Nitish"",""customerNumber"":""9630000000"",""testRideTaken"":""""}],
+  ""confidence"": 0.9
 }"),
-                new ChatRequestUserMessage($"Extract ALL records from this data:\n\n{textToSend}")
+                new ChatRequestUserMessage($"Extract ALL records from this Excel data:\n\n{textToSend}")
             }
         };
 

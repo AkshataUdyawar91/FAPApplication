@@ -1,10 +1,14 @@
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:go_router/go_router.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/router/app_router.dart';
 
-class HQAnalyticsPage extends StatefulWidget {
+class HQAnalyticsPage extends ConsumerStatefulWidget {
   final String token;
   final String userName;
 
@@ -15,12 +19,13 @@ class HQAnalyticsPage extends StatefulWidget {
   });
 
   @override
-  State<HQAnalyticsPage> createState() => _HQAnalyticsPageState();
+  ConsumerState<HQAnalyticsPage> createState() => _HQAnalyticsPageState();
 }
 
-class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
-  
+class _HQAnalyticsPageState extends ConsumerState<HQAnalyticsPage> {
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    ..interceptors.add(PrettyDioLogger());
+
   bool _isLoading = true;
   Map<String, dynamic> _analytics = {};
   String _selectedTab = 'trends';
@@ -33,13 +38,13 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
 
   Future<void> _loadAnalytics() async {
     setState(() => _isLoading = true);
-    
+
     try {
       final response = await _dio.get(
         '/analytics/overview',
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
-      
+
       if (response.statusCode == 200 && mounted) {
         setState(() {
           _analytics = response.data;
@@ -100,7 +105,7 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
             children: [
               IconButton(
                 icon: const Icon(Icons.chevron_left, color: Colors.white),
-                onPressed: () => Navigator.pushReplacementNamed(context, '/'),
+                onPressed: () => handleLogout(context, ref),
               ),
               const SizedBox(width: 8),
               const Text(
@@ -119,7 +124,7 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
               ),
               const SizedBox(width: 24),
               OutlinedButton.icon(
-                onPressed: () => Navigator.pushReplacementNamed(context, '/'),
+                onPressed: () => handleLogout(context, ref),
                 icon: const Icon(Icons.logout, size: 16),
                 label: const Text('Logout'),
                 style: OutlinedButton.styleFrom(
@@ -127,7 +132,8 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                   backgroundColor: Colors.white,
                   side: const BorderSide(color: Colors.white),
                 ).copyWith(
-                  foregroundColor: WidgetStateProperty.all(const Color(0xFF1E3A8A)),
+                  foregroundColor:
+                      WidgetStateProperty.all(const Color(0xFF1E3A8A)),
                 ),
               ),
             ],
@@ -163,42 +169,51 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
   Widget _buildOverviewStats() {
     return Row(
       children: [
-        Expanded(child: _buildStatCard(
-          'Total Submissions',
-          '248',
-          Icons.bar_chart,
-          const Color(0xFF3B82F6),
-          '↑ 12% vs last month',
-        ),),
+        Expanded(
+          child: _buildStatCard(
+            'Total Submissions',
+            '248',
+            Icons.bar_chart,
+            const Color(0xFF3B82F6),
+            '↑ 12% vs last month',
+          ),
+        ),
         const SizedBox(width: 16),
-        Expanded(child: _buildStatCard(
-          'Approved',
-          '186',
-          Icons.check_circle,
-          const Color(0xFF10B981),
-          '75% approval rate',
-        ),),
+        Expanded(
+          child: _buildStatCard(
+            'Approved',
+            '186',
+            Icons.check_circle,
+            const Color(0xFF10B981),
+            '75% approval rate',
+          ),
+        ),
         const SizedBox(width: 16),
-        Expanded(child: _buildStatCard(
-          'Total Amount',
-          '₹12.5Cr',
-          Icons.currency_rupee,
-          const Color(0xFF3B82F6),
-          '₹9.3Cr approved',
-        ),),
+        Expanded(
+          child: _buildStatCard(
+            'Total Amount',
+            '₹12.5Cr',
+            Icons.currency_rupee,
+            const Color(0xFF3B82F6),
+            '₹9.3Cr approved',
+          ),
+        ),
         const SizedBox(width: 16),
-        Expanded(child: _buildStatCard(
-          'AI Confidence',
-          '87%',
-          Icons.psychology,
-          const Color(0xFF3B82F6),
-          '↑ 3% improvement',
-        ),),
+        Expanded(
+          child: _buildStatCard(
+            'AI Confidence',
+            '87%',
+            Icons.psychology,
+            const Color(0xFF3B82F6),
+            '↑ 3% improvement',
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildStatCard(String label, String value, IconData icon, Color color, String subtitle) {
+  Widget _buildStatCard(
+      String label, String value, IconData icon, Color color, String subtitle) {
     return Card(
       elevation: 2,
       child: Padding(
@@ -231,8 +246,8 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                       Text(
                         subtitle,
                         style: AppTextStyles.bodySmall.copyWith(
-                          color: subtitle.startsWith('↑') 
-                              ? const Color(0xFF10B981) 
+                          color: subtitle.startsWith('↑')
+                              ? const Color(0xFF10B981)
                               : AppColors.textSecondary,
                           fontSize: 11,
                         ),
@@ -361,8 +376,16 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                       sideTitles: SideTitles(
                         showTitles: true,
                         getTitlesWidget: (value, meta) {
-                          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-                          if (value.toInt() >= 0 && value.toInt() < months.length) {
+                          const months = [
+                            'Jan',
+                            'Feb',
+                            'Mar',
+                            'Apr',
+                            'May',
+                            'Jun'
+                          ];
+                          if (value.toInt() >= 0 &&
+                              value.toInt() < months.length) {
                             return Text(
                               months[value.toInt()],
                               style: AppTextStyles.bodySmall.copyWith(
@@ -374,8 +397,10 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                         },
                       ),
                     ),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
                   ),
                   borderData: FlBorderData(show: false),
                   lineBarsData: [
@@ -489,8 +514,16 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                       sideTitles: SideTitles(
                         showTitles: true,
                         getTitlesWidget: (value, meta) {
-                          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-                          if (value.toInt() >= 0 && value.toInt() < months.length) {
+                          const months = [
+                            'Jan',
+                            'Feb',
+                            'Mar',
+                            'Apr',
+                            'May',
+                            'Jun'
+                          ];
+                          if (value.toInt() >= 0 &&
+                              value.toInt() < months.length) {
                             return Text(
                               months[value.toInt()],
                               style: AppTextStyles.bodySmall.copyWith(
@@ -502,17 +535,61 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                         },
                       ),
                     ),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
                   ),
                   borderData: FlBorderData(show: false),
                   barGroups: [
-                    BarChartGroupData(x: 0, barRods: [BarChartRodData(toY: 180, color: AppColors.primary, width: 20, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
-                    BarChartGroupData(x: 1, barRods: [BarChartRodData(toY: 210, color: AppColors.primary, width: 20, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
-                    BarChartGroupData(x: 2, barRods: [BarChartRodData(toY: 190, color: AppColors.primary, width: 20, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
-                    BarChartGroupData(x: 3, barRods: [BarChartRodData(toY: 225, color: AppColors.primary, width: 20, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
-                    BarChartGroupData(x: 4, barRods: [BarChartRodData(toY: 240, color: AppColors.primary, width: 20, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
-                    BarChartGroupData(x: 5, barRods: [BarChartRodData(toY: 260, color: AppColors.primary, width: 20, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
+                    BarChartGroupData(x: 0, barRods: [
+                      BarChartRodData(
+                          toY: 180,
+                          color: AppColors.primary,
+                          width: 20,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
+                    BarChartGroupData(x: 1, barRods: [
+                      BarChartRodData(
+                          toY: 210,
+                          color: AppColors.primary,
+                          width: 20,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
+                    BarChartGroupData(x: 2, barRods: [
+                      BarChartRodData(
+                          toY: 190,
+                          color: AppColors.primary,
+                          width: 20,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
+                    BarChartGroupData(x: 3, barRods: [
+                      BarChartRodData(
+                          toY: 225,
+                          color: AppColors.primary,
+                          width: 20,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
+                    BarChartGroupData(x: 4, barRods: [
+                      BarChartRodData(
+                          toY: 240,
+                          color: AppColors.primary,
+                          width: 20,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
+                    BarChartGroupData(x: 5, barRods: [
+                      BarChartRodData(
+                          toY: 260,
+                          color: AppColors.primary,
+                          width: 20,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
                   ],
                 ),
               ),
@@ -649,8 +726,14 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                       sideTitles: SideTitles(
                         showTitles: true,
                         getTitlesWidget: (value, meta) {
-                          const issues = ['Amount\nMismatch', 'Missing\nDocs', 'Photo\nQuality', 'Date\nIssues'];
-                          if (value.toInt() >= 0 && value.toInt() < issues.length) {
+                          const issues = [
+                            'Amount\nMismatch',
+                            'Missing\nDocs',
+                            'Photo\nQuality',
+                            'Date\nIssues'
+                          ];
+                          if (value.toInt() >= 0 &&
+                              value.toInt() < issues.length) {
                             return Padding(
                               padding: const EdgeInsets.only(top: 8.0),
                               child: Text(
@@ -667,15 +750,45 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                         },
                       ),
                     ),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
                   ),
                   borderData: FlBorderData(show: false),
                   barGroups: [
-                    BarChartGroupData(x: 0, barRods: [BarChartRodData(toY: 15, color: const Color(0xFFEF4444), width: 40, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
-                    BarChartGroupData(x: 1, barRods: [BarChartRodData(toY: 12, color: const Color(0xFFEF4444), width: 40, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
-                    BarChartGroupData(x: 2, barRods: [BarChartRodData(toY: 8, color: const Color(0xFFEF4444), width: 40, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
-                    BarChartGroupData(x: 3, barRods: [BarChartRodData(toY: 7, color: const Color(0xFFEF4444), width: 40, borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))]),
+                    BarChartGroupData(x: 0, barRods: [
+                      BarChartRodData(
+                          toY: 15,
+                          color: const Color(0xFFEF4444),
+                          width: 40,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
+                    BarChartGroupData(x: 1, barRods: [
+                      BarChartRodData(
+                          toY: 12,
+                          color: const Color(0xFFEF4444),
+                          width: 40,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
+                    BarChartGroupData(x: 2, barRods: [
+                      BarChartRodData(
+                          toY: 8,
+                          color: const Color(0xFFEF4444),
+                          width: 40,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
+                    BarChartGroupData(x: 3, barRods: [
+                      BarChartRodData(
+                          toY: 7,
+                          color: const Color(0xFFEF4444),
+                          width: 40,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)))
+                    ]),
                   ],
                 ),
               ),
@@ -688,11 +801,36 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
 
   Widget _buildAgenciesTab() {
     final agencies = [
-      {'name': 'Creative Marketing Solutions', 'submissions': 45, 'approved': 43, 'amount': 2850000},
-      {'name': 'Digital Dynamics Agency', 'submissions': 38, 'approved': 35, 'amount': 2420000},
-      {'name': 'Brand Builders Inc', 'submissions': 32, 'approved': 29, 'amount': 2050000},
-      {'name': 'Media Masters', 'submissions': 28, 'approved': 25, 'amount': 1780000},
-      {'name': 'Promotion Pros', 'submissions': 25, 'approved': 22, 'amount': 1590000},
+      {
+        'name': 'Creative Marketing Solutions',
+        'submissions': 45,
+        'approved': 43,
+        'amount': 2850000
+      },
+      {
+        'name': 'Digital Dynamics Agency',
+        'submissions': 38,
+        'approved': 35,
+        'amount': 2420000
+      },
+      {
+        'name': 'Brand Builders Inc',
+        'submissions': 32,
+        'approved': 29,
+        'amount': 2050000
+      },
+      {
+        'name': 'Media Masters',
+        'submissions': 28,
+        'approved': 25,
+        'amount': 1780000
+      },
+      {
+        'name': 'Promotion Pros',
+        'submissions': 25,
+        'approved': 22,
+        'amount': 1590000
+      },
     ];
 
     return Card(
@@ -724,9 +862,10 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
     );
   }
 
-  Widget _buildAgencyCard(int rank, String name, int submissions, int approved, int amount) {
+  Widget _buildAgencyCard(
+      int rank, String name, int submissions, int approved, int amount) {
     final approvalRate = (approved / submissions * 100).round();
-    
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
@@ -803,7 +942,8 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
             child: LinearProgressIndicator(
               value: approved / submissions,
               backgroundColor: AppColors.reviewBorder,
-              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+              valueColor:
+                  const AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
               minHeight: 8,
             ),
           ),
@@ -822,44 +962,54 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
           children: [
             Row(
               children: [
-                const Icon(Icons.psychology, color: AppColors.primary, size: 24),
+                const Icon(Icons.psychology,
+                    color: AppColors.primary, size: 24),
                 const SizedBox(width: 8),
                 Text(
                   'AI Performance Metrics',
-                  style: AppTextStyles.h2.copyWith(color: AppColors.textPrimary),
+                  style:
+                      AppTextStyles.h2.copyWith(color: AppColors.textPrimary),
                 ),
               ],
             ),
             const SizedBox(height: 24),
             Row(
               children: [
-                Expanded(child: _buildAIMetricCard(
-                  'Average Confidence',
-                  '87%',
-                  '↑ +3% vs last month',
-                  const Color(0xFF3B82F6),
-                ),),
+                Expanded(
+                  child: _buildAIMetricCard(
+                    'Average Confidence',
+                    '87%',
+                    '↑ +3% vs last month',
+                    const Color(0xFF3B82F6),
+                  ),
+                ),
                 const SizedBox(width: 16),
-                Expanded(child: _buildAIMetricCard(
-                  'Accuracy Rate',
-                  '94%',
-                  'AI predictions match ASM',
-                  const Color(0xFF10B981),
-                ),),
+                Expanded(
+                  child: _buildAIMetricCard(
+                    'Accuracy Rate',
+                    '94%',
+                    'AI predictions match ASM',
+                    const Color(0xFF10B981),
+                  ),
+                ),
                 const SizedBox(width: 16),
-                Expanded(child: _buildAIMetricCard(
-                  'Processing Time',
-                  '2.3s',
-                  'Average per document',
-                  const Color(0xFF8B5CF6),
-                ),),
+                Expanded(
+                  child: _buildAIMetricCard(
+                    'Processing Time',
+                    '2.3s',
+                    'Average per document',
+                    const Color(0xFF8B5CF6),
+                  ),
+                ),
                 const SizedBox(width: 16),
-                Expanded(child: _buildAIMetricCard(
-                  'Flagged for Review',
-                  '23',
-                  '9% of total submissions',
-                  const Color(0xFFF59E0B),
-                ),),
+                Expanded(
+                  child: _buildAIMetricCard(
+                    'Flagged for Review',
+                    '23',
+                    '9% of total submissions',
+                    const Color(0xFFF59E0B),
+                  ),
+                ),
               ],
             ),
           ],
@@ -868,7 +1018,8 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
     );
   }
 
-  Widget _buildAIMetricCard(String label, String value, String subtitle, Color color) {
+  Widget _buildAIMetricCard(
+      String label, String value, String subtitle, Color color) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -926,7 +1077,8 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                 children: [
                   Text(
                     '💡 Key Insights',
-                    style: AppTextStyles.h3.copyWith(color: AppColors.textPrimary),
+                    style:
+                        AppTextStyles.h3.copyWith(color: AppColors.textPrimary),
                   ),
                   const SizedBox(height: 16),
                   _buildInsightItem(
@@ -969,7 +1121,8 @@ class _HQAnalyticsPageState extends State<HQAnalyticsPage> {
                 children: [
                   Text(
                     '📈 Recommendations',
-                    style: AppTextStyles.h3.copyWith(color: const Color(0xFF065F46)),
+                    style: AppTextStyles.h3
+                        .copyWith(color: const Color(0xFF065F46)),
                   ),
                   const SizedBox(height: 16),
                   _buildRecommendationItem(
