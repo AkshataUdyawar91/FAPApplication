@@ -215,6 +215,33 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     widget.onCampaignsChanged(_campaigns);
   }
 
+  // ── Test helpers (used by integration_test_runner.dart) ──
+
+  /// Loads dealers from the API for the given campaign, populating internal maps.
+  Future<void> testLoadDealers(String campaignId) => _loadDealersForState(campaignId);
+
+  /// Returns the list of unique dealer names loaded for a campaign.
+  List<String> testGetDealerNames(String campaignId) => _uniqueDealerNames[campaignId] ?? [];
+
+  /// Programmatically selects a dealer name (same as user picking from dialog).
+  void testSelectDealerName(String campaignId, String dealerName) {
+    final campaign = _campaigns.firstWhere((c) => c.id == campaignId);
+    _onDealerNameSelected(campaign, dealerName);
+  }
+
+  /// Returns the city options available after a dealer name is selected.
+  List<Map<String, dynamic>> testGetCityOptions(String campaignId) => _cityOptions[campaignId] ?? [];
+
+  /// Programmatically selects a city (same as user picking from dialog).
+  void testSelectCity(String campaignId, Map<String, dynamic> dealer) {
+    final campaign = _campaigns.firstWhere((c) => c.id == campaignId);
+    _onCitySelected(campaign, dealer);
+  }
+
+  /// Triggers a UI rebuild.
+  // ignore: invalid_use_of_protected_member
+  void testRebuild() => setState(() {});
+
   @override
   void initState() {
     super.initState();

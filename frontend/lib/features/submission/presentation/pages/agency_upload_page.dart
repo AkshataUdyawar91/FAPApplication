@@ -76,6 +76,29 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
 
   bool get _isEditMode => widget.submissionId != null;
 
+  // ── Test helpers (used by integration_test_runner.dart) ──
+  /// Exposes invoices list for test injection.
+  List<InvoiceItemData> get testInvoices => _invoices;
+  set testInvoices(List<InvoiceItemData> v) => _invoices = v;
+  /// Exposes cost summary file for test injection.
+  PlatformFile? get testCostSummaryFile => _costSummaryFile;
+  set testCostSummaryFile(PlatformFile? v) => _costSummaryFile = v;
+  /// Exposes activity summary file for test injection.
+  PlatformFile? get testActivitySummaryFile => _activitySummaryFile;
+  set testActivitySummaryFile(PlatformFile? v) => _activitySummaryFile = v;
+  /// Exposes enquiry doc file for test injection.
+  PlatformFile? get testEnquiryDocFile => _enquiryDocFile;
+  set testEnquiryDocFile(PlatformFile? v) => _enquiryDocFile = v;
+  /// Exposes campaigns list for test injection.
+  List<CampaignItemData> get testCampaigns => _campaigns;
+  set testCampaigns(List<CampaignItemData> v) => _campaigns = v;
+  /// Triggers invoice extraction for a given invoice.
+  Future<void> testExtractInvoice(InvoiceItemData inv) =>
+      _uploadAndAutofillInvoice(inv);
+  /// Triggers a UI rebuild.
+  // ignore: invalid_use_of_protected_member
+  void testRebuild() => setState(() {});
+
   static const int _totalSteps = 3;
 
   static const List<_TabMeta> _tabs = [
