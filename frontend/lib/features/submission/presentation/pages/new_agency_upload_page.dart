@@ -2631,6 +2631,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
                 setState(() => _campaigns = campaigns),
             token: widget.token,
             packageId: _currentPackageId,
+            selectedActivationState: _selectedActivationState,
             onEnsureTeamCreated: _ensureTeamCreated,
           ),
         ],

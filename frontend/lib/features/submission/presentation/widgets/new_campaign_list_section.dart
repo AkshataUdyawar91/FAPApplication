@@ -1,9 +1,13 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/web_camera_helper.dart'
+    if (dart.library.io) '../../../../core/utils/web_camera_stub.dart';
 
 /// Extraction status for UI feedback
 enum ExtractionStatus { none, extracting, success, failed }
@@ -103,6 +107,7 @@ class CampaignListSection extends StatefulWidget {
   final Function(List<CampaignItemData>) onCampaignsChanged;
   final String? token;
   final String? packageId;
+  final String? selectedActivationState;
 
   /// Called when photos are picked and the team needs to exist on the server.
   /// The parent must create the team (and package if needed) and return the
@@ -116,6 +121,7 @@ class CampaignListSection extends StatefulWidget {
     required this.onCampaignsChanged,
     this.token,
     this.packageId,
+    this.selectedActivationState,
     this.onEnsureTeamCreated,
   });
 
@@ -128,6 +134,13 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
   // Controllers keyed by "campaignId_fieldName" so they survive setState rebuilds
   final Map<String, TextEditingController> _controllers = {};
+
+  // Dealer data per campaign
+  final Map<String, List<Map<String, dynamic>>> _dealerResults = {};
+  final Map<String, bool> _dealerLoading = {};
+  final Map<String, bool> _dealerSelected = {};
+  final Map<String, List<String>> _uniqueDealerNames = {};
+  final Map<String, List<Map<String, dynamic>>> _cityOptions = {};
 
   TextEditingController _ctrl(
       String campaignId, String field, String initialValue) {
@@ -144,6 +157,72 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     for (final k in keys) {
       _controllers.remove(k)?.dispose();
     }
+    _dealerResults.remove(campaignId);
+    _dealerLoading.remove(campaignId);
+    _dealerSelected.remove(campaignId);
+    _uniqueDealerNames.remove(campaignId);
+    _cityOptions.remove(campaignId);
+  }
+
+  Future<void> _loadDealersForState(String campaignId) async {
+    final state = widget.selectedActivationState;
+    if (state == null || state.isEmpty || widget.token == null) return;
+    setState(() => _dealerLoading[campaignId] = true);
+    try {
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final response = await dio.get(
+        '/state/dealers',
+        queryParameters: {'state': state, 'q': '', 'size': 50},
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200 && mounted) {
+        final data = response.data;
+        List<Map<String, dynamic>> dealers;
+        if (data is List) {
+          dealers = List<Map<String, dynamic>>.from(data);
+        } else if (data is Map && data['items'] != null) {
+          dealers = List<Map<String, dynamic>>.from(data['items'] as List);
+        } else {
+          dealers = [];
+        }
+        final names = dealers
+            .map((d) => d['dealerName']?.toString() ?? '')
+            .toSet()
+            .toList()
+          ..sort();
+        setState(() {
+          _dealerResults[campaignId] = dealers;
+          _uniqueDealerNames[campaignId] = names;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading dealers: $e');
+    } finally {
+      if (mounted) setState(() => _dealerLoading[campaignId] = false);
+    }
+  }
+
+  void _onDealerNameSelected(CampaignItemData campaign, String dealerName) {
+    final allDealers = _dealerResults[campaign.id] ?? [];
+    final matchingDealers = allDealers
+        .where((d) => d['dealerName']?.toString() == dealerName)
+        .toList();
+    setState(() {
+      campaign.dealershipName = dealerName;
+      campaign.dealershipAddress = '';
+      campaign.campaignName = '';
+      _dealerSelected[campaign.id] = true;
+      _cityOptions[campaign.id] = matchingDealers;
+    });
+    widget.onCampaignsChanged(_campaigns);
+  }
+
+  void _onCitySelected(CampaignItemData campaign, Map<String, dynamic> dealer) {
+    setState(() {
+      campaign.dealershipAddress = dealer['city']?.toString() ?? '';
+      campaign.campaignName = dealer['dealerCode']?.toString() ?? '';
+    });
+    widget.onCampaignsChanged(_campaigns);
   }
 
   @override
@@ -157,6 +236,12 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         widget.onCampaignsChanged(_campaigns);
       });
+    }
+    // Pre-mark existing campaigns as dealer-selected if they already have data
+    for (final c in _campaigns) {
+      if (c.dealershipName.isNotEmpty) {
+        _dealerSelected[c.id] = true;
+      }
     }
   }
 
@@ -287,6 +372,43 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       if (mounted) {
         setState(() => campaign.uploadingPhotoIndices.removeAll(indices));
         _showError('Photo upload failed. Photos will be uploaded on submit.');
+      }
+    }
+  }
+
+  Future<void> _capturePhoto(int campaignIndex) async {
+    final campaign = _campaigns[campaignIndex];
+    final existing = campaign.existingPhotoFileNames?.length ?? 0;
+    final remaining =
+        CampaignItemData.maxPhotos - campaign.photos.length - existing;
+    if (remaining <= 0) {
+      _showError('Maximum ${CampaignItemData.maxPhotos} photos reached');
+      return;
+    }
+    if (kIsWeb) {
+      final file = await capturePhotoOnWeb(context);
+      if (file != null && mounted) {
+        final startIndex = campaign.photos.length;
+        setState(() => campaign.photos.add(file));
+        widget.onCampaignsChanged(_campaigns);
+        await _uploadPhotosImmediately(campaignIndex, startIndex, [file]);
+      }
+    } else {
+      try {
+        final picker = ImagePicker();
+        final XFile? photo = await picker.pickImage(
+            source: ImageSource.camera, imageQuality: 85);
+        if (photo != null) {
+          final bytes = await photo.readAsBytes();
+          final file =
+              PlatformFile(name: photo.name, size: bytes.length, bytes: bytes);
+          final startIndex = campaign.photos.length;
+          setState(() => campaign.photos.add(file));
+          widget.onCampaignsChanged(_campaigns);
+          await _uploadPhotosImmediately(campaignIndex, startIndex, [file]);
+        }
+      } catch (e) {
+        debugPrint('Error capturing photo: $e');
       }
     }
   }
@@ -814,23 +936,15 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               final narrow = constraints.maxWidth < 500;
               if (narrow) {
                 return Column(children: [
-                  _teamField('Dealership Name', campaign.id, 'dealershipName',
-                      campaign.dealershipName, (v) {
-                    campaign.dealershipName = v;
-                    widget.onCampaignsChanged(_campaigns);
-                  }, required: true),
+                  _dealerNameDropdownField(campaign),
                   const SizedBox(height: 12),
-                  _teamField('Dealer Code', campaign.id, 'campaignName',
-                      campaign.campaignName, (v) {
-                    campaign.campaignName = v;
-                    widget.onCampaignsChanged(_campaigns);
-                  }, required: true),
+                  _cityDropdownField(campaign),
                   const SizedBox(height: 12),
-                  _teamField('City', campaign.id, 'dealershipAddress',
-                      campaign.dealershipAddress, (v) {
-                    campaign.dealershipAddress = v;
-                    widget.onCampaignsChanged(_campaigns);
-                  }, required: true),
+                  _teamReadonly(
+                      'Dealer Code',
+                      campaign.campaignName.isNotEmpty
+                          ? campaign.campaignName
+                          : '—'),
                   const SizedBox(height: 12),
                   _teamDateField('Start Date', campaign.startDate, (v) {
                     setState(() {
@@ -855,26 +969,16 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               }
               return Column(children: [
                 Row(children: [
-                  Expanded(
-                      child: _teamField('Dealership Name', campaign.id,
-                          'dealershipName', campaign.dealershipName, (v) {
-                    campaign.dealershipName = v;
-                    widget.onCampaignsChanged(_campaigns);
-                  }, required: true)),
+                  Expanded(child: _dealerNameDropdownField(campaign)),
+                  const SizedBox(width: 16),
+                  Expanded(child: _cityDropdownField(campaign)),
                   const SizedBox(width: 16),
                   Expanded(
-                      child: _teamField('Dealer Code', campaign.id,
-                          'campaignName', campaign.campaignName, (v) {
-                    campaign.campaignName = v;
-                    widget.onCampaignsChanged(_campaigns);
-                  }, required: true)),
-                  const SizedBox(width: 16),
-                  Expanded(
-                      child: _teamField('City', campaign.id,
-                          'dealershipAddress', campaign.dealershipAddress, (v) {
-                    campaign.dealershipAddress = v;
-                    widget.onCampaignsChanged(_campaigns);
-                  }, required: true)),
+                      child: _teamReadonly(
+                          'Dealer Code',
+                          campaign.campaignName.isNotEmpty
+                              ? campaign.campaignName
+                              : '—')),
                 ]),
                 const SizedBox(height: 12),
                 Row(children: [
@@ -908,15 +1012,17 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
             // State note
             RichText(
-                text: const TextSpan(
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                text: TextSpan(
+              style:
+                  const TextStyle(fontSize: 13, color: AppColors.textSecondary),
               children: [
-                TextSpan(text: 'State: '),
+                const TextSpan(text: 'State: '),
                 TextSpan(
-                    text: 'Maharashtra',
-                    style: TextStyle(
+                    text: widget.selectedActivationState ?? 'Not selected',
+                    style: const TextStyle(
                         fontWeight: FontWeight.w600, color: Color(0xFF111827))),
-                TextSpan(text: '  (all teams share the activation state)'),
+                const TextSpan(
+                    text: '  (all teams share the activation state)'),
               ],
             )),
             const SizedBox(height: 16),
@@ -929,48 +1035,362 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     );
   }
 
-  // ─── Field helpers ────────────────────────────────────────────────────
+  // ─── Dealer dropdown fields ───────────────────────────────────────────
 
-  Widget _teamField(String label, String campaignId, String field, String value,
-      Function(String) onChanged,
-      {bool required = false}) {
-    final controller = _ctrl(campaignId, field, value);
+  Widget _dealerNameDropdownField(CampaignItemData campaign) {
+    final isLoading = _dealerLoading[campaign.id] ?? false;
+    final hasState = widget.selectedActivationState != null &&
+        widget.selectedActivationState!.isNotEmpty;
+    final isSelected = _dealerSelected[campaign.id] == true &&
+        campaign.dealershipName.isNotEmpty;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(children: [
-          Text(label,
-              style: const TextStyle(
+          const Text('Dealership Name',
+              style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                   color: Color(0xFF374151))),
-          if (required)
-            const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
+          const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
         ]),
         const SizedBox(height: 6),
-        TextFormField(
-          controller: controller,
-          onChanged: onChanged,
-          style: const TextStyle(fontSize: 14),
-          decoration: InputDecoration(
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
-                borderSide: const BorderSide(color: AppColors.border)),
-            enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
-                borderSide: const BorderSide(color: AppColors.border)),
-            focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
-                borderSide:
-                    const BorderSide(color: AppColors.primary, width: 1.5)),
-            isDense: true,
+        InkWell(
+          onTap: hasState ? () => _showDealerNamePicker(campaign) : null,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: hasState ? Colors.white : const Color(0xFFF9FAFB),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    isSelected
+                        ? campaign.dealershipName
+                        : (hasState
+                            ? 'Select dealer...'
+                            : 'Select activation state first'),
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: isSelected
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF9E9E9E),
+                    ),
+                  ),
+                ),
+                if (isLoading)
+                  const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: AppColors.primary))
+                else if (isSelected)
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        campaign.dealershipName = '';
+                        campaign.campaignName = '';
+                        campaign.dealershipAddress = '';
+                        _dealerSelected[campaign.id] = false;
+                        _cityOptions[campaign.id] = [];
+                      });
+                      widget.onCampaignsChanged(_campaigns);
+                    },
+                    child: const Icon(Icons.close,
+                        size: 18, color: Color(0xFF9E9E9E)),
+                  )
+                else
+                  Icon(Icons.arrow_drop_down,
+                      size: 22,
+                      color: hasState
+                          ? AppColors.primary
+                          : const Color(0xFF9E9E9E)),
+              ],
+            ),
+          ),
+        ),
+        if (!hasState)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text('Please select an activation state in Step 1 first',
+                style: TextStyle(fontSize: 11, color: Color(0xFFEF4444))),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _showDealerNamePicker(CampaignItemData campaign) async {
+    final state = widget.selectedActivationState;
+    if (state == null || state.isEmpty) return;
+
+    if (_dealerResults[campaign.id] == null ||
+        _dealerResults[campaign.id]!.isEmpty) {
+      await _loadDealersForState(campaign.id);
+    }
+    if (!mounted) return;
+
+    final allNames = List<String>.from(_uniqueDealerNames[campaign.id] ?? []);
+    final searchController = TextEditingController();
+    List<String> filtered = List.from(allNames);
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: Text('Select Dealer — $state',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600)),
+              contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              content: SizedBox(
+                width: 400,
+                height: 400,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: searchController,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        hintText: 'Search dealer name...',
+                        hintStyle: const TextStyle(
+                            fontSize: 13, color: Color(0xFF9E9E9E)),
+                        prefixIcon: const Icon(Icons.search,
+                            size: 20, color: AppColors.primary),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide:
+                                const BorderSide(color: AppColors.border)),
+                        enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide:
+                                const BorderSide(color: AppColors.border)),
+                        focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                                color: AppColors.primary, width: 1.5)),
+                        isDense: true,
+                      ),
+                      onChanged: (value) {
+                        final q = value.toLowerCase();
+                        setDialogState(() {
+                          filtered = allNames
+                              .where((n) => n.toLowerCase().contains(q))
+                              .toList();
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.store_outlined,
+                                      size: 40,
+                                      color:
+                                          Colors.grey.withValues(alpha: 0.4)),
+                                  const SizedBox(height: 8),
+                                  const Text('No dealers found',
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          color: AppColors.textSecondary)),
+                                ],
+                              ),
+                            )
+                          : ListView.separated(
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) => const Divider(
+                                  height: 1, color: Color(0xFFF3F4F6)),
+                              itemBuilder: (ctx, i) {
+                                final name = filtered[i];
+                                final allDealers =
+                                    _dealerResults[campaign.id] ?? [];
+                                final cityCount = allDealers
+                                    .where((d) =>
+                                        d['dealerName']?.toString() == name)
+                                    .length;
+                                return ListTile(
+                                  dense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  title: Text(name,
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500)),
+                                  subtitle: Text(
+                                      '$cityCount ${cityCount == 1 ? 'city' : 'cities'}',
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textSecondary)),
+                                  trailing: const Icon(Icons.chevron_right,
+                                      size: 18, color: AppColors.textSecondary),
+                                  onTap: () {
+                                    _onDealerNameSelected(campaign, name);
+                                    Navigator.of(ctx).pop();
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('Cancel')),
+              ],
+            );
+          },
+        );
+      },
+    );
+    searchController.dispose();
+  }
+
+  Widget _cityDropdownField(CampaignItemData campaign) {
+    final hasDealerSelected = _dealerSelected[campaign.id] == true &&
+        campaign.dealershipName.isNotEmpty;
+    final hasCitySelected = campaign.dealershipAddress.isNotEmpty;
+    final cities = _cityOptions[campaign.id] ?? [];
+
+    // Auto-select if only one city
+    if (hasDealerSelected && !hasCitySelected && cities.length == 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _onCitySelected(campaign, cities.first);
+      });
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          const Text('City',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF374151))),
+          const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
+        ]),
+        const SizedBox(height: 6),
+        InkWell(
+          onTap: hasDealerSelected ? () => _showCityPicker(campaign) : null,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: hasDealerSelected ? Colors.white : const Color(0xFFF9FAFB),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    hasCitySelected
+                        ? campaign.dealershipAddress
+                        : (hasDealerSelected
+                            ? 'Select city...'
+                            : 'Select dealer first'),
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: hasCitySelected
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF9E9E9E),
+                    ),
+                  ),
+                ),
+                if (hasCitySelected)
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        campaign.dealershipAddress = '';
+                        campaign.campaignName = '';
+                      });
+                      widget.onCampaignsChanged(_campaigns);
+                    },
+                    child: const Icon(Icons.close,
+                        size: 18, color: Color(0xFF9E9E9E)),
+                  )
+                else
+                  Icon(Icons.arrow_drop_down,
+                      size: 22,
+                      color: hasDealerSelected
+                          ? AppColors.primary
+                          : const Color(0xFF9E9E9E)),
+              ],
+            ),
           ),
         ),
       ],
     );
   }
+
+  Future<void> _showCityPicker(CampaignItemData campaign) async {
+    final cities = _cityOptions[campaign.id] ?? [];
+    if (cities.isEmpty) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text('Select City — ${campaign.dealershipName}',
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          content: SizedBox(
+            width: 350,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: cities.length,
+              separatorBuilder: (_, __) =>
+                  const Divider(height: 1, color: Color(0xFFF3F4F6)),
+              itemBuilder: (ctx, i) {
+                final dealer = cities[i];
+                final city = dealer['city']?.toString() ?? '';
+                final code = dealer['dealerCode']?.toString() ?? '';
+                return ListTile(
+                  dense: true,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  leading: const Icon(Icons.location_on_outlined,
+                      size: 20, color: AppColors.primary),
+                  title: Text(city,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w500)),
+                  subtitle: Text('Code: $code',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textSecondary)),
+                  onTap: () {
+                    _onCitySelected(campaign, dealer);
+                    Navigator.of(ctx).pop();
+                  },
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancel')),
+          ],
+        );
+      },
+    );
+  }
+
+  // ─── Field helpers ────────────────────────────────────────────────────
 
   Widget _teamDateField(String label, String value, Function(String) onChanged,
       {bool required = false, DateTime? minDate}) {
@@ -1075,6 +1495,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                           : () => _removePhoto(campaignIndex, i),
                     )),
             if (canAdd) _addPhotoTile(() => _pickPhotos(campaignIndex)),
+            if (canAdd) _capturePhotoTile(() => _capturePhoto(campaignIndex)),
           ],
         ),
       ],
@@ -1169,6 +1590,35 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                 size: 22, color: AppColors.primary.withValues(alpha: 0.6)),
             const SizedBox(height: 4),
             const Text('+ Add Photo',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _capturePhotoTile(VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        width: 110,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+              color: AppColors.primary.withValues(alpha: 0.4), width: 1.5),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.camera_alt,
+                size: 22, color: AppColors.primary.withValues(alpha: 0.6)),
+            const SizedBox(height: 4),
+            const Text('+ Capture',
                 style: TextStyle(
                     fontSize: 11,
                     color: AppColors.primary,
