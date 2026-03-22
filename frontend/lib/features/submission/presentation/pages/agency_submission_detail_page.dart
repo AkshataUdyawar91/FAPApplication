@@ -419,7 +419,7 @@ class _AgencySubmissionDetailPageState
                 const Icon(Icons.verified_user,
                     color: AppColors.primary, size: 24),
                 const SizedBox(width: 12),
-                const Text('Document Validations', style: AppTextStyles.h3),
+                const Text('Validation Summary', style: AppTextStyles.h3),
               ],
             ),
             const SizedBox(height: 16),
@@ -1483,10 +1483,10 @@ class _AgencySubmissionDetailPageState
     return [
       NavItem(
           icon: Icons.dashboard,
-          label: 'Dashboard',
+          label: 'Home',
           onTap: () => Navigator.pop(context)),
       NavItem(
-          icon: Icons.upload_file, label: 'Upload', onTap: _navigateToUpload),
+          icon: Icons.upload_file, label: 'New Claim', onTap: _navigateToUpload),
       NavItem(
           icon: Icons.visibility,
           label: 'View Request',
@@ -1530,37 +1530,6 @@ class _AgencySubmissionDetailPageState
             ),
           ),
           const Spacer(),
-          CircleAvatar(
-            backgroundColor: Colors.white,
-            radius: 18,
-            child: Text(
-              widget.userName.isNotEmpty
-                  ? widget.userName[0].toUpperCase()
-                  : '?',
-              style: const TextStyle(
-                  color: Color(0xFF003087),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(widget.userName,
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white)),
-              const SizedBox(height: 2),
-              Text('Agency',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.7))),
-            ],
-          ),
-          const SizedBox(width: 12),
         ],
       ),
     );
