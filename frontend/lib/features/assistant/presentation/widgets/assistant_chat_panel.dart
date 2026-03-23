@@ -365,6 +365,115 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     }
   }
 
+  /// Fetch document bytes from backend and show in a fullscreen dialog.
+  Future<void> _viewDocument(String docId) async {
+    if (docId.isEmpty) return;
+    try {
+      final dio = ref.read(dioProvider);
+      final resp = await dio.get('/api/documents/$docId/download');
+      final data = resp.data as Map<String, dynamic>;
+      final base64Content = data['base64Content'] as String? ?? '';
+      final contentType = data['contentType'] as String? ?? '';
+      final fileName = data['filename'] as String? ?? 'document';
+      if (base64Content.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No content available for this document')),
+          );
+        }
+        return;
+      }
+      final bytes = base64Decode(base64Content);
+      final isImage = contentType.startsWith('image/') ||
+          fileName.toLowerCase().endsWith('.jpg') ||
+          fileName.toLowerCase().endsWith('.jpeg') ||
+          fileName.toLowerCase().endsWith('.png');
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                child: Row(children: [
+                  Expanded(child: Text(fileName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ]),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: isImage
+                    ? InteractiveViewer(child: Image.memory(bytes, fit: BoxFit.contain))
+                    : Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(32),
+                          child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            const Icon(Icons.description, size: 48, color: Color(0xFF6B7280)),
+                            const SizedBox(height: 12),
+                            Text(fileName, style: const TextStyle(fontSize: 14)),
+                            const SizedBox(height: 8),
+                            const Text('Preview not available for this file type.', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                          ]),
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load document: $e')),
+        );
+      }
+    }
+  }
+
+  /// Fetch document bytes from backend and trigger browser download.
+  Future<void> _downloadDocument(String docId, String fallbackName) async {
+    if (docId.isEmpty) return;
+    try {
+      final dio = ref.read(dioProvider);
+      final resp = await dio.get('/api/documents/$docId/download');
+      final data = resp.data as Map<String, dynamic>;
+      final base64Content = data['base64Content'] as String? ?? '';
+      final contentType = data['contentType'] as String? ?? 'application/octet-stream';
+      final fileName = data['filename'] as String? ?? fallbackName;
+      if (base64Content.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No content available for download')),
+          );
+        }
+        return;
+      }
+      if (kIsWeb) {
+        final anchor = web.HTMLAnchorElement()
+          ..href = 'data:$contentType;base64,$base64Content'
+          ..download = fileName
+          ..style.display = 'none';
+        web.document.body!.append(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Downloaded: $fileName')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to download: $e')),
+        );
+      }
+    }
+  }
+
   Widget _bottomInput(AssistantState state) {
     if (_inputMode == 'po') {
       return _searchBar(_poSearchCtrl, 'Search PO number (min 3 chars)...', Icons.search, _onPOSearch);
@@ -1365,6 +1474,43 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
+        // View & Download buttons for invoice
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _viewDocument(docId);
+              },
+              icon: const Icon(Icons.visibility, size: 16),
+              label: const Text('View'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _downloadDocument(docId, 'invoice');
+              },
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Download'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -1553,6 +1699,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         2: FlexColumnWidth(),
         3: FlexColumnWidth(),
         4: FlexColumnWidth(),
+        5: FixedColumnWidth(40),
+        6: FixedColumnWidth(40),
       },
       children: [
         TableRow(
@@ -1563,6 +1711,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
             _tableCell('GPS', headerStyle),
             _tableCell('Blue\nT-shirt', headerStyle),
             _tableCell('3W\nVehicle', headerStyle),
+            _tableCell('View', headerStyle),
+            _tableCell('Save', headerStyle),
           ],
         ),
         ...photos.map((photo) => TableRow(
@@ -1573,6 +1723,18 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
             _tableBadgeCell(_badge(_rulePassed(photo, 'gps'))),
             _tableBadgeCell(_badge(_rulePassed(photo, 'blue'))),
             _tableBadgeCell(_badge(_rulePassed(photo, 'vehicle'))),
+            _tableBadgeCell(
+              InkWell(
+                onTap: photo.photoId.isNotEmpty ? () => _viewDocument(photo.photoId) : null,
+                child: Icon(Icons.visibility, size: 18, color: photo.photoId.isNotEmpty ? const Color(0xFF003087) : Colors.grey.shade400),
+              ),
+            ),
+            _tableBadgeCell(
+              InkWell(
+                onTap: photo.photoId.isNotEmpty ? () => _downloadDocument(photo.photoId, photo.fileName) : null,
+                child: Icon(Icons.download, size: 18, color: photo.photoId.isNotEmpty ? const Color(0xFF003087) : Colors.grey.shade400),
+              ),
+            ),
           ],
         )),
       ],
@@ -1792,6 +1954,43 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
+        // View & Download buttons for cost summary
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _viewDocument(docId);
+              },
+              icon: const Icon(Icons.visibility, size: 16),
+              label: const Text('View'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _downloadDocument(docId, 'cost_summary');
+              },
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Download'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -1918,6 +2117,43 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
+        // View & Download buttons for activity summary
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _viewDocument(docId);
+              },
+              icon: const Icon(Icons.visibility, size: 16),
+              label: const Text('View'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _downloadDocument(docId, 'activity_summary');
+              },
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Download'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -2042,6 +2278,43 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
+        // View & Download buttons for enquiry dump
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _viewDocument(docId);
+              },
+              icon: const Icon(Icons.visibility, size: 16),
+              label: const Text('View'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _downloadDocument(docId, 'enquiry_dump');
+              },
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Download'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -2259,7 +2532,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('ClaimsIQ Assistant',
+                      Text('FieldIQ Assistant',
                           style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
                       Text('Online', style: TextStyle(fontSize: 12, color: Color(0xFF90CAF9))),
                     ],

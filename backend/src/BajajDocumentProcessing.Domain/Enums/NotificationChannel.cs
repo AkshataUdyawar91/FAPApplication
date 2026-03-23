@@ -7,12 +7,12 @@ namespace BajajDocumentProcessing.Domain.Enums;
 public enum NotificationChannel
 {
     /// <summary>
-    /// In-app notification displayed within the ClaimsIQ portal.
+    /// In-app notification displayed within the FieldIQ portal.
     /// </summary>
     InApp = 1,
 
     /// <summary>
-    /// Microsoft Teams Adaptive Card notification sent via the ClaimsIQ bot.
+    /// Microsoft Teams Adaptive Card notification sent via the FieldIQ bot.
     /// </summary>
     Teams = 2,
 

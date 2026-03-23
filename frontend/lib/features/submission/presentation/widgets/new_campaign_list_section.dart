@@ -6,7 +6,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/theme/app_colors.dart';
-import '../../../../core/utils/web_camera_helper.dart' if (dart.library.io) '../../../../core/utils/web_camera_stub.dart';
+import '../../../../core/utils/web_camera_helper.dart'
+    if (dart.library.io) '../../../../core/utils/web_camera_stub.dart';
 
 /// Extraction status for UI feedback
 enum ExtractionStatus { none, extracting, success, failed }
@@ -59,8 +60,8 @@ class InvoiceItemData {
 
 /// Data class for a team/campaign
 class CampaignItemData {
-  final String id;
-  String campaignName;   // used as "Dealer Code" in the new UI
+  String id; // mutable: updated with server-assigned campaignId after creation
+  String campaignName; // used as "Dealer Code" in the new UI
   String startDate;
   String endDate;
   String workingDays;
@@ -73,6 +74,12 @@ class CampaignItemData {
   String? existingCostSummaryFileName;
   String? existingActivitySummaryFileName;
   List<String>? existingPhotoFileNames;
+
+  /// Tracks which photo indices are currently uploading
+  final Set<int> uploadingPhotoIndices = {};
+
+  /// Tracks which photo indices have been successfully uploaded to the server
+  final Set<int> uploadedPhotoIndices = {};
 
   CampaignItemData({
     required this.id,
@@ -93,7 +100,6 @@ class CampaignItemData {
         invoices = invoices ?? [InvoiceItemData(id: '${id}_invoice_1')];
 
   static const int maxPhotos = 50;
-  static const int minPhotos = 3;
 }
 
 class CampaignListSection extends StatefulWidget {
@@ -103,6 +109,12 @@ class CampaignListSection extends StatefulWidget {
   final String? packageId;
   final String? selectedActivationState;
 
+  /// Called when photos are picked and the team needs to exist on the server.
+  /// The parent must create the team (and package if needed) and return the
+  /// server-assigned campaignId, or null on failure.
+  final Future<String?> Function(CampaignItemData campaign)?
+      onEnsureTeamCreated;
+
   const CampaignListSection({
     super.key,
     required this.campaigns,
@@ -110,6 +122,7 @@ class CampaignListSection extends StatefulWidget {
     this.token,
     this.packageId,
     this.selectedActivationState,
+    this.onEnsureTeamCreated,
   });
 
   @override
@@ -125,13 +138,12 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   // Dealer data per campaign
   final Map<String, List<Map<String, dynamic>>> _dealerResults = {};
   final Map<String, bool> _dealerLoading = {};
-  final Map<String, bool> _showDealerDropdown = {};
   final Map<String, bool> _dealerSelected = {};
-  // Unique dealer names and cities for the selected dealer
   final Map<String, List<String>> _uniqueDealerNames = {};
   final Map<String, List<Map<String, dynamic>>> _cityOptions = {};
 
-  TextEditingController _ctrl(String campaignId, String field, String initialValue) {
+  TextEditingController _ctrl(
+      String campaignId, String field, String initialValue) {
     final key = '${campaignId}_$field';
     if (!_controllers.containsKey(key)) {
       _controllers[key] = TextEditingController(text: initialValue);
@@ -140,23 +152,21 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   }
 
   void _disposeControllersForCampaign(String campaignId) {
-    final keys = _controllers.keys.where((k) => k.startsWith('${campaignId}_')).toList();
+    final keys =
+        _controllers.keys.where((k) => k.startsWith('${campaignId}_')).toList();
     for (final k in keys) {
       _controllers.remove(k)?.dispose();
     }
     _dealerResults.remove(campaignId);
     _dealerLoading.remove(campaignId);
-    _showDealerDropdown.remove(campaignId);
     _dealerSelected.remove(campaignId);
     _uniqueDealerNames.remove(campaignId);
     _cityOptions.remove(campaignId);
   }
 
-  /// Fetches all dealers from the API filtered by the selected activation state.
   Future<void> _loadDealersForState(String campaignId) async {
     final state = widget.selectedActivationState;
     if (state == null || state.isEmpty || widget.token == null) return;
-
     setState(() => _dealerLoading[campaignId] = true);
     try {
       final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
@@ -175,8 +185,11 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         } else {
           dealers = [];
         }
-        // Extract unique dealer names
-        final names = dealers.map((d) => d['dealerName']?.toString() ?? '').toSet().toList()..sort();
+        final names = dealers
+            .map((d) => d['dealerName']?.toString() ?? '')
+            .toSet()
+            .toList()
+          ..sort();
         setState(() {
           _dealerResults[campaignId] = dealers;
           _uniqueDealerNames[campaignId] = names;
@@ -189,59 +202,28 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     }
   }
 
-  /// Called when a dealer NAME is selected — populates city options for that dealer.
   void _onDealerNameSelected(CampaignItemData campaign, String dealerName) {
     final allDealers = _dealerResults[campaign.id] ?? [];
-    final matchingDealers = allDealers.where((d) => d['dealerName']?.toString() == dealerName).toList();
-
+    final matchingDealers = allDealers
+        .where((d) => d['dealerName']?.toString() == dealerName)
+        .toList();
     setState(() {
       campaign.dealershipName = dealerName;
-      campaign.dealershipAddress = ''; // reset city
-      campaign.campaignName = ''; // reset dealer code
+      campaign.dealershipAddress = '';
+      campaign.campaignName = '';
       _dealerSelected[campaign.id] = true;
       _cityOptions[campaign.id] = matchingDealers;
     });
     widget.onCampaignsChanged(_campaigns);
   }
 
-  /// Called when a CITY is selected for the chosen dealer — auto-fills dealer code.
   void _onCitySelected(CampaignItemData campaign, Map<String, dynamic> dealer) {
-    final dealerCode = dealer['dealerCode']?.toString() ?? '';
-    final city = dealer['city']?.toString() ?? '';
-
     setState(() {
-      campaign.dealershipAddress = city;
-      campaign.campaignName = dealerCode;
+      campaign.dealershipAddress = dealer['city']?.toString() ?? '';
+      campaign.campaignName = dealer['dealerCode']?.toString() ?? '';
     });
     widget.onCampaignsChanged(_campaigns);
   }
-
-  // ── Test helpers (used by integration_test_runner.dart) ──
-
-  /// Loads dealers from the API for the given campaign, populating internal maps.
-  Future<void> testLoadDealers(String campaignId) => _loadDealersForState(campaignId);
-
-  /// Returns the list of unique dealer names loaded for a campaign.
-  List<String> testGetDealerNames(String campaignId) => _uniqueDealerNames[campaignId] ?? [];
-
-  /// Programmatically selects a dealer name (same as user picking from dialog).
-  void testSelectDealerName(String campaignId, String dealerName) {
-    final campaign = _campaigns.firstWhere((c) => c.id == campaignId);
-    _onDealerNameSelected(campaign, dealerName);
-  }
-
-  /// Returns the city options available after a dealer name is selected.
-  List<Map<String, dynamic>> testGetCityOptions(String campaignId) => _cityOptions[campaignId] ?? [];
-
-  /// Programmatically selects a city (same as user picking from dialog).
-  void testSelectCity(String campaignId, Map<String, dynamic> dealer) {
-    final campaign = _campaigns.firstWhere((c) => c.id == campaignId);
-    _onCitySelected(campaign, dealer);
-  }
-
-  /// Triggers a UI rebuild.
-  // ignore: invalid_use_of_protected_member
-  void testRebuild() => setState(() {});
 
   @override
   void initState() {
@@ -254,6 +236,12 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         widget.onCampaignsChanged(_campaigns);
       });
+    }
+    // Pre-mark existing campaigns as dealer-selected if they already have data
+    for (final c in _campaigns) {
+      if (c.dealershipName.isNotEmpty) {
+        _dealerSelected[c.id] = true;
+      }
     }
   }
 
@@ -268,7 +256,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   // ─── Mutations ───────────────────────────────────────────────────────
 
   void _addCampaign() {
-    setState(() => _campaigns.add(CampaignItemData(id: 'campaign_${_campaigns.length + 1}')));
+    setState(() => _campaigns
+        .add(CampaignItemData(id: 'campaign_${_campaigns.length + 1}')));
     widget.onCampaignsChanged(_campaigns);
   }
 
@@ -288,52 +277,145 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   Future<void> _pickPhotos(int campaignIndex) async {
     final campaign = _campaigns[campaignIndex];
     final existing = campaign.existingPhotoFileNames?.length ?? 0;
-    final remaining = CampaignItemData.maxPhotos - campaign.photos.length - existing;
-    if (remaining <= 0) { _showError('Maximum ${CampaignItemData.maxPhotos} photos reached'); return; }
+    final remaining =
+        CampaignItemData.maxPhotos - campaign.photos.length - existing;
+    if (remaining <= 0) {
+      _showError('Maximum ${CampaignItemData.maxPhotos} photos reached');
+      return;
+    }
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.image, allowMultiple: true);
-      if (result != null && result.files.isNotEmpty) {
-        final toAdd = result.files.take(remaining).toList();
-        setState(() => campaign.photos.addAll(toAdd));
+      final result = await FilePicker.platform
+          .pickFiles(type: FileType.image, allowMultiple: true);
+      if (result == null || result.files.isEmpty) return;
+
+      final toAdd = result.files.take(remaining).toList();
+      // Record the starting index before adding so we know which indices to upload
+      final startIndex = campaign.photos.length;
+      setState(() => campaign.photos.addAll(toAdd));
+      widget.onCampaignsChanged(_campaigns);
+
+      // Immediately upload — ensure the team exists on the server first
+      await _uploadPhotosImmediately(campaignIndex, startIndex, toAdd);
+    } catch (e) {
+      debugPrint('Error picking photos: $e');
+    }
+  }
+
+  /// Ensures the team has a server-side campaignId, then uploads the given photos.
+  Future<void> _uploadPhotosImmediately(
+      int campaignIndex, int startIndex, List<PlatformFile> photos) async {
+    if (widget.token == null) return;
+
+    final campaign = _campaigns[campaignIndex];
+
+    // Resolve packageId — either already known or obtained via parent callback
+    String? packageId = widget.packageId;
+    String? campaignId =
+        (campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_'))
+            ? campaign.id
+            : null;
+
+    // If team not yet created on server, ask the parent to create it
+    if (campaignId == null && widget.onEnsureTeamCreated != null) {
+      if (!mounted) return;
+      campaignId = await widget.onEnsureTeamCreated!(campaign);
+      if (campaignId == null) {
+        if (mounted) {
+          _showError(
+              'Could not create team. Please fill in team details and try again.');
+        }
+        return;
+      }
+      // Persist the server-assigned id back into the campaign
+      if (mounted) {
+        setState(() => campaign.id = campaignId!);
         widget.onCampaignsChanged(_campaigns);
       }
-    } catch (e) { debugPrint('Error picking photos: $e'); }
+    }
+
+    if (campaignId == null || packageId == null) {
+      // No package yet (PO not selected) — photos stay in memory, uploaded at submit
+      return;
+    }
+
+    // Mark indices as uploading
+    final indices = List.generate(photos.length, (i) => startIndex + i);
+    if (mounted) {
+      setState(() => campaign.uploadingPhotoIndices.addAll(indices));
+    }
+
+    try {
+      final photoFiles = photos
+          .where((p) => p.bytes != null)
+          .map((p) => MultipartFile.fromBytes(p.bytes!, filename: p.name))
+          .toList();
+
+      if (photoFiles.isEmpty) return;
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final response = await dio.post(
+        '/hierarchical/$packageId/campaigns/$campaignId/photos',
+        data: FormData.fromMap({'files': photoFiles}),
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        setState(() {
+          campaign.uploadingPhotoIndices.removeAll(indices);
+          campaign.uploadedPhotoIndices.addAll(indices);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error uploading photos immediately: $e');
+      if (mounted) {
+        setState(() => campaign.uploadingPhotoIndices.removeAll(indices));
+        _showError('Photo upload failed. Photos will be uploaded on submit.');
+      }
+    }
   }
 
   Future<void> _capturePhoto(int campaignIndex) async {
     final campaign = _campaigns[campaignIndex];
     final existing = campaign.existingPhotoFileNames?.length ?? 0;
-    final remaining = CampaignItemData.maxPhotos - campaign.photos.length - existing;
-    if (remaining <= 0) { _showError('Maximum ${CampaignItemData.maxPhotos} photos reached'); return; }
-
+    final remaining =
+        CampaignItemData.maxPhotos - campaign.photos.length - existing;
+    if (remaining <= 0) {
+      _showError('Maximum ${CampaignItemData.maxPhotos} photos reached');
+      return;
+    }
     if (kIsWeb) {
-      // Use web camera dialog with getUserMedia
       final file = await capturePhotoOnWeb(context);
       if (file != null && mounted) {
+        final startIndex = campaign.photos.length;
         setState(() => campaign.photos.add(file));
         widget.onCampaignsChanged(_campaigns);
+        await _uploadPhotosImmediately(campaignIndex, startIndex, [file]);
       }
     } else {
-      // Use image_picker for mobile
       try {
         final picker = ImagePicker();
-        final XFile? photo = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+        final XFile? photo = await picker.pickImage(
+            source: ImageSource.camera, imageQuality: 85);
         if (photo != null) {
           final bytes = await photo.readAsBytes();
-          final file = PlatformFile(
-            name: photo.name,
-            size: bytes.length,
-            bytes: bytes,
-          );
+          final file =
+              PlatformFile(name: photo.name, size: bytes.length, bytes: bytes);
+          final startIndex = campaign.photos.length;
           setState(() => campaign.photos.add(file));
           widget.onCampaignsChanged(_campaigns);
+          await _uploadPhotosImmediately(campaignIndex, startIndex, [file]);
         }
-      } catch (e) { debugPrint('Error capturing photo: $e'); }
+      } catch (e) {
+        debugPrint('Error capturing photo: $e');
+      }
     }
   }
 
   Future<void> _removePhoto(int campaignIndex, int photoIndex) async {
-    final confirmed = await _confirm('Delete Photo', 'Delete "${_campaigns[campaignIndex].photos[photoIndex].name}"?');
+    final confirmed = await _confirm('Delete Photo',
+        'Delete "${_campaigns[campaignIndex].photos[photoIndex].name}"?');
     if (!confirmed || !mounted) return;
     setState(() => _campaigns[campaignIndex].photos.removeAt(photoIndex));
     widget.onCampaignsChanged(_campaigns);
@@ -347,23 +429,28 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       if (s == null || e == null) return;
       int days = 0;
       for (var d = s; !d.isAfter(e); d = d.add(const Duration(days: 1))) {
-        if (d.weekday != DateTime.saturday && d.weekday != DateTime.sunday) days++;
+        if (d.weekday != DateTime.saturday && d.weekday != DateTime.sunday)
+          days++;
       }
       setState(() => campaign.workingDays = days.toString());
       widget.onCampaignsChanged(_campaigns);
-    } catch (e) { debugPrint('Error calculating working days: $e'); }
+    } catch (e) {
+      debugPrint('Error calculating working days: $e');
+    }
   }
 
   DateTime? _parseDate(String value) {
     if (value.isEmpty) return null;
     try {
       final p = value.split('-');
-      if (p.length == 3) return DateTime(int.parse(p[2]), int.parse(p[1]), int.parse(p[0]));
+      if (p.length == 3)
+        return DateTime(int.parse(p[2]), int.parse(p[1]), int.parse(p[0]));
     } catch (_) {}
     return null;
   }
 
-  Future<void> _selectDate(String current, Function(String) onSelected, {DateTime? minDate}) async {
+  Future<void> _selectDate(String current, Function(String) onSelected,
+      {DateTime? minDate}) async {
     final first = minDate ?? DateTime(2020);
     DateTime initial = DateTime.now();
     final parsed = _parseDate(current);
@@ -376,7 +463,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       firstDate: first,
       lastDate: DateTime(2030),
       builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(colorScheme: const ColorScheme.light(primary: AppColors.primary)),
+        data: Theme.of(ctx).copyWith(
+            colorScheme: const ColorScheme.light(primary: AppColors.primary)),
         child: child!,
       ),
     );
@@ -387,13 +475,18 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        title: Text(title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         content: Text(message, style: const TextStyle(fontSize: 14)),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.rejectedText, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.rejectedText,
+                foregroundColor: Colors.white),
             child: const Text('Delete'),
           ),
         ],
@@ -420,8 +513,11 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   Future<void> _removeInvoice(int campaignIndex, int invoiceIndex) async {
     if (_campaigns[campaignIndex].invoices.length > 1) {
       final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
-      final label = invoice.invoiceNumber.isNotEmpty ? 'Invoice #${invoice.invoiceNumber}' : 'Invoice ${invoiceIndex + 1}';
-      final confirmed = await _confirm('Delete Invoice', 'Are you sure you want to delete "$label"?');
+      final label = invoice.invoiceNumber.isNotEmpty
+          ? 'Invoice #${invoice.invoiceNumber}'
+          : 'Invoice ${invoiceIndex + 1}';
+      final confirmed = await _confirm(
+          'Delete Invoice', 'Are you sure you want to delete "$label"?');
       if (!confirmed || !mounted) return;
       setState(() {
         _campaigns[campaignIndex].invoices.removeAt(invoiceIndex);
@@ -438,7 +534,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       );
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
-        setState(() => _campaigns[campaignIndex].invoices[invoiceIndex].file = file);
+        setState(
+            () => _campaigns[campaignIndex].invoices[invoiceIndex].file = file);
         widget.onCampaignsChanged(_campaigns);
         await _uploadAndExtractInvoice(campaignIndex, invoiceIndex, file);
       }
@@ -447,7 +544,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     }
   }
 
-  Future<void> _uploadAndExtractInvoice(int campaignIndex, int invoiceIndex, PlatformFile file) async {
+  Future<void> _uploadAndExtractInvoice(
+      int campaignIndex, int invoiceIndex, PlatformFile file) async {
     if (file.bytes == null || widget.token == null) return;
 
     final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
@@ -471,7 +569,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         final documentId = uploadResponse.data['documentId']?.toString();
 
         if (packageId != null && documentId != null) {
-          await _pollForInvoiceExtraction(packageId, documentId, campaignIndex, invoiceIndex);
+          await _pollForInvoiceExtraction(
+              packageId, documentId, campaignIndex, invoiceIndex);
         }
       }
     } catch (e) {
@@ -479,15 +578,18 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     } finally {
       if (mounted) {
         setState(() {
-          if (campaignIndex < _campaigns.length && invoiceIndex < _campaigns[campaignIndex].invoices.length) {
-            _campaigns[campaignIndex].invoices[invoiceIndex].isExtracting = false;
+          if (campaignIndex < _campaigns.length &&
+              invoiceIndex < _campaigns[campaignIndex].invoices.length) {
+            _campaigns[campaignIndex].invoices[invoiceIndex].isExtracting =
+                false;
           }
         });
       }
     }
   }
 
-  Future<void> _pollForInvoiceExtraction(String packageId, String documentId, int campaignIndex, int invoiceIndex) async {
+  Future<void> _pollForInvoiceExtraction(String packageId, String documentId,
+      int campaignIndex, int invoiceIndex) async {
     final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
     const maxAttempts = 25;
 
@@ -498,7 +600,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       try {
         final response = await dio.get(
           '/submissions/$packageId',
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          options:
+              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
 
         if (!mounted) return;
@@ -521,22 +624,40 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               }
 
               if (extractedData is Map) {
-                final invNumber = extractedData['InvoiceNumber'] ?? extractedData['invoiceNumber'] ?? '';
-                final invDate = extractedData['InvoiceDate'] ?? extractedData['invoiceDate'] ?? '';
-                final amount = extractedData['TotalAmount'] ?? extractedData['totalAmount'] ?? '';
-                final gst = extractedData['GSTNumber'] ?? extractedData['gstNumber'] ??
-                             extractedData['GSTIN'] ?? extractedData['gstin'] ??
-                             extractedData['VendorGSTIN'] ?? extractedData['vendorGSTIN'] ??
-                             extractedData['SellerGSTIN'] ?? extractedData['sellerGSTIN'] ?? '';
+                final invNumber = extractedData['InvoiceNumber'] ??
+                    extractedData['invoiceNumber'] ??
+                    '';
+                final invDate = extractedData['InvoiceDate'] ??
+                    extractedData['invoiceDate'] ??
+                    '';
+                final amount = extractedData['TotalAmount'] ??
+                    extractedData['totalAmount'] ??
+                    '';
+                final gst = extractedData['GSTNumber'] ??
+                    extractedData['gstNumber'] ??
+                    extractedData['GSTIN'] ??
+                    extractedData['gstin'] ??
+                    extractedData['VendorGSTIN'] ??
+                    extractedData['vendorGSTIN'] ??
+                    extractedData['SellerGSTIN'] ??
+                    extractedData['sellerGSTIN'] ??
+                    '';
 
-                if (invNumber.toString().isNotEmpty || amount.toString().isNotEmpty) {
+                if (invNumber.toString().isNotEmpty ||
+                    amount.toString().isNotEmpty) {
                   if (!mounted) return;
 
-                  if (campaignIndex < _campaigns.length && invoiceIndex < _campaigns[campaignIndex].invoices.length) {
-                    final invoice = _campaigns[campaignIndex].invoices[invoiceIndex];
+                  if (campaignIndex < _campaigns.length &&
+                      invoiceIndex <
+                          _campaigns[campaignIndex].invoices.length) {
+                    final invoice =
+                        _campaigns[campaignIndex].invoices[invoiceIndex];
                     setState(() {
-                      if (invNumber.toString().isNotEmpty) invoice.invoiceNumber = invNumber.toString();
-                      if (invDate.toString().isNotEmpty) invoice.invoiceDate = _formatExtractedDate(invDate.toString());
+                      if (invNumber.toString().isNotEmpty)
+                        invoice.invoiceNumber = invNumber.toString();
+                      if (invDate.toString().isNotEmpty)
+                        invoice.invoiceDate =
+                            _formatExtractedDate(invDate.toString());
                       if (amount.toString().isNotEmpty) {
                         final amountNum = double.tryParse(amount.toString());
                         if (amountNum != null) {
@@ -545,7 +666,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                           invoice.totalAmount = amount.toString();
                         }
                       }
-                      if (gst.toString().isNotEmpty) invoice.gstNumber = gst.toString();
+                      if (gst.toString().isNotEmpty)
+                        invoice.gstNumber = gst.toString();
                       invoice.isExtracting = false;
                     });
                     widget.onCampaignsChanged(_campaigns);
@@ -589,11 +711,78 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         allowedExtensions: ['pdf', 'xlsx', 'xls'],
       );
       if (result != null && result.files.isNotEmpty) {
-        setState(() => _campaigns[campaignIndex].costSummaryFile = result.files.first);
+        setState(() =>
+            _campaigns[campaignIndex].costSummaryFile = result.files.first);
         widget.onCampaignsChanged(_campaigns);
+
+        // Auto-upload cost summary file if packageId is available
+        if (widget.packageId != null && widget.packageId!.isNotEmpty) {
+          await _uploadCostSummaryFile(campaignIndex, result.files.first);
+        }
       }
     } catch (e) {
       debugPrint('Error picking cost summary file: $e');
+    }
+  }
+
+  Future<void> _uploadCostSummaryFile(
+      int campaignIndex, PlatformFile file) async {
+    if (file.bytes == null || widget.token == null || widget.packageId == null)
+      return;
+
+    // Get the campaign ID
+    final campaign = _campaigns[campaignIndex];
+    String? campaignId = campaign.id;
+
+    // If campaign doesn't have an ID yet, we can't upload
+    if (campaignId.isEmpty || campaignId.startsWith('campaign_')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Please save the team first before uploading cost summary'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      debugPrint('Auto-uploading cost summary: ${file.name}');
+
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
+      });
+
+      final response = await dio.post(
+        '/hierarchical/${widget.packageId}/campaigns/$campaignId/cost-summary',
+        data: formData,
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        debugPrint('Cost summary uploaded successfully');
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cost summary uploaded and extraction started!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error uploading cost summary: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Cost summary upload failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -604,7 +793,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         allowedExtensions: ['pdf', 'xlsx', 'xls'],
       );
       if (result != null && result.files.isNotEmpty) {
-        setState(() => _campaigns[campaignIndex].activitySummaryFile = result.files.first);
+        setState(() =>
+            _campaigns[campaignIndex].activitySummaryFile = result.files.first);
         widget.onCampaignsChanged(_campaigns);
       }
     } catch (e) {
@@ -617,7 +807,9 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   @override
   Widget build(BuildContext context) {
     final totalPhotos = _campaigns.fold<int>(
-        0, (sum, c) => sum + c.photos.length + (c.existingPhotoFileNames?.length ?? 0));
+        0,
+        (sum, c) =>
+            sum + c.photos.length + (c.existingPhotoFileNames?.length ?? 0));
     final totalMax = _campaigns.length * CampaignItemData.maxPhotos;
 
     return Column(
@@ -631,13 +823,20 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Teams', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
+                  const Text('Teams',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF111827))),
                   const SizedBox(height: 2),
-                  const Text('Add each team that executed the activation.', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                  const Text('Add each team that executed the activation.',
+                      style: TextStyle(
+                          fontSize: 13, color: AppColors.textSecondary)),
                   const SizedBox(height: 4),
                   Text(
                     '${_campaigns.length} team${_campaigns.length != 1 ? 's' : ''} added — $totalPhotos / $totalMax photos uploaded',
-                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textSecondary),
                   ),
                 ],
               ),
@@ -645,31 +844,41 @@ class _CampaignListSectionState extends State<CampaignListSection> {
             OutlinedButton.icon(
               onPressed: _addCampaign,
               icon: const Icon(Icons.add, size: 16),
-              label: const Text('+ Add Team', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              label: const Text('+ Add Team',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.primary,
                 side: const BorderSide(color: AppColors.primary),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
               ),
             ),
           ],
         ),
         const SizedBox(height: 16),
-        ...List.generate(_campaigns.length, (i) => _buildTeamCard(_campaigns[i], i)),
+        ...List.generate(
+            _campaigns.length, (i) => _buildTeamCard(_campaigns[i], i)),
       ],
     );
   }
 
   Widget _buildTeamCard(CampaignItemData campaign, int index) {
-    final photoCount = campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0);
+    final photoCount =
+        campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0);
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border.withValues(alpha: 0.5)),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
+        ],
       ),
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -681,9 +890,16 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Container(
-                  width: 28, height: 28,
-                  decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
-                  child: Center(child: Text('${index + 1}', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700))),
+                  width: 28,
+                  height: 28,
+                  decoration: const BoxDecoration(
+                      color: AppColors.primary, shape: BoxShape.circle),
+                  child: Center(
+                      child: Text('${index + 1}',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700))),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -691,16 +907,23 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                     campaign.dealershipName.isNotEmpty
                         ? 'Team ${index + 1} — ${campaign.dealershipName}'
                         : 'Team ${index + 1}',
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF111827)),
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF111827)),
                   ),
                 ),
                 if (campaign.dealershipAddress.isNotEmpty)
-                  Text('(${campaign.dealershipAddress})', style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                  Text('(${campaign.dealershipAddress})',
+                      style: const TextStyle(
+                          fontSize: 13, color: AppColors.textSecondary)),
                 if (_campaigns.length > 1) ...[
                   const SizedBox(width: 8),
                   TextButton(
                     onPressed: () => _removeCampaign(index),
-                    style: TextButton.styleFrom(foregroundColor: AppColors.rejectedText, padding: EdgeInsets.zero),
+                    style: TextButton.styleFrom(
+                        foregroundColor: AppColors.rejectedText,
+                        padding: EdgeInsets.zero),
                     child: const Text('Remove', style: TextStyle(fontSize: 13)),
                   ),
                 ],
@@ -717,13 +940,31 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                   const SizedBox(height: 12),
                   _cityDropdownField(campaign),
                   const SizedBox(height: 12),
-                  _teamReadonly('Dealer Code', campaign.campaignName.isNotEmpty ? campaign.campaignName : '—'),
+                  _teamReadonly(
+                      'Dealer Code',
+                      campaign.campaignName.isNotEmpty
+                          ? campaign.campaignName
+                          : '—'),
                   const SizedBox(height: 12),
-                  _teamDateField('Start Date', campaign.startDate, (v) { setState(() { campaign.startDate = v; _calculateWorkingDays(campaign); }); }, required: true),
+                  _teamDateField('Start Date', campaign.startDate, (v) {
+                    setState(() {
+                      campaign.startDate = v;
+                      _calculateWorkingDays(campaign);
+                    });
+                  }, required: true),
                   const SizedBox(height: 12),
-                  _teamDateField('End Date', campaign.endDate, (v) { setState(() { campaign.endDate = v; _calculateWorkingDays(campaign); }); }, required: true, minDate: _parseDate(campaign.startDate)),
+                  _teamDateField('End Date', campaign.endDate, (v) {
+                    setState(() {
+                      campaign.endDate = v;
+                      _calculateWorkingDays(campaign);
+                    });
+                  }, required: true, minDate: _parseDate(campaign.startDate)),
                   const SizedBox(height: 12),
-                  _teamReadonly('Working Days', campaign.workingDays.isNotEmpty ? campaign.workingDays : '—'),
+                  _teamReadonly(
+                      'Working Days',
+                      campaign.workingDays.isNotEmpty
+                          ? campaign.workingDays
+                          : '—'),
                 ]);
               }
               return Column(children: [
@@ -732,27 +973,56 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                   const SizedBox(width: 16),
                   Expanded(child: _cityDropdownField(campaign)),
                   const SizedBox(width: 16),
-                  Expanded(child: _teamReadonly('Dealer Code', campaign.campaignName.isNotEmpty ? campaign.campaignName : '—')),
+                  Expanded(
+                      child: _teamReadonly(
+                          'Dealer Code',
+                          campaign.campaignName.isNotEmpty
+                              ? campaign.campaignName
+                              : '—')),
                 ]),
                 const SizedBox(height: 12),
                 Row(children: [
-                  Expanded(child: _teamDateField('Start Date', campaign.startDate, (v) { setState(() { campaign.startDate = v; _calculateWorkingDays(campaign); }); }, required: true)),
+                  Expanded(
+                      child:
+                          _teamDateField('Start Date', campaign.startDate, (v) {
+                    setState(() {
+                      campaign.startDate = v;
+                      _calculateWorkingDays(campaign);
+                    });
+                  }, required: true)),
                   const SizedBox(width: 16),
-                  Expanded(child: _teamDateField('End Date', campaign.endDate, (v) { setState(() { campaign.endDate = v; _calculateWorkingDays(campaign); }); }, required: true, minDate: _parseDate(campaign.startDate))),
+                  Expanded(
+                      child: _teamDateField('End Date', campaign.endDate, (v) {
+                    setState(() {
+                      campaign.endDate = v;
+                      _calculateWorkingDays(campaign);
+                    });
+                  }, required: true, minDate: _parseDate(campaign.startDate))),
                   const SizedBox(width: 16),
-                  Expanded(child: _teamReadonly('Working Days', campaign.workingDays.isNotEmpty ? campaign.workingDays : '—')),
+                  Expanded(
+                      child: _teamReadonly(
+                          'Working Days',
+                          campaign.workingDays.isNotEmpty
+                              ? campaign.workingDays
+                              : '—')),
                 ]),
               ]);
             }),
             const SizedBox(height: 16),
 
             // State note
-            RichText(text: TextSpan(
-              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            RichText(
+                text: TextSpan(
+              style:
+                  const TextStyle(fontSize: 13, color: AppColors.textSecondary),
               children: [
                 const TextSpan(text: 'State: '),
-                TextSpan(text: widget.selectedActivationState ?? 'Not selected', style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF111827))),
-                const TextSpan(text: '  (all teams share the activation state)'),
+                TextSpan(
+                    text: widget.selectedActivationState ?? 'Not selected',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, color: Color(0xFF111827))),
+                const TextSpan(
+                    text: '  (all teams share the activation state)'),
               ],
             )),
             const SizedBox(height: 16),
@@ -765,18 +1035,24 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     );
   }
 
-  // ─── Dealer name dropdown field ─────────────────────────────────────
+  // ─── Dealer dropdown fields ───────────────────────────────────────────
 
   Widget _dealerNameDropdownField(CampaignItemData campaign) {
     final isLoading = _dealerLoading[campaign.id] ?? false;
-    final hasState = widget.selectedActivationState != null && widget.selectedActivationState!.isNotEmpty;
-    final isSelected = _dealerSelected[campaign.id] == true && campaign.dealershipName.isNotEmpty;
+    final hasState = widget.selectedActivationState != null &&
+        widget.selectedActivationState!.isNotEmpty;
+    final isSelected = _dealerSelected[campaign.id] == true &&
+        campaign.dealershipName.isNotEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(children: [
-          const Text('Dealership Name', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
+          const Text('Dealership Name',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF374151))),
           const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
         ]),
         const SizedBox(height: 6),
@@ -795,15 +1071,25 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               children: [
                 Expanded(
                   child: Text(
-                    isSelected ? campaign.dealershipName : (hasState ? 'Select dealer...' : 'Select activation state first'),
+                    isSelected
+                        ? campaign.dealershipName
+                        : (hasState
+                            ? 'Select dealer...'
+                            : 'Select activation state first'),
                     style: TextStyle(
                       fontSize: 14,
-                      color: isSelected ? const Color(0xFF111827) : const Color(0xFF9E9E9E),
+                      color: isSelected
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF9E9E9E),
                     ),
                   ),
                 ),
                 if (isLoading)
-                  const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary))
+                  const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: AppColors.primary))
                 else if (isSelected)
                   GestureDetector(
                     onTap: () {
@@ -816,10 +1102,15 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                       });
                       widget.onCampaignsChanged(_campaigns);
                     },
-                    child: const Icon(Icons.close, size: 18, color: Color(0xFF9E9E9E)),
+                    child: const Icon(Icons.close,
+                        size: 18, color: Color(0xFF9E9E9E)),
                   )
                 else
-                  Icon(Icons.arrow_drop_down, size: 22, color: hasState ? AppColors.primary : const Color(0xFF9E9E9E)),
+                  Icon(Icons.arrow_drop_down,
+                      size: 22,
+                      color: hasState
+                          ? AppColors.primary
+                          : const Color(0xFF9E9E9E)),
               ],
             ),
           ),
@@ -834,13 +1125,12 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     );
   }
 
-  /// Opens a dialog to pick a dealer name (unique names only, no city shown).
   Future<void> _showDealerNamePicker(CampaignItemData campaign) async {
     final state = widget.selectedActivationState;
     if (state == null || state.isEmpty) return;
 
-    // Load dealers if not already loaded
-    if (_dealerResults[campaign.id] == null || _dealerResults[campaign.id]!.isEmpty) {
+    if (_dealerResults[campaign.id] == null ||
+        _dealerResults[campaign.id]!.isEmpty) {
       await _loadDealersForState(campaign.id);
     }
     if (!mounted) return;
@@ -855,7 +1145,9 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
             return AlertDialog(
-              title: Text('Select Dealer — $state', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              title: Text('Select Dealer — $state',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600)),
               contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               content: SizedBox(
                 width: 400,
@@ -867,18 +1159,32 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                       autofocus: true,
                       decoration: InputDecoration(
                         hintText: 'Search dealer name...',
-                        hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF9E9E9E)),
-                        prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.primary),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
-                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
-                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
+                        hintStyle: const TextStyle(
+                            fontSize: 13, color: Color(0xFF9E9E9E)),
+                        prefixIcon: const Icon(Icons.search,
+                            size: 20, color: AppColors.primary),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide:
+                                const BorderSide(color: AppColors.border)),
+                        enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide:
+                                const BorderSide(color: AppColors.border)),
+                        focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                                color: AppColors.primary, width: 1.5)),
                         isDense: true,
                       ),
                       onChanged: (value) {
                         final q = value.toLowerCase();
                         setDialogState(() {
-                          filtered = allNames.where((n) => n.toLowerCase().contains(q)).toList();
+                          filtered = allNames
+                              .where((n) => n.toLowerCase().contains(q))
+                              .toList();
                         });
                       },
                     ),
@@ -889,27 +1195,45 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(Icons.store_outlined, size: 40, color: Colors.grey.withValues(alpha: 0.4)),
+                                  Icon(Icons.store_outlined,
+                                      size: 40,
+                                      color:
+                                          Colors.grey.withValues(alpha: 0.4)),
                                   const SizedBox(height: 8),
-                                  const Text('No dealers found', style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
+                                  const Text('No dealers found',
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          color: AppColors.textSecondary)),
                                 ],
                               ),
                             )
                           : ListView.separated(
                               itemCount: filtered.length,
-                              separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFF3F4F6)),
+                              separatorBuilder: (_, __) => const Divider(
+                                  height: 1, color: Color(0xFFF3F4F6)),
                               itemBuilder: (ctx, i) {
                                 final name = filtered[i];
-                                // Count how many cities this dealer is in
-                                final allDealers = _dealerResults[campaign.id] ?? [];
-                                final cityCount = allDealers.where((d) => d['dealerName']?.toString() == name).length;
+                                final allDealers =
+                                    _dealerResults[campaign.id] ?? [];
+                                final cityCount = allDealers
+                                    .where((d) =>
+                                        d['dealerName']?.toString() == name)
+                                    .length;
                                 return ListTile(
                                   dense: true,
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                  title: Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                                  subtitle: Text('$cityCount ${cityCount == 1 ? 'city' : 'cities'}',
-                                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                                  trailing: const Icon(Icons.chevron_right, size: 18, color: AppColors.textSecondary),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  title: Text(name,
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500)),
+                                  subtitle: Text(
+                                      '$cityCount ${cityCount == 1 ? 'city' : 'cities'}',
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textSecondary)),
+                                  trailing: const Icon(Icons.chevron_right,
+                                      size: 18, color: AppColors.textSecondary),
                                   onTap: () {
                                     _onDealerNameSelected(campaign, name);
                                     Navigator.of(ctx).pop();
@@ -922,7 +1246,9 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                 ),
               ),
               actions: [
-                TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+                TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('Cancel')),
               ],
             );
           },
@@ -932,14 +1258,13 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     searchController.dispose();
   }
 
-  // ─── City dropdown field ──────────────────────────────────────────────
-
   Widget _cityDropdownField(CampaignItemData campaign) {
-    final hasDealerSelected = _dealerSelected[campaign.id] == true && campaign.dealershipName.isNotEmpty;
+    final hasDealerSelected = _dealerSelected[campaign.id] == true &&
+        campaign.dealershipName.isNotEmpty;
     final hasCitySelected = campaign.dealershipAddress.isNotEmpty;
     final cities = _cityOptions[campaign.id] ?? [];
 
-    // If dealer has only one city, auto-select it
+    // Auto-select if only one city
     if (hasDealerSelected && !hasCitySelected && cities.length == 1) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _onCitySelected(campaign, cities.first);
@@ -950,7 +1275,11 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(children: [
-          const Text('City', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
+          const Text('City',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF374151))),
           const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
         ]),
         const SizedBox(height: 6),
@@ -969,10 +1298,16 @@ class _CampaignListSectionState extends State<CampaignListSection> {
               children: [
                 Expanded(
                   child: Text(
-                    hasCitySelected ? campaign.dealershipAddress : (hasDealerSelected ? 'Select city...' : 'Select dealer first'),
+                    hasCitySelected
+                        ? campaign.dealershipAddress
+                        : (hasDealerSelected
+                            ? 'Select city...'
+                            : 'Select dealer first'),
                     style: TextStyle(
                       fontSize: 14,
-                      color: hasCitySelected ? const Color(0xFF111827) : const Color(0xFF9E9E9E),
+                      color: hasCitySelected
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF9E9E9E),
                     ),
                   ),
                 ),
@@ -985,10 +1320,15 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                       });
                       widget.onCampaignsChanged(_campaigns);
                     },
-                    child: const Icon(Icons.close, size: 18, color: Color(0xFF9E9E9E)),
+                    child: const Icon(Icons.close,
+                        size: 18, color: Color(0xFF9E9E9E)),
                   )
                 else
-                  Icon(Icons.arrow_drop_down, size: 22, color: hasDealerSelected ? AppColors.primary : const Color(0xFF9E9E9E)),
+                  Icon(Icons.arrow_drop_down,
+                      size: 22,
+                      color: hasDealerSelected
+                          ? AppColors.primary
+                          : const Color(0xFF9E9E9E)),
               ],
             ),
           ),
@@ -997,7 +1337,6 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     );
   }
 
-  /// Opens a dialog to pick a city for the selected dealer.
   Future<void> _showCityPicker(CampaignItemData campaign) async {
     final cities = _cityOptions[campaign.id] ?? [];
     if (cities.isEmpty) return;
@@ -1006,24 +1345,33 @@ class _CampaignListSectionState extends State<CampaignListSection> {
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: Text('Select City — ${campaign.dealershipName}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          title: Text('Select City — ${campaign.dealershipName}',
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
           contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
           content: SizedBox(
             width: 350,
             child: ListView.separated(
               shrinkWrap: true,
               itemCount: cities.length,
-              separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFF3F4F6)),
+              separatorBuilder: (_, __) =>
+                  const Divider(height: 1, color: Color(0xFFF3F4F6)),
               itemBuilder: (ctx, i) {
                 final dealer = cities[i];
                 final city = dealer['city']?.toString() ?? '';
                 final code = dealer['dealerCode']?.toString() ?? '';
                 return ListTile(
                   dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  leading: const Icon(Icons.location_on_outlined, size: 20, color: AppColors.primary),
-                  title: Text(city, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                  subtitle: Text('Code: $code', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  leading: const Icon(Icons.location_on_outlined,
+                      size: 20, color: AppColors.primary),
+                  title: Text(city,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w500)),
+                  subtitle: Text('Code: $code',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textSecondary)),
                   onTap: () {
                     _onCitySelected(campaign, dealer);
                     Navigator.of(ctx).pop();
@@ -1033,7 +1381,9 @@ class _CampaignListSectionState extends State<CampaignListSection> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancel')),
           ],
         );
       },
@@ -1042,13 +1392,19 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
   // ─── Field helpers ────────────────────────────────────────────────────
 
-  Widget _teamDateField(String label, String value, Function(String) onChanged, {bool required = false, DateTime? minDate}) {
+  Widget _teamDateField(String label, String value, Function(String) onChanged,
+      {bool required = false, DateTime? minDate}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(children: [
-          Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
-          if (required) const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF374151))),
+          if (required)
+            const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
         ]),
         const SizedBox(height: 6),
         TextFormField(
@@ -1058,11 +1414,20 @@ class _CampaignListSectionState extends State<CampaignListSection> {
           decoration: InputDecoration(
             hintText: 'dd-mm-yyyy',
             hintStyle: const TextStyle(color: Color(0xFF9E9E9E), fontSize: 14),
-            suffixIcon: const Icon(Icons.calendar_today, color: AppColors.primary, size: 18),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.border)),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.border)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
+            suffixIcon: const Icon(Icons.calendar_today,
+                color: AppColors.primary, size: 18),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide:
+                    const BorderSide(color: AppColors.primary, width: 1.5)),
             isDense: true,
           ),
           onTap: () => _selectDate(value, onChanged, minDate: minDate),
@@ -1075,7 +1440,11 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF374151))),
         const SizedBox(height: 6),
         Container(
           width: double.infinity,
@@ -1085,7 +1454,8 @@ class _CampaignListSectionState extends State<CampaignListSection> {
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: AppColors.border),
           ),
-          child: Text(value, style: const TextStyle(fontSize: 14, color: Color(0xFF374151))),
+          child: Text(value,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF374151))),
         ),
       ],
     );
@@ -1093,59 +1463,37 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
   // ─── Photos section ───────────────────────────────────────────────────
 
-  Widget _buildPhotosSection(CampaignItemData campaign, int campaignIndex, int totalCount) {
+  Widget _buildPhotosSection(
+      CampaignItemData campaign, int campaignIndex, int totalCount) {
     final max = CampaignItemData.maxPhotos;
-    final min = CampaignItemData.minPhotos;
     final canAdd = totalCount < max;
-    final isBelowMin = totalCount < min;
     final existingNames = campaign.existingPhotoFileNames ?? [];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(
-              'Photos ($totalCount / $max)',
-              style: TextStyle(
+        Text('Photos ($totalCount / $max)',
+            style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: isBelowMin ? const Color(0xFFEF4444) : const Color(0xFF374151),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'min $min required',
-              style: TextStyle(
-                fontSize: 11,
-                color: isBelowMin ? const Color(0xFFEF4444) : const Color(0xFF6B7280),
-              ),
-            ),
-          ],
-        ),
-        if (isBelowMin) ...[
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              const Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFEF4444)),
-              const SizedBox(width: 4),
-              Text(
-                'Please upload at least $min photos for this team',
-                style: const TextStyle(fontSize: 12, color: Color(0xFFEF4444)),
-              ),
-            ],
-          ),
-        ],
+                color: Color(0xFF374151))),
         const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            ...existingNames.map((name) => _photoTile(name, onRemove: null)),
-            ...List.generate(campaign.photos.length, (i) => _photoTile(
-              campaign.photos[i].name,
-              onRemove: () => _removePhoto(campaignIndex, i),
-            )),
+            ...existingNames.map((name) => _photoTile(name,
+                isUploading: false, isUploaded: true, onRemove: null)),
+            ...List.generate(
+                campaign.photos.length,
+                (i) => _photoTile(
+                      campaign.photos[i].name,
+                      isUploading: campaign.uploadingPhotoIndices.contains(i),
+                      isUploaded: campaign.uploadedPhotoIndices.contains(i),
+                      onRemove: campaign.uploadingPhotoIndices.contains(i)
+                          ? null
+                          : () => _removePhoto(campaignIndex, i),
+                    )),
             if (canAdd) _addPhotoTile(() => _pickPhotos(campaignIndex)),
             if (canAdd) _capturePhotoTile(() => _capturePhoto(campaignIndex)),
           ],
@@ -1154,29 +1502,71 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     );
   }
 
-  Widget _photoTile(String name, {required VoidCallback? onRemove}) {
+  Widget _photoTile(String name,
+      {required bool isUploading,
+      required bool isUploaded,
+      required VoidCallback? onRemove}) {
     final display = name.length > 12 ? '${name.substring(0, 12)}...' : name;
+
+    final Color borderColor = isUploading
+        ? const Color(0xFF93C5FD)
+        : isUploaded
+            ? const Color(0xFF86EFAC)
+            : AppColors.border;
+    final Color bgColor = isUploading
+        ? const Color(0xFFEFF6FF)
+        : isUploaded
+            ? const Color(0xFFF0FDF4)
+            : const Color(0xFFF9FAFB);
+    final Color iconColor = isUploading
+        ? const Color(0xFF3B82F6)
+        : isUploaded
+            ? const Color(0xFF16A34A)
+            : AppColors.textSecondary;
+    final String statusLabel = isUploading
+        ? 'Uploading...'
+        : isUploaded
+            ? 'Uploaded'
+            : 'Pending';
+    final Color statusColor = isUploading
+        ? const Color(0xFF3B82F6)
+        : isUploaded
+            ? const Color(0xFF16A34A)
+            : AppColors.textSecondary;
+
     return Container(
       width: 110,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0FDF4),
+        color: bgColor,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+        border: Border.all(color: borderColor, width: 1.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            const Icon(Icons.image, size: 14, color: Color(0xFF16A34A)),
+            isUploading
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.5, color: Color(0xFF3B82F6)),
+                  )
+                : Icon(Icons.image, size: 14, color: iconColor),
             const Spacer(),
             if (onRemove != null)
-              GestureDetector(onTap: onRemove, child: const Icon(Icons.close, size: 14, color: AppColors.rejectedText)),
+              GestureDetector(
+                  onTap: onRemove,
+                  child: const Icon(Icons.close,
+                      size: 14, color: AppColors.rejectedText)),
           ]),
           const SizedBox(height: 4),
-          Text(display, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: Color(0xFF15803D))),
+          Text(display,
+              style: TextStyle(
+                  fontSize: 11, fontWeight: FontWeight.w500, color: iconColor)),
           const SizedBox(height: 2),
-          const Text('Uploaded', style: TextStyle(fontSize: 10, color: Color(0xFF16A34A))),
+          Text(statusLabel, style: TextStyle(fontSize: 10, color: statusColor)),
         ],
       ),
     );
@@ -1196,9 +1586,14 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.add_photo_alternate, size: 22, color: AppColors.primary.withValues(alpha: 0.6)),
+            Icon(Icons.add_photo_alternate,
+                size: 22, color: AppColors.primary.withValues(alpha: 0.6)),
             const SizedBox(height: 4),
-            const Text('+ Upload', style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w500)),
+            const Text('+ Add Photo',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w500)),
           ],
         ),
       ),
@@ -1214,14 +1609,20 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: AppColors.primary.withValues(alpha: 0.4), width: 1.5),
+          border: Border.all(
+              color: AppColors.primary.withValues(alpha: 0.4), width: 1.5),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.camera_alt, size: 22, color: AppColors.primary.withValues(alpha: 0.6)),
+            Icon(Icons.camera_alt,
+                size: 22, color: AppColors.primary.withValues(alpha: 0.6)),
             const SizedBox(height: 4),
-            const Text('+ Capture', style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w500)),
+            const Text('+ Capture',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w500)),
           ],
         ),
       ),

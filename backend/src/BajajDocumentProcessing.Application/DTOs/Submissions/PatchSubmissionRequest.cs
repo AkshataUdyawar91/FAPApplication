@@ -1,18 +1,21 @@
-using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 
 namespace BajajDocumentProcessing.Application.DTOs.Submissions;
 
 /// <summary>
-/// Request to patch submission fields (e.g., state selection)
+/// Request to patch submission fields. All fields are optional — only provided fields are applied.
 /// </summary>
 public class PatchSubmissionRequest
 {
     /// <summary>
-    /// Activity state/region where the work was performed
+    /// Activity state/region where the work was performed (e.g., Maharashtra).
     /// </summary>
-    [Required(ErrorMessage = "State is required")]
-    [StringLength(100, ErrorMessage = "State cannot exceed 100 characters")]
     [JsonPropertyName("state")]
-    public string State { get; set; } = string.Empty;
+    public string? State { get; set; }
+
+    /// <summary>
+    /// PO ID to associate with this draft submission.
+    /// </summary>
+    [JsonPropertyName("selectedPOId")]
+    public Guid? SelectedPOId { get; set; }
 }

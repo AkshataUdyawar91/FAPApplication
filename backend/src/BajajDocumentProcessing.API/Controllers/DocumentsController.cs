@@ -200,14 +200,15 @@ public class DocumentsController : ControllerBase
     }
 
     /// <summary>
-    /// Extract data from a document without creating any DB entities.
-    /// Uploads the file to a temp blob, runs AI extraction, and returns the extracted fields.
-    /// Used by the upload form to auto-populate fields before the submission is created.
+    /// Extract data from a document. When packageId is provided for an Invoice, the file is
+    /// persisted to blob storage and an Invoice row (+ ValidationResult) is saved to the database.
+    /// Returns extracted fields and, for persisted invoices, the new documentId.
     /// </summary>
     /// <param name="file">Document file to extract data from</param>
     /// <param name="documentType">Type of document (Invoice, CostSummary, etc.)</param>
+    /// <param name="packageId">Optional package ID — when provided for Invoice, saves to DB</param>
     /// <param name="documentAgent">Document agent for AI extraction</param>
-    /// <returns>Extracted data as JSON</returns>
+    /// <returns>Extracted data as JSON, plus documentId when persisted</returns>
     /// <response code="200">Extraction successful</response>
     /// <response code="400">Bad request - no file or unsupported type</response>
     /// <response code="500">Extraction failed</response>
@@ -219,24 +220,30 @@ public class DocumentsController : ControllerBase
     public async Task<IActionResult> ExtractDocument(
         [FromForm] IFormFile file,
         [FromForm] string documentType,
+        [FromForm] Guid? packageId,
         [FromServices] IDocumentAgent documentAgent,
         CancellationToken cancellationToken)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new { error = "No file provided" });
 
+        var docTypeLower = documentType.Trim().ToLowerInvariant();
         string? blobUrl = null;
+        bool isPersisted = false;
+
         try
         {
-            // Upload to temp blob for extraction
             var ext = Path.GetExtension(file.FileName);
-            var tempName = $"temp-extract/{Guid.NewGuid()}{ext}";
-            blobUrl = await _fileStorageService.UploadFileAsync(file, "documents", tempName);
 
-            _logger.LogInformation("Extract-only: uploaded temp blob {BlobUrl} for {DocType}", blobUrl, documentType);
+            // For invoices with a packageId we keep the blob permanently; otherwise use a temp path
+            var blobName = (docTypeLower == "invoice" && packageId.HasValue)
+                ? $"invoices/{packageId}/{Guid.NewGuid()}{ext}"
+                : $"temp-extract/{Guid.NewGuid()}{ext}";
+
+            blobUrl = await _fileStorageService.UploadFileAsync(file, "documents", blobName);
+            _logger.LogInformation("Extract: uploaded blob {BlobUrl} for {DocType} (packageId={PackageId})", blobUrl, documentType, packageId);
 
             object? extracted = null;
-            var docTypeLower = documentType.Trim().ToLowerInvariant();
 
             if (docTypeLower == "invoice")
             {
@@ -259,17 +266,94 @@ public class DocumentsController : ControllerBase
                 return BadRequest(new { error = $"Extraction not supported for document type: {documentType}" });
             }
 
-            return Ok(new { extractedData = extracted });
+            // Persist Invoice + ValidationResult when packageId is provided
+            Guid? savedDocumentId = null;
+            if (docTypeLower == "invoice" && packageId.HasValue && extracted is InvoiceData invoiceData)
+            {
+                var package = await _context.DocumentPackages
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == packageId.Value, cancellationToken);
+
+                if (package != null)
+                {
+                    // Use the package's selected PO; fall back to any PO linked to this package
+                    var poId = package.SelectedPOId;
+                    if (poId == null)
+                    {
+                        var anyPo = await _context.POs.AsNoTracking()
+                            .Where(p => p.AgencyId == package.AgencyId && !p.IsDeleted)
+                            .OrderByDescending(p => p.CreatedAt)
+                            .Select(p => (Guid?)p.Id)
+                            .FirstOrDefaultAsync(cancellationToken);
+                        poId = anyPo;
+                    }
+
+                    if (poId.HasValue)
+                    {
+                        var confidence = invoiceData.FieldConfidences.Values.Any()
+                            ? invoiceData.FieldConfidences.Values.Average() : 0.5;
+
+                        var invoice = new Domain.Entities.Invoice
+                        {
+                            Id = Guid.NewGuid(),
+                            PackageId = packageId.Value,
+                            POId = poId.Value,
+                            VersionNumber = package.VersionNumber,
+                            FileName = file.FileName,
+                            BlobUrl = blobUrl,
+                            ContentType = file.ContentType,
+                            FileSizeBytes = file.Length,
+                            InvoiceNumber = invoiceData.InvoiceNumber,
+                            InvoiceDate = invoiceData.InvoiceDate == default ? null : invoiceData.InvoiceDate,
+                            VendorName = invoiceData.VendorName,
+                            GSTNumber = invoiceData.GSTNumber,
+                            SubTotal = invoiceData.SubTotal,
+                            TaxAmount = invoiceData.TaxAmount,
+                            TotalAmount = invoiceData.TotalAmount,
+                            ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(invoiceData),
+                            ExtractionConfidence = confidence,
+                            IsFlaggedForReview = invoiceData.IsFlaggedForReview,
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow
+                        };
+                        _context.Invoices.Add(invoice);
+
+                        var validationResult = new Domain.Entities.ValidationResult
+                        {
+                            Id = Guid.NewGuid(),
+                            DocumentType = Domain.Enums.DocumentType.Invoice,
+                            DocumentId = invoice.Id,
+                            CompletenessCheckPassed = !string.IsNullOrEmpty(invoiceData.InvoiceNumber) && invoiceData.TotalAmount > 0,
+                            AllValidationsPassed = false, // full cross-doc validation runs at submit time
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow
+                        };
+                        _context.ValidationResults.Add(validationResult);
+
+                        await _context.SaveChangesAsync(cancellationToken);
+                        savedDocumentId = invoice.Id;
+                        isPersisted = true;
+
+                        _logger.LogInformation("Invoice {InvoiceId} saved to DB for package {PackageId}", invoice.Id, packageId.Value);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("No PO found for package {PackageId} — invoice not persisted", packageId.Value);
+                    }
+                }
+            }
+
+            return Ok(new { extractedData = extracted, documentId = savedDocumentId });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Extract-only failed for {DocType}: {Error}", documentType, ex.Message);
+            _logger.LogError(ex, "Extract failed for {DocType}: {Error}", documentType, ex.Message);
             return StatusCode(500, new { error = "Extraction failed. You can enter details manually." });
         }
         finally
         {
-            // Clean up temp blob
-            if (blobUrl != null)
+            // Only delete the blob if it was a temp (not persisted)
+            if (!isPersisted && blobUrl != null)
             {
                 try { await _fileStorageService.DeleteFileAsync(blobUrl); }
                 catch (Exception delEx) { _logger.LogWarning(delEx, "Failed to delete temp blob {BlobUrl}", blobUrl); }
