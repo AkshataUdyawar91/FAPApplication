@@ -23,6 +23,7 @@ class AssistantResponseModel {
   final int? missingPhoneCount;
   final List<FinalReviewSectionModel>? reviewSections;
   final String? fileName;
+  final List<PendingClaimItemModel>? pendingClaims;
 
   const AssistantResponseModel({
     required this.type,
@@ -48,6 +49,7 @@ class AssistantResponseModel {
     this.missingPhoneCount,
     this.reviewSections,
     this.fileName,
+    this.pendingClaims,
   });
 
   factory AssistantResponseModel.fromJson(Map<String, dynamic> json) {
@@ -97,6 +99,9 @@ class AssistantResponseModel {
           ?.map((e) => FinalReviewSectionModel.fromJson(e as Map<String, dynamic>))
           .toList(),
       fileName: json['fileName'] as String?,
+      pendingClaims: (json['pendingClaims'] as List<dynamic>?)
+          ?.map((e) => PendingClaimItemModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
   }
 }
@@ -336,6 +341,44 @@ class FinalReviewFieldModel {
     return FinalReviewFieldModel(
       label: json['label'] as String? ?? '',
       value: json['value'] as String? ?? '—',
+    );
+  }
+}
+
+class PendingClaimItemModel {
+  final String submissionId;
+  final String fapId;
+  final String poNumber;
+  final double invoiceAmount;
+  final String status;
+  final String statusLabel;
+  final String statusColor;
+  final String submittedDate;
+  final String activityState;
+
+  const PendingClaimItemModel({
+    required this.submissionId,
+    required this.fapId,
+    required this.poNumber,
+    required this.invoiceAmount,
+    required this.status,
+    required this.statusLabel,
+    required this.statusColor,
+    required this.submittedDate,
+    required this.activityState,
+  });
+
+  factory PendingClaimItemModel.fromJson(Map<String, dynamic> json) {
+    return PendingClaimItemModel(
+      submissionId: json['submissionId'] as String? ?? '',
+      fapId: json['fapId'] as String? ?? '',
+      poNumber: json['poNumber'] as String? ?? '—',
+      invoiceAmount: (json['invoiceAmount'] as num?)?.toDouble() ?? 0.0,
+      status: json['status'] as String? ?? '',
+      statusLabel: json['statusLabel'] as String? ?? '',
+      statusColor: json['statusColor'] as String? ?? 'blue',
+      submittedDate: json['submittedDate'] as String? ?? '',
+      activityState: json['activityState'] as String? ?? '—',
     );
   }
 }

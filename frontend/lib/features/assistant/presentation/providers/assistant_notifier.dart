@@ -85,7 +85,14 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
   }
 
   Future<void> sendAction(String action, {String? payloadJson}) async {
-    _addUserMessage(action
+    const _actionLabels = <String, String>{
+      'view_requests': '',
+      'create_request': 'Start a new submission',
+      'pending_approvals': 'Why was my claim returned',
+    };
+    final label = _actionLabels[action];
+    if (label != null && label.isNotEmpty) _addUserMessage(label);
+    else if (label == null) _addUserMessage(action
         .replaceAll('_', ' ')
         .split(' ')
         .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase())

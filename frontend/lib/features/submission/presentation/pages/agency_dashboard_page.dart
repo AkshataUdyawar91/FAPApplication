@@ -123,16 +123,16 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         'recommending'
       ].contains(state)) {
         statuses.add('extracting');
-      } else if (['pendingapproval', 'pendingchapproval'].contains(state)) {
+      } else if (['pendingapproval', 'pendingchapproval', 'pendingch'].contains(state)) {
         statuses.add('pending_with_asm');
-      } else if (['asmapproved', 'pendinghqapproval'].contains(state)) {
+      } else if (['asmapproved', 'pendinghqapproval', 'pendingra'].contains(state)) {
         statuses.add('pending_with_ra');
       } else if (state == 'approved') {
         statuses.add('approved');
-      } else if (['rejected', 'rejectedbyasm', 'reuploadrequested']
+      } else if (['rejected', 'rejectedbyasm', 'reuploadrequested', 'chrejected']
           .contains(state)) {
         statuses.add('rejected_by_asm');
-      } else if (['rejectedbyhq', 'rejectedbyra'].contains(state)) {
+      } else if (['rejectedbyhq', 'rejectedbyra', 'rarejected'].contains(state)) {
         statuses.add('rejected_by_ra');
       }
     }
@@ -199,20 +199,20 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           break;
         case 'pending_with_asm':
           matchesStatus =
-              ['pendingapproval', 'pendingchapproval'].contains(state);
+              ['pendingapproval', 'pendingchapproval', 'pendingch'].contains(state);
           break;
         case 'pending_with_ra':
-          matchesStatus = ['asmapproved', 'pendinghqapproval'].contains(state);
+          matchesStatus = ['asmapproved', 'pendinghqapproval', 'pendingra'].contains(state);
           break;
         case 'approved':
           matchesStatus = state == 'approved';
           break;
         case 'rejected_by_asm':
-          matchesStatus = ['rejected', 'rejectedbyasm', 'reuploadrequested']
+          matchesStatus = ['rejected', 'rejectedbyasm', 'reuploadrequested', 'chrejected']
               .contains(state);
           break;
         case 'rejected_by_ra':
-          matchesStatus = ['rejectedbyhq', 'rejectedbyra'].contains(state);
+          matchesStatus = ['rejectedbyhq', 'rejectedbyra', 'rarejected'].contains(state);
           break;
       }
       return matchesSearch && matchesStatus;
@@ -238,11 +238,11 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       }).length,
       'pendingWithASM': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['pendingapproval', 'pendingchapproval'].contains(s);
+        return ['pendingapproval', 'pendingchapproval', 'pendingch'].contains(s);
       }).length,
       'pendingWithRA': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['asmapproved', 'pendinghqapproval'].contains(s);
+        return ['asmapproved', 'pendinghqapproval', 'pendingra'].contains(s);
       }).length,
       'approved': _requests
           .where((r) => r['state']?.toString().toLowerCase() == 'approved')

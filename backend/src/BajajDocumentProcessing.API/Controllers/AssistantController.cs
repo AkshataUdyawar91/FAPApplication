@@ -54,7 +54,7 @@ public class AssistantController : ControllerBase
         // Actions that don't require an agencyId (available to all roles)
         var publicActions = new HashSet<string>
         {
-            "greet", "create_request", "view_requests", "pending_approvals",
+            "greet", "create_request", "pending_approvals",
             "search_state", "list_states", "submit_team_name",
             "search_dealer", "select_dealer", "submit_team_dates",
             "reupload_invoice", "reupload_activity_summary",
@@ -72,7 +72,7 @@ public class AssistantController : ControllerBase
             {
                 "greet" => BuildGreeting(),
                 "create_request" => BuildCreateRequestPrompt(),
-                "view_requests" => BuildViewRequestsPrompt(),
+                "view_requests" => await HandleViewRequests(agencyId ?? Guid.Empty, ct),
                 "pending_approvals" => BuildPendingApprovalsPrompt(),
                 "search_po" => await HandleSearchPO(request, agencyId!.Value, ct),
                 "select_po" => await HandleSelectPO(request, agencyId!.Value, ct),
@@ -148,12 +148,84 @@ public class AssistantController : ControllerBase
         };
     }
 
-    private static AssistantResponse BuildViewRequestsPrompt()
+    private async Task<AssistantResponse> HandleViewRequests(Guid agencyId, CancellationToken ct)
     {
+        // Pending states: everything except Draft (0) and Approved (8)
+        var pendingStates = new[]
+        {
+            PackageState.Uploaded,
+            PackageState.Extracting,
+            PackageState.Validating,
+            PackageState.PendingCH,
+            PackageState.CHRejected,
+            PackageState.PendingRA,
+            PackageState.RARejected,
+        };
+
+        var packages = await _context.DocumentPackages
+            .Where(p => p.AgencyId == agencyId && !p.IsDeleted && pendingStates.Contains(p.State))
+            .OrderByDescending(p => p.CreatedAt)
+            .Select(p => new
+            {
+                p.Id,
+                p.SubmissionNumber,
+                p.State,
+                p.CreatedAt,
+                p.ActivityState,
+                InvoiceAmount = p.Invoices
+                    .Where(i => !i.IsDeleted && i.TotalAmount.HasValue)
+                    .Sum(i => (decimal?)i.TotalAmount) ?? 0m,
+                PONumber = p.SelectedPOId != null
+                    ? _context.POs
+                        .Where(po => po.Id == p.SelectedPOId && !po.IsDeleted)
+                        .Select(po => po.PONumber)
+                        .FirstOrDefault()
+                    : null,
+            })
+            .ToListAsync(ct);
+
+        if (packages.Count == 0)
+        {
+            return new AssistantResponse
+            {
+                Type = "text",
+                Message = "You have no pending claims right now. All your submissions are either approved or not yet started.",
+            };
+        }
+
+        var claims = packages.Select(p => new PendingClaimItem
+        {
+            SubmissionId = p.Id.ToString(),
+            FapId = p.SubmissionNumber ?? $"FAP-{p.Id.ToString()[..8].ToUpper()}",
+            PoNumber = p.PONumber ?? "—",
+            InvoiceAmount = p.InvoiceAmount,
+            Status = p.State.ToString(),
+            StatusLabel = p.State switch
+            {
+                PackageState.PendingCH => "Pending with CH",
+                PackageState.PendingRA => "Pending with RA",
+                PackageState.CHRejected => "Rejected by CH",
+                PackageState.RARejected => "Rejected by RA",
+                PackageState.Validating or PackageState.Extracting => "Processing",
+                PackageState.Uploaded => "Processing",
+                _ => p.State.ToString(),
+            },
+            StatusColor = p.State switch
+            {
+                PackageState.PendingCH => "blue",
+                PackageState.PendingRA => "blue",
+                PackageState.CHRejected or PackageState.RARejected => "red",
+                _ => "orange",
+            },
+            SubmittedDate = p.CreatedAt.ToString("dd-MMM-yyyy"),
+            ActivityState = p.ActivityState ?? "—",
+        }).ToList();
+
         return new AssistantResponse
         {
-            Type = "text",
-            Message = "This feature is coming soon. You'll be able to view and track all your submissions here.",
+            Type = "pending_claims",
+            Message = "Here are your pending claims.",
+            PendingClaims = claims,
         };
     }
 
@@ -3905,6 +3977,9 @@ public class AssistantResponse
     [JsonPropertyName("reviewSections")]
     public List<FinalReviewSection>? ReviewSections { get; init; }
 
+    [JsonPropertyName("pendingClaims")]
+    public List<PendingClaimItem>? PendingClaims { get; init; }
+
     [JsonPropertyName("fileName")]
     public string? FileName { get; init; }
 }
@@ -4051,4 +4126,34 @@ public class FinalReviewField
 
     [JsonPropertyName("value")]
     public required string Value { get; init; }
+}
+
+public class PendingClaimItem
+{
+    [JsonPropertyName("submissionId")]
+    public required string SubmissionId { get; init; }
+
+    [JsonPropertyName("fapId")]
+    public required string FapId { get; init; }
+
+    [JsonPropertyName("poNumber")]
+    public required string PoNumber { get; init; }
+
+    [JsonPropertyName("invoiceAmount")]
+    public decimal InvoiceAmount { get; init; }
+
+    [JsonPropertyName("status")]
+    public required string Status { get; init; }
+
+    [JsonPropertyName("statusLabel")]
+    public required string StatusLabel { get; init; }
+
+    [JsonPropertyName("statusColor")]
+    public required string StatusColor { get; init; }
+
+    [JsonPropertyName("submittedDate")]
+    public required string SubmittedDate { get; init; }
+
+    [JsonPropertyName("activityState")]
+    public required string ActivityState { get; init; }
 }

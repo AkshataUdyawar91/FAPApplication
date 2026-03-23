@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:web/web.dart' as web;
 import '../providers/assistant_notifier.dart';
@@ -867,9 +868,154 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         return AssistantBubble(message: msg.content);
       case 'draft_saved':
         return AssistantBubble(message: msg.content);
+      case 'pending_claims':
+        return AssistantBubble(message: msg.content, child: _pendingClaimsCard(r));
       default:
         return AssistantBubble(message: msg.content);
     }
+  }
+
+  Widget _pendingClaimsCard(AssistantResponseModel r) {
+    final claims = r.pendingClaims ?? [];
+    if (claims.isEmpty) return const SizedBox.shrink();
+
+    // Indian number format helper
+    String formatIndian(double amount) {
+      if (amount == 0) return '₹0';
+      final parts = amount.toStringAsFixed(0).split('');
+      final result = StringBuffer();
+      final len = parts.length;
+      for (int i = 0; i < len; i++) {
+        if (i == len - 3 && len > 3) result.write(',');
+        else if (i > (len - 3) && (len - i - 1) % 2 == 0 && i < len - 3) result.write(',');
+        result.write(parts[i]);
+      }
+      return '₹${result.toString()}';
+    }
+
+    Color statusBg(String color) {
+      switch (color) {
+        case 'blue': return const Color(0xFFDBEAFE);
+        case 'red': return const Color(0xFFFEE2E2);
+        default: return const Color(0xFFFEF3C7);
+      }
+    }
+
+    Color statusFg(String color) {
+      switch (color) {
+        case 'blue': return const Color(0xFF1E40AF);
+        case 'red': return const Color(0xFFDC2626);
+        default: return const Color(0xFFD97706);
+      }
+    }
+
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    Widget claimCard(PendingClaimItemModel claim) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 4, offset: const Offset(0, 2))],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Row 1: FAP ID + Status pill
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      claim.fapId,
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: statusBg(claim.statusColor),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      claim.statusLabel,
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: statusFg(claim.statusColor)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              // Row 2: PO Number + Invoice Amount
+              Row(children: [
+                const Icon(Icons.receipt_long, size: 13, color: Color(0xFF6B7280)),
+                const SizedBox(width: 4),
+                Text('PO: ${claim.poNumber}',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+                const SizedBox(width: 12),
+                const Icon(Icons.currency_rupee, size: 13, color: Color(0xFF6B7280)),
+                Text(
+                  claim.invoiceAmount > 0 ? formatIndian(claim.invoiceAmount) : '—',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                ),
+              ]),
+              const SizedBox(height: 4),
+              // Row 3: State + Date
+              Row(children: [
+                const Icon(Icons.location_on, size: 13, color: Color(0xFF6B7280)),
+                const SizedBox(width: 4),
+                Text(claim.activityState,
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+                const SizedBox(width: 12),
+                const Icon(Icons.calendar_today, size: 12, color: Color(0xFF6B7280)),
+                const SizedBox(width: 4),
+                Text(claim.submittedDate,
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+              ]),
+              const SizedBox(height: 10),
+              // View Details button
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    context.pushNamed('submission-detail', extra: {
+                      'submissionId': claim.submissionId,
+                      'token': token,
+                      'userName': userName,
+                      'poNumber': claim.poNumber == '—' ? '' : claim.poNumber,
+                    });
+                  },
+                  icon: const Icon(Icons.open_in_new, size: 14),
+                  label: const Text('View Details', style: TextStyle(fontSize: 13)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF003087),
+                    side: const BorderSide(color: Color(0xFF003087)),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Scrollable if > 5 claims
+    final Widget list = claims.length > 5
+        ? SizedBox(
+            height: 5 * 160.0,
+            child: SingleChildScrollView(
+              child: Column(children: claims.map(claimCard).toList()),
+            ),
+          )
+        : Column(children: claims.map(claimCard).toList());
+
+    return list;
   }
 
   Widget _teamProgressIndicator(int current, int total) {
