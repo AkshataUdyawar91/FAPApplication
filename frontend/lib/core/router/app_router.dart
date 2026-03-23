@@ -1,3 +1,4 @@
+import 'package:bajaj_document_processing/features/submission/presentation/pages/new_agency_upload_page.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
@@ -162,7 +163,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final userName = args?['userName']?.toString() ?? '';
           final submissionId = args?['submissionId']?.toString();
 
-          return AgencyUploadPage(
+          return NewAgencyUploadPage(
             token: token,
             userName: userName,
             submissionId: submissionId,

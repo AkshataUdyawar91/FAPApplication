@@ -19,7 +19,7 @@ class MyApp extends ConsumerWidget {
     final router = ref.watch(appRouterProvider);
 
     return MaterialApp.router(
-      title: 'ClaimsIQ',
+      title: 'FieldIQ',
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
       routerConfig: router,

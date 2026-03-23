@@ -23,7 +23,7 @@ public class EmailAgent : IEmailAgent
     private readonly ICorrelationIdService _correlationIdService;
     private readonly AsyncRetryPolicy _retryPolicy;
 
-    private const string Brand = "ClaimsIQ";
+    private const string Brand = "FieldIQ";
     private const string BrandColor = "#003087";
     private const string AccentColor = "#00A3E0";
     private const string GreenColor = "#38a169";
@@ -307,7 +307,7 @@ public class EmailAgent : IEmailAgent
             buttonColor: RedColor,
             buttonUrl: $"https://claimsiq.bajaj.com/fap/{fapId}",
             footerNote: "Please resubmit with corrections at your earliest convenience.",
-            bodyNote: "Log in to ClaimsIQ to correct and resubmit your claim."
+            bodyNote: "Log in to FieldIQ to correct and resubmit your claim."
         );
 
         return await SendAndLogAsync(packageId, "circleHead_rejected",
@@ -359,7 +359,7 @@ public class EmailAgent : IEmailAgent
             buttonLabel: "View Details",
             buttonColor: GreenColor,
             buttonUrl: $"https://claimsiq.bajaj.com/fap/{fapId}",
-            footerNote: "Payment will be processed as per the standard payment cycle. Thank you for using ClaimsIQ.",
+            footerNote: "Payment will be processed as per the standard payment cycle. Thank you for using FieldIQ.",
             bodyNote: "No further action required. Payment will be processed as per the standard cycle."
         );
 
@@ -573,12 +573,12 @@ public class EmailAgent : IEmailAgent
 
     private async Task<string> GetUserNameAsync(Guid? userId, CancellationToken cancellationToken)
     {
-        if (!userId.HasValue) return "ClaimsIQ System";
+        if (!userId.HasValue) return "FieldIQ System";
         return await _context.Users
             .AsNoTracking()
             .Where(u => u.Id == userId.Value)
             .Select(u => u.FullName)
-            .FirstOrDefaultAsync(cancellationToken) ?? "ClaimsIQ System";
+            .FirstOrDefaultAsync(cancellationToken) ?? "FieldIQ System";
     }
 
     private static EmailResult PackageNotFound() =>
@@ -587,7 +587,7 @@ public class EmailAgent : IEmailAgent
     /// <summary>
     /// Builds the white card email HTML matching the screenshot layout:
     /// - White card on light-grey page background
-    /// - "C ClaimsIQ  Bajaj Auto" header row with blue bottom border
+    /// - "C FieldIQ  Bajaj Auto" header row with blue bottom border
     /// - Bold recipient greeting
     /// - Intro line (may contain inline colored spans)
     /// - Bordered detail table with blue left-column labels
@@ -680,7 +680,7 @@ public class EmailAgent : IEmailAgent
                          style="background:#ffffff;border-radius:8px;max-width:560px;
                                 box-shadow:0 1px 4px rgba(0,0,0,.12);overflow:hidden">
 
-                    <!-- Card header: C logo + ClaimsIQ + Bajaj Auto + blue underline -->
+                    <!-- Card header: C logo + FieldIQ + Bajaj Auto + blue underline -->
                     <tr>
                       <td style="padding:20px 28px 16px;border-bottom:2px solid {BrandColor}">
                         <table cellpadding="0" cellspacing="0">

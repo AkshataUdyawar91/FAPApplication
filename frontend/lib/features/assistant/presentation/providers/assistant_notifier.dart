@@ -88,6 +88,14 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     // Show the actual typed text as the user bubble if provided,
     // otherwise format the action name (e.g. "create_request" → "Create Request")
     final displayText = userText ?? action
+    const _actionLabels = <String, String>{
+      'view_requests': '',
+      'pending_approvals': '',
+      'create_request': 'Start a new submission',
+    };
+    final label = _actionLabels[action];
+    if (label != null && label.isNotEmpty) _addUserMessage(label);
+    else if (label == null) _addUserMessage(action
         .replaceAll('_', ' ')
         .split(' ')
         .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase())
@@ -131,6 +139,9 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       _addBotMessage(response);
       if (response.selectedPO != null) {
         state = state.copyWith(selectedPO: response.selectedPO);
+      }
+      if (response.submissionId != null) {
+        state = state.copyWith(submissionId: response.submissionId);
       }
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
@@ -673,7 +684,12 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     _addUserMessage('Save as Draft');
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final response = await _dataSource.sendMessage(action: 'save_draft_from_chat');
+      final sid = state.submissionId;
+      final payload = sid != null ? '{"submissionId":"$sid"}' : null;
+      final response = await _dataSource.sendMessage(
+        action: 'save_draft_from_chat',
+        payloadJson: payload,
+      );
       _addBotMessage(response);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());

@@ -47,6 +47,9 @@ class _AgencySubmissionDetailPageState
     extends ConsumerState<AgencySubmissionDetailPage> {
   final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
     ..interceptors.add(PrettyDioLogger());
+  // Separate Dio for view/download — no response body logging (base64 floods console)
+  final _dioSilent = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    ..interceptors.add(PrettyDioLogger(responseBody: false));
 
   bool _isLoading = true;
   Map<String, dynamic>? _submission;
@@ -470,6 +473,7 @@ class _AgencySubmissionDetailPageState
                 title: 'Enquiry Validation',
                 fileName: _getEnquiryFileName(),
                 validation: _enquiryValidation,
+                documentId: _getDocumentIdByType('EnquiryDocument'),
               ),
               const SizedBox(height: 24),
             ],
@@ -562,6 +566,23 @@ class _AgencySubmissionDetailPageState
     final fileName = photo['fileName'] ?? 'Unknown';
     final validationDetailsJson = photo['validationDetailsJson'] as String?;
     final failureReason = photo['failureReason'] as String?;
+    final photoDocId = photo['documentId']?.toString() ?? '';
+
+    // Photo validation is aggregate (documentId = packageId). Use first photo's actual ID instead.
+    final packageId = _submission?['id']?.toString() ?? '';
+    String resolvedPhotoDocId = (photoDocId.isNotEmpty && photoDocId != packageId) ? photoDocId : '';
+    
+    // Get first photo's real ID from campaigns for View/Download (blob URLs are private Azure storage)
+    if (resolvedPhotoDocId.isEmpty) {
+      final campaigns = _submission?['campaigns'] as List? ?? [];
+      for (final campaign in campaigns) {
+        final photos = (campaign as Map<String, dynamic>)['photos'] as List? ?? [];
+        if (photos.isNotEmpty) {
+          resolvedPhotoDocId = (photos[0] as Map<String, dynamic>)['id']?.toString() ?? '';
+          break;
+        }
+      }
+    }
 
     List<Map<String, dynamic>> allRows = [];
 
@@ -592,6 +613,7 @@ class _AgencySubmissionDetailPageState
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
+      resolvedDocId: resolvedPhotoDocId,
     );
   }
 
@@ -698,10 +720,10 @@ class _AgencySubmissionDetailPageState
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
+      resolvedDocId: resolvedDocId,
+      resolvedBlobUrl: resolvedBlobUrl,
     );
-  }
-
-  /// Extracts all validation rows from ValidationDetailsJson.
+  }  /// Extracts all validation rows from ValidationDetailsJson.
   /// Reads: proactiveRules, fieldPresence, crossDocument, amountConsistency,
   /// lineItemMatching, vendorMatching, completeness — deduplicating by label.
   List<Map<String, dynamic>> _extractAllValidationRows(
@@ -2821,7 +2843,7 @@ class _AgencySubmissionDetailPageState
 
   Future<void> _viewDocument(String documentId, String filename) async {
     try {
-      final response = await _dio.get(
+      final response = await _dioSilent.get(
         '/documents/$documentId/download',
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
@@ -2857,7 +2879,7 @@ class _AgencySubmissionDetailPageState
       return;
     }
     try {
-      final response = await _dio.get(
+      final response = await _dioSilent.get(
         '/documents/$documentId/download',
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
@@ -2909,7 +2931,7 @@ class _AgencySubmissionDetailPageState
       return;
     }
     try {
-      final response = await _dio.get(
+      final response = await _dioSilent.get(
         '/documents/$documentId/download',
         options: Options(
           headers: {'Authorization': 'Bearer ${widget.token}'},

@@ -123,16 +123,16 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         'recommending'
       ].contains(state)) {
         statuses.add('extracting');
-      } else if (['pendingapproval', 'pendingchapproval'].contains(state)) {
+      } else if (['pendingapproval', 'pendingchapproval', 'pendingch'].contains(state)) {
         statuses.add('pending_with_asm');
-      } else if (['asmapproved', 'pendinghqapproval'].contains(state)) {
+      } else if (['asmapproved', 'pendinghqapproval', 'pendingra'].contains(state)) {
         statuses.add('pending_with_ra');
       } else if (state == 'approved') {
         statuses.add('approved');
-      } else if (['rejected', 'rejectedbyasm', 'reuploadrequested']
+      } else if (['rejected', 'rejectedbyasm', 'reuploadrequested', 'chrejected']
           .contains(state)) {
         statuses.add('rejected_by_asm');
-      } else if (['rejectedbyhq', 'rejectedbyra'].contains(state)) {
+      } else if (['rejectedbyhq', 'rejectedbyra', 'rarejected'].contains(state)) {
         statuses.add('rejected_by_ra');
       }
     }
@@ -199,20 +199,20 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           break;
         case 'pending_with_asm':
           matchesStatus =
-              ['pendingapproval', 'pendingchapproval'].contains(state);
+              ['pendingapproval', 'pendingchapproval', 'pendingch'].contains(state);
           break;
         case 'pending_with_ra':
-          matchesStatus = ['asmapproved', 'pendinghqapproval'].contains(state);
+          matchesStatus = ['asmapproved', 'pendinghqapproval', 'pendingra'].contains(state);
           break;
         case 'approved':
           matchesStatus = state == 'approved';
           break;
         case 'rejected_by_asm':
-          matchesStatus = ['rejected', 'rejectedbyasm', 'reuploadrequested']
+          matchesStatus = ['rejected', 'rejectedbyasm', 'reuploadrequested', 'chrejected']
               .contains(state);
           break;
         case 'rejected_by_ra':
-          matchesStatus = ['rejectedbyhq', 'rejectedbyra'].contains(state);
+          matchesStatus = ['rejectedbyhq', 'rejectedbyra', 'rarejected'].contains(state);
           break;
       }
       return matchesSearch && matchesStatus;
@@ -238,11 +238,11 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       }).length,
       'pendingWithASM': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['pendingapproval', 'pendingchapproval'].contains(s);
+        return ['pendingapproval', 'pendingchapproval', 'pendingch'].contains(s);
       }).length,
       'pendingWithRA': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['asmapproved', 'pendinghqapproval'].contains(s);
+        return ['asmapproved', 'pendinghqapproval', 'pendingra'].contains(s);
       }).length,
       'approved': _requests
           .where((r) => r['state']?.toString().toLowerCase() == 'approved')
@@ -367,11 +367,49 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     );
   }
 
-  void _navigateToUpload() {
-    context.pushNamed('agency-upload', extra: {
-      'token': widget.token,
-      'userName': widget.userName,
-    });
+  // void _navigateToUpload() {
+  //   context.pushNamed('agency-upload', extra: {
+  //     'token': widget.token,
+  //     'userName': widget.userName,
+  //   });
+  // }
+
+  void _navigateToUpload() async {
+    // Show loading indicator
+    if (!mounted) return;
+
+    // Create draft submission first
+    try {
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final response = await dio.post(
+        '/submissions/draft',
+        data: {}, // Empty body - will use authenticated user's agency
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 201 && mounted) {
+        final submissionId = response.data['submissionId'];
+        debugPrint('Draft submission created: $submissionId');
+
+        // Navigate to upload page with submissionId
+        context.pushNamed('agency-upload', extra: {
+          'token': widget.token,
+          'userName': widget.userName,
+          'submissionId': submissionId,
+        });
+      }
+    } catch (e) {
+      debugPrint('Error creating draft submission: $e');
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to create submission: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _navigateToChatbot() {
@@ -385,12 +423,11 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(
-          icon: Icons.dashboard,
-          label: 'Home',
-          isActive: true,
-          onTap: () {}),
+          icon: Icons.dashboard, label: 'Home', isActive: true, onTap: () {}),
       NavItem(
-          icon: Icons.upload_file, label: 'New Claim', onTap: _navigateToUpload),
+          icon: Icons.upload_file,
+          label: 'New Claim',
+          onTap: _navigateToUpload),
       NavItem(
           icon: Icons.notifications,
           label: 'Notifications',
@@ -463,7 +500,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
             icon: const Icon(Icons.add, size: 20),
             label: const Text('New Request'),
           ),
-
         ],
       ),
     );
@@ -773,9 +809,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
 
   Widget _buildMobileCard(Map<String, dynamic> request) {
     final rawState = request['state']?.toString() ?? 'pending';
-    final id = request['id']?.toString() ?? '';
-    final fapNumber = request['submissionNumber']?.toString() ??
-        'FAP-${id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase()}';
+    final fapNumber = request['submissionNumber']?.toString() ?? '—';
     final poNumber =
         request['poNumber']?.toString() ?? request['poNo']?.toString() ?? '—';
     final invoiceNumber = request['invoiceNumber']?.toString() ??
@@ -932,9 +966,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                 rows: requests.map((r) {
                   final rawState = r['state']?.toString() ?? 'pending';
                   final status = _normalizeStatus(rawState);
-                  final id = r['id']?.toString() ?? '';
-                  final fapNumber = r['submissionNumber']?.toString() ??
-                      'FAP-${id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase()}';
+                  final fapNumber = r['submissionNumber']?.toString() ?? '—';
                   final poNumber =
                       r['poNumber']?.toString() ?? r['poNo']?.toString() ?? '—';
                   final invoiceNumber = r['invoiceNumber']?.toString() ??
@@ -1084,8 +1116,8 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       case 'pendinghqapproval':
       case 'pendingwithra':
       case 'pendingra':
-        bgColor = const Color(0xFFFEF3C7);
-        textColor = const Color(0xFF92400E);
+        bgColor = const Color(0xFFDBEAFE);
+        textColor = const Color(0xFF1E40AF);
         label = 'Pending with RA';
         break;
       case 'reuploadrequested':
@@ -1175,7 +1207,8 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     if (['pendingra', 'pendinghqapproval', 'pendingwithra'].contains(state))
       return 'pending_hq';
     if (state == 'approved') return 'approved';
-    if (['chrejected', 'rejectedbyasm'].contains(state)) return 'rejected_by_asm';
+    if (['chrejected', 'rejectedbyasm'].contains(state))
+      return 'rejected_by_asm';
     if (['rarejected', 'rejectedbyhq', 'rejectedbyra'].contains(state))
       return 'rejected_by_hq';
     if (['rejected', 'validationfailed', 'reuploadrequested'].contains(state))
