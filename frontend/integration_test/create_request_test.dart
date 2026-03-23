@@ -235,11 +235,11 @@ class _TestRunnerPanelState extends State<TestRunnerPanel> {
     await _runStep('Tap Sign In button', () async {
       await _scrollToElevatedButton('Sign In');
       _tapElevatedButton('Sign In');
-      await _waitFor(() => _findText('All Requests'), timeout: 10);
+      await _waitFor(() => _findText('My Requests'), timeout: 10);
     });
 
     await _runStep('Dashboard loaded after login', () async {
-      if (!_findText('All Requests')) throw Exception('Dashboard not loaded');
+      if (!_findText('My Requests')) throw Exception('Dashboard not loaded');
     });
 
     // ── Phase 2: Navigate to Upload ──
@@ -511,8 +511,22 @@ class _TestRunnerPanelState extends State<TestRunnerPanel> {
     await _runStep('Submit for Validation', () async {
       await _scrollToElevatedButton('Submit for Validation');
       _tapElevatedButton('Submit for Validation');
-      // Wait for submission to complete or error
-      await Future.delayed(const Duration(seconds: 5));
+      // Wait for navigation back to dashboard
+      await _waitFor(
+        () => _findText('My Requests'),
+        timeout: 60,
+      );
+    });
+
+    await _runStep('Verify submission success toast', () async {
+      // Toast appears on dashboard after redirect — check specifically for toast text
+      await _waitFor(
+        () => _findText('Submission complete'),
+        timeout: 60,
+      );
+      if (!_findText('Submission complete')) {
+        throw Exception('Success toast not shown after submission');
+      }
     });
 
     setState(() {
