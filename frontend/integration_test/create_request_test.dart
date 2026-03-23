@@ -11,7 +11,7 @@
 //
 // Run:
 //   cd frontend
-//   flutter run -d chrome -t lib/integration_test_runner.dart
+//   flutter run -d chrome -t integration_test/create_request_test.dart
 // =============================================================================
 
 import 'dart:async';
@@ -21,10 +21,10 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:dio/dio.dart';
-import 'core/theme/app_theme.dart';
-import 'core/router/app_router.dart';
-import 'features/submission/presentation/pages/agency_upload_page.dart';
-import 'features/submission/presentation/widgets/campaign_list_section.dart';
+import 'package:bajaj_document_processing/core/theme/app_theme.dart';
+import 'package:bajaj_document_processing/core/router/app_router.dart';
+import 'package:bajaj_document_processing/features/submission/presentation/pages/agency_upload_page.dart';
+import 'package:bajaj_document_processing/features/submission/presentation/widgets/campaign_list_section.dart';
 import 'integration_test_config.dart';
 
 void main() {
