@@ -242,6 +242,12 @@ public class SubmissionDocumentDto
 public class ValidationResultDto
 {
     /// <summary>
+    /// The document ID this validation belongs to
+    /// </summary>
+    [JsonPropertyName("documentId")]
+    public Guid? DocumentId { get; init; }
+
+    /// <summary>
     /// Whether all validations passed
     /// </summary>
     [JsonPropertyName("allValidationsPassed")]

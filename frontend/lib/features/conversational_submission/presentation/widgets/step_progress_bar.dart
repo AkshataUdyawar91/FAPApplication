@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 /// A progress bar widget designed to sit in the AppBar bottom slot.
 ///
 /// Shows the current step progress (0–100%) as a [LinearProgressIndicator]
-/// with the ClaimsIQ brand color and a step label.
+/// with the FieldIQ brand color and a step label.
 class StepProgressBar extends StatelessWidget implements PreferredSizeWidget {
   /// Progress value from 0 to 100.
   final int progressPercent;

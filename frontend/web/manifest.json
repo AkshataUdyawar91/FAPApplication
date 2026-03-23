@@ -1,11 +1,11 @@
 {
-    "name": "ClaimsIQ",
-    "short_name": "ClaimsIQ",
+    "name": "FieldIQ",
+    "short_name": "FieldIQ",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#FFFFFF",
     "theme_color": "#003087",
-    "description": "ClaimsIQ — Agency FAP Claim Submission & Tracking",
+    "description": "FieldIQ — Agency FAP Claim Submission & Tracking",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

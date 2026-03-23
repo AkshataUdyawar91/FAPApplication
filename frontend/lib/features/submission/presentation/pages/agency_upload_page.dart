@@ -76,6 +76,29 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
 
   bool get _isEditMode => widget.submissionId != null;
 
+  // ── Test helpers (used by integration_test_runner.dart) ──
+  /// Exposes invoices list for test injection.
+  List<InvoiceItemData> get testInvoices => _invoices;
+  set testInvoices(List<InvoiceItemData> v) => _invoices = v;
+  /// Exposes cost summary file for test injection.
+  PlatformFile? get testCostSummaryFile => _costSummaryFile;
+  set testCostSummaryFile(PlatformFile? v) => _costSummaryFile = v;
+  /// Exposes activity summary file for test injection.
+  PlatformFile? get testActivitySummaryFile => _activitySummaryFile;
+  set testActivitySummaryFile(PlatformFile? v) => _activitySummaryFile = v;
+  /// Exposes enquiry doc file for test injection.
+  PlatformFile? get testEnquiryDocFile => _enquiryDocFile;
+  set testEnquiryDocFile(PlatformFile? v) => _enquiryDocFile = v;
+  /// Exposes campaigns list for test injection.
+  List<CampaignItemData> get testCampaigns => _campaigns;
+  set testCampaigns(List<CampaignItemData> v) => _campaigns = v;
+  /// Triggers invoice extraction for a given invoice.
+  Future<void> testExtractInvoice(InvoiceItemData inv) =>
+      _uploadAndAutofillInvoice(inv);
+  /// Triggers a UI rebuild.
+  // ignore: invalid_use_of_protected_member
+  void testRebuild() => setState(() {});
+
   static const int _totalSteps = 3;
 
   static const List<_TabMeta> _tabs = [
@@ -675,6 +698,18 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
         _existingActivitySummaryFileName == null) {
       _showError('Please upload an Activity Summary');
       return;
+    }
+    // Validate minimum photos per team
+    for (int i = 0; i < _campaigns.length; i++) {
+      final campaign = _campaigns[i];
+      final photoCount = campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0);
+      if (photoCount < CampaignItemData.minPhotos) {
+        final teamLabel = campaign.dealershipName.isNotEmpty
+            ? campaign.dealershipName
+            : 'Team ${i + 1}';
+        _showError('$teamLabel needs at least ${CampaignItemData.minPhotos} photos ($photoCount uploaded)');
+        return;
+      }
     }
     setState(() => _isUploading = true);
     try {
@@ -2076,32 +2111,38 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             if (isMobile) ...[
               _buildFlatField('Invoice Number', invoice.invoiceNumber,
                   (v) => invoice.invoiceNumber = v,
-                  required: true, controller: invoice.invoiceNumberController),
+                  required: true, controller: invoice.invoiceNumberController,
+                  enabled: !invoice.isExtracting),
               const SizedBox(height: 10),
               _buildFlatDateField('Invoice Date', invoice.invoiceDate,
                   (v) => invoice.invoiceDate = v,
-                  required: true, controller: invoice.invoiceDateController),
+                  required: true, controller: invoice.invoiceDateController,
+                  enabled: !invoice.isExtracting),
               const SizedBox(height: 10),
               _buildFlatField('Invoice Amount', invoice.totalAmount,
                   (v) => invoice.totalAmount = v,
-                  required: true, controller: invoice.totalAmountController),
+                  required: true, controller: invoice.totalAmountController,
+                  enabled: !invoice.isExtracting),
               const SizedBox(height: 10),
               _buildFlatField(
                   'GSTIN', invoice.gstNumber, (v) => invoice.gstNumber = v,
-                  required: true, controller: invoice.gstNumberController),
+                  required: true, controller: invoice.gstNumberController,
+                  enabled: !invoice.isExtracting),
             ] else ...[
               Row(children: [
                 Expanded(
                     child: _buildFlatField('Invoice Number',
                         invoice.invoiceNumber, (v) => invoice.invoiceNumber = v,
                         required: true,
-                        controller: invoice.invoiceNumberController)),
+                        controller: invoice.invoiceNumberController,
+                        enabled: !invoice.isExtracting)),
                 const SizedBox(width: 16),
                 Expanded(
                     child: _buildFlatDateField('Invoice Date',
                         invoice.invoiceDate, (v) => invoice.invoiceDate = v,
                         required: true,
-                        controller: invoice.invoiceDateController)),
+                        controller: invoice.invoiceDateController,
+                        enabled: !invoice.isExtracting)),
               ]),
               const SizedBox(height: 12),
               Row(children: [
@@ -2109,13 +2150,15 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
                     child: _buildFlatField('Invoice Amount',
                         invoice.totalAmount, (v) => invoice.totalAmount = v,
                         required: true,
-                        controller: invoice.totalAmountController)),
+                        controller: invoice.totalAmountController,
+                        enabled: !invoice.isExtracting)),
                 const SizedBox(width: 16),
                 Expanded(
                     child: _buildFlatField('GSTIN', invoice.gstNumber,
                         (v) => invoice.gstNumber = v,
                         required: true,
-                        controller: invoice.gstNumberController)),
+                        controller: invoice.gstNumberController,
+                        enabled: !invoice.isExtracting)),
               ]),
             ],
           ],
@@ -2128,7 +2171,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
   /// When [controller] is provided it is used instead of [initialValue] so
   /// that programmatic updates (e.g. from extraction) are reflected in the UI.
   Widget _buildFlatField(String label, String value, Function(String) onChanged,
-      {bool required = false, TextEditingController? controller}) {
+      {bool required = false, TextEditingController? controller, bool enabled = true}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2148,9 +2191,12 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
         TextFormField(
           controller: controller,
           initialValue: controller == null ? value : null,
-          onChanged: (v) => setState(() => onChanged(v)),
-          style: const TextStyle(fontSize: 14),
+          onChanged: enabled ? (v) => setState(() => onChanged(v)) : null,
+          enabled: enabled,
+          style: TextStyle(fontSize: 14, color: enabled ? null : const Color(0xFF9CA3AF)),
           decoration: InputDecoration(
+            filled: !enabled,
+            fillColor: !enabled ? const Color(0xFFF3F4F6) : null,
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             border: OutlineInputBorder(
@@ -2159,6 +2205,9 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(6),
                 borderSide: const BorderSide(color: AppColors.border)),
+            disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
             focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(6),
                 borderSide:
@@ -2173,7 +2222,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
   /// Flat date field with calendar picker — matches PO date style.
   Widget _buildFlatDateField(
       String label, String value, Function(String) onChanged,
-      {bool required = false, TextEditingController? controller}) {
+      {bool required = false, TextEditingController? controller, bool enabled = true}) {
     // Use the provided controller, or create a temporary one for backward compat
     final ctrl = controller ?? TextEditingController(text: value);
     return Column(
@@ -2194,13 +2243,16 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
         const SizedBox(height: 6),
         TextFormField(
           readOnly: true,
+          enabled: enabled,
           controller: ctrl,
-          style: const TextStyle(fontSize: 14),
+          style: TextStyle(fontSize: 14, color: enabled ? null : const Color(0xFF9CA3AF)),
           decoration: InputDecoration(
             hintText: 'dd-mm-yyyy',
             hintStyle: const TextStyle(color: Color(0xFF9E9E9E), fontSize: 14),
-            suffixIcon: const Icon(Icons.calendar_today,
-                color: AppColors.primary, size: 18),
+            filled: !enabled,
+            fillColor: !enabled ? const Color(0xFFF3F4F6) : null,
+            suffixIcon: Icon(Icons.calendar_today,
+                color: enabled ? AppColors.primary : const Color(0xFF9CA3AF), size: 18),
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             border: OutlineInputBorder(
@@ -2209,13 +2261,16 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(6),
                 borderSide: const BorderSide(color: AppColors.border)),
+            disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
             focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(6),
                 borderSide:
                     const BorderSide(color: AppColors.primary, width: 1.5)),
             isDense: true,
           ),
-          onTap: () async {
+          onTap: enabled ? () async {
             DateTime initial = DateTime.now();
             if (value.isNotEmpty) {
               final parsed = _parseDate(value);
@@ -2240,7 +2295,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
               ctrl.text = formatted;
               setState(() => onChanged(formatted));
             }
-          },
+          } : null,
         ),
       ],
     );

@@ -127,7 +127,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "greeting",
-            Message = "Hey! I'm your ClaimsIQ assistant. I can help you submit claims and track approvals.",
+            Message = "Hey! I'm your FieldIQ assistant. I can help you submit claims and track approvals.",
             Cards = new List<WorkflowCard>
             {
                 new() { Id = "create_request", Title = "Start a new submission", Subtitle = "I'll guide you step by step", Icon = "add_circle_outline", Action = "create_request" },
@@ -2241,7 +2241,7 @@ public class AssistantController : ControllerBase
         int passCount = rules.Count(r => r.Passed);
         int failCount = rules.Count(r => !r.Passed);
 
-        string botMessage = $"ClaimsIQ Enquiry Dump processed:\n• {totalRecords} enquiry records found\n• {missingPhone} records with missing Customer Phone";
+        string botMessage = $"FieldIQ Enquiry Dump processed:\n• {totalRecords} enquiry records found\n• {missingPhone} records with missing Customer Phone";
 
         // Persist to ValidationResults
         try
