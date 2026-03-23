@@ -27,7 +27,7 @@ public class TeamsBotOptions
     public string TenantId { get; set; } = string.Empty;
 
     /// <summary>
-    /// Base URL for the ClaimsIQ portal (used in "Open in Portal" links).
+    /// Base URL for the FieldIQ portal (used in "Open in Portal" links).
     /// </summary>
     public string PortalBaseUrl { get; set; } = "https://localhost:7001";
 

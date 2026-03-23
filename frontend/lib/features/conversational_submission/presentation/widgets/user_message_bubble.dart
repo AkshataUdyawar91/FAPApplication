@@ -3,7 +3,7 @@ import '../../domain/entities/conversation_message.dart';
 
 /// User message bubble for text input and action confirmations.
 ///
-/// Displays right-aligned with the ClaimsIQ brand color (#003087).
+/// Displays right-aligned with the FieldIQ brand color (#003087).
 /// Supports both free-text messages and action confirmation labels.
 class UserMessageBubble extends StatelessWidget {
   final ConversationMessage message;

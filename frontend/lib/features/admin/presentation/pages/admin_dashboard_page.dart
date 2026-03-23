@@ -82,7 +82,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           children: [
             Icon(Icons.admin_panel_settings, color: Colors.white, size: 20),
             SizedBox(width: 8),
-            Text('ClaimsIQ — Admin Panel',
+            Text('FieldIQ — Admin Panel',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
           ],
         ),

@@ -67,7 +67,7 @@ public class TeamsBotService : TeamsActivityHandler
         // For greetings (hi, hello, hey, start), show welcome + pending submissions
         if (IsGreeting(text))
         {
-            var welcomeMessage = "👋 Hi! I'm the ClaimsIQ Review Bot.\n\n" +
+            var welcomeMessage = "👋 Hi! I'm the FieldIQ Review Bot.\n\n" +
                                  "I'll send you adaptive cards when FAPs are ready for review. " +
                                  "You can **Approve** or **Reject** directly from the card.\n\n" +
                                  $"[Open Portal]({_portalBaseUrl})";
@@ -306,7 +306,7 @@ public class TeamsBotService : TeamsActivityHandler
             if (systemUser == null)
             {
                 _logger.LogWarning("Could not resolve Teams user {TeamsUserId} to a system user", teamsUserId);
-                // Show login card so the user can link their ClaimsIQ account
+                // Show login card so the user can link their FieldIQ account
                 await SendLoginCardAsync(turnContext, cancellationToken);
                 return;
             }
@@ -1290,7 +1290,7 @@ public class TeamsBotService : TeamsActivityHandler
     }
 
     /// <summary>
-    /// Sends an Adaptive Card with email/password inputs so the user can link their ClaimsIQ account.
+    /// Sends an Adaptive Card with email/password inputs so the user can link their FieldIQ account.
     /// Password is masked using Input.Text with style=password.
     /// </summary>
     private async Task SendLoginCardAsync(
@@ -1307,14 +1307,14 @@ public class TeamsBotService : TeamsActivityHandler
                 new JObject
                 {
                     ["type"] = "TextBlock",
-                    ["text"] = "🔐 Sign in to ClaimsIQ",
+                    ["text"] = "🔐 Sign in to FieldIQ",
                     ["size"] = "Medium",
                     ["weight"] = "Bolder"
                 },
                 new JObject
                 {
                     ["type"] = "TextBlock",
-                    ["text"] = "I couldn't match your Teams account automatically. Please enter your ClaimsIQ credentials to link your account.",
+                    ["text"] = "I couldn't match your Teams account automatically. Please enter your FieldIQ credentials to link your account.",
                     ["wrap"] = true,
                     ["size"] = "Small",
                     ["color"] = "Default"

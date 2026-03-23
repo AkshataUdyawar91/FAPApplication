@@ -87,7 +87,7 @@ public class TeamsBotServiceTests
 
         var reply = adapter.ActiveQueue.FirstOrDefault();
         Assert.NotNull(reply);
-        Assert.Contains("ClaimsIQ Review Bot", reply.Text);
+        Assert.Contains("FieldIQ Review Bot", reply.Text);
         Assert.Contains("Approve", reply.Text);
     }
 

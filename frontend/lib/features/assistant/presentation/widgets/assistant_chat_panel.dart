@@ -2026,7 +2026,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('ClaimsIQ Assistant',
+                      Text('FieldIQ Assistant',
                           style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
                       Text('Online', style: TextStyle(fontSize: 12, color: Color(0xFF90CAF9))),
                     ],

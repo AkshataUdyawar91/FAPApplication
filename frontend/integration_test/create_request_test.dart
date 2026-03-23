@@ -43,7 +43,7 @@ class IntegrationTestApp extends ConsumerWidget {
     final router = ref.watch(appRouterProvider);
 
     return MaterialApp.router(
-      title: 'ClaimsIQ - Integration Test',
+      title: 'FieldIQ - Integration Test',
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
       routerConfig: router,
