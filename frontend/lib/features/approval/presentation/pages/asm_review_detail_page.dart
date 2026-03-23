@@ -27,12 +27,14 @@ class ASMReviewDetailPage extends ConsumerStatefulWidget {
   final String submissionId;
   final String token;
   final String userName;
+  final String? poNumber;
 
   const ASMReviewDetailPage({
     super.key,
     required this.submissionId,
     required this.token,
     required this.userName,
+    this.poNumber,
   });
 
   @override
@@ -74,6 +76,11 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   // Blob URLs for Cost Summary and Activity Summary (fallback when documentId unavailable)
   String? _costSummaryBlobUrl;
   String? _activitySummaryBlobUrl;
+
+  // PO Balance state
+  bool _isLoadingPoBalance = false;
+  Map<String, dynamic>? _poBalanceResult;
+  String? _poBalanceError;
 
   @override
   void initState() {
@@ -156,14 +163,14 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           try {
             final valResponse = await _dio.get(
               '/submissions/${widget.submissionId}/validations',
-              options: Options(
-                  headers: {'Authorization': 'Bearer ${widget.token}'}),
+              options:
+                  Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
             );
             if (valResponse.statusCode == 200 && valResponse.data != null) {
-              final docs = valResponse.data['documents'] as List<dynamic>? ?? [];
-              final photoDocs = docs
-                  .where((d) => d['documentType'] == 'TeamPhoto')
-                  .toList();
+              final docs =
+                  valResponse.data['documents'] as List<dynamic>? ?? [];
+              final photoDocs =
+                  docs.where((d) => d['documentType'] == 'TeamPhoto').toList();
               if (photoDocs.isNotEmpty) {
                 photoValidations = photoDocs;
               }
@@ -176,14 +183,17 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         // Extract blob URLs for Cost Summary and Activity Summary from campaigns
         String? costSummaryBlobUrl;
         String? activitySummaryBlobUrl;
-        final campaignsList = submissionData['campaigns'] as List<dynamic>? ?? [];
+        final campaignsList =
+            submissionData['campaigns'] as List<dynamic>? ?? [];
         if (campaignsList.isNotEmpty) {
           final firstCampaign = campaignsList[0] as Map<String, dynamic>;
-          costSummaryBlobUrl = firstCampaign['costSummaryBlobUrl']?.toString()
-              ?? firstCampaign['costSummaryUrl']?.toString();
-          activitySummaryBlobUrl = firstCampaign['activitySummaryBlobUrl']?.toString()
-              ?? firstCampaign['activitySummaryUrl']?.toString()
-              ?? firstCampaign['activityBlobUrl']?.toString();
+          costSummaryBlobUrl =
+              firstCampaign['costSummaryBlobUrl']?.toString() ??
+                  firstCampaign['costSummaryUrl']?.toString();
+          activitySummaryBlobUrl =
+              firstCampaign['activitySummaryBlobUrl']?.toString() ??
+                  firstCampaign['activitySummaryUrl']?.toString() ??
+                  firstCampaign['activityBlobUrl']?.toString();
         }
 
         setState(() {
@@ -459,24 +469,26 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                                       Visibility(
                                         visible: false,
                                         child: CampaignDetailsTable(
-                                        campaignDetails: _campaignDetails,
-                                        onPhotoTap: (detail) {
-                                          if (detail.downloadPath != null &&
-                                              detail.downloadPath!.isNotEmpty) {
-                                            _downloadHierarchicalDocument(
-                                                detail.downloadPath!,
-                                                detail.documentName);
-                                          } else if (detail.documentId !=
-                                                  null &&
-                                              detail.documentId!.isNotEmpty) {
-                                            _downloadDocument(detail.documentId,
-                                                detail.documentName);
-                                          } else {
-                                            _downloadDocumentByUrl(
-                                                detail.blobUrl,
-                                                detail.documentName);
-                                          }
-                                        },
+                                          campaignDetails: _campaignDetails,
+                                          onPhotoTap: (detail) {
+                                            if (detail.downloadPath != null &&
+                                                detail
+                                                    .downloadPath!.isNotEmpty) {
+                                              _downloadHierarchicalDocument(
+                                                  detail.downloadPath!,
+                                                  detail.documentName);
+                                            } else if (detail.documentId !=
+                                                    null &&
+                                                detail.documentId!.isNotEmpty) {
+                                              _downloadDocument(
+                                                  detail.documentId,
+                                                  detail.documentName);
+                                            } else {
+                                              _downloadDocumentByUrl(
+                                                  detail.blobUrl,
+                                                  detail.documentName);
+                                            }
+                                          },
                                         ),
                                       ),
                                       const SizedBox(height: 24),
@@ -528,9 +540,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   Widget _buildHeaderSection() {
     final documents = _submission!['documents'] as List? ?? [];
     String invoiceNumber = '';
-    String reqNumber = _submission!['submissionNumber']?.toString() 
-        ?? 'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
-    
+    String reqNumber = _submission!['submissionNumber']?.toString() ??
+        'REQ-${widget.submissionId.substring(0, 8).toUpperCase()}';
+
     // Extract invoice number from invoice document
     for (var doc in documents) {
       if (doc['type'] == 'Invoice' && doc['extractedData'] != null) {
@@ -568,138 +580,240 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Back button and title row
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.arrow_back),
-                  tooltip: 'Back to review list',
-                ),
-                const SizedBox(width: 8),
+                // Left column: back button + title + action buttons
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        invoiceNumber.isNotEmpty && agencyName.isNotEmpty
-                            ? '$invoiceNumber - $agencyName'
-                            : invoiceNumber.isNotEmpty
-                                ? invoiceNumber
-                                : agencyName.isNotEmpty
-                                    ? agencyName
-                                    : 'Submission Details',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 16,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
+                      // Back button and title row
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          Text(
-                            reqNumber,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                            ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.arrow_back),
+                            tooltip: 'Back to review list',
                           ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.calendar_today,
-                                  size: 14, color: Colors.grey[600]),
-                              const SizedBox(width: 4),
-                              Text(
-                                _formatDisplayDate(submittedDate),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[600],
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  invoiceNumber.isNotEmpty &&
+                                          agencyName.isNotEmpty
+                                      ? '$invoiceNumber - $agencyName'
+                                      : invoiceNumber.isNotEmpty
+                                          ? invoiceNumber
+                                          : agencyName.isNotEmpty
+                                              ? agencyName
+                                              : 'Submission Details',
+                                  style: const TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 4),
+                                Wrap(
+                                  spacing: 16,
+                                  runSpacing: 4,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Text(
+                                      reqNumber,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.calendar_today,
+                                            size: 14, color: Colors.grey[600]),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          _formatDisplayDate(submittedDate),
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
+                      // Action buttons — only for actionable states
+                      if (_isSubmissionActionable()) ...[
+                        const SizedBox(height: 20),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            OutlinedButton(
+                              onPressed:
+                                  _isProcessing ? null : _showRejectDialog,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFEF4444),
+                                side:
+                                    const BorderSide(color: Color(0xFFEF4444)),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 20, vertical: 12),
+                              ),
+                              child: const Text('Reject'),
+                            ),
+                            ElevatedButton(
+                              onPressed:
+                                  _isProcessing ? null : _approveSubmission,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10B981),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 20, vertical: 12),
+                              ),
+                              child: _isProcessing
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text('Approve Request'),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
+                const SizedBox(width: 24),
+                // Right column: PO Balance
+                _buildPoBalanceSection(),
               ],
             ),
-            const SizedBox(height: 20),
-
-            // Action buttons row - only show for actionable states
+            // Comments — full width below both columns
             if (_isSubmissionActionable()) ...[
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  OutlinedButton(
-                    onPressed: _isProcessing ? null : _showRejectDialog,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFEF4444),
-                      side: const BorderSide(color: Color(0xFFEF4444)),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
-                    ),
-                    child: const Text('Reject'),
-                  ),
-                  ElevatedButton(
-                    onPressed: _isProcessing ? null : _approveSubmission,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF10B981),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
-                    ),
-                    child: _isProcessing
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text('Approve Request'),
-                  ),
-                ],
-              ),
               const SizedBox(height: 20),
-              // Comments section in header
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Comments (Optional)',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
+              const Divider(),
+              const SizedBox(height: 16),
+              const Text(
+                'Comments (Optional)',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _commentsController,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'Add your review comments here...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _commentsController,
-                    maxLines: 3,
-                    decoration: InputDecoration(
-                      hintText: 'Add your review comments here...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      filled: true,
-                      fillColor: Colors.grey[50],
-                      contentPadding: const EdgeInsets.all(12),
-                    ),
-                  ),
-                ],
+                  filled: true,
+                  fillColor: Colors.grey[50],
+                  contentPadding: const EdgeInsets.all(12),
+                ),
               ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPoBalanceSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 40,
+          child: ElevatedButton.icon(
+            onPressed: _isLoadingPoBalance ? null : _fetchPoBalance,
+            icon: _isLoadingPoBalance
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.account_balance_wallet_outlined, size: 16),
+            label:
+                Text(_isLoadingPoBalance ? 'Checking...' : 'Check PO Balance'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF003087),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              textStyle:
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
+        if (_poBalanceResult != null) ...[
+          const SizedBox(height: 6),
+          _buildPoBalanceResult(_poBalanceResult!),
+        ],
+        if (_poBalanceError != null) ...[
+          const SizedBox(height: 6),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline,
+                  size: 14, color: Color(0xFFDC2626)),
+              const SizedBox(width: 4),
+              Text(
+                _poBalanceError!,
+                style: const TextStyle(fontSize: 12, color: Color(0xFFDC2626)),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPoBalanceResult(Map<String, dynamic> result) {
+    final balance = result['balance'];
+    final currency = result['currency']?.toString() ?? 'INR';
+
+    final balanceValue = balance is num
+        ? balance.toDouble()
+        : double.tryParse(balance?.toString() ?? '') ?? 0.0;
+    final isPositive = balanceValue >= 0;
+    final balanceColor =
+        isPositive ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+    final formattedBalance =
+        '${isPositive ? '' : '-'}$currency ${balanceValue.abs().toStringAsFixed(2)}';
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Balance: ',
+          style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+        ),
+        Text(
+          formattedBalance,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: balanceColor,
+          ),
+        ),
+      ],
     );
   }
 
@@ -710,11 +824,15 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     Color textColor;
     String displayText;
 
-    if (normalizedState == 'pendingch' || normalizedState == 'pendingapproval' || normalizedState == 'pendingchapproval') {
+    if (normalizedState == 'pendingch' ||
+        normalizedState == 'pendingapproval' ||
+        normalizedState == 'pendingchapproval') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending';
-    } else if (normalizedState == 'pendingra' || normalizedState == 'asmapproved' || normalizedState == 'pendinghqapproval') {
+    } else if (normalizedState == 'pendingra' ||
+        normalizedState == 'asmapproved' ||
+        normalizedState == 'pendinghqapproval') {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending with RA';
@@ -722,11 +840,15 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       backgroundColor = const Color(0xFFD1FAE5);
       textColor = const Color(0xFF10B981);
       displayText = 'Approved';
-    } else if (normalizedState == 'rarejected' || normalizedState == 'rejectedbyhq' || normalizedState == 'rejectedbyra') {
+    } else if (normalizedState == 'rarejected' ||
+        normalizedState == 'rejectedbyhq' ||
+        normalizedState == 'rejectedbyra') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected by RA';
-    } else if (normalizedState == 'chrejected' || normalizedState == 'rejectedbyasm' || normalizedState == 'rejected') {
+    } else if (normalizedState == 'chrejected' ||
+        normalizedState == 'rejectedbyasm' ||
+        normalizedState == 'rejected') {
       backgroundColor = const Color(0xFFFEE2E2);
       textColor = const Color(0xFFEF4444);
       displayText = 'Rejected';
@@ -779,10 +901,86 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
-    return state == 'pendingch' || 
-           state == 'pendingapproval' || 
-           state == 'pendingchapproval' ||
-           state == 'rarejected';
+    return state == 'pendingch' ||
+        state == 'pendingapproval' ||
+        state == 'pendingchapproval' ||
+        state == 'rarejected';
+  }
+
+  /// Extracts the PO number from the submission's documents array.
+  String? _extractPoNumber() {
+    // Fast path: use the PO number passed directly from the dashboard list
+    if (widget.poNumber != null && widget.poNumber!.isNotEmpty) {
+      return widget.poNumber;
+    }
+    final documents = _submission?['documents'] as List? ?? [];
+    for (final doc in documents) {
+      final type = doc['type']?.toString() ?? '';
+      if (type == 'PO') {
+        final extractedData = doc['extractedData'];
+        Map<String, dynamic>? data;
+        if (extractedData is String && extractedData.isNotEmpty) {
+          try {
+            data = jsonDecode(extractedData) as Map<String, dynamic>?;
+          } catch (_) {}
+        } else if (extractedData is Map) {
+          data = Map<String, dynamic>.from(extractedData);
+        }
+        if (data != null) {
+          final poNum = data['PONumber'] ??
+              data['poNumber'] ??
+              data['PO_Number'] ??
+              data['po_number'];
+          if (poNum != null && poNum.toString().isNotEmpty)
+            return poNum.toString();
+        }
+        final poNum =
+            doc['poNumber']?.toString() ?? doc['PONumber']?.toString();
+        if (poNum != null && poNum.isNotEmpty) return poNum;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _fetchPoBalance() async {
+    final poNum = _extractPoNumber();
+    if (poNum == null || poNum.isEmpty) {
+      setState(() {
+        _poBalanceError = 'PO number not found in this submission.';
+        _poBalanceResult = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingPoBalance = true;
+      _poBalanceError = null;
+      _poBalanceResult = null;
+    });
+
+    try {
+      final response = await _dio.get(
+        '/po-balance/$poNum',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      if (response.statusCode == 200 && mounted) {
+        setState(() {
+          _poBalanceResult = response.data as Map<String, dynamic>;
+          _isLoadingPoBalance = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        String errorMsg = 'Failed to fetch PO balance.';
+        if (e is DioException && e.response != null) {
+          errorMsg = e.response?.data?['message']?.toString() ?? errorMsg;
+        }
+        setState(() {
+          _poBalanceError = errorMsg;
+          _isLoadingPoBalance = false;
+        });
+      }
+    }
   }
 
   /// Builds CampaignDetailRow list from hierarchical campaign data.
@@ -988,7 +1186,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   void _openBlobUrl(String blobUrl, String filename) {
     if (blobUrl.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+        const SnackBar(
+            content: Text('Document URL not available'),
+            backgroundColor: Colors.orange),
       );
       return;
     }
@@ -1002,7 +1202,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   void _downloadByBlobUrl(String blobUrl, String filename) {
     if (blobUrl.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Document URL not available'), backgroundColor: Colors.orange),
+        const SnackBar(
+            content: Text('Document URL not available'),
+            backgroundColor: Colors.orange),
       );
       return;
     }
@@ -1012,7 +1214,10 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     anchor.click();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Downloading $filename...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+        SnackBar(
+            content: Text('Downloading $filename...'),
+            backgroundColor: AppColors.approvedText,
+            duration: const Duration(seconds: 2)),
       );
     }
   }
@@ -1025,12 +1230,15 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       );
       if (response.statusCode == 200) {
         final base64Content = response.data['base64Content']?.toString() ?? '';
-        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
+        final contentType = response.data['contentType']?.toString() ??
+            'application/octet-stream';
         final name = response.data['filename']?.toString() ?? filename;
         if (base64Content.isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+              const SnackBar(
+                  content: Text('File content not available'),
+                  backgroundColor: Colors.orange),
             );
           }
           return;
@@ -1041,16 +1249,21 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load document: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Failed to load document: $e'),
+              backgroundColor: Colors.red),
         );
       }
     }
   }
 
-  Future<void> _downloadDocumentDirect(String? documentId, String? filename) async {
+  Future<void> _downloadDocumentDirect(
+      String? documentId, String? filename) async {
     if (documentId == null || documentId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Document not available for download'), backgroundColor: Colors.orange),
+        const SnackBar(
+            content: Text('Document not available for download'),
+            backgroundColor: Colors.orange),
       );
       return;
     }
@@ -1061,12 +1274,16 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       );
       if (response.statusCode == 200) {
         final base64Content = response.data['base64Content']?.toString() ?? '';
-        final contentType = response.data['contentType']?.toString() ?? 'application/octet-stream';
-        final name = filename ?? response.data['filename']?.toString() ?? 'document';
+        final contentType = response.data['contentType']?.toString() ??
+            'application/octet-stream';
+        final name =
+            filename ?? response.data['filename']?.toString() ?? 'document';
         if (base64Content.isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('File content not available'), backgroundColor: Colors.orange),
+              const SnackBar(
+                  content: Text('File content not available'),
+                  backgroundColor: Colors.orange),
             );
           }
           return;
@@ -1084,14 +1301,19 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         web.URL.revokeObjectURL(url);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Downloading $name...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+            SnackBar(
+                content: Text('Downloading $name...'),
+                backgroundColor: AppColors.approvedText,
+                duration: const Duration(seconds: 2)),
           );
         }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to download: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Failed to download: $e'),
+              backgroundColor: Colors.red),
         );
       }
     }
@@ -1428,7 +1650,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
   Widget _buildInvoiceValidationCard(Map<String, dynamic> invoice) {
     final fileName = invoice['fileName'] ?? 'Unknown';
-    final docId = invoice['documentId']?.toString() ?? invoice['id']?.toString() ?? _getDocumentIdByType('Invoice');
+    final docId = invoice['documentId']?.toString() ??
+        invoice['id']?.toString() ??
+        _getDocumentIdByType('Invoice');
     final validationDetailsJson = invoice['validationDetailsJson'] as String?;
 
     Map<String, dynamic>? validationDetails;
@@ -1479,7 +1703,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     Map<String, dynamic>? validationDetails;
     List<Map<String, dynamic>> allRows = [];
 
-    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty && validationDetailsJson != '{}') {
+    if (validationDetailsJson != null &&
+        validationDetailsJson.isNotEmpty &&
+        validationDetailsJson != '{}') {
       try {
         validationDetails =
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
@@ -1495,7 +1721,11 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     if (allRows.isEmpty && failureReason != null && failureReason.isNotEmpty) {
       final reasons = failureReason.split('; ');
       for (final reason in reasons) {
-        allRows.add({'label': reason.trim(), 'passed': false, 'message': reason.trim()});
+        allRows.add({
+          'label': reason.trim(),
+          'passed': false,
+          'message': reason.trim()
+        });
       }
     }
 
@@ -1613,21 +1843,73 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     final crossDocument = details['crossDocument'] as Map<String, dynamic>?;
     if (crossDocument != null) {
       final checkMap = {
-        'totalCostValid': ('Total Cost Validation', 'Total cost matches invoice', 'Total cost does not match invoice'),
-        'elementCostsValid': ('Element Costs Validation', 'Element costs are valid', 'Element costs are invalid'),
-        'fixedCostsValid': ('Fixed Costs Validation', 'Fixed costs are valid', 'Fixed costs are invalid'),
-        'variableCostsValid': ('Variable Costs Validation', 'Variable costs are valid', 'Variable costs are invalid'),
-        'numberOfDaysMatches': ('Number of Days Match', 'Days match between documents', 'Days mismatch between documents'),
-        'photoCountMatchesManDays': ('Photo Count vs Man Days', 'Photo count matches man days', 'Photo count does not match man days'),
-        'manDaysWithinCostSummaryDays': ('Man Days vs Cost Summary Days', 'Man days within cost summary days', 'Man days exceed cost summary days'),
-        'agencyCodeMatches': ('Agency Code Match', 'Agency code matches', 'Agency code mismatch'),
-        'poNumberMatches': ('PO Number Match', 'PO number matches', 'PO number mismatch'),
-        'gstStateMatches': ('GST State Match', 'GST state matches', 'GST state mismatch'),
-        'hsnSacCodeValid': ('HSN/SAC Code', 'HSN/SAC code is valid', 'HSN/SAC code is invalid'),
-        'invoiceAmountValid': ('Invoice Amount', 'Invoice amount is valid', 'Invoice amount is invalid'),
+        'totalCostValid': (
+          'Total Cost Validation',
+          'Total cost matches invoice',
+          'Total cost does not match invoice'
+        ),
+        'elementCostsValid': (
+          'Element Costs Validation',
+          'Element costs are valid',
+          'Element costs are invalid'
+        ),
+        'fixedCostsValid': (
+          'Fixed Costs Validation',
+          'Fixed costs are valid',
+          'Fixed costs are invalid'
+        ),
+        'variableCostsValid': (
+          'Variable Costs Validation',
+          'Variable costs are valid',
+          'Variable costs are invalid'
+        ),
+        'numberOfDaysMatches': (
+          'Number of Days Match',
+          'Days match between documents',
+          'Days mismatch between documents'
+        ),
+        'photoCountMatchesManDays': (
+          'Photo Count vs Man Days',
+          'Photo count matches man days',
+          'Photo count does not match man days'
+        ),
+        'manDaysWithinCostSummaryDays': (
+          'Man Days vs Cost Summary Days',
+          'Man days within cost summary days',
+          'Man days exceed cost summary days'
+        ),
+        'agencyCodeMatches': (
+          'Agency Code Match',
+          'Agency code matches',
+          'Agency code mismatch'
+        ),
+        'poNumberMatches': (
+          'PO Number Match',
+          'PO number matches',
+          'PO number mismatch'
+        ),
+        'gstStateMatches': (
+          'GST State Match',
+          'GST state matches',
+          'GST state mismatch'
+        ),
+        'hsnSacCodeValid': (
+          'HSN/SAC Code',
+          'HSN/SAC code is valid',
+          'HSN/SAC code is invalid'
+        ),
+        'invoiceAmountValid': (
+          'Invoice Amount',
+          'Invoice amount is valid',
+          'Invoice amount is invalid'
+        ),
         // poBalanceValid intentionally excluded — use INV_AMOUNT_VS_PO_BALANCE from proactiveRules instead
         // to avoid showing a default "Pass" when the balance was never actually checked.
-        'gstPercentageValid': ('GST Percentage', 'GST percentage is valid', 'GST percentage is invalid'),
+        'gstPercentageValid': (
+          'GST Percentage',
+          'GST percentage is valid',
+          'GST percentage is invalid'
+        ),
       };
       for (final entry in checkMap.entries) {
         final val = crossDocument[entry.key];
@@ -1664,7 +1946,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         details['lineItemMatching'] as Map<String, dynamic>?;
     if (lineItemMatching != null) {
       final allMatched = lineItemMatching['allItemsMatched'] ?? false;
-      final missing = lineItemMatching['missingItemCodes'] as List<dynamic>? ?? [];
+      final missing =
+          lineItemMatching['missingItemCodes'] as List<dynamic>? ?? [];
       addRow(
         'Line Item Matching',
         allMatched == true,
@@ -1675,8 +1958,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
 
     // 6. Vendor matching (Invoice)
-    final vendorMatching =
-        details['vendorMatching'] as Map<String, dynamic>?;
+    final vendorMatching = details['vendorMatching'] as Map<String, dynamic>?;
     if (vendorMatching != null) {
       final isMatched = vendorMatching['isMatched'] ?? false;
       final poVendor = vendorMatching['poVendor'] ?? 'N/A';
@@ -1783,7 +2065,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     String? documentId,
     String? blobUrl,
   }) {
-    final resolvedDocId = (documentId != null && documentId.isNotEmpty) ? documentId : '';
+    final resolvedDocId =
+        (documentId != null && documentId.isNotEmpty) ? documentId : '';
     final resolvedBlobUrl = blobUrl ?? '';
 
     return Card(
@@ -1844,7 +2127,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                           ),
                         ]),
                       ),
-                    if (resolvedDocId.isNotEmpty || resolvedBlobUrl.isNotEmpty) ...[
+                    if (resolvedDocId.isNotEmpty ||
+                        resolvedBlobUrl.isNotEmpty) ...[
                       const SizedBox(width: 8),
                       SizedBox(
                         height: 28,
@@ -1857,7 +2141,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                             }
                           },
                           icon: const Icon(Icons.visibility, size: 13),
-                          label: const Text('View', style: TextStyle(fontSize: 11)),
+                          label: const Text('View',
+                              style: TextStyle(fontSize: 11)),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.primary,
                             side: const BorderSide(color: AppColors.primary),
@@ -1877,7 +2162,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                             }
                           },
                           icon: const Icon(Icons.download, size: 13),
-                          label: const Text('Download', style: TextStyle(fontSize: 11)),
+                          label: const Text('Download',
+                              style: TextStyle(fontSize: 11)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,
                             foregroundColor: Colors.white,
@@ -1960,8 +2246,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                 left: const BorderSide(color: Color(0xFFE5E7EB)),
                 right: const BorderSide(color: Color(0xFFE5E7EB)),
                 bottom: BorderSide(
-                    color: const Color(0xFFE5E7EB),
-                    width: isLast ? 1 : 0.5),
+                    color: const Color(0xFFE5E7EB), width: isLast ? 1 : 0.5),
               ),
               borderRadius: isLast
                   ? const BorderRadius.vertical(bottom: Radius.circular(8))
@@ -2006,10 +2291,14 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
   String _getDocumentIdByType(String type) {
     final documents = _submission?['documents'] as List<dynamic>? ?? [];
-    final typeLower = type.toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+    final typeLower =
+        type.toLowerCase().replaceAll(' ', '').replaceAll('_', '');
     for (final doc in documents) {
-      final docType = (doc['type']?.toString() ?? doc['documentType']?.toString() ?? '')
-          .toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+      final docType =
+          (doc['type']?.toString() ?? doc['documentType']?.toString() ?? '')
+              .toLowerCase()
+              .replaceAll(' ', '')
+              .replaceAll('_', '');
       if (docType == typeLower) {
         return doc['id']?.toString() ?? doc['documentId']?.toString() ?? '';
       }
@@ -2020,43 +2309,56 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   /// Gets document ID for Cost Summary — checks documents array with multiple aliases,
   /// then falls back to campaigns array, then the validation object itself.
   String _getCostSummaryDocumentId() {
-    for (final alias in ['CostSummary', 'Cost Summary', 'costsummary', 'cost_summary']) {
+    for (final alias in [
+      'CostSummary',
+      'Cost Summary',
+      'costsummary',
+      'cost_summary'
+    ]) {
       final id = _getDocumentIdByType(alias);
       if (id.isNotEmpty) return id;
     }
     if (_submission != null) {
       final campaigns = _submission!['campaigns'] as List? ?? [];
       for (final c in campaigns) {
-        final id = (c as Map<String, dynamic>)['costSummaryDocumentId']?.toString()
-            ?? c['costSummaryId']?.toString()
-            ?? '';
+        final id =
+            (c as Map<String, dynamic>)['costSummaryDocumentId']?.toString() ??
+                c['costSummaryId']?.toString() ??
+                '';
         if (id.isNotEmpty) return id;
       }
     }
-    return _costSummaryValidation['documentId']?.toString()
-        ?? _costSummaryValidation['id']?.toString()
-        ?? '';
+    return _costSummaryValidation['documentId']?.toString() ??
+        _costSummaryValidation['id']?.toString() ??
+        '';
   }
 
   /// Gets document ID for Activity Summary — checks documents array with multiple aliases,
   /// then falls back to campaigns array, then the validation object itself.
   String _getActivitySummaryDocumentId() {
-    for (final alias in ['ActivitySummary', 'Activity Summary', 'activitysummary', 'activity_summary', 'Activity']) {
+    for (final alias in [
+      'ActivitySummary',
+      'Activity Summary',
+      'activitysummary',
+      'activity_summary',
+      'Activity'
+    ]) {
       final id = _getDocumentIdByType(alias);
       if (id.isNotEmpty) return id;
     }
     if (_submission != null) {
       final campaigns = _submission!['campaigns'] as List? ?? [];
       for (final c in campaigns) {
-        final id = (c as Map<String, dynamic>)['activitySummaryDocumentId']?.toString()
-            ?? c['activitySummaryId']?.toString()
-            ?? '';
+        final id = (c as Map<String, dynamic>)['activitySummaryDocumentId']
+                ?.toString() ??
+            c['activitySummaryId']?.toString() ??
+            '';
         if (id.isNotEmpty) return id;
       }
     }
-    return _activityValidation['documentId']?.toString()
-        ?? _activityValidation['id']?.toString()
-        ?? '';
+    return _activityValidation['documentId']?.toString() ??
+        _activityValidation['id']?.toString() ??
+        '';
   }
 
   String _getCostSummaryFileName() {
@@ -2090,7 +2392,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   }) {
     final resolvedDocId = (documentId != null && documentId.isNotEmpty)
         ? documentId
-        : validation['documentId']?.toString() ?? validation['id']?.toString() ?? '';
+        : validation['documentId']?.toString() ??
+            validation['id']?.toString() ??
+            '';
     final resolvedBlobUrl = blobUrl ?? '';
 
     final validationDetailsJson =
@@ -2121,5 +2425,4 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       blobUrl: resolvedBlobUrl.isNotEmpty ? resolvedBlobUrl : null,
     );
   }
-
 }
