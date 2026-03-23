@@ -542,61 +542,67 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               : null,
         );
       case 'state_selection':
-        return AssistantBubble(
-          message: msg.content,
-          child: r.cards != null
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 8),
-                      child: Text('Select State', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-                    ),
-                    ...r.cards!.map((c) {
-                      if (c.action == 'list_states') {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton.icon(
-                              onPressed: () => ref.read(assistantNotifierProvider.notifier).listAllStates(),
-                              icon: const Icon(Icons.search, size: 18, color: Color(0xFF003087)),
-                              label: Text(c.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
-                              style: OutlinedButton.styleFrom(
-                                alignment: Alignment.centerLeft,
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                side: BorderSide(color: Colors.grey.shade300),
-                              ),
-                            ),
-                          ),
-                        );
-                      }
-                      return _stateButton(c.title, () => ref.read(assistantNotifierProvider.notifier).selectState(c.title));
-                    }),
-                  ],
-                )
-              : null,
-        );
+        // STATE SELECTION UI HIDDEN — backend auto-selects Maharashtra
+        // To re-enable, remove this return and uncomment the block below
+        return AssistantBubble(message: msg.content);
+        // return AssistantBubble(
+        //   message: msg.content,
+        //   child: r.cards != null
+        //       ? Column(
+        //           crossAxisAlignment: CrossAxisAlignment.start,
+        //           children: [
+        //             const Padding(
+        //               padding: EdgeInsets.only(bottom: 8),
+        //               child: Text('Select State', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+        //             ),
+        //             ...r.cards!.map((c) {
+        //               if (c.action == 'list_states') {
+        //                 return Padding(
+        //                   padding: const EdgeInsets.only(bottom: 4),
+        //                   child: SizedBox(
+        //                     width: double.infinity,
+        //                     child: OutlinedButton.icon(
+        //                       onPressed: () => ref.read(assistantNotifierProvider.notifier).listAllStates(),
+        //                       icon: const Icon(Icons.search, size: 18, color: Color(0xFF003087)),
+        //                       label: Text(c.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+        //                       style: OutlinedButton.styleFrom(
+        //                         alignment: Alignment.centerLeft,
+        //                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        //                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        //                         side: BorderSide(color: Colors.grey.shade300),
+        //                       ),
+        //                     ),
+        //                   ),
+        //                 );
+        //               }
+        //               return _stateButton(c.title, () => ref.read(assistantNotifierProvider.notifier).selectState(c.title));
+        //             }),
+        //           ],
+        //         )
+        //       : null,
+        // );
       case 'state_search_results':
-        return AssistantBubble(
-          message: msg.content,
-          child: r.states != null && r.states!.isNotEmpty
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 8),
-                      child: Text('States', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-                    ),
-                    ...r.states!.map((s) => _stateButton(s, () {
-                          _stateSearchCtrl.clear();
-                          ref.read(assistantNotifierProvider.notifier).selectState(s);
-                        })),
-                  ],
-                )
-              : null,
-        );
+        // STATE SEARCH UI HIDDEN — backend auto-selects Maharashtra
+        // To re-enable, remove this return and uncomment the block below
+        return AssistantBubble(message: msg.content);
+        // return AssistantBubble(
+        //   message: msg.content,
+        //   child: r.states != null && r.states!.isNotEmpty
+        //       ? Column(
+        //           crossAxisAlignment: CrossAxisAlignment.start,
+        //           children: [
+        //             const Padding(
+        //               padding: EdgeInsets.only(bottom: 8),
+        //               child: Text('States', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+        //             ),
+        //             ...r.states!.map((s) => _stateButton(s, () {
+        //                   _stateSearchCtrl.clear();
+        //                   ref.read(assistantNotifierProvider.notifier).selectState(s);
+        //                 })),
+        //           ],
+        //         )
+        //       : null,
+        // );
       case 'state_confirmed':
         return AssistantBubble(
           message: msg.content,
@@ -870,6 +876,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         return AssistantBubble(message: msg.content);
       case 'pending_claims':
         return AssistantBubble(message: msg.content, child: _pendingClaimsCard(r));
+      case 'rejection_history':
+        return AssistantBubble(message: msg.content, child: _rejectionHistoryCard(r));
       default:
         return AssistantBubble(message: msg.content);
     }
@@ -1018,8 +1026,85 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     return list;
   }
 
-  Widget _teamProgressIndicator(int current, int total) {
-    return Row(children: [
+  Widget _rejectionHistoryCard(AssistantResponseModel r) {
+    final items = r.rejectionItems ?? [];
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    Widget card(RejectionItemModel item) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 4, offset: const Offset(0, 2))],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // FAP ID + role pill
+              Row(children: [
+                Expanded(
+                  child: Text(item.fapId,
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEE2E2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(item.rejectedByRole,
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFDC2626))),
+                ),
+              ]),
+              const SizedBox(height: 6),
+              // Rejected by + date
+              Row(children: [
+                const Icon(Icons.person_outline, size: 13, color: Color(0xFF6B7280)),
+                const SizedBox(width: 4),
+                Text(item.rejectedBy, style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+                const SizedBox(width: 12),
+                const Icon(Icons.calendar_today, size: 12, color: Color(0xFF6B7280)),
+                const SizedBox(width: 4),
+                Text(item.rejectedAt, style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+              ]),
+              const SizedBox(height: 8),
+              // Reason box
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFED7AA)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Reason', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF92400E))),
+                    const SizedBox(height: 4),
+                    Text(item.reason, style: const TextStyle(fontSize: 12, color: Color(0xFF78350F))),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return items.length > 5
+        ? SizedBox(
+            height: 5 * 180.0,
+            child: SingleChildScrollView(child: Column(children: items.map(card).toList())),
+          )
+        : Column(children: items.map(card).toList());
+  }
+
+  Widget _teamProgressIndicator(int current, int total) {    return Row(children: [
       Text('Team $current of $total',
           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
       const SizedBox(width: 8),
@@ -2121,7 +2206,9 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       if (t == 'po_search' || t == 'po_search_results') {
         newMode = 'po';
       } else if (t == 'state_selection' || t == 'state_search_results') {
-        newMode = 'state';
+        // STATE SELECTION HIDDEN — auto-selects Maharashtra
+        // newMode = 'state';
+        newMode = 'none';
       } else if (t == 'dealer_search' || t == 'dealer_search_results') {
         newMode = 'dealer';
       } else if (t == 'dealer_list') {

@@ -87,8 +87,8 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
   Future<void> sendAction(String action, {String? payloadJson}) async {
     const _actionLabels = <String, String>{
       'view_requests': '',
+      'pending_approvals': '',
       'create_request': 'Start a new submission',
-      'pending_approvals': 'Why was my claim returned',
     };
     final label = _actionLabels[action];
     if (label != null && label.isNotEmpty) _addUserMessage(label);
@@ -131,6 +131,9 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       _addBotMessage(response);
       if (response.selectedPO != null) {
         state = state.copyWith(selectedPO: response.selectedPO);
+      }
+      if (response.submissionId != null) {
+        state = state.copyWith(submissionId: response.submissionId);
       }
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
@@ -673,7 +676,12 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     _addUserMessage('Save as Draft');
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final response = await _dataSource.sendMessage(action: 'save_draft_from_chat');
+      final sid = state.submissionId;
+      final payload = sid != null ? '{"submissionId":"$sid"}' : null;
+      final response = await _dataSource.sendMessage(
+        action: 'save_draft_from_chat',
+        payloadJson: payload,
+      );
       _addBotMessage(response);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());

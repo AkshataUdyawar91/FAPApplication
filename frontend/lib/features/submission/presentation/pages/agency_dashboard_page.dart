@@ -773,9 +773,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
 
   Widget _buildMobileCard(Map<String, dynamic> request) {
     final rawState = request['state']?.toString() ?? 'pending';
-    final id = request['id']?.toString() ?? '';
-    final fapNumber = request['submissionNumber']?.toString() ??
-        'FAP-${id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase()}';
+    final fapNumber = request['submissionNumber']?.toString() ?? '—';
     final poNumber =
         request['poNumber']?.toString() ?? request['poNo']?.toString() ?? '—';
     final invoiceNumber = request['invoiceNumber']?.toString() ??
@@ -932,9 +930,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                 rows: requests.map((r) {
                   final rawState = r['state']?.toString() ?? 'pending';
                   final status = _normalizeStatus(rawState);
-                  final id = r['id']?.toString() ?? '';
-                  final fapNumber = r['submissionNumber']?.toString() ??
-                      'FAP-${id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase()}';
+                  final fapNumber = r['submissionNumber']?.toString() ?? '—';
                   final poNumber =
                       r['poNumber']?.toString() ?? r['poNo']?.toString() ?? '—';
                   final invoiceNumber = r['invoiceNumber']?.toString() ??
@@ -1084,8 +1080,8 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       case 'pendinghqapproval':
       case 'pendingwithra':
       case 'pendingra':
-        bgColor = const Color(0xFFFEF3C7);
-        textColor = const Color(0xFF92400E);
+        bgColor = const Color(0xFFDBEAFE);
+        textColor = const Color(0xFF1E40AF);
         label = 'Pending with RA';
         break;
       case 'reuploadrequested':
