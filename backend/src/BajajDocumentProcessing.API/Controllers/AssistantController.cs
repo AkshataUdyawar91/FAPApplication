@@ -54,13 +54,12 @@ public class AssistantController : ControllerBase
         // Actions that don't require an agencyId (available to all roles)
         var publicActions = new HashSet<string>
         {
-            "greet", "create_request", "view_requests", "pending_approvals",
+            "greet", "create_request",
             "search_state", "list_states", "submit_team_name",
             "search_dealer", "select_dealer", "submit_team_dates",
             "reupload_invoice", "reupload_activity_summary",
             "reupload_cost_summary", "reupload_enquiry_dump",
             "continue_after_cost_summary", "continue_after_teams",
-            "save_draft_from_chat",
         };
 
         if (!publicActions.Contains(action ?? "") && agencyId == null)
@@ -72,8 +71,8 @@ public class AssistantController : ControllerBase
             {
                 "greet" => BuildGreeting(),
                 "create_request" => BuildCreateRequestPrompt(),
-                "view_requests" => BuildViewRequestsPrompt(),
-                "pending_approvals" => BuildPendingApprovalsPrompt(),
+                "view_requests" => await HandleViewRequests(agencyId ?? Guid.Empty, ct),
+                "pending_approvals" => await HandlePendingApprovals(agencyId ?? Guid.Empty, ct),
                 "search_po" => await HandleSearchPO(request, agencyId!.Value, ct),
                 "select_po" => await HandleSelectPO(request, agencyId!.Value, ct),
                 "select_state" => await HandleSelectState(request, agencyId!.Value, ct),
@@ -105,7 +104,7 @@ public class AssistantController : ControllerBase
                 "reupload_enquiry_dump" => HandleEnquiryDumpUpload(),
                 "continue_after_enquiry" => await HandleFinalReview(request, agencyId!.Value, ct),
                 "submit_from_chat" => await HandleSubmitFromChat(request, agencyId!.Value, ct),
-                "save_draft_from_chat" => HandleSaveDraftFromChat(),
+                "save_draft_from_chat" => await HandleSaveDraftFromChat(request, agencyId ?? Guid.Empty, ct),
                 _ => BuildGreeting(),
             };
 
@@ -148,12 +147,81 @@ public class AssistantController : ControllerBase
         };
     }
 
-    private static AssistantResponse BuildViewRequestsPrompt()
+    private async Task<AssistantResponse> HandleViewRequests(Guid agencyId, CancellationToken ct)
     {
+        // Pending states: everything except Draft (0) and Approved (8)
+        var pendingStates = new[]
+        {
+            PackageState.Draft,
+            PackageState.Uploaded,
+            PackageState.Extracting,
+            PackageState.Validating,
+            PackageState.PendingCH,
+            PackageState.PendingRA,
+        };
+
+        var packages = await _context.DocumentPackages
+            .Where(p => p.AgencyId == agencyId && !p.IsDeleted && pendingStates.Contains(p.State))
+            .OrderByDescending(p => p.CreatedAt)
+            .Select(p => new
+            {
+                p.Id,
+                p.SubmissionNumber,
+                p.State,
+                p.CreatedAt,
+                p.ActivityState,
+                InvoiceAmount = p.Invoices
+                    .Where(i => !i.IsDeleted && i.TotalAmount.HasValue)
+                    .Sum(i => (decimal?)i.TotalAmount) ?? 0m,
+                PONumber = p.SelectedPOId != null
+                    ? _context.POs
+                        .Where(po => po.Id == p.SelectedPOId && !po.IsDeleted)
+                        .Select(po => po.PONumber)
+                        .FirstOrDefault()
+                    : null,
+            })
+            .ToListAsync(ct);
+
+        if (packages.Count == 0)
+        {
+            return new AssistantResponse
+            {
+                Type = "text",
+                Message = "You have no pending claims right now. All your submissions are either approved or not yet started.",
+            };
+        }
+
+        var claims = packages.Select(p => new PendingClaimItem
+        {
+            SubmissionId = p.Id.ToString(),
+            FapId = p.SubmissionNumber ?? "—",
+            PoNumber = p.PONumber ?? "—",
+            InvoiceAmount = p.InvoiceAmount,
+            Status = p.State.ToString(),
+            StatusLabel = p.State switch
+            {
+                PackageState.Draft => "Draft",
+                PackageState.PendingCH => "Pending with CH",
+                PackageState.PendingRA => "Pending with RA",
+                PackageState.Validating or PackageState.Extracting => "Processing",
+                PackageState.Uploaded => "Processing",
+                _ => p.State.ToString(),
+            },
+            StatusColor = p.State switch
+            {
+                PackageState.Draft => "orange",
+                PackageState.PendingCH or PackageState.PendingRA => "blue",
+                _ => "orange",
+            },
+            SubmittedDate = p.CreatedAt.ToString("dd-MMM-yyyy"),
+            ActivityState = p.ActivityState ?? "—",
+        }).ToList();
+
         return new AssistantResponse
         {
-            Type = "text",
-            Message = "This feature is coming soon. You'll be able to view and track all your submissions here.",
+            Type = "pending_claims",
+            Message = "Here are your pending claims.",
+            PendingClaims = claims,
         };
     }
 
@@ -163,6 +231,65 @@ public class AssistantController : ControllerBase
         {
             Type = "text",
             Message = "This feature is coming soon. You'll see items pending your review here.",
+        };
+    }
+
+    private async Task<AssistantResponse> HandlePendingApprovals(Guid agencyId, CancellationToken ct)
+    {
+        // Explicitly join DocumentPackages with IgnoreQueryFilters on both sides so that
+        // soft-deleted packages (resubmitted claims) are still included in the results.
+        var rejections = await _context.RequestApprovalHistories
+            .IgnoreQueryFilters()
+            .Where(h => !h.IsDeleted && h.Action == ApprovalAction.Rejected)
+            .Join(
+                _context.DocumentPackages.IgnoreQueryFilters().Where(p => p.AgencyId == agencyId),
+                h => h.PackageId,
+                p => p.Id,
+                (h, p) => new
+                {
+                    PackageId = h.PackageId,
+                    FapId = p.SubmissionNumber,
+                    RejectedBy = h.Approver.FullName,
+                    RejectedAt = h.ActionDate,
+                    Reason = h.Comments,
+                    Role = h.ApproverRole,
+                })
+            .OrderByDescending(x => x.RejectedAt)
+            .Take(50)
+            .ToListAsync(ct);
+
+        // Deduplicate: keep only the most recent rejection per package
+        var seen = new HashSet<Guid>();
+        var deduped = new List<dynamic>();
+        foreach (var r in rejections)
+        {
+            if (seen.Add(r.PackageId))
+                deduped.Add(r);
+        }
+
+        if (deduped.Count == 0)
+        {
+            return new AssistantResponse
+            {
+                Type = "text",
+                Message = "I don't see any recently rejected claims.",
+            };
+        }
+
+        var items = deduped.Select(r => new RejectionItem
+        {
+            FapId = r.FapId ?? "—",
+            RejectedBy = r.RejectedBy,
+            RejectedAt = r.RejectedAt.ToString("dd-MMM-yyyy"),
+            Reason = string.IsNullOrWhiteSpace(r.Reason) ? "No reason provided." : r.Reason,
+            RejectedByRole = r.Role == UserRole.ASM ? "Rejected by CH" : "Rejected by RA",
+        }).ToList();
+
+        return new AssistantResponse
+        {
+            Type = "rejection_history",
+            Message = "Here are your recently rejected claims.",
+            RejectionItems = items,
         };
     }
 
@@ -239,9 +366,31 @@ public class AssistantController : ControllerBase
             };
         }
 
-        // PO selected — skip upload, go directly to state selection
-        var stateResponse = await BuildStateSelectionPrompt(agencyId, po.PONumber ?? poId.ToString(), ct);
-        // Return selectedPO so frontend stores it for the invoice upload step
+        // PO selected — auto-select Maharashtra (state selection UI hidden for now)
+        // To re-enable state selection, replace the block below with:
+        // var stateResponse = await BuildStateSelectionPrompt(agencyId, po.PONumber ?? poId.ToString(), ct);
+        // and return the stateResponse with SelectedPO attached.
+
+        var autoStateRequest = new AssistantRequest
+        {
+            Action = "select_state",
+            Message = "Maharashtra",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { poId = po.Id.ToString() }),
+        };
+        var stateResponse = await HandleSelectState(autoStateRequest, agencyId, ct);
+
+        var selectedPoItem = new POItem
+        {
+            Id = po.Id.ToString(),
+            PONumber = po.PONumber ?? "",
+            PODate = po.PODate ?? DateTime.MinValue,
+            VendorName = po.VendorName ?? "",
+            TotalAmount = po.TotalAmount ?? 0,
+            RemainingBalance = po.RemainingBalance,
+            POStatus = po.POStatus ?? "Unknown",
+        };
+
+        // Reconstruct response with SelectedPO attached (init-only properties)
         return new AssistantResponse
         {
             Type = stateResponse.Type,
@@ -249,16 +398,8 @@ public class AssistantController : ControllerBase
             Cards = stateResponse.Cards,
             InputHint = stateResponse.InputHint,
             MinSearchLength = stateResponse.MinSearchLength,
-            SelectedPO = new POItem
-            {
-                Id = po.Id.ToString(),
-                PONumber = po.PONumber ?? "",
-                PODate = po.PODate ?? DateTime.MinValue,
-                VendorName = po.VendorName ?? "",
-                TotalAmount = po.TotalAmount ?? 0,
-                RemainingBalance = po.RemainingBalance,
-                POStatus = po.POStatus ?? "Unknown",
-            },
+            SubmissionId = stateResponse.SubmissionId,
+            SelectedPO = selectedPoItem,
         };
     }
 
@@ -371,6 +512,7 @@ public class AssistantController : ControllerBase
         Guid? submissionId = null;
         try
         {
+            var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
             var package = new Domain.Entities.DocumentPackage
             {
                 Id = Guid.NewGuid(),
@@ -379,6 +521,7 @@ public class AssistantController : ControllerBase
                 State = Domain.Enums.PackageState.Draft,
                 SelectedPOId = selectedPoId,
                 ActivityState = validState,
+                SubmissionNumber = submissionNumber,
                 CurrentStep = 4,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
@@ -386,7 +529,7 @@ public class AssistantController : ControllerBase
             _context.DocumentPackages.Add(package);
             await _context.SaveChangesAsync(ct);
             submissionId = package.Id;
-            _logger.LogInformation("Draft submission {Id} created for state {State}", package.Id, validState);
+            _logger.LogInformation("Draft submission {Id} created for state {State}, SubmissionNumber: {SubNum}", package.Id, validState, submissionNumber);
         }
         catch (Exception ex)
         {
@@ -396,7 +539,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "invoice_upload",
-            Message = $"State set to {validState}. Please upload the invoice document.",
+            Message = "Please upload the invoice document.",
             AllowedFormats = new List<string> { "PDF", "JPG", "PNG" },
             SubmissionId = submissionId,
             Cards = new List<WorkflowCard>
@@ -2614,9 +2757,12 @@ public class AssistantController : ControllerBase
         if (package.EnquiryDocument == null) return new AssistantResponse { Type = "error", Message = "Enquiry Dump is required." };
         if (!package.Teams.Any(t => t.Photos.Count >= 3)) return new AssistantResponse { Type = "error", Message = "At least one team with 3+ photos is required." };
 
-        // Generate submission number
-        var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
-        package.SubmissionNumber = submissionNumber;
+        // Generate submission number only if not already assigned (draft creation assigns it)
+        if (string.IsNullOrEmpty(package.SubmissionNumber))
+        {
+            var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
+            package.SubmissionNumber = submissionNumber;
+        }
 
         // Do NOT set state to PendingCH here — let WorkflowOrchestrator handle state transition,
         // CH assignment, Teams notification, email, and SignalR push.
@@ -2625,7 +2771,7 @@ public class AssistantController : ControllerBase
         await _context.SaveChangesAsync(ct);
 
         _logger.LogInformation("Package {PackageId} submitted from chat by user {UserId}. SubmissionNumber: {SubNum} — triggering orchestrator",
-            submissionId, userId, submissionNumber);
+            submissionId, userId, package.SubmissionNumber);
 
         // Queue workflow via background processor (proper scoped execution, avoids disposed context issues)
         await _backgroundQueue.QueueWorkflowAsync(package.Id);
@@ -2638,12 +2784,35 @@ public class AssistantController : ControllerBase
         };
     }
 
-    private static AssistantResponse HandleSaveDraftFromChat()
+    private async Task<AssistantResponse> HandleSaveDraftFromChat(AssistantRequest request, Guid agencyId, CancellationToken ct)
     {
+        Guid? submissionId = null;
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var p = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (p.TryGetProperty("submissionId", out var sp) && Guid.TryParse(sp.GetString(), out var sid))
+                    submissionId = sid;
+            }
+            catch { }
+        }
+
+        if (submissionId.HasValue)
+        {
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == submissionId.Value && p.AgencyId == agencyId && !p.IsDeleted, ct);
+            if (package != null && package.State == Domain.Enums.PackageState.Draft)
+            {
+                package.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync(ct);
+            }
+        }
+
         return new AssistantResponse
         {
             Type = "draft_saved",
-            Message = "Your submission has been saved as a draft.",
+            Message = "Draft saved. You can find it in your pending claims and continue later.",
         };
     }
 
@@ -3905,6 +4074,12 @@ public class AssistantResponse
     [JsonPropertyName("reviewSections")]
     public List<FinalReviewSection>? ReviewSections { get; init; }
 
+    [JsonPropertyName("pendingClaims")]
+    public List<PendingClaimItem>? PendingClaims { get; init; }
+
+    [JsonPropertyName("rejectionItems")]
+    public List<RejectionItem>? RejectionItems { get; init; }
+
     [JsonPropertyName("fileName")]
     public string? FileName { get; init; }
 }
@@ -4051,4 +4226,52 @@ public class FinalReviewField
 
     [JsonPropertyName("value")]
     public required string Value { get; init; }
+}
+
+public class PendingClaimItem
+{
+    [JsonPropertyName("submissionId")]
+    public required string SubmissionId { get; init; }
+
+    [JsonPropertyName("fapId")]
+    public required string FapId { get; init; }
+
+    [JsonPropertyName("poNumber")]
+    public required string PoNumber { get; init; }
+
+    [JsonPropertyName("invoiceAmount")]
+    public decimal InvoiceAmount { get; init; }
+
+    [JsonPropertyName("status")]
+    public required string Status { get; init; }
+
+    [JsonPropertyName("statusLabel")]
+    public required string StatusLabel { get; init; }
+
+    [JsonPropertyName("statusColor")]
+    public required string StatusColor { get; init; }
+
+    [JsonPropertyName("submittedDate")]
+    public required string SubmittedDate { get; init; }
+
+    [JsonPropertyName("activityState")]
+    public required string ActivityState { get; init; }
+}
+
+public class RejectionItem
+{
+    [JsonPropertyName("fapId")]
+    public required string FapId { get; init; }
+
+    [JsonPropertyName("rejectedBy")]
+    public required string RejectedBy { get; init; }
+
+    [JsonPropertyName("rejectedAt")]
+    public required string RejectedAt { get; init; }
+
+    [JsonPropertyName("reason")]
+    public required string Reason { get; init; }
+
+    [JsonPropertyName("rejectedByRole")]
+    public required string RejectedByRole { get; init; }
 }
