@@ -105,6 +105,7 @@ class AssistantResponseModel {
       fileName: json['fileName'] as String?,
       statusCards: (json['statusCards'] as List<dynamic>?)
           ?.map((e) => StatusCardModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
       pendingClaims: (json['pendingClaims'] as List<dynamic>?)
           ?.map((e) => PendingClaimItemModel.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -379,7 +380,12 @@ class StatusCardModel {
       amount: json['amount'] as String?,
       submittedDate: json['submittedDate'] as String? ?? '',
       deepLink: json['deepLink'] as String? ?? '',
-class PendingClaimItemModel {  final String submissionId;
+    );
+  }
+}
+
+class PendingClaimItemModel {
+  final String submissionId;
   final String fapId;
   final String poNumber;
   final double invoiceAmount;
@@ -418,6 +424,9 @@ class PendingClaimItemModel {  final String submissionId;
 
 class RejectionItemModel {
   final String fapId;
+  final String submissionId;
+  final String? poNumber;
+  final String? activityState;
   final String rejectedBy;
   final String rejectedAt;
   final String reason;
@@ -425,6 +434,9 @@ class RejectionItemModel {
 
   const RejectionItemModel({
     required this.fapId,
+    required this.submissionId,
+    this.poNumber,
+    this.activityState,
     required this.rejectedBy,
     required this.rejectedAt,
     required this.reason,
@@ -434,6 +446,9 @@ class RejectionItemModel {
   factory RejectionItemModel.fromJson(Map<String, dynamic> json) {
     return RejectionItemModel(
       fapId: json['fapId'] as String? ?? '—',
+      submissionId: json['submissionId'] as String? ?? '',
+      poNumber: json['poNumber'] as String?,
+      activityState: json['activityState'] as String?,
       rejectedBy: json['rejectedBy'] as String? ?? '—',
       rejectedAt: json['rejectedAt'] as String? ?? '—',
       reason: json['reason'] as String? ?? 'No reason provided.',

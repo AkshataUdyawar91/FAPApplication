@@ -178,12 +178,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   void _handleTypedInput(String text) {
     final intent = ChatIntentDetector.detect(text);
-    if (intent == ChatIntent.createRequest) {
-      ref.read(assistantNotifierProvider.notifier).sendAction('create_request');
-    } else if (intent == ChatIntent.help) {
-      ref.read(assistantNotifierProvider.notifier).sendAction('help');
-    } else {
-      ref.read(assistantNotifierProvider.notifier).sendAction('message', payloadJson: null, userText: text);
+    switch (intent) {
+      case ChatIntent.greeting:
+        ref.read(assistantNotifierProvider.notifier).sendAction('greet', userText: text);
+      case ChatIntent.createRequest:
+        ref.read(assistantNotifierProvider.notifier).sendAction('create_request', userText: text);
+      case ChatIntent.rejectionReason:
+        ref.read(assistantNotifierProvider.notifier).sendAction('pending_approvals', userText: text);
+      case ChatIntent.statusCheck:
+        ref.read(assistantNotifierProvider.notifier).sendAction('message', userText: text);
+      case ChatIntent.help:
+        ref.read(assistantNotifierProvider.notifier).sendAction('help', userText: text);
+      case ChatIntent.fallback:
+      case ChatIntent.unknown:
+        ref.read(assistantNotifierProvider.notifier).sendAction('message', payloadJson: null, userText: text);
     }
   }
 

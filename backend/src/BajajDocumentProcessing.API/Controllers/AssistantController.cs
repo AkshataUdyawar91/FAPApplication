@@ -150,18 +150,21 @@ public class AssistantController : ControllerBase
         }
     }
 
+    /// <summary>Shared action cards reused across greeting and help responses.</summary>
+    private static readonly List<WorkflowCard> CommonActionCards = new()
+    {
+        new() { Id = "create_request",    Title = "Start a new submission",   Subtitle = "I'll guide you step by step",    Icon = "add_circle_outline", Action = "create_request" },
+        new() { Id = "view_requests",     Title = "Show my pending claims",    Subtitle = "Track under review claims",      Icon = "list_alt",           Action = "view_requests" },
+        new() { Id = "pending_approvals", Title = "Why was my claim returned", Subtitle = "Get correction guidance",        Icon = "pending_actions",    Action = "pending_approvals" },
+    };
+
     private static AssistantResponse BuildGreeting()
     {
         return new AssistantResponse
         {
             Type = "greeting",
             Message = "Hey! I'm your FieldIQ assistant. I can help you submit claims and track approvals.",
-            Cards = new List<WorkflowCard>
-            {
-                new() { Id = "create_request", Title = "Start a new submission", Subtitle = "I'll guide you step by step", Icon = "add_circle_outline", Action = "create_request" },
-                new() { Id = "view_requests", Title = "Show my pending claims", Subtitle = "Track under review claims", Icon = "list_alt", Action = "view_requests" },
-                new() { Id = "pending_approvals", Title = "Why was my claim returned", Subtitle = "Get correction guidance", Icon = "pending_actions", Action = "pending_approvals" },
-            },
+            Cards = CommonActionCards,
         };
     }
 
@@ -173,11 +176,8 @@ public class AssistantController : ControllerBase
             Message = "Here's what I can help you with. Tap a card or copy an example question:",
             Cards = new List<WorkflowCard>
             {
-                new() { Id = "help_status",   Title = "Check claim status",     Subtitle = "Try: \"What's the status of my claims?\"",    Icon = "track_changes",      Action = "message" },
-                new() { Id = "help_submit",   Title = "Start a new submission", Subtitle = "Try: \"I want to create a new request\"",      Icon = "add_circle_outline", Action = "create_request" },
-                new() { Id = "help_rejected", Title = "Rejection reasons",      Subtitle = "Try: \"Why was my claim returned?\"",          Icon = "info_outline",       Action = "message" },
-                new() { Id = "help_track",    Title = "Track a request",        Subtitle = "Try: \"Show my pending claims\"",              Icon = "list_alt",           Action = "view_requests" },
-            },
+                new() { Id = "help_status",   Title = "Check claim status",     Subtitle = "Try: \"What's the status of my claims?\"", Icon = "track_changes",      Action = "message" },
+            }.Concat(CommonActionCards).ToList(),
         };
     }
 
@@ -294,6 +294,8 @@ public class AssistantController : ControllerBase
                 {
                     PackageId = h.PackageId,
                     FapId = p.SubmissionNumber,
+                    ActivityState = p.ActivityState,
+                    SelectedPOId = p.SelectedPOId,
                     RejectedBy = h.Approver.FullName,
                     RejectedAt = h.ActionDate,
                     Reason = h.Comments,
@@ -321,13 +323,36 @@ public class AssistantController : ControllerBase
             };
         }
 
-        var items = deduped.Select(r => new RejectionItem
+        // Resolve PO numbers in one query
+        var poIds = deduped
+            .Where(r => r.SelectedPOId != null)
+            .Select(r => (Guid)r.SelectedPOId)
+            .Distinct()
+            .ToList();
+
+        var poNumbers = await _context.POs
+            .Where(p => poIds.Contains(p.Id) && !p.IsDeleted)
+            .Select(p => new { p.Id, p.PONumber })
+            .ToDictionaryAsync(p => p.Id, p => p.PONumber, ct);
+
+        var items = deduped.Select(r =>
         {
-            FapId = r.FapId ?? "—",
-            RejectedBy = r.RejectedBy,
-            RejectedAt = r.RejectedAt.ToString("dd-MMM-yyyy"),
-            Reason = string.IsNullOrWhiteSpace(r.Reason) ? "No reason provided." : r.Reason,
-            RejectedByRole = r.Role == UserRole.ASM ? "Rejected by CH" : "Rejected by RA",
+            var selectedPoId = r.SelectedPOId as Guid?;
+            var poNumber = selectedPoId.HasValue && poNumbers.ContainsKey(selectedPoId.Value)
+                ? poNumbers[selectedPoId.Value]
+                : "—";
+
+            return new RejectionItem
+            {
+                FapId = r.FapId ?? "—",
+                SubmissionId = r.PackageId.ToString(),
+                PoNumber = poNumber ?? "—",
+                ActivityState = r.ActivityState ?? "—",
+                RejectedBy = r.RejectedBy,
+                RejectedAt = r.RejectedAt.ToString("dd-MMM-yyyy"),
+                Reason = string.IsNullOrWhiteSpace(r.Reason) ? "No reason provided." : r.Reason,
+                RejectedByRole = r.Role == UserRole.ASM ? "Rejected by CH" : "Rejected by RA",
+            };
         }).ToList();
 
         return new AssistantResponse
@@ -2891,21 +2916,25 @@ public class AssistantController : ControllerBase
 
         try
         {
-            // AC 5.2 / AC 13.2: Detect status-check queries — use LLM or keyword classifier based on flag
-            var isStatusQuery = _features.Value.UseLLMClassifier
+            // AC 3.1–3.6: Classify intent — LLM or keyword based on feature flag
+            var intent = _features.Value.UseLLMClassifier
                 ? await ClassifyIntentWithLLMAsync(query, ct)
-                : IsStatusCheckQuery(query);
-            if (isStatusQuery)
-            {
-                return await BuildStatusCardsResponse(userId, query, ct);
-            }
+                : ClassifyIntent(query);
 
-            // Non-status queries fall through to GPT chat
-            var chatResponse = await _chatService.ProcessQueryAsync(userId, query, null, ct);
-            return new AssistantResponse
+            return intent switch
             {
-                Type = "text",
-                Message = chatResponse.Message,
+                // AC 3.1 — STATUS_CHECK
+                ChatQueryIntent.StatusCheck => await BuildStatusCardsResponse(userId, query, ct),
+                // AC 3.2 — REJECTION_REASON
+                ChatQueryIntent.RejectionReason => await HandlePendingApprovals(await GetAgencyIdAsync(ct) ?? Guid.Empty, ct),
+                // AC 3.5 — GREETING
+                ChatQueryIntent.Greeting => BuildGreeting(),
+                // AC 3.3 — NEW_SUBMISSION
+                ChatQueryIntent.NewSubmission => BuildCreateRequestPrompt(),
+                // AC 3.4 — HELP
+                ChatQueryIntent.Help => BuildHelpResponse(),
+                // AC 3.6 — FALLBACK: GPT chat with capability guidance
+                _ => await HandleFallbackQuery(userId, query, ct),
             };
         }
         catch (Exception ex)
@@ -2920,15 +2949,42 @@ public class AssistantController : ControllerBase
     }
 
     /// <summary>
-    /// Returns true when the user's message is asking about submission status.
+    /// AC 3.1–3.6: Keyword-phase intent classifier.
+    /// Priority: Greeting > NewSubmission > RejectionReason > StatusCheck > Help > Fallback
     /// </summary>
-    private static bool IsStatusCheckQuery(string query)
+    private static ChatQueryIntent ClassifyIntent(string query)
     {
-        var q = query.ToLowerInvariant();
-        return q.Contains("status") || q.Contains("pending") || q.Contains("claim") ||
-               q.Contains("submission") || q.Contains("request") || q.Contains("approved") ||
-               q.Contains("rejected") || q.Contains("show my") || q.Contains("my request") ||
-               q.Contains("my claim") || q.Contains("track") || q.Contains("fap-") || q.Contains("fap ");
+        var q = query.ToLowerInvariant().Trim();
+
+        // AC 3.5 — GREETING (exact-word to avoid false positives)
+        if (q is "hi" or "hello" or "hey" || q.StartsWith("good morning") || q.StartsWith("good afternoon") || q.StartsWith("good evening"))
+            return ChatQueryIntent.Greeting;
+
+        // AC 3.3 — NEW_SUBMISSION
+        if (q.Contains("new request") || q.Contains("new submission") || q.Contains("create") ||
+            q.Contains("start") || q.Contains("submit") || q.Contains("raise") ||
+            q.Contains("apply for approval") || q.Contains("open a ticket") || q.Contains("make a request") ||
+            q.Contains("file a request") || q.Contains("i want to"))
+            return ChatQueryIntent.NewSubmission;
+
+        // AC 3.2 — REJECTION_REASON (before StatusCheck — prevents "rejected" hijack)
+        if (q.Contains("reject") || q.Contains("return") || q.Contains("why") || q.Contains("correct"))
+            return ChatQueryIntent.RejectionReason;
+
+        // AC 3.1 — STATUS_CHECK
+        if (q.Contains("status") || q.Contains("pending") || q.Contains("where is") ||
+            q.Contains("show my") || q.Contains("track") || q.Contains("my claim") ||
+            q.Contains("my request") || q.Contains("my submission") || q.Contains("claim") ||
+            q.Contains("approved") || q.Contains("fap-") || q.Contains("fap "))
+            return ChatQueryIntent.StatusCheck;
+
+        // AC 3.4 — HELP
+        if (q.Contains("help") || q.Contains("how") || q.Contains("process") ||
+            q.Contains("what can you do") || q.Contains("what do you do"))
+            return ChatQueryIntent.Help;
+
+        // AC 3.6 — FALLBACK
+        return ChatQueryIntent.Fallback;
     }
 
     /// <summary>
@@ -4166,26 +4222,51 @@ public class AssistantController : ControllerBase
 
     /// <summary>
     /// AC 13.2: LLM-based intent classifier using GPT via ChatService.
-    /// Returns true if the query is asking about submission status.
     /// Falls back to keyword classification on any failure (non-blocking).
     /// </summary>
-    private async Task<bool> ClassifyIntentWithLLMAsync(string query, CancellationToken ct)
+    private async Task<ChatQueryIntent> ClassifyIntentWithLLMAsync(string query, CancellationToken ct)
     {
         try
         {
             var userId = GetUserIdSync();
-            if (userId == null) return IsStatusCheckQuery(query);
+            if (userId == null) return ClassifyIntent(query);
 
             var prompt =
-                $"Classify the following user message. Reply with exactly one word: STATUS if the user is asking about submission status, tracking, pending claims, or a specific FAP ID. Otherwise reply OTHER.\n\nMessage: {query}";
+                $"Classify the following user message into exactly one of these intents: " +
+                $"GREETING, NEW_SUBMISSION, REJECTION_REASON, STATUS_CHECK, HELP, FALLBACK.\n\n" +
+                $"Message: {query}\n\nReply with exactly one word from the list above.";
 
             var result = await _chatService.ProcessQueryAsync(userId.Value, prompt, null, ct);
-            return result.Message.Trim().StartsWith("STATUS", StringComparison.OrdinalIgnoreCase);
+            return result.Message.Trim().ToUpperInvariant() switch
+            {
+                "GREETING"         => ChatQueryIntent.Greeting,
+                "NEW_SUBMISSION"   => ChatQueryIntent.NewSubmission,
+                "REJECTION_REASON" => ChatQueryIntent.RejectionReason,
+                "STATUS_CHECK"     => ChatQueryIntent.StatusCheck,
+                "HELP"             => ChatQueryIntent.Help,
+                _                  => ChatQueryIntent.Fallback,
+            };
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "LLM intent classification failed — falling back to keyword classifier");
-            return IsStatusCheckQuery(query);
+            return ClassifyIntent(query);
+        }
+    }
+
+    /// <summary>
+    /// AC 3.6: FALLBACK — tries GPT chat first; if unavailable returns structured capability guidance.
+    /// </summary>
+    private async Task<AssistantResponse> HandleFallbackQuery(Guid userId, string query, CancellationToken ct)
+    {
+        try
+        {
+            var chatResponse = await _chatService.ProcessQueryAsync(userId, query, null, ct);
+            return new AssistantResponse { Type = "text", Message = chatResponse.Message };
+        }
+        catch
+        {
+            return BuildHelpResponse();
         }
     }
 
@@ -4567,6 +4648,15 @@ public class RejectionItem
     [JsonPropertyName("fapId")]
     public required string FapId { get; init; }
 
+    [JsonPropertyName("submissionId")]
+    public required string SubmissionId { get; init; }
+
+    [JsonPropertyName("poNumber")]
+    public string? PoNumber { get; init; }
+
+    [JsonPropertyName("activityState")]
+    public string? ActivityState { get; init; }
+
     [JsonPropertyName("rejectedBy")]
     public required string RejectedBy { get; init; }
 
@@ -4578,4 +4668,23 @@ public class RejectionItem
 
     [JsonPropertyName("rejectedByRole")]
     public required string RejectedByRole { get; init; }
+}
+
+/// <summary>
+/// AC 3.1–3.6: Intent enum for keyword and LLM-based classification.
+/// </summary>
+public enum ChatQueryIntent
+{
+    /// <summary>AC 3.5 — "hi", "hello", "good morning"</summary>
+    Greeting,
+    /// <summary>AC 3.3 — "new", "submit", "create", "start"</summary>
+    NewSubmission,
+    /// <summary>AC 3.2 — "reject", "return", "why", "correct"</summary>
+    RejectionReason,
+    /// <summary>AC 3.1 — "status", "pending", "where is", "show my", "track"</summary>
+    StatusCheck,
+    /// <summary>AC 3.4 — "help", "how", "process"</summary>
+    Help,
+    /// <summary>AC 3.6 — no keyword matched</summary>
+    Fallback,
 }
