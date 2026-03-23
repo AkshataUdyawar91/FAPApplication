@@ -93,6 +93,7 @@ class CampaignItemData {
         invoices = invoices ?? [InvoiceItemData(id: '${id}_invoice_1')];
 
   static const int maxPhotos = 50;
+  static const int minPhotos = 3;
 }
 
 class CampaignListSection extends StatefulWidget {
@@ -1094,13 +1095,47 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
   Widget _buildPhotosSection(CampaignItemData campaign, int campaignIndex, int totalCount) {
     final max = CampaignItemData.maxPhotos;
+    final min = CampaignItemData.minPhotos;
     final canAdd = totalCount < max;
+    final isBelowMin = totalCount < min;
     final existingNames = campaign.existingPhotoFileNames ?? [];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Photos ($totalCount / $max)', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+        Row(
+          children: [
+            Text(
+              'Photos ($totalCount / $max)',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isBelowMin ? const Color(0xFFEF4444) : const Color(0xFF374151),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'min $min required',
+              style: TextStyle(
+                fontSize: 11,
+                color: isBelowMin ? const Color(0xFFEF4444) : const Color(0xFF6B7280),
+              ),
+            ),
+          ],
+        ),
+        if (isBelowMin) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFEF4444)),
+              const SizedBox(width: 4),
+              Text(
+                'Please upload at least $min photos for this team',
+                style: const TextStyle(fontSize: 12, color: Color(0xFFEF4444)),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 10),
         Wrap(
           spacing: 8,
