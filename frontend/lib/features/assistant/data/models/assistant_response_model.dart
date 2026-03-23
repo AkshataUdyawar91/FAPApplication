@@ -23,6 +23,7 @@ class AssistantResponseModel {
   final int? missingPhoneCount;
   final List<FinalReviewSectionModel>? reviewSections;
   final String? fileName;
+  final List<StatusCardModel>? statusCards;
 
   const AssistantResponseModel({
     required this.type,
@@ -48,6 +49,7 @@ class AssistantResponseModel {
     this.missingPhoneCount,
     this.reviewSections,
     this.fileName,
+    this.statusCards,
   });
 
   factory AssistantResponseModel.fromJson(Map<String, dynamic> json) {
@@ -97,6 +99,9 @@ class AssistantResponseModel {
           ?.map((e) => FinalReviewSectionModel.fromJson(e as Map<String, dynamic>))
           .toList(),
       fileName: json['fileName'] as String?,
+      statusCards: (json['statusCards'] as List<dynamic>?)
+          ?.map((e) => StatusCardModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
   }
 }
@@ -336,6 +341,35 @@ class FinalReviewFieldModel {
     return FinalReviewFieldModel(
       label: json['label'] as String? ?? '',
       value: json['value'] as String? ?? '—',
+    );
+  }
+}
+
+class StatusCardModel {
+  final String fapId;
+  final String fullId;
+  final String status;
+  final String? amount;
+  final String submittedDate;
+  final String deepLink;
+
+  const StatusCardModel({
+    required this.fapId,
+    required this.fullId,
+    required this.status,
+    this.amount,
+    required this.submittedDate,
+    required this.deepLink,
+  });
+
+  factory StatusCardModel.fromJson(Map<String, dynamic> json) {
+    return StatusCardModel(
+      fapId: json['fapId'] as String? ?? '',
+      fullId: json['fullId'] as String? ?? '',
+      status: json['status'] as String? ?? '',
+      amount: json['amount'] as String?,
+      submittedDate: json['submittedDate'] as String? ?? '',
+      deepLink: json['deepLink'] as String? ?? '',
     );
   }
 }

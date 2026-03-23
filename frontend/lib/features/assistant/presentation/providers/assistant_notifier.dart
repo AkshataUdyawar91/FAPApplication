@@ -84,15 +84,22 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     }
   }
 
-  Future<void> sendAction(String action, {String? payloadJson}) async {
-    _addUserMessage(action
+  Future<void> sendAction(String action, {String? payloadJson, String? userText}) async {
+    // Show the actual typed text as the user bubble if provided,
+    // otherwise format the action name (e.g. "create_request" → "Create Request")
+    final displayText = userText ?? action
         .replaceAll('_', ' ')
         .split(' ')
         .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase())
-        .join(' '));
+        .join(' ');
+    _addUserMessage(displayText);
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final response = await _dataSource.sendMessage(action: action, payloadJson: payloadJson);
+      final response = await _dataSource.sendMessage(
+        action: action,
+        message: userText,
+        payloadJson: payloadJson,
+      );
       _addBotMessage(response);
       if (response.selectedPO != null) {
         state = state.copyWith(selectedPO: response.selectedPO);

@@ -18,7 +18,9 @@ import 'file_upload_card.dart';
 import 'chat_input_bar.dart';
 import '../../data/models/assistant_response_model.dart';
 import '../../../../core/network/dio_client.dart';
+import '../../../../core/utils/chat_intent_detector.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
+import '../../../submission/presentation/pages/agency_submission_detail_page.dart';
 
 /// Embeddable side-panel version of the Field Activity Assistant.
 /// Mirrors ChatScreen logic but renders as a Column (no Scaffold).
@@ -447,9 +449,20 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       );
     }
     return ChatInputBar(
-      onSend: (text) => ref.read(assistantNotifierProvider.notifier).sendAction('message'),
+      onSend: (text) => _handleTypedInput(text),
       enabled: !state.isLoading,
     );
+  }
+
+  void _handleTypedInput(String text) {
+    final intent = ChatIntentDetector.detect(text);
+    if (intent == ChatIntent.createRequest) {
+      ref.read(assistantNotifierProvider.notifier).sendAction('create_request');
+    } else if (intent == ChatIntent.help) {
+      ref.read(assistantNotifierProvider.notifier).sendAction('help');
+    } else {
+      ref.read(assistantNotifierProvider.notifier).sendAction('message', payloadJson: null, userText: text);
+    }
   }
 
   void _submitTeamName() {
@@ -510,6 +523,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     if (r == null) return AssistantBubble(message: msg.content);
     switch (r.type) {
       case 'greeting':
+      case 'help':
         return AssistantBubble(
           message: msg.content,
           child: r.cards != null
@@ -867,6 +881,13 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         return AssistantBubble(message: msg.content);
       case 'draft_saved':
         return AssistantBubble(message: msg.content);
+      case 'status_cards':
+        return AssistantBubble(
+          message: msg.content,
+          child: r.statusCards != null && r.statusCards!.isNotEmpty
+              ? _statusCardsWidget(r.statusCards!)
+              : null,
+        );
       default:
         return AssistantBubble(message: msg.content);
     }
@@ -1957,6 +1978,138 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Maps a nav:// deep-link to the correct detail page.
+  /// Agency submissions open in a modal dialog (no sidebar/drawer).
+  /// ASM and HQ review pages open in a new browser tab.
+  void _openDetailInModal(String deepLink, {String? fapId}) {
+    debugPrint('[Chat] View tapped — fapId: $fapId, deepLink: $deepLink');
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    // ASM and HQ pages open in a new tab
+    if (deepLink.startsWith('nav://asm-review/') ||
+        deepLink.startsWith('nav://hq-review/')) {
+      final id = deepLink.startsWith('nav://asm-review/')
+          ? deepLink.replaceFirst('nav://asm-review/', '')
+          : deepLink.replaceFirst('nav://hq-review/', '');
+      final route = deepLink.startsWith('nav://asm-review/')
+          ? 'asm-review'
+          : 'hq-review';
+      web.window.open(
+        '${web.window.location.origin}/#/$route/$id',
+        '_blank',
+      );
+      return;
+    }
+
+    // Agency detail opens in modal with no sidebar/drawer
+    if (deepLink.startsWith('nav://agency-detail/')) {
+      final id = deepLink.replaceFirst('nav://agency-detail/', '');
+      showDialog(
+        context: context,
+        barrierColor: Colors.black54,
+        builder: (_) => Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: SizedBox(
+            width: MediaQuery.of(context).size.width * 0.92,
+            height: MediaQuery.of(context).size.height * 0.92,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: AgencySubmissionDetailPage(
+                key: ValueKey(id),
+                submissionId: id,
+                token: token,
+                userName: userName,
+                poNumber: '',
+                isModal: true,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _statusCardsWidget(List<StatusCardModel> cards) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: cards.map((card) {
+        Color statusColor;
+        Color statusBg;
+        switch (card.status) {
+          case 'Pending with CH':
+          case 'Pending with RA':
+            statusColor = const Color(0xFFB45309);
+            statusBg = const Color(0xFFFEF3C7);
+            break;
+          case 'Extracting':
+          case 'Validating':
+            statusColor = const Color(0xFF1D4ED8);
+            statusBg = const Color(0xFFDBEAFE);
+            break;
+          default:
+            statusColor = const Color(0xFF6B7280);
+            statusBg = const Color(0xFFF3F4F6);
+        }
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+          ),
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(card.fapId,
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                    const SizedBox(height: 4),
+                    Row(children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: statusBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(card.status,
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: statusColor)),
+                      ),
+                      if (card.amount != null) ...[
+                        const SizedBox(width: 8),
+                        Text(card.amount!,
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
+                      ],
+                    ]),
+                    const SizedBox(height: 4),
+                    Text(card.submittedDate,
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: () => _openDetailInModal(card.deepLink, fapId: card.fapId),
+                style: TextButton.styleFrom(
+                  backgroundColor: const Color(0xFF003087),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  minimumSize: const Size(60, 36),
+                ),
+                child: const Text('View', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 

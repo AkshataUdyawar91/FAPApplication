@@ -14,6 +14,7 @@ import '../widgets/file_upload_card.dart';
 import '../widgets/chat_input_bar.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../data/models/assistant_response_model.dart';
+import '../../../../core/utils/chat_intent_detector.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -170,9 +171,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       return _teamCountInput(state);
     }
     return ChatInputBar(
-      onSend: (text) => ref.read(assistantNotifierProvider.notifier).sendAction('message'),
+      onSend: (text) => _handleTypedInput(text),
       enabled: !state.isLoading,
     );
+  }
+
+  void _handleTypedInput(String text) {
+    final intent = ChatIntentDetector.detect(text);
+    if (intent == ChatIntent.createRequest) {
+      ref.read(assistantNotifierProvider.notifier).sendAction('create_request');
+    } else if (intent == ChatIntent.help) {
+      ref.read(assistantNotifierProvider.notifier).sendAction('help');
+    } else {
+      ref.read(assistantNotifierProvider.notifier).sendAction('message', payloadJson: null, userText: text);
+    }
   }
 
   Widget _teamNameInput(AssistantState state) {
@@ -465,6 +477,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (r == null) return AssistantBubble(message: msg.content);
     switch (r.type) {
       case 'greeting':
+      case 'help':
         return AssistantBubble(
           message: msg.content,
           child: r.cards != null
