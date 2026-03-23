@@ -81,7 +81,7 @@ The agency page uses a shared `_buildValidationCardWidget()` that already had Vi
 #### 2.2 Photo Validation
 | ID | Change | How to Remove |
 |----|--------|---------------|
-| T9 | `_buildPhotoValidationCard()` — added `final photoDocId = photo['documentId']?.toString() ?? photo['id']?.toString() ?? '';` and passed `resolvedDocId: photoDocId` to `_buildValidationCardWidget()` | Remove the `photoDocId` variable line and remove `resolvedDocId: photoDocId,` from the return call |
+| T9 | `_buildPhotoValidationCard()` — Photo validation `documentId` from API is the package ID (not a real TeamPhoto ID), causing 404 on download. Blob URLs are private Azure storage (not accessible from browser). Fix: extract first photo's real ID from `campaigns[0].photos[0].id` and pass as `resolvedDocId` to `_buildValidationCardWidget()`. The existing `/api/documents/{id}/download` endpoint handles `DocumentType.TeamPhoto` by looking up the TeamPhoto record, fetching blob bytes through backend Azure credentials, and returning base64. | In `_buildPhotoValidationCard()`: remove the `if (resolvedPhotoDocId.isEmpty)` block that extracts photo ID from campaigns. Revert `resolvedPhotoDocId` back to `final` with the original packageId check only. Remove `resolvedDocId: resolvedPhotoDocId` from the `_buildValidationCardWidget()` call. |
 
 #### 2.3 Enquiry Validation
 | ID | Change | How to Remove |
@@ -99,7 +99,7 @@ The ASM page uses `_buildValidationCard()` which already had View/Download butto
 #### 3.1 Photo Validation
 | ID | Change | How to Remove |
 |----|--------|---------------|
-| T11 | `_buildPhotoValidationCard()` — added `final photoDocId = photo['documentId']?.toString() ?? photo['id']?.toString() ?? '';` and passed `documentId: photoDocId` to `_buildValidationCard()` | Remove the `photoDocId` variable line and remove `documentId: photoDocId,` from the return call |
+| T11 | `_buildPhotoValidationCard()` — Same fix as T9. Photo validation `documentId` from API is the package ID. Blob URLs are private Azure storage. Fix: extract first photo's real ID from `campaigns[0].photos[0].id` and pass as `documentId:` to `_buildValidationCard()`. Backend `/api/documents/{id}/download` handles TeamPhoto lookup and blob fetch. | In `_buildPhotoValidationCard()`: remove the `if (resolvedPhotoDocId.isEmpty)` block that extracts photo ID from campaigns. Revert `resolvedPhotoDocId` back to `final`. Remove `documentId: resolvedPhotoDocId` from the `_buildValidationCard()` call. |
 
 #### 3.2 Enquiry Validation
 | ID | Change | How to Remove |
@@ -132,7 +132,7 @@ The HQ page's `_buildValidationCard()` had NO View/Download buttons at all. Full
 #### 4.4 Photo Validation
 | ID | Change | How to Remove |
 |----|--------|---------------|
-| T16 | `_buildPhotoValidationCard()` — added `final photoDocId = photo['documentId']?.toString() ?? photo['id']?.toString() ?? '';` and passed `documentId: photoDocId` | Remove the `photoDocId` variable line and remove `documentId: photoDocId,` from the return call |
+| T16 | `_buildPhotoValidationCard()` — Same fix as T9/T11. Photo validation `documentId` from API is the package ID. Blob URLs are private Azure storage. Fix: extract first photo's real ID from `campaigns[0].photos[0].id` and pass as `documentId:` to `_buildValidationCard()`. Backend `/api/documents/{id}/download` handles TeamPhoto lookup and blob fetch. | In `_buildPhotoValidationCard()`: remove the `if (resolvedPhotoDocId.isEmpty)` block that extracts photo ID from campaigns. Revert `resolvedPhotoDocId` back to `final`. Remove `documentId: resolvedPhotoDocId` from the `_buildValidationCard()` call. |
 
 #### 4.5 Enquiry Validation
 | ID | Change | How to Remove |
@@ -166,20 +166,56 @@ The root cause for Enquiry Validation View/Download buttons not appearing: `Vali
 
 ### To remove ALL View/Download from Agency Detail:
 1. In `_buildSingleValidationCard()`: remove `resolvedDocId:` and `resolvedBlobUrl:` from the return
-2. In `_buildPhotoValidationCard()`: remove `photoDocId` variable and `resolvedDocId: photoDocId`
-3. In enquiry call: remove `documentId: _getDocumentIdByType('EnquiryDocument')`
+2. In enquiry call: remove `documentId: _getDocumentIdByType('EnquiryDocument')`
 
 ### To remove ALL View/Download from ASM Detail:
-1. In `_buildPhotoValidationCard()`: remove `photoDocId` variable and `documentId: photoDocId`
-2. In enquiry call: remove `documentId: _getDocumentIdByType('EnquiryDocument')`
+1. In enquiry call: remove `documentId: _getDocumentIdByType('EnquiryDocument')`
 
 ### To remove ALL View/Download from RA (HQ) Detail:
 1. Revert `_buildValidationCard()` to old signature (remove `documentId`/`blobUrl` params and button UI)
 2. Revert `_buildSingleValidationCard()` to not resolve/forward IDs
 3. In `_buildInvoiceValidationCard()`: remove `documentId: docId`
-4. In `_buildPhotoValidationCard()`: remove `photoDocId` variable and `documentId: photoDocId`
-5. In enquiry call: remove `documentId: _getDocumentIdByType('EnquiryDocument')`
+4. In enquiry call: remove `documentId: _getDocumentIdByType('EnquiryDocument')`
 
 ### To remove Backend DocumentId support:
 1. In `SubmissionDetailResponse.cs`: remove `DocumentId` property from `ValidationResultDto`
 2. In `SubmissionsController.cs` (`GetSubmission`): remove `DocumentId = ...` from `CostSummaryValidation`, `ActivityValidation`, and `EnquiryValidation` DTO blocks
+
+
+---
+
+## Changelog
+
+### 2026-03-23 — Photo Validation: Private Blob URL Fix (T9, T11, T16)
+
+**Problem**: Photo validation's `documentId` in the API response is the package ID (not a real TeamPhoto ID), causing 404 on the `/api/documents/{id}/download` endpoint. The previous workaround passed the first photo's blob URL (`campaigns[0].photos[0].blobUrl`) directly to the frontend, but Azure Blob Storage URLs are private and not accessible from the browser.
+
+**Root Cause**: Azure Blob Storage container access level is set to private. Only the backend (with storage account credentials) can read blobs. The frontend cannot open or download from `https://bajajstorageprod.blob.core.windows.net/...` URLs directly.
+
+**Solution**: Extract the first photo's real TeamPhoto ID from `campaigns[0].photos[0].id` and pass it as `documentId` to the validation card. The existing `/api/documents/{id}/download` endpoint already handles `DocumentType.TeamPhoto` — it looks up the TeamPhoto record in the database, reads the blob through the backend's Azure credentials via `_fileStorageService.GetFileBytesAsync(blobUrl)`, and returns base64 content to the frontend.
+
+**Files Changed**:
+- `frontend/lib/features/submission/presentation/pages/agency_submission_detail_page.dart` (T9)
+- `frontend/lib/features/approval/presentation/pages/asm_review_detail_page.dart` (T11)
+- `frontend/lib/features/approval/presentation/pages/hq_review_detail_page.dart` (T16)
+
+**Pattern applied in all 3 files** (`_buildPhotoValidationCard`):
+```dart
+// Before (broken): passed private blob URL
+String firstPhotoBlobUrl = '';
+// ... extract from campaigns[0].photos[0].blobUrl
+return _buildValidationCard(..., blobUrl: firstPhotoBlobUrl);
+
+// After (fixed): pass real TeamPhoto ID, let backend proxy the download
+if (resolvedPhotoDocId.isEmpty) {
+  final campaigns = _submission?['campaigns'] as List? ?? [];
+  for (final campaign in campaigns) {
+    final photos = (campaign as Map<String, dynamic>)['photos'] as List? ?? [];
+    if (photos.isNotEmpty) {
+      resolvedPhotoDocId = (photos[0] as Map<String, dynamic>)['id']?.toString() ?? '';
+      break;
+    }
+  }
+}
+return _buildValidationCard(..., documentId: resolvedPhotoDocId);
+```

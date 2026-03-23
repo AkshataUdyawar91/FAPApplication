@@ -51,6 +51,17 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         'Expires': '0',
       },
     ),
+  )..interceptors.add(PrettyDioLogger());
+  // Separate Dio for view/download — no response body logging (base64 floods console)
+  final _dioSilent = Dio(
+    BaseOptions(
+      baseUrl: 'http://localhost:5000/api',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+    ),
   )..interceptors.add(PrettyDioLogger(responseBody: false));
   final _commentsController = TextEditingController();
 
@@ -1019,7 +1030,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
   Future<void> _viewDocument(String documentId, String filename) async {
     try {
-      final response = await _dio.get(
+      final response = await _dioSilent.get(
         '/documents/$documentId/download',
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
@@ -1055,7 +1066,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       return;
     }
     try {
-      final response = await _dio.get(
+      final response = await _dioSilent.get(
         '/documents/$documentId/download',
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
@@ -1109,7 +1120,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
 
     try {
-      final response = await _dio.get(
+      final response = await _dioSilent.get(
         '/documents/$documentId/download',
         options: Options(
           headers: {'Authorization': 'Bearer ${widget.token}'},
@@ -1476,7 +1487,23 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     final fileName = photo['fileName'] ?? 'Unknown';
     final validationDetailsJson = photo['validationDetailsJson'] as String?;
     final failureReason = photo['failureReason'] as String?;
-    final photoDocId = photo['documentId']?.toString() ?? photo['id']?.toString() ?? '';
+    final photoDocId = photo['documentId']?.toString() ?? '';
+
+    // Photo validation is aggregate (documentId = packageId). Use first photo's actual ID instead.
+    final packageId = _submission?['id']?.toString() ?? '';
+    String resolvedPhotoDocId = (photoDocId.isNotEmpty && photoDocId != packageId) ? photoDocId : '';
+    
+    // Get first photo's real ID from campaigns for View/Download (blob URLs are private Azure storage)
+    if (resolvedPhotoDocId.isEmpty) {
+      final campaigns = _submission?['campaigns'] as List? ?? [];
+      for (final campaign in campaigns) {
+        final photos = (campaign as Map<String, dynamic>)['photos'] as List? ?? [];
+        if (photos.isNotEmpty) {
+          resolvedPhotoDocId = (photos[0] as Map<String, dynamic>)['id']?.toString() ?? '';
+          break;
+        }
+      }
+    }
 
     Map<String, dynamic>? validationDetails;
     List<Map<String, dynamic>> allRows = [];
@@ -1510,7 +1537,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
-      documentId: photoDocId,
+      documentId: resolvedPhotoDocId,
     );
   }
 
