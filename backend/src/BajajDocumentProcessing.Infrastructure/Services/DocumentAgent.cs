@@ -1903,12 +1903,12 @@ Analyze the provided text extracted from an invoice document and extract ALL str
 REQUIRED FIELDS TO EXTRACT:
 1. Invoice Number - Look for: 'Invoice No', 'Invoice Number', 'Bill No', 'Inv No', 'Document No'
 2. Invoice Date - Date of invoice (format: YYYY-MM-DD)
-3. Agency Name - Name of the agency/customer/recipient receiving the invoice
-4. Agency Address - Full address of the agency/recipient
+3. Agency Name - Name of the SUPPLIER/SELLER who issued the invoice (look near 'Supplier', 'From', 'M/S', 'Issued By')
+4. Agency Address - Full address of the SUPPLIER/SELLER
 5. Agency Code - Agency identifier code (alphanumeric, 4-10 characters)
-6. Billing Name - Bill to party name (may be same as agency)
-7. Billing Address - Bill to address
-8. Vendor Name - Supplier/vendor company name (look near 'Supplier', 'From', 'M/S')
+6. Billing Name - Name of the RECIPIENT/BUYER/BILL-TO party (look near 'Recipient', 'Bill To', 'Buyer')
+7. Billing Address - Full address of the RECIPIENT/BUYER
+8. Vendor Name - Supplier/vendor company name (same as Agency Name — look near 'Supplier', 'From', 'M/S')
 9. Vendor Code - Vendor identifier code
 10. State Name - State where service/goods supplied (e.g., 'Maharashtra', 'Bihar', 'Karnataka')
 11. State Code - 2-digit state code (e.g., '27' for Maharashtra, '10' for Bihar)
@@ -1928,7 +1928,8 @@ CRITICAL INSTRUCTIONS FOR INDIAN INVOICES:
 - State Name: Derive from state code or 'Place of Supply' field.
 - HSN/SAC Code: Usually in the line items table header.
 - Total Amount: If multiple totals exist, use the FINAL payable amount.
-- Agency = Recipient/Customer/Bill To party.
+- Agency = SUPPLIER (the party who issued/sent the invoice, listed under 'Supplier' section).
+- Billing = RECIPIENT (the party receiving the invoice, listed under 'Recipient' section).
 - If a field is not found, use empty string for text, 0 for numbers.
 
 Respond ONLY with a JSON object in this exact format:
