@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../core/network/dio_client.dart';
 import '../../../../core/constants/api_constants.dart';
@@ -73,7 +74,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
                   ? _buildEmptyState()
                   : _buildSubmissionsList(),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.pushNamed(context, '/agency/conversational-submission'),
+        onPressed: () => context.pushNamed('conversational-submission'),
         backgroundColor: const Color(0xFF003087),
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
@@ -118,7 +119,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
           ),
           const SizedBox(height: 24),
           ElevatedButton.icon(
-            onPressed: () => Navigator.pushNamed(context, '/agency/conversational-submission'),
+            onPressed: () => context.pushNamed('conversational-submission'),
             icon: const Icon(Icons.add_comment),
             label: const Text('New Submission'),
             style: ElevatedButton.styleFrom(
@@ -170,7 +171,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: isDraft
-            ? () => Navigator.pushNamed(context, '/agency/conversational-submission')
+            ? () => context.pushNamed('conversational-submission')
             : null,
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -198,15 +199,14 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
               _buildInfoRow('PO Number', poNumber),
               if (createdAt.isNotEmpty)
                 _buildInfoRow('Created', _formatDate(createdAt)),
-              if (isDraft)
-                _buildInfoRow('Progress', 'Step $currentStep of 10'),
+              if (isDraft) _buildInfoRow('Progress', 'Step $currentStep of 10'),
               if (isDraft) ...[
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () =>
-                        Navigator.pushNamed(context, '/agency/conversational-submission'),
+                        context.pushNamed('conversational-submission'),
                     icon: const Icon(Icons.play_arrow, size: 18),
                     label: const Text('Resume'),
                     style: OutlinedButton.styleFrom(
@@ -229,8 +229,11 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-          Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+          Text(label,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+          Text(value,
+              style:
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
         ],
       ),
     );
@@ -247,7 +250,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
         fg = Colors.grey.shade700;
         break;
       case 'submitted':
-      case 'pendingasm':
+      case 'pendingch':
       case 'pendingra':
         bg = const Color(0xFFDBEAFE);
         fg = const Color(0xFF1E40AF);
@@ -256,7 +259,7 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
         bg = const Color(0xFFD1FAE5);
         fg = const Color(0xFF065F46);
         break;
-      case 'asmrejected':
+      case 'chrejected':
       case 'rarejected':
         bg = const Color(0xFFFEE2E2);
         fg = const Color(0xFF991B1B);
@@ -272,7 +275,9 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
         color: bg,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(label, style: TextStyle(fontSize: 12, color: fg, fontWeight: FontWeight.w500)),
+      child: Text(label,
+          style:
+              TextStyle(fontSize: 12, color: fg, fontWeight: FontWeight.w500)),
     );
   }
 
@@ -282,14 +287,14 @@ class _MySubmissionsPageState extends ConsumerState<MySubmissionsPage> {
         return 'Draft';
       case 'submitted':
         return 'Submitted';
-      case 'pendingasm':
-        return 'Pending ASM';
+      case 'pendingch':
+        return 'Pending CH';
       case 'pendingra':
         return 'Pending RA';
       case 'approved':
         return 'Approved';
-      case 'asmrejected':
-        return 'ASM Rejected';
+      case 'chrejected':
+        return 'CH Rejected';
       case 'rarejected':
         return 'RA Rejected';
       default:

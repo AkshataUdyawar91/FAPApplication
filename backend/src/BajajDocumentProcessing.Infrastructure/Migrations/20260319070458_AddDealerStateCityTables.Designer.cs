@@ -1586,9 +1586,7 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CircleHeadUserId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_StateMappings_CircleHeadUserId")
-                        .HasFilter("[CircleHeadUserId] IS NOT NULL");
+                        .HasDatabaseName("IX_StateMappings_CircleHeadUserId");
 
                     b.HasIndex("RAUserId")
                         .HasDatabaseName("IX_StateMappings_RAUserId");

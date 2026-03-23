@@ -27,10 +27,6 @@ public class StateCityConfiguration : IEntityTypeConfiguration<StateCity>
             .IsRequired()
             .HasDefaultValue(true);
 
-        builder.Property(s => s.IsDeleted)
-            .IsRequired()
-            .HasDefaultValue(false);
-
         builder.HasQueryFilter(s => !s.IsDeleted);
 
         // Unique: one city per state (no duplicate city entries for same state)

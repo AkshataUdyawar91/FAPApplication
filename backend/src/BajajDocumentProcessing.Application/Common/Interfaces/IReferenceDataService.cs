@@ -68,4 +68,11 @@ public interface IReferenceDataService
     /// <param name="stateCode">State code</param>
     /// <returns>Expected rate or null if not found</returns>
     decimal? GetStateRate(string elementName, string stateCode);
+
+    /// <summary>
+    /// Gets the numeric state code from a state name (e.g., "Bihar" → "10")
+    /// </summary>
+    /// <param name="stateName">State name</param>
+    /// <returns>2-digit state code or null if not found</returns>
+    string? GetStateCodeByName(string stateName);
 }

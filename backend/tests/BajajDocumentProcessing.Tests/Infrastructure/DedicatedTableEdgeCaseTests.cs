@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
+using TeamsEntity = BajajDocumentProcessing.Domain.Entities.Teams;
 
 namespace BajajDocumentProcessing.Tests.Infrastructure;
 
@@ -133,7 +134,8 @@ public class DedicatedTableEdgeCaseTests
         var mockPerceptualHashService = new Mock<IPerceptualHashService>();
         return new ValidationAgent(
             mockContext.Object, mockLogger.Object, mockHttpClientFactory.Object,
-            mockReferenceDataService.Object, mockCorrelationIdService.Object, mockPerceptualHashService.Object);
+            mockReferenceDataService.Object, mockCorrelationIdService.Object, mockPerceptualHashService.Object,
+            new Mock<IPoBalanceService>().Object);
     }
 
     private static DocumentPackage CreatePackage(Guid packageId, bool hasPO, bool hasInvoice, bool hasCostSummary, int photoCount)
@@ -144,7 +146,7 @@ public class DedicatedTableEdgeCaseTests
             State = PackageState.Uploaded,
             CreatedAt = DateTime.UtcNow,
             Invoices = new List<Invoice>(),
-            Teams = new List<Teams>()
+            Teams = new List<TeamsEntity>()
         };
 
         if (hasPO)
@@ -156,7 +158,7 @@ public class DedicatedTableEdgeCaseTests
         if (hasCostSummary)
             package.CostSummary = new CostSummary { Id = Guid.NewGuid(), PackageId = packageId, FileName = "CS.xlsx", CreatedAt = DateTime.UtcNow };
 
-        var team = new Teams
+        var team = new TeamsEntity
         {
             Id = Guid.NewGuid(), PackageId = packageId, CampaignName = "Test",
             Photos = new List<TeamPhotos>()

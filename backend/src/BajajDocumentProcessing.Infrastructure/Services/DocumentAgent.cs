@@ -6,6 +6,7 @@ using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 // CHANGE: Added ClosedXML for reading Excel files (Enquiry Dump)
@@ -1406,7 +1407,11 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
         public string? CampaignName { get; set; }
         public string? State { get; set; }
         public string? PlaceOfSupply { get; set; }
+
+        [JsonConverter(typeof(NullableDateTimeConverter))]
         public DateTime? CampaignStartDate { get; set; }
+
+        [JsonConverter(typeof(NullableDateTimeConverter))]
         public DateTime? CampaignEndDate { get; set; }
         public decimal TotalCost { get; set; }
         public int? NumberOfDays { get; set; }
@@ -1422,10 +1427,44 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
         public string? Category { get; set; }
         public string? ElementName { get; set; }
         public decimal Amount { get; set; }
-        public int? Quantity { get; set; }
+        public decimal? Quantity { get; set; }
         public string? Unit { get; set; }
         public bool IsFixedCost { get; set; }
         public bool IsVariableCost { get; set; }
+    }
+
+    /// <summary>
+    /// Handles empty strings and various date formats from AI responses, returning null instead of throwing.
+    /// </summary>
+    private class NullableDateTimeConverter : JsonConverter<DateTime?>
+    {
+        public override DateTime? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Null)
+                return null;
+
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                var value = reader.GetString();
+                if (string.IsNullOrWhiteSpace(value))
+                    return null;
+
+                if (DateTime.TryParse(value, out var date))
+                    return date;
+
+                return null;
+            }
+
+            return reader.GetDateTime();
+        }
+
+        public override void Write(Utf8JsonWriter writer, DateTime? value, JsonSerializerOptions options)
+        {
+            if (value.HasValue)
+                writer.WriteStringValue(value.Value);
+            else
+                writer.WriteNullValue();
+        }
     }
 
     /// <summary>
@@ -1864,12 +1903,12 @@ Analyze the provided text extracted from an invoice document and extract ALL str
 REQUIRED FIELDS TO EXTRACT:
 1. Invoice Number - Look for: 'Invoice No', 'Invoice Number', 'Bill No', 'Inv No', 'Document No'
 2. Invoice Date - Date of invoice (format: YYYY-MM-DD)
-3. Agency Name - Name of the agency/customer/recipient receiving the invoice
-4. Agency Address - Full address of the agency/recipient
+3. Agency Name - Name of the SUPPLIER/SELLER who issued the invoice (look near 'Supplier', 'From', 'M/S', 'Issued By')
+4. Agency Address - Full address of the SUPPLIER/SELLER
 5. Agency Code - Agency identifier code (alphanumeric, 4-10 characters)
-6. Billing Name - Bill to party name (may be same as agency)
-7. Billing Address - Bill to address
-8. Vendor Name - Supplier/vendor company name (look near 'Supplier', 'From', 'M/S')
+6. Billing Name - Name of the RECIPIENT/BUYER/BILL-TO party (look near 'Recipient', 'Bill To', 'Buyer')
+7. Billing Address - Full address of the RECIPIENT/BUYER
+8. Vendor Name - Supplier/vendor company name (same as Agency Name — look near 'Supplier', 'From', 'M/S')
 9. Vendor Code - Vendor identifier code
 10. State Name - State where service/goods supplied (e.g., 'Maharashtra', 'Bihar', 'Karnataka')
 11. State Code - 2-digit state code (e.g., '27' for Maharashtra, '10' for Bihar)
@@ -1889,7 +1928,8 @@ CRITICAL INSTRUCTIONS FOR INDIAN INVOICES:
 - State Name: Derive from state code or 'Place of Supply' field.
 - HSN/SAC Code: Usually in the line items table header.
 - Total Amount: If multiple totals exist, use the FINAL payable amount.
-- Agency = Recipient/Customer/Bill To party.
+- Agency = SUPPLIER (the party who issued/sent the invoice, listed under 'Supplier' section).
+- Billing = RECIPIENT (the party receiving the invoice, listed under 'Recipient' section).
 - If a field is not found, use empty string for text, 0 for numbers.
 
 Respond ONLY with a JSON object in this exact format:

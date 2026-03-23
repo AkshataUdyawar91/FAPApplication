@@ -23,6 +23,7 @@ public class PoBalanceService : IPoBalanceService
     private readonly string _sapApiKey;
     private readonly string _sapBasicAuth;
     private readonly string _sapCookie;
+    private readonly bool _isConfigured;
 
     public PoBalanceService(
         IApplicationDbContext db,
@@ -31,10 +32,19 @@ public class PoBalanceService : IPoBalanceService
     {
         _db = db;
         _logger = logger;
-        _sapUrl       = configuration["SAP:PoBalanceApi:Url"]       ?? throw new InvalidOperationException("SAP:PoBalanceApi:Url is not configured.");
-        _sapApiKey    = configuration["SAP:PoBalanceApi:ApiKey"]    ?? throw new InvalidOperationException("SAP:PoBalanceApi:ApiKey is not configured.");
-        _sapBasicAuth = configuration["SAP:PoBalanceApi:BasicAuth"] ?? throw new InvalidOperationException("SAP:PoBalanceApi:BasicAuth is not configured.");
+        _sapUrl       = configuration["SAP:PoBalanceApi:Url"]       ?? string.Empty;
+        _sapApiKey    = configuration["SAP:PoBalanceApi:ApiKey"]    ?? string.Empty;
+        _sapBasicAuth = configuration["SAP:PoBalanceApi:BasicAuth"] ?? string.Empty;
         _sapCookie    = configuration["SAP:PoBalanceApi:Cookie"]    ?? string.Empty;
+
+        _isConfigured = !string.IsNullOrWhiteSpace(_sapUrl)
+                     && !string.IsNullOrWhiteSpace(_sapApiKey)
+                     && !string.IsNullOrWhiteSpace(_sapBasicAuth);
+
+        if (!_isConfigured)
+        {
+            _logger.LogWarning("SAP PO Balance API is not fully configured (SAP:PoBalanceApi:Url/ApiKey/BasicAuth). PO balance checks will be skipped.");
+        }
     }
 
     /// <inheritdoc />
@@ -45,6 +55,12 @@ public class PoBalanceService : IPoBalanceService
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
+        if (!_isConfigured)
+        {
+            _logger.LogWarning("PO balance check skipped for PO {PoNum} — SAP API not configured.", poNum);
+            throw new InvalidOperationException("SAP PO Balance API is not configured.");
+        }
+
         var log = new PoBalanceLog
         {
             Id            = Guid.NewGuid(),

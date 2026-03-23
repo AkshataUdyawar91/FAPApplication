@@ -18,6 +18,7 @@ public class ProactiveValidationService : IProactiveValidationService
     private readonly IApplicationDbContext _db;
     private readonly ISubmissionNotificationService _notificationService;
     private readonly ILogger<ProactiveValidationService> _logger;
+    private readonly IReferenceDataService _referenceData;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -27,11 +28,13 @@ public class ProactiveValidationService : IProactiveValidationService
     public ProactiveValidationService(
         IApplicationDbContext db,
         ISubmissionNotificationService notificationService,
-        ILogger<ProactiveValidationService> logger)
+        ILogger<ProactiveValidationService> logger,
+        IReferenceDataService referenceData)
     {
         _db = db;
         _notificationService = notificationService;
         _logger = logger;
+        _referenceData = referenceData;
     }
 
     /// <inheritdoc />
@@ -84,7 +87,7 @@ public class ProactiveValidationService : IProactiveValidationService
         return response;
     }
 
-    #region Invoice Validation (9 rules)
+    #region Invoice Validation (12 rules)
 
     private async Task<List<ProactiveRuleResult>> ValidateInvoiceAsync(
         Guid documentId, Guid packageId, CancellationToken ct)
@@ -132,7 +135,45 @@ public class ProactiveValidationService : IProactiveValidationService
         var vendorCode = GetJsonField(extractedData, "vendorCode");
         rules.Add(CheckFieldPresence("INV_VENDOR_CODE_PRESENT", vendorCode, "Vendor Code"));
 
-        // Rule 8: INV_PO_NUMBER_MATCH (cross-check against PO)
+        // Rule 8: INV_AGENCY_NAME_ADDRESS
+        var agencyName = GetJsonField(extractedData, "agencyName");
+        var agencyAddress = GetJsonField(extractedData, "agencyAddress");
+        var agencyNameAddress = (agencyName != null && agencyAddress != null) ? $"{agencyName}, {agencyAddress}" : agencyName ?? agencyAddress;
+        rules.Add(new ProactiveRuleResult
+        {
+            RuleCode = "INV_AGENCY_NAME_ADDRESS",
+            Type = "Required",
+            Passed = !string.IsNullOrWhiteSpace(agencyName) && !string.IsNullOrWhiteSpace(agencyAddress),
+            ExtractedValue = agencyNameAddress,
+            ExpectedValue = null,
+            Message = (!string.IsNullOrWhiteSpace(agencyName) && !string.IsNullOrWhiteSpace(agencyAddress))
+                ? "Supplier name & address found"
+                : string.IsNullOrWhiteSpace(agencyName) ? "Supplier name not detected" : "Supplier address not detected",
+            Severity = (!string.IsNullOrWhiteSpace(agencyName) && !string.IsNullOrWhiteSpace(agencyAddress)) ? "Pass" : "Fail"
+        });
+
+        // Rule 9: INV_BILLING_NAME_ADDRESS
+        var billingName = GetJsonField(extractedData, "billingName");
+        var billingAddress = GetJsonField(extractedData, "billingAddress");
+        var billingNameAddress = (billingName != null && billingAddress != null) ? $"{billingName}, {billingAddress}" : billingName ?? billingAddress;
+        rules.Add(new ProactiveRuleResult
+        {
+            RuleCode = "INV_BILLING_NAME_ADDRESS",
+            Type = "Required",
+            Passed = !string.IsNullOrWhiteSpace(billingName) && !string.IsNullOrWhiteSpace(billingAddress),
+            ExtractedValue = billingNameAddress,
+            ExpectedValue = null,
+            Message = (!string.IsNullOrWhiteSpace(billingName) && !string.IsNullOrWhiteSpace(billingAddress))
+                ? "Recipient name & address found"
+                : string.IsNullOrWhiteSpace(billingName) ? "Recipient name not detected" : "Recipient address not detected",
+            Severity = (!string.IsNullOrWhiteSpace(billingName) && !string.IsNullOrWhiteSpace(billingAddress)) ? "Pass" : "Fail"
+        });
+
+        // Rule 10: INV_SUPPLIER_STATE
+        var supplierState = GetJsonField(extractedData, "stateName") ?? GetJsonField(extractedData, "stateCode");
+        rules.Add(CheckFieldPresence("INV_SUPPLIER_STATE", supplierState, "Supplier State"));
+
+        // Rule 11: INV_PO_NUMBER_MATCH (cross-check against PO)
         rules.Add(CheckPONumberMatch(extractedData, po));
 
         // Rule 9: INV_AMOUNT_VS_PO_BALANCE (cross-check amount against PO remaining balance)
@@ -327,7 +368,7 @@ public class ProactiveValidationService : IProactiveValidationService
     }
 
     private static ProactiveRuleResult CheckActivityDaysVsTeamDetails(
-        Dictionary<string, string> activityData, List<Teams> teams)
+        Dictionary<string, string> activityData, List<Domain.Entities.Teams> teams)
     {
         var activityDaysStr = GetJsonField(activityData, "totalDays")
             ?? GetJsonField(activityData, "workingDays")
@@ -431,6 +472,15 @@ public class ProactiveValidationService : IProactiveValidationService
 
         // Rule 4: CS_ELEMENT_COST_VS_RATES — check element costs against rate master
         rules.Add(CheckElementCostsVsRates(extractedData));
+
+        // Rule 5: CS_FIXED_COST_LIMITS
+        var breakdownJson = !string.IsNullOrWhiteSpace(costSummary.CostBreakdownJson)
+            ? costSummary.CostBreakdownJson
+            : costSummary.ExtractedDataJson; // ParseCostItems handles costBreakdowns extraction
+        rules.Add(CheckFixedCostLimits(breakdownJson, costSummary.PlaceOfSupply));
+
+        // Rule 6: CS_VARIABLE_COST_LIMITS
+        rules.Add(CheckVariableCostLimits(breakdownJson, costSummary.PlaceOfSupply));
 
         return rules;
     }
@@ -543,6 +593,96 @@ public class ProactiveValidationService : IProactiveValidationService
         };
     }
 
+    private ProactiveRuleResult CheckFixedCostLimits(string? costBreakdownJson, string? placeOfSupply)
+    {
+        var stateCode = !string.IsNullOrWhiteSpace(placeOfSupply)
+            ? (_referenceData.GetStateCodeByName(placeOfSupply) ?? placeOfSupply)
+            : null;
+
+        var fixedItems = ParseCostItems(costBreakdownJson, isFixed: true);
+
+        if (fixedItems.Count == 0)
+            return new ProactiveRuleResult { RuleCode = "CS_FIXED_COST_LIMITS", Type = "Check", Passed = true, Message = "No fixed cost items found to validate", Severity = "Pass" };
+
+        if (string.IsNullOrWhiteSpace(stateCode))
+            return new ProactiveRuleResult { RuleCode = "CS_FIXED_COST_LIMITS", Type = "Check", Passed = false, Message = "State not identified — cannot check fixed cost limits", Severity = "Warning" };
+
+        var failed = fixedItems.Where(i => !_referenceData.ValidateFixedCostLimit(i.elem, i.amt, stateCode)).ToList();
+        var ok = failed.Count == 0;
+        return new ProactiveRuleResult
+        {
+            RuleCode = "CS_FIXED_COST_LIMITS",
+            Type = "Check",
+            Passed = ok,
+            ExtractedValue = $"{fixedItems.Count} fixed item(s) checked",
+            Message = ok
+                ? $"All {fixedItems.Count} fixed cost item(s) within state limits"
+                : $"{failed.Count} item(s) exceed state limit: {string.Join(", ", failed.Select(f => f.elem))}",
+            Severity = ok ? "Pass" : "Fail"
+        };
+    }
+
+    private ProactiveRuleResult CheckVariableCostLimits(string? costBreakdownJson, string? placeOfSupply)
+    {
+        var stateCode = !string.IsNullOrWhiteSpace(placeOfSupply)
+            ? (_referenceData.GetStateCodeByName(placeOfSupply) ?? placeOfSupply)
+            : null;
+
+        var varItems = ParseCostItems(costBreakdownJson, isFixed: false);
+
+        if (varItems.Count == 0)
+            return new ProactiveRuleResult { RuleCode = "CS_VARIABLE_COST_LIMITS", Type = "Check", Passed = true, Message = "No variable cost items found to validate", Severity = "Pass" };
+
+        if (string.IsNullOrWhiteSpace(stateCode))
+            return new ProactiveRuleResult { RuleCode = "CS_VARIABLE_COST_LIMITS", Type = "Check", Passed = false, Message = "State not identified — cannot check variable cost limits", Severity = "Warning" };
+
+        var failed = varItems.Where(i => !_referenceData.ValidateVariableCostLimit(i.elem, i.amt, stateCode)).ToList();
+        var ok = failed.Count == 0;
+        return new ProactiveRuleResult
+        {
+            RuleCode = "CS_VARIABLE_COST_LIMITS",
+            Type = "Check",
+            Passed = ok,
+            ExtractedValue = $"{varItems.Count} variable item(s) checked",
+            Message = ok
+                ? $"All {varItems.Count} variable cost item(s) within state limits"
+                : $"{failed.Count} item(s) exceed state limit: {string.Join(", ", failed.Select(f => f.elem))}",
+            Severity = ok ? "Pass" : "Fail"
+        };
+    }
+
+    private static List<(string elem, decimal amt)> ParseCostItems(string? json, bool isFixed)
+    {
+        var result = new List<(string, decimal)>();
+        if (string.IsNullOrWhiteSpace(json)) return result;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            // Support both a direct array and an object with a costBreakdowns property
+            var root = doc.RootElement;
+            JsonElement arr = root;
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("costBreakdowns", out var nested) &&
+                nested.ValueKind == JsonValueKind.Array)
+                arr = nested;
+
+            if (arr.ValueKind != JsonValueKind.Array) return result;
+            foreach (var b in arr.EnumerateArray())
+            {
+                var flag = isFixed
+                    ? (b.TryGetProperty("isFixedCost", out var fc) && fc.GetBoolean())
+                    : (b.TryGetProperty("isVariableCost", out var vc) && vc.GetBoolean());
+                if (!flag) continue;
+                var elem = (b.TryGetProperty("elementName", out var en) ? en.GetString() : null)
+                        ?? (b.TryGetProperty("category", out var cat) ? cat.GetString() : null) ?? "";
+                var amt = b.TryGetProperty("amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0;
+                if (!string.IsNullOrWhiteSpace(elem)) result.Add((elem, amt));
+            }
+        }
+        catch { }
+        return result;
+    }
+
     #endregion
 
     #region Persistence
@@ -582,6 +722,7 @@ public class ProactiveValidationService : IProactiveValidationService
                     DocumentId = documentId,
                     DocumentType = documentType,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = BuildDetailsWithProactiveRules(null, ruleResultsJson),
                     CreatedAt = DateTime.UtcNow
                 };
                 _db.ValidationResults.Add(validationResult);
@@ -589,6 +730,9 @@ public class ProactiveValidationService : IProactiveValidationService
             else
             {
                 validationResult.RuleResultsJson = ruleResultsJson;
+                // Merge proactive rules into existing ValidationDetailsJson
+                validationResult.ValidationDetailsJson = BuildDetailsWithProactiveRules(
+                    validationResult.ValidationDetailsJson, ruleResultsJson);
                 validationResult.UpdatedAt = DateTime.UtcNow;
             }
 
@@ -599,6 +743,49 @@ public class ProactiveValidationService : IProactiveValidationService
             _logger.LogError(ex,
                 "Failed to persist rule results for document {DocumentId}", documentId);
             // Don't throw — validation results are still returned to the caller
+        }
+    }
+
+    /// <summary>
+    /// Builds or updates ValidationDetailsJson by adding/replacing the proactiveRules array.
+    /// Preserves any existing reactive validation properties (fieldPresence, crossDocument, etc.).
+    /// </summary>
+    private static string BuildDetailsWithProactiveRules(string? existingDetailsJson, string ruleResultsJson)
+    {
+        try
+        {
+            using var proactiveDoc = JsonDocument.Parse(ruleResultsJson);
+            if (proactiveDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return existingDetailsJson ?? "{}";
+
+            using var existingDoc = JsonDocument.Parse(existingDetailsJson ?? "{}");
+
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = false }))
+            {
+                writer.WriteStartObject();
+
+                // Copy all existing properties except proactiveRules (will be replaced)
+                foreach (var prop in existingDoc.RootElement.EnumerateObject())
+                {
+                    if (!string.Equals(prop.Name, "proactiveRules", StringComparison.OrdinalIgnoreCase))
+                    {
+                        prop.WriteTo(writer);
+                    }
+                }
+
+                // Write the updated proactive rules
+                writer.WritePropertyName("proactiveRules");
+                proactiveDoc.RootElement.WriteTo(writer);
+
+                writer.WriteEndObject();
+            }
+
+            return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        }
+        catch (JsonException)
+        {
+            return existingDetailsJson ?? "{}";
         }
     }
 

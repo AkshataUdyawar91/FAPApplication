@@ -56,4 +56,9 @@ public class RequestApprovalHistory : BaseEntity
     /// Navigation property to the user who performed this approval action.
     /// </summary>
     public User Approver { get; set; } = null!;
+
+    /// <summary>
+    /// Source channel for this approval action: "Portal", "TeamsBot", or null (legacy/portal default).
+    /// </summary>
+    public string? Channel { get; set; }
 }

@@ -5,6 +5,7 @@
 -- =============================================
 
 -- POs: Purchase Order documents (one per package)
+-- Added: VendorCode, POStatus, RemainingBalance, RefreshedAt
 -- Logical FK: PackageId -> BDP_DocumentPackages.Id, AgencyId -> BDP_Agencies.Id
 CREATE TABLE dbo.BDP_POs
 (
@@ -14,7 +15,11 @@ CREATE TABLE dbo.BDP_POs
     PONumber                NVARCHAR(100)       NULL,
     PODate                  DATETIME2           NULL,
     VendorName              NVARCHAR(500)       NULL,
+    VendorCode              NVARCHAR(50)        NULL,
     TotalAmount             DECIMAL(18, 2)      NULL,
+    RemainingBalance        DECIMAL(18, 2)      NULL,
+    POStatus                NVARCHAR(50)        NULL,
+    RefreshedAt             DATETIME2           NULL,
     FileName                NVARCHAR(500)       NOT NULL,
     BlobUrl                 NVARCHAR(2000)      NOT NULL,
     FileSizeBytes           BIGINT              NOT NULL,
@@ -35,14 +40,72 @@ WITH
     CLUSTERED COLUMNSTORE INDEX
 );
 
+-- POSyncLogs: Audit log for PO sync operations from SAP/external source
+-- Logical FK: POId -> BDP_POs.Id, AgencyId -> BDP_Agencies.Id
+CREATE TABLE dbo.BDP_POSyncLogs
+(
+    Id              UNIQUEIDENTIFIER    NOT NULL,
+    POId            UNIQUEIDENTIFIER    NULL,
+    AgencyId        UNIQUEIDENTIFIER    NULL,
+    FileName        NVARCHAR(500)       NOT NULL,
+    SourceSystem    NVARCHAR(200)       NOT NULL,
+    Status          NVARCHAR(100)       NOT NULL,
+    ImportedRecords NVARCHAR(4000)      NULL,
+    ErrorMessage    NVARCHAR(4000)      NULL,
+    ProcessedAt     DATETIME2           NOT NULL,
+    IsDeleted       BIT                 NOT NULL,
+    CreatedAt       DATETIME2           NOT NULL,
+    UpdatedAt       DATETIME2           NULL,
+    CreatedBy       NVARCHAR(256)       NULL,
+    UpdatedBy       NVARCHAR(256)       NULL
+)
+WITH
+(
+    DISTRIBUTION = ROUND_ROBIN,
+    CLUSTERED COLUMNSTORE INDEX
+);
+
+-- POBalanceLogs: Audit log for every PO balance check call to SAP
+CREATE TABLE dbo.BDP_POBalanceLogs
+(
+    Id              UNIQUEIDENTIFIER    NOT NULL,
+    PoNum           NVARCHAR(50)        NOT NULL,
+    CompanyCode     NVARCHAR(20)        NOT NULL,
+    Balance         DECIMAL(18, 2)      NULL,
+    Currency        NVARCHAR(10)        NULL,
+    IsSuccess       BIT                 NOT NULL,
+    ErrorMessage    NVARCHAR(4000)      NULL,
+    RequestedBy     NVARCHAR(450)       NULL,
+    CorrelationId   NVARCHAR(100)       NULL,
+    RequestedAt     DATETIME2           NOT NULL,
+    SapCalledAt     DATETIME2           NULL,
+    SapRespondedAt  DATETIME2           NULL,
+    SapHttpStatus   INT                 NULL,
+    SapRequestBody  NVARCHAR(4000)      NULL,
+    SapResponseBody NVARCHAR(4000)      NULL,
+    ElapsedMs       BIGINT              NOT NULL
+)
+WITH
+(
+    DISTRIBUTION = ROUND_ROBIN,
+    CLUSTERED COLUMNSTORE INDEX
+);
+
 -- CostSummaries: Cost summary documents (one per package)
+-- Removed: CostBreakdownJson
+-- Added: ElementWiseCostsJson, ElementWiseQuantityJson, NumberOfActivations, NumberOfDays, NumberOfTeams, PlaceOfSupply
 -- Logical FK: PackageId -> BDP_DocumentPackages.Id
 CREATE TABLE dbo.BDP_CostSummaries
 (
     Id                      UNIQUEIDENTIFIER    NOT NULL,
     PackageId               UNIQUEIDENTIFIER    NOT NULL,
     TotalCost               DECIMAL(18, 2)      NULL,
-    CostBreakdownJson       NVARCHAR(4000)      NULL,
+    ElementWiseCostsJson    NVARCHAR(4000)      NULL,
+    ElementWiseQuantityJson NVARCHAR(4000)      NULL,
+    NumberOfActivations     INT                 NULL,
+    NumberOfDays            INT                 NULL,
+    NumberOfTeams           INT                 NULL,
+    PlaceOfSupply           NVARCHAR(500)       NULL,
     FileName                NVARCHAR(500)       NOT NULL,
     BlobUrl                 NVARCHAR(2000)      NOT NULL,
     FileSizeBytes           BIGINT              NOT NULL,
@@ -64,12 +127,16 @@ WITH
 );
 
 -- ActivitySummaries: Activity summary documents (one per package)
+-- Added: DealerName, TotalDays, TotalWorkingDays
 -- Logical FK: PackageId -> BDP_DocumentPackages.Id
 CREATE TABLE dbo.BDP_ActivitySummaries
 (
     Id                      UNIQUEIDENTIFIER    NOT NULL,
     PackageId               UNIQUEIDENTIFIER    NOT NULL,
     ActivityDescription     NVARCHAR(2000)      NULL,
+    DealerName              NVARCHAR(500)       NULL,
+    TotalDays               INT                 NULL,
+    TotalWorkingDays        INT                 NULL,
     FileName                NVARCHAR(500)       NOT NULL,
     BlobUrl                 NVARCHAR(2000)      NOT NULL,
     FileSizeBytes           BIGINT              NOT NULL,
@@ -176,6 +243,7 @@ WITH
 );
 
 -- Teams: Campaign/Team entities (multiple per package)
+-- Removed: TeamsJson (dropped from domain)
 -- Logical FK: PackageId -> BDP_DocumentPackages.Id
 CREATE TABLE dbo.BDP_Teams
 (
@@ -190,7 +258,6 @@ CREATE TABLE dbo.BDP_Teams
     DealershipAddress   NVARCHAR(1000)      NULL,
     GPSLocation         NVARCHAR(100)       NULL,
     State               NVARCHAR(100)       NULL,
-    TeamsJson           NVARCHAR(4000)      NULL,
     VersionNumber       INT                 NOT NULL,
     IsDeleted           BIT                 NOT NULL,
     CreatedAt           DATETIME2           NOT NULL,
@@ -225,39 +292,6 @@ CREATE TABLE dbo.BDP_TeamPhotos
     IsFlaggedForReview      BIT                 NOT NULL,
     DisplayOrder            INT                 NOT NULL,
     VersionNumber           INT                 NOT NULL,
-    IsDeleted               BIT                 NOT NULL,
-    CreatedAt               DATETIME2           NOT NULL,
-    UpdatedAt               DATETIME2           NULL,
-    CreatedBy               NVARCHAR(256)       NULL,
-    UpdatedBy               NVARCHAR(256)       NULL
-)
-WITH
-(
-    DISTRIBUTION = HASH(PackageId),
-    CLUSTERED COLUMNSTORE INDEX
-);
-
--- CampaignInvoices: Invoices linked to Teams (multiple per team)
--- Logical FK: CampaignId -> BDP_Teams.Id, PackageId -> BDP_DocumentPackages.Id
-CREATE TABLE dbo.BDP_CampaignInvoices
-(
-    Id                      UNIQUEIDENTIFIER    NOT NULL,
-    CampaignId              UNIQUEIDENTIFIER    NOT NULL,
-    PackageId               UNIQUEIDENTIFIER    NOT NULL,
-    InvoiceNumber           NVARCHAR(100)       NULL,
-    InvoiceDate             DATETIME2           NULL,
-    VendorName              NVARCHAR(500)       NULL,
-    GSTNumber               NVARCHAR(50)        NULL,
-    SubTotal                DECIMAL(18, 2)      NULL,
-    TaxAmount               DECIMAL(18, 2)      NULL,
-    TotalAmount             DECIMAL(18, 2)      NULL,
-    FileName                NVARCHAR(500)       NOT NULL,
-    BlobUrl                 NVARCHAR(2000)      NOT NULL,
-    FileSizeBytes           BIGINT              NOT NULL,
-    ContentType             NVARCHAR(100)       NOT NULL,
-    ExtractedDataJson       NVARCHAR(4000)      NULL,
-    ExtractionConfidence    FLOAT               NULL,
-    IsFlaggedForReview      BIT                 NOT NULL,
     IsDeleted               BIT                 NOT NULL,
     CreatedAt               DATETIME2           NOT NULL,
     UpdatedAt               DATETIME2           NULL,

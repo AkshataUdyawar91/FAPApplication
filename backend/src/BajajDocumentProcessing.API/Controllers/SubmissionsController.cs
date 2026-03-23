@@ -163,16 +163,19 @@ public class SubmissionsController : ControllerBase
                 }
             }
 
-            // Queue workflow for background processing (non-blocking)
-            await _backgroundQueue.QueueWorkflowAsync(package.Id);
+            // Do NOT queue workflow here — the frontend uploads documents AFTER this call,
+            // then triggers processing via POST /submissions/{id}/process-async.
+            // Queuing here would start the workflow before documents are uploaded,
+            // causing validation to run with incomplete data and the package to reach
+            // PendingCH prematurely (skipping Extracting → Validating progression).
             
-            _logger.LogInformation("Submission {PackageId} created and queued for processing", package.Id);
+            _logger.LogInformation("Submission {PackageId} created. Awaiting document uploads before processing.", package.Id);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Submission received and is being processed"
+                Message = "Submission created. Upload documents and then trigger processing."
             };
 
             return CreatedAtAction(
@@ -201,7 +204,7 @@ public class SubmissionsController : ControllerBase
     [ProducesResponseType(typeof(CreateDraftResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> CreateDraft(
-        [FromBody] CreateDraftRequest request,
+        [FromBody] CreateDraftRequest? request,
         CancellationToken cancellationToken)
     {
         try
@@ -214,20 +217,41 @@ public class SubmissionsController : ControllerBase
 
             var userId = Guid.Parse(userIdClaim);
 
-            // Verify PO exists
-            var po = await _context.POs.FirstOrDefaultAsync(p => p.Id == request.PoId, cancellationToken);
-            if (po == null)
+            // Load the user to resolve their agency — agency users must be linked to an agency
+            var user = await _context.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+            if (user?.AgencyId == null)
             {
-                return BadRequest(new { error = "PO not found" });
+                return BadRequest(new { error = "User is not linked to an agency" });
+            }
+
+            // Use the agency from the request body if provided, otherwise fall back to the user's own agency
+            var agencyId = request?.AgencyId ?? user.AgencyId.Value;
+
+            // If a PO was provided, validate it exists, is not deleted, and belongs to this agency
+            Guid? selectedPoId = null;
+            if (request?.PoId != null)
+            {
+                var po = await _context.POs.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == request.PoId && !p.IsDeleted, cancellationToken);
+                if (po == null)
+                {
+                    return BadRequest(new { error = "PO not found" });
+                }
+                if (po.AgencyId != agencyId)
+                {
+                    return BadRequest(new { error = "PO does not belong to this agency" });
+                }
+                selectedPoId = po.Id;
             }
 
             var package = new Domain.Entities.DocumentPackage
             {
                 Id = Guid.NewGuid(),
                 SubmittedByUserId = userId,
-                AgencyId = request.AgencyId,
+                AgencyId = agencyId,
                 State = PackageState.Draft,
-                SelectedPOId = request.PoId,
+                SelectedPOId = selectedPoId,
                 CurrentStep = 1,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -237,7 +261,7 @@ public class SubmissionsController : ControllerBase
             await _context.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Draft submission {PackageId} created for PO {PoId} by user {UserId}",
-                package.Id, request.PoId, userId);
+                package.Id, selectedPoId, userId);
 
             var response = new CreateDraftResponse
             {
@@ -304,11 +328,32 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = $"Can only update Draft submissions. Current state: {package.State}" });
             }
 
-            package.ActivityState = request.State;
+            // Apply whichever fields were provided
+            if (request.State != null)
+            {
+                package.ActivityState = request.State;
+            }
+
+            if (request.SelectedPOId != null)
+            {
+                var po = await _context.POs.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == request.SelectedPOId && !p.IsDeleted, cancellationToken);
+                if (po == null)
+                {
+                    return BadRequest(new { error = "PO not found" });
+                }
+                if (po.AgencyId != package.AgencyId)
+                {
+                    return BadRequest(new { error = "PO does not belong to this agency" });
+                }
+                package.SelectedPOId = request.SelectedPOId;
+            }
+
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} state updated to {State} by user {UserId}", id, request.State, userId);
+            _logger.LogInformation("Submission {Id} patched (state={State}, poId={PoId}) by user {UserId}",
+                id, request.State, request.SelectedPOId, userId);
 
             return NoContent();
         }
@@ -399,10 +444,53 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Load ValidationResult separately — it uses polymorphic DocumentType+DocumentId, not a direct FK
-            var validationResult = await _context.ValidationResults
+            // Load ValidationResults for each document type
+            var poValidation = package.PO != null 
+                ? await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.PO && v.DocumentId == package.PO.Id, cancellationToken)
+                : null;
+
+            var invoiceValidations = new List<Domain.Entities.ValidationResult>();
+            foreach (var invoice in package.Invoices.Where(i => !i.IsDeleted))
+            {
+                var validation = await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.Invoice && v.DocumentId == invoice.Id, cancellationToken);
+                if (validation != null)
+                    invoiceValidations.Add(validation);
+            }
+
+            var costSummaryValidation = package.CostSummary != null
+                ? await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.CostSummary && v.DocumentId == package.CostSummary.Id, cancellationToken)
+                : null;
+
+            var activityValidation = package.ActivitySummary != null
+                ? await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.ActivitySummary && v.DocumentId == package.ActivitySummary.Id, cancellationToken)
+                : null;
+
+            var enquiryValidation = package.EnquiryDocument != null
+                ? await _context.ValidationResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.EnquiryDocument && v.DocumentId == package.EnquiryDocument.Id, cancellationToken)
+                : null;
+
+            // Photo validation: query by package ID and all individual photo IDs in one go
+            var photoDocumentIds = new List<Guid> { id }; // package ID (new code stores TeamPhoto with DocumentId = packageId)
+            foreach (var team in package.Teams.Where(t => !t.IsDeleted))
+            {
+                foreach (var photo in team.Photos.Where(p => !p.IsDeleted))
+                    photoDocumentIds.Add(photo.Id);
+            }
+            var photoValidations = await _context.ValidationResults
                 .AsNoTracking()
-                .FirstOrDefaultAsync(v => v.DocumentId == package.Id, cancellationToken);
+                .Where(v => v.DocumentType == DocumentType.TeamPhoto && photoDocumentIds.Contains(v.DocumentId))
+                .ToListAsync(cancellationToken);
+
             _logger.LogInformation("Retrieved submission {Id} successfully", id);
 
             // Get approval history for review fields
@@ -463,11 +551,82 @@ public class SubmissionsController : ControllerBase
                         }).ToList()
                         : new List<CampaignInvoiceDto>()
                 }).ToList(),
-                ValidationResult = validationResult != null ? new ValidationResultDto
+                ValidationResult = null, // Legacy field - kept for backward compatibility
+                POValidation = poValidation != null ? new ValidationResultDto
                 {
-                    AllValidationsPassed = validationResult.AllValidationsPassed,
-                    FailureReason = validationResult.FailureReason
+                    AllValidationsPassed = poValidation.AllValidationsPassed,
+                    FailureReason = poValidation.FailureReason,
+                    SapVerificationPassed = poValidation.SapVerificationPassed,
+                    AmountConsistencyPassed = poValidation.AmountConsistencyPassed,
+                    LineItemMatchingPassed = poValidation.LineItemMatchingPassed,
+                    CompletenessCheckPassed = poValidation.CompletenessCheckPassed,
+                    DateValidationPassed = poValidation.DateValidationPassed,
+                    VendorMatchingPassed = poValidation.VendorMatchingPassed,
+                    RuleResultsJson = poValidation.RuleResultsJson,
+                    ValidationDetailsJson = poValidation.ValidationDetailsJson
                 } : null,
+                InvoiceValidations = invoiceValidations.Select(v => new DocumentValidationDto
+                {
+                    DocumentType = "Invoice",
+                    DocumentId = v.DocumentId,
+                    FileName = package.Invoices.FirstOrDefault(i => i.Id == v.DocumentId)?.FileName,
+                    AllPassed = v.AllValidationsPassed,
+                    FailureReason = v.FailureReason,
+                    ValidatedAt = v.CreatedAt,
+                    ValidationDetailsJson = v.ValidationDetailsJson
+                }).ToList(),
+                CostSummaryValidation = costSummaryValidation != null ? new ValidationResultDto
+                {
+                    DocumentId = package.CostSummary?.Id,
+                    AllValidationsPassed = costSummaryValidation.AllValidationsPassed,
+                    FailureReason = costSummaryValidation.FailureReason,
+                    SapVerificationPassed = costSummaryValidation.SapVerificationPassed,
+                    AmountConsistencyPassed = costSummaryValidation.AmountConsistencyPassed,
+                    LineItemMatchingPassed = costSummaryValidation.LineItemMatchingPassed,
+                    CompletenessCheckPassed = costSummaryValidation.CompletenessCheckPassed,
+                    DateValidationPassed = costSummaryValidation.DateValidationPassed,
+                    VendorMatchingPassed = costSummaryValidation.VendorMatchingPassed,
+                    RuleResultsJson = costSummaryValidation.RuleResultsJson,
+                    ValidationDetailsJson = costSummaryValidation.ValidationDetailsJson
+                } : null,
+                ActivityValidation = activityValidation != null ? new ValidationResultDto
+                {
+                    DocumentId = package.ActivitySummary?.Id,
+                    AllValidationsPassed = activityValidation.AllValidationsPassed,
+                    FailureReason = activityValidation.FailureReason,
+                    SapVerificationPassed = activityValidation.SapVerificationPassed,
+                    AmountConsistencyPassed = activityValidation.AmountConsistencyPassed,
+                    LineItemMatchingPassed = activityValidation.LineItemMatchingPassed,
+                    CompletenessCheckPassed = activityValidation.CompletenessCheckPassed,
+                    DateValidationPassed = activityValidation.DateValidationPassed,
+                    VendorMatchingPassed = activityValidation.VendorMatchingPassed,
+                    RuleResultsJson = activityValidation.RuleResultsJson,
+                    ValidationDetailsJson = activityValidation.ValidationDetailsJson
+                } : null,
+                EnquiryValidation = enquiryValidation != null ? new ValidationResultDto
+                {
+                    DocumentId = package.EnquiryDocument?.Id,
+                    AllValidationsPassed = enquiryValidation.AllValidationsPassed,
+                    FailureReason = enquiryValidation.FailureReason,
+                    SapVerificationPassed = enquiryValidation.SapVerificationPassed,
+                    AmountConsistencyPassed = enquiryValidation.AmountConsistencyPassed,
+                    LineItemMatchingPassed = enquiryValidation.LineItemMatchingPassed,
+                    CompletenessCheckPassed = enquiryValidation.CompletenessCheckPassed,
+                    DateValidationPassed = enquiryValidation.DateValidationPassed,
+                    VendorMatchingPassed = enquiryValidation.VendorMatchingPassed,
+                    RuleResultsJson = enquiryValidation.RuleResultsJson,
+                    ValidationDetailsJson = enquiryValidation.ValidationDetailsJson
+                } : null,
+                PhotoValidations = photoValidations.Select(v => new DocumentValidationDto
+                {
+                    DocumentType = "TeamPhoto",
+                    DocumentId = v.DocumentId,
+                    FileName = "Team Photos (All)",
+                    AllPassed = v.AllValidationsPassed,
+                    FailureReason = v.FailureReason,
+                    ValidatedAt = v.CreatedAt,
+                    ValidationDetailsJson = v.ValidationDetailsJson
+                }).ToList(),
                 ConfidenceScore = package.ConfidenceScore != null ? new ConfidenceScoreDto
                 {
                     OverallConfidence = package.ConfidenceScore.OverallConfidence,
@@ -601,8 +760,13 @@ public class SubmissionsController : ControllerBase
             if (package.CostSummary != null) documentIds.Add(package.CostSummary.Id);
             if (package.ActivitySummary != null) documentIds.Add(package.ActivitySummary.Id);
             if (package.EnquiryDocument != null) documentIds.Add(package.EnquiryDocument.Id);
-            // TeamPhoto uses package.Id as DocumentId
+            // TeamPhoto uses package.Id as DocumentId; also add individual photo IDs for backward compatibility
             documentIds.Add(package.Id);
+            foreach (var team in package.Teams.Where(t => !t.IsDeleted))
+            {
+                foreach (var photo in team.Photos.Where(p => !p.IsDeleted))
+                    documentIds.Add(photo.Id);
+            }
 
             // Query all validation results for these document IDs
             var validationResults = await _context.ValidationResults
@@ -620,6 +784,7 @@ public class SubmissionsController : ControllerBase
             if (package.CostSummary != null) fileNames["CostSummary"] = package.CostSummary.FileName ?? "Cost Summary document";
             if (package.ActivitySummary != null) fileNames["ActivitySummary"] = package.ActivitySummary.FileName ?? "Activity Summary document";
             if (package.EnquiryDocument != null) fileNames["EnquiryDocument"] = package.EnquiryDocument.FileName ?? "Enquiry Dump document";
+            fileNames["TeamPhoto"] = "Team Photos (All)";
 
             var response = new SubmissionValidationsResponse
             {
@@ -639,11 +804,9 @@ public class SubmissionsController : ControllerBase
                     FileName = fileName,
                     AllPassed = vr.AllValidationsPassed,
                     FailureReason = vr.FailureReason,
-                    ValidatedAt = vr.UpdatedAt ?? vr.CreatedAt
+                    ValidatedAt = vr.UpdatedAt ?? vr.CreatedAt,
+                    ValidationDetailsJson = vr.ValidationDetailsJson
                 };
-
-                // Note: ValidationDetailsJson was removed. FieldPresence and CrossDocument
-                // details are no longer stored as JSON. FailureReason contains the summary.
 
                 response.Documents.Add(docDto);
             }
@@ -660,7 +823,7 @@ public class SubmissionsController : ControllerBase
     /// <summary>
     /// List submissions with filtering and pagination (Agency users see only their own submissions)
     /// </summary>
-    /// <param name="state">Optional filter by package state (Uploaded, PendingASMApproval, PendingHQApproval, Approved, etc.)</param>
+    /// <param name="state">Optional filter by package state (Uploaded, PendingCH, PendingRA, Approved, etc.)</param>
     /// <param name="page">Page number for pagination (default: 1)</param>
     /// <param name="pageSize">Number of items per page (default: 20, max: 100)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
@@ -729,9 +892,19 @@ public class SubmissionsController : ControllerBase
                 }
                 _logger.LogInformation("Filtering submissions for RA {UserId} with assigned states: {States}", userId, string.Join(", ", assignedStates));
                 query = query.Where(p => p.ActivityState != null && assignedStates.Contains(p.ActivityState));
+
+                // RA should only see submissions that have been approved by ASM (reached RA level or beyond)
+                var raVisibleStates = new[]
+                {
+                    PackageState.PendingRA,
+                    PackageState.RARejected,
+                    PackageState.Approved
+                };
+                query = query.Where(p => raVisibleStates.Contains(p.State));
             }
             else
             {
+                // Admin or HQ: see all submissions
                 _logger.LogInformation("Showing all submissions for role: {Role}", userRole);
             }
 
@@ -754,9 +927,23 @@ public class SubmissionsController : ControllerBase
                 .Take(pageSize)
                 .ToListAsync(cancellationToken);
 
+            // Chatbot flow: packages use SelectedPOId instead of a linked PO entity.
+            // Bulk-load those POs so we can show PO number in the list.
+            var missingPoIds = packages
+                .Where(p => p.PO == null && p.SelectedPOId.HasValue)
+                .Select(p => p.SelectedPOId!.Value)
+                .Distinct()
+                .ToList();
+            var selectedPosById = missingPoIds.Count > 0
+                ? await _context.POs
+                    .AsNoTracking()
+                    .Where(po => missingPoIds.Contains(po.Id) && !po.IsDeleted)
+                    .ToDictionaryAsync(po => po.Id, cancellationToken)
+                : new Dictionary<Guid, Domain.Entities.PO>();
+
             var items = packages.Select(p =>
             {
-                // Extract invoice data from Invoices (linked to PO)
+                // Extract invoice data — chatbot stores directly on Invoices, portal via Teams
                 var firstInvoice = p.Invoices
                     .Where(i => !i.IsDeleted)
                     .FirstOrDefault();
@@ -773,15 +960,19 @@ public class SubmissionsController : ControllerBase
                     invoiceAmount = totalInvoiceAmount;
 
                 // Extract PO data from dedicated PO entity
-                string? poNumber = p.PO?.PONumber;
-                decimal? poAmount = p.PO?.TotalAmount;
+                // Chatbot flow: PO is referenced via SelectedPOId — use bulk-loaded selectedPosById
+                var effectivePo = p.PO
+                    ?? (p.SelectedPOId.HasValue && selectedPosById.TryGetValue(p.SelectedPOId.Value, out var selPo) ? selPo : null);
+
+                string? poNumber = effectivePo?.PONumber;
+                decimal? poAmount = effectivePo?.TotalAmount;
 
                 // Fallback: try ExtractedDataJson if typed fields are empty
-                if (p.PO != null && string.IsNullOrEmpty(poNumber) && !string.IsNullOrEmpty(p.PO.ExtractedDataJson))
+                if (effectivePo != null && string.IsNullOrEmpty(poNumber) && !string.IsNullOrEmpty(effectivePo.ExtractedDataJson))
                 {
                     try
                     {
-                        var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(p.PO.ExtractedDataJson);
+                        var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(effectivePo.ExtractedDataJson);
                         
                         if (poData.TryGetProperty("PONumber", out var poNum))
                             poNumber = poNum.GetString();
@@ -869,8 +1060,8 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Allow approval from PendingASM or RARejected states
-            if (package.State != PackageState.PendingASM && 
+            // Allow approval from PendingCH or RARejected states
+            if (package.State != PackageState.PendingCH && 
                 package.State != PackageState.RARejected)
             {
                 return BadRequest(new { error = $"Submission is not in a state that can be approved by ASM. Current state: {package.State}" });
@@ -945,7 +1136,7 @@ public class SubmissionsController : ControllerBase
     /// <param name="request">Rejection reason (required)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Updated submission status</returns>
-    /// <response code="200">Submission rejected by ASM</response>
+    /// <response code="200">Submission rejected by CH</response>
     /// <response code="400">Bad request - submission not in correct state</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - ASM role required</response>
@@ -971,14 +1162,14 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Allow rejection from PendingASM or RARejected states
-            if (package.State != PackageState.PendingASM && 
+            // Allow rejection from PendingCH or RARejected states
+            if (package.State != PackageState.PendingCH && 
                 package.State != PackageState.RARejected)
             {
-                return BadRequest(new { error = $"Submission is not in a state that can be rejected by ASM. Current state: {package.State}" });
+                return BadRequest(new { error = $"Submission is not in a state that can be rejected by CH. Current state: {package.State}" });
             }
 
-            package.State = PackageState.ASMRejected;
+            package.State = PackageState.CHRejected;
             // Record rejection in RequestApprovalHistory
             var rejectionHistory = new Domain.Entities.RequestApprovalHistory
             {
@@ -999,7 +1190,7 @@ public class SubmissionsController : ControllerBase
             // Push SubmissionStatusChanged event via SignalR
             await _submissionNotificationService.SendSubmissionStatusChangedAsync(
                 id,
-                new { submissionId = id, newStatus = PackageState.ASMRejected.ToString(), assignedTo = (Guid?)null },
+                new { submissionId = id, newStatus = PackageState.CHRejected.ToString(), assignedTo = (Guid?)null },
                 cancellationToken);
 
             // Send circleHead_rejected email to agency
@@ -1010,13 +1201,13 @@ public class SubmissionsController : ControllerBase
                     _logger.LogWarning("circleHead_rejected email failed for package {PackageId}: {Error}", id, result.ErrorMessage);
             });
 
-            _logger.LogInformation("Submission {Id} rejected by ASM {UserId} with reason: {Reason}", id, userId, request.Reason);
+            _logger.LogInformation("Submission {Id} rejected by CH {UserId} with reason: {Reason}", id, userId, request.Reason);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Rejected by ASM"
+                Message = "Rejected by CH"
             };
 
             return Ok(response);
@@ -1042,7 +1233,7 @@ public class SubmissionsController : ControllerBase
     /// <response code="404">Not found - submission does not exist</response>
     /// <response code="500">Internal server error</response>
     [HttpPatch("{id}/hq-approve")]
-    [Authorize(Roles = "HQ")]
+    [Authorize(Roles = "HQ,RA")]
     [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> HQApproveSubmission(
         Guid id,
@@ -1123,14 +1314,14 @@ public class SubmissionsController : ControllerBase
     /// <param name="request">Rejection reason (required)</param>
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Updated submission status</returns>
-    /// <response code="200">Submission rejected by HQ, sent back to ASM</response>
+    /// <response code="200">Submission rejected by HQ, sent back to CH</response>
     /// <response code="400">Bad request - submission not in correct state</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - HQ role required</response>
     /// <response code="404">Not found - submission does not exist</response>
     /// <response code="500">Internal server error</response>
     [HttpPatch("{id}/hq-reject")]
-    [Authorize(Roles = "HQ")]
+    [Authorize(Roles = "HQ,RA")]
     [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> HQRejectSubmission(
         Guid id,
@@ -1243,7 +1434,7 @@ public class SubmissionsController : ControllerBase
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Updated submission status with resubmission count</returns>
     /// <response code="200">Package resubmitted successfully and workflow triggered</response>
-    /// <response code="400">Bad request - can only resubmit packages rejected by ASM</response>
+    /// <response code="400">Bad request - can only resubmit packages rejected by CH</response>
     /// <response code="401">Unauthorized - authentication required</response>
     /// <response code="403">Forbidden - Agency role required or user does not own package</response>
     /// <response code="404">Not found - submission does not exist</response>
@@ -1267,11 +1458,11 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            // Can only resubmit if rejected by ASM or rejected by RA
-            if (package.State != PackageState.ASMRejected && 
+            // Can only resubmit if rejected by CH or rejected by RA
+            if (package.State != PackageState.CHRejected && 
                 package.State != PackageState.RARejected)
             {
-                return BadRequest(new { error = $"Can only resubmit packages rejected by ASM or RA. Current state: {package.State}" });
+                return BadRequest(new { error = $"Can only resubmit packages rejected by CH or RA. Current state: {package.State}" });
             }
 
             // Verify the package belongs to the user
@@ -1457,8 +1648,8 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = $"Can only send back packages rejected by RA. Current state: {package.State}" });
             }
 
-            // Move to ASMRejected so Agency can edit and resubmit
-            package.State = PackageState.ASMRejected;
+            // Move to CHRejected so Agency can edit and resubmit
+            package.State = PackageState.CHRejected;
             // Record in RequestApprovalHistory
             var sendBackHistory = new Domain.Entities.RequestApprovalHistory
             {
@@ -1525,12 +1716,12 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingASM)
+            if (package.State != PackageState.PendingCH)
             {
                 return BadRequest(new { error = "Submission is not in pending approval state" });
             }
 
-            package.State = PackageState.ASMRejected;
+            package.State = PackageState.CHRejected;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -1571,7 +1762,10 @@ public class SubmissionsController : ControllerBase
     [HttpPost("{packageId}/submit")]
     [Authorize(Roles = "Agency")]
     [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> SubmitPackage(Guid packageId, CancellationToken cancellationToken)
+    public async Task<IActionResult> SubmitPackage(
+        Guid packageId,
+        [FromBody] SubmitPackageRequest? request,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -1618,8 +1812,17 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = $"Package is already in {package.State} state. Only Draft or Uploaded packages can be submitted." });
             }
 
+            // Accept activityState from the request body — covers the case where the frontend
+            // selected a state but the PATCH hadn't persisted it yet (race condition safety net).
+            if (!string.IsNullOrWhiteSpace(request?.ActivityState))
+            {
+                package.ActivityState = request.ActivityState.Trim();
+            }
+
             // Verify minimum required documents
-            var hasPO = package.PO != null;
+            // In the draft flow the PO is linked via SelectedPOId (no separate uploaded PO document).
+            // In the legacy flow it is an uploaded PO document on the PO navigation property.
+            var hasPO = package.PO != null || package.SelectedPOId != null;
             var hasInvoice = package.Invoices.Any(i => !i.IsDeleted);
             var hasCostSummary = package.CostSummary != null;
 
@@ -1772,20 +1975,20 @@ public class SubmissionsController : ControllerBase
             // Only allow moving from Uploaded state
             if (package.State != PackageState.Uploaded)
             {
-                return BadRequest(new { error = $"Cannot move submission from {package.State} to PendingASM" });
+                return BadRequest(new { error = $"Cannot move submission from {package.State} to PendingCH" });
             }
 
-            package.State = PackageState.PendingASM;
+            package.State = PackageState.PendingCH;
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} manually moved to PendingASM", id);
+            _logger.LogInformation("Submission {Id} manually moved to PendingCH", id);
 
             var response = new SubmissionStatusResponse
             {
                 Id = package.Id,
                 State = package.State.ToString(),
-                Message = "Moved to PendingASM"
+                Message = "Moved to PendingCH"
             };
 
             return Ok(response);
@@ -1920,6 +2123,18 @@ public class SubmissionsController : ControllerBase
                 var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, cancellationToken);
                 package.AssignedCircleHeadUserId = circleHeadUserId;
                 _logger.LogInformation("CircleHead {UserId} assigned for package {PackageId}", circleHeadUserId, packageId);
+            }
+
+            // Reset state to Uploaded so the orchestrator processes from scratch.
+            // This handles cases where a previous premature workflow run moved the
+            // package to PendingCH before all documents were uploaded.
+            if (package.State == PackageState.PendingCH || 
+                package.State == PackageState.Extracting || 
+                package.State == PackageState.Validating ||
+                package.State == PackageState.Uploaded)
+            {
+                package.State = PackageState.Uploaded;
+                _logger.LogInformation("Package {PackageId} state reset to Uploaded for reprocessing", packageId);
             }
 
             package.UpdatedAt = DateTime.UtcNow;
@@ -2549,6 +2764,15 @@ public record ResubmitToHQRequest(
     [StringLength(500, MinimumLength = 10, ErrorMessage = "Notes must be between 10 and 500 characters")]
     string Notes
 );
+
+/// <summary>
+/// Optional body for the submit endpoint — allows the frontend to pass activityState
+/// at submit time as a safety net in case the prior PATCH hasn't persisted it yet.
+/// </summary>
+public class SubmitPackageRequest
+{
+    public string? ActivityState { get; set; }
+}
 
 /// <summary>
 /// Request to request document reupload

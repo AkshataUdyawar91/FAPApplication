@@ -1,8 +1,12 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/router/app_router.dart';
+import '../../../../core/network/dio_client.dart';
 
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -12,8 +16,9 @@ import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/pagination_bar.dart';
+import '../../../../core/network/dio_client.dart';
 
-class AgencyDashboardPage extends StatefulWidget {
+class AgencyDashboardPage extends ConsumerStatefulWidget {
   final String token;
   final String userName;
 
@@ -24,11 +29,13 @@ class AgencyDashboardPage extends StatefulWidget {
   });
 
   @override
-  State<AgencyDashboardPage> createState() => _AgencyDashboardPageState();
+  ConsumerState<AgencyDashboardPage> createState() =>
+      _AgencyDashboardPageState();
 }
 
-class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
+class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
+  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    ..interceptors.add(PrettyDioLogger());
   final _searchController = TextEditingController();
 
   String _statusFilter = 'all';
@@ -47,6 +54,12 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   @override
   void initState() {
     super.initState();
+    // Sync token into authTokenProvider so AssistantChatPanel's dio interceptor picks it up
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.token.isNotEmpty) {
+        ref.read(authTokenProvider.notifier).state = widget.token;
+      }
+    });
     _loadRequests();
   }
 
@@ -110,7 +123,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         'recommending'
       ].contains(state)) {
         statuses.add('extracting');
-      } else if (['pendingapproval', 'pendingasmapproval'].contains(state)) {
+      } else if (['pendingapproval', 'pendingchapproval'].contains(state)) {
         statuses.add('pending_with_asm');
       } else if (['asmapproved', 'pendinghqapproval'].contains(state)) {
         statuses.add('pending_with_ra');
@@ -133,10 +146,10 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       'all': 'All Status',
       'uploaded': 'Submitted',
       'extracting': 'Extracting',
-      'pending_with_asm': 'Pending with ASM',
+      'pending_with_asm': 'Pending with CH',
       'pending_with_ra': 'Pending with RA',
       'approved': 'Approved',
-      'rejected_by_asm': 'Rejected by ASM',
+      'rejected_by_asm': 'Rejected by CH',
       'rejected_by_ra': 'Rejected by RA',
     };
 
@@ -186,7 +199,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           break;
         case 'pending_with_asm':
           matchesStatus =
-              ['pendingapproval', 'pendingasmapproval'].contains(state);
+              ['pendingapproval', 'pendingchapproval'].contains(state);
           break;
         case 'pending_with_ra':
           matchesStatus = ['asmapproved', 'pendinghqapproval'].contains(state);
@@ -225,7 +238,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       }).length,
       'pendingWithASM': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['pendingapproval', 'pendingasmapproval'].contains(s);
+        return ['pendingapproval', 'pendingchapproval'].contains(s);
       }).length,
       'pendingWithRA': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
@@ -277,7 +290,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                   userName: widget.userName,
                   userRole: 'Agency',
                   navItems: _getNavItems(context),
-                  onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                  onLogout: () => handleLogout(context, ref),
                 )
               : null,
           body: Column(
@@ -291,8 +304,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                         userName: widget.userName,
                         userRole: 'Agency',
                         navItems: _getNavItems(context),
-                        onLogout: () =>
-                            Navigator.pushReplacementNamed(context, '/'),
+                        onLogout: () => handleLogout(context, ref),
                         isCollapsed: _isSidebarCollapsed,
                         onToggleCollapse: () => setState(
                             () => _isSidebarCollapsed = !_isSidebarCollapsed),
@@ -332,25 +344,72 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           floatingActionButton: isMobile
               ? Padding(
                   padding: const EdgeInsets.only(bottom: 16, right: 4),
-                  child: FloatingActionButton(
-                    onPressed: _navigateToChatbot,
-                    backgroundColor: AppColors.primary,
-                    tooltip: 'New Submission',
-                    child: const Icon(Icons.smart_toy, color: Colors.white),
+                  child: Builder(
+                    builder: (ctx) => FloatingActionButton(
+                      onPressed: () => Scaffold.of(ctx).openEndDrawer(),
+                      backgroundColor: AppColors.primary,
+                      tooltip: 'Open Assistant',
+                      child: const Icon(Icons.smart_toy, color: Colors.white),
+                    ),
                   ),
                 )
-              : null,
+              : (_isChatOpen || _isChatbotOpen)
+                  ? null
+                  : FloatingActionButton(
+                      onPressed: _navigateToChatbot,
+                      backgroundColor: AppColors.primary,
+                      tooltip: 'Open Assistant',
+                      child: const Icon(Icons.smart_toy, color: Colors.white),
+                    ),
           floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         );
       },
     );
   }
 
-  void _navigateToUpload() {
-    Navigator.pushNamed(context, '/agency/upload', arguments: {
-      'token': widget.token,
-      'userName': widget.userName,
-    });
+  // void _navigateToUpload() {
+  //   context.pushNamed('agency-upload', extra: {
+  //     'token': widget.token,
+  //     'userName': widget.userName,
+  //   });
+  // }
+
+  void _navigateToUpload() async {
+    // Show loading indicator
+    if (!mounted) return;
+
+    // Create draft submission first
+    try {
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final response = await dio.post(
+        '/submissions/draft',
+        data: {}, // Empty body - will use authenticated user's agency
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 201 && mounted) {
+        final submissionId = response.data['submissionId'];
+        debugPrint('Draft submission created: $submissionId');
+
+        // Navigate to upload page with submissionId
+        context.pushNamed('agency-upload', extra: {
+          'token': widget.token,
+          'userName': widget.userName,
+          'submissionId': submissionId,
+        });
+      }
+    } catch (e) {
+      debugPrint('Error creating draft submission: $e');
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to create submission: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _navigateToChatbot() {
@@ -364,16 +423,11 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(
-          icon: Icons.dashboard,
-          label: 'Dashboard',
-          isActive: true,
-          onTap: () {}),
+          icon: Icons.dashboard, label: 'Home', isActive: true, onTap: () {}),
       NavItem(
-          icon: Icons.chat_bubble_outline,
-          label: 'New Claim (Chat)',
-          onTap: _navigateToChatbot),
-      NavItem(
-          icon: Icons.upload_file, label: 'Upload', onTap: _navigateToUpload),
+          icon: Icons.upload_file,
+          label: 'New Claim',
+          onTap: _navigateToUpload),
       NavItem(
           icon: Icons.notifications,
           label: 'Notifications',
@@ -411,37 +465,6 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
             ),
           ),
           const Spacer(),
-          CircleAvatar(
-            backgroundColor: Colors.white,
-            radius: 18,
-            child: Text(
-              widget.userName.isNotEmpty
-                  ? widget.userName[0].toUpperCase()
-                  : '?',
-              style: const TextStyle(
-                  color: Color(0xFF003087),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(widget.userName,
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white)),
-              const SizedBox(height: 2),
-              Text('Agency',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.7))),
-            ],
-          ),
-          const SizedBox(width: 12),
         ],
       ),
     );
@@ -464,7 +487,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('All Requests', style: AppTextStyles.h2),
+                Text('My Requests', style: AppTextStyles.h2),
                 const SizedBox(height: 4),
                 Text('View and track all your reimbursement requests',
                     style: AppTextStyles.bodySmall),
@@ -476,21 +499,6 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
             onPressed: _navigateToUpload,
             icon: const Icon(Icons.add, size: 20),
             label: const Text('New Request'),
-          ),
-          SizedBox(
-            width: 8,
-          ),
-          OutlinedButton.icon(
-            onPressed: _navigateToChatbot,
-            icon: Icon(
-              _isChatbotOpen ? Icons.close : Icons.smart_toy,
-              size: 18,
-            ),
-            label: Text(_isChatbotOpen ? 'Close Chat' : 'New Submission'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.primary,
-              side: const BorderSide(color: AppColors.primary),
-            ),
           ),
         ],
       ),
@@ -510,7 +518,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (device == DeviceType.mobile) ...[
-              Text('All Requests', style: AppTextStyles.h2),
+              Text('My Requests', style: AppTextStyles.h2),
               const SizedBox(height: 4),
               Text('View and track all your reimbursement requests',
                   style: AppTextStyles.bodySmall),
@@ -532,7 +540,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
   Widget _buildStatsCards(DeviceType device) {
     final stats = _stats;
     final cards = [
-      _StatData('Pending with ASM', stats['pendingWithASM']!.toString(),
+      _StatData('Pending with CH', stats['pendingWithASM']!.toString(),
           Icons.schedule, const Color(0xFF3B82F6), 'pending_with_asm'),
       _StatData('Approved', stats['approved']!.toString(), Icons.check_circle,
           const Color(0xFF10B981), 'approved'),
@@ -857,10 +865,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () {
-                  Navigator.pushNamed(
-                    context,
-                    '/agency/submission-detail',
-                    arguments: {
+                  context.pushNamed(
+                    'submission-detail',
+                    extra: {
                       'submissionId': request['id'],
                       'token': widget.token,
                       'userName': widget.userName,
@@ -997,10 +1004,9 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                             color: AppColors.primary,
                             onPressed: () {
                               // Navigate to detailed view page
-                              Navigator.pushNamed(
-                                context,
-                                '/agency/submission-detail',
-                                arguments: {
+                              context.pushNamed(
+                                'submission-detail',
+                                extra: {
                                   'submissionId': r['id'],
                                   'token': widget.token,
                                   'userName': widget.userName,
@@ -1078,12 +1084,14 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         label = state == 'validationfailed' ? 'Validation Failed' : 'Rejected';
         break;
       case 'rejectedbyasm':
+      case 'chrejected':
         bgColor = const Color(0xFFFEE2E2);
         textColor = const Color(0xFF991B1B);
-        label = 'Rejected by ASM';
+        label = 'Rejected by CH';
         break;
       case 'rejectedbyhq':
       case 'rejectedbyra':
+      case 'rarejected':
         bgColor = const Color(0xFFFEE2E2);
         textColor = const Color(0xFF991B1B);
         label = 'Rejected by RA';
@@ -1095,21 +1103,23 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
         bgColor = const Color(0xFFDBEAFE);
         textColor = const Color(0xFF1E40AF);
         label = state == 'pendingapproval'
-            ? 'Pending with ASM'
+            ? 'Pending with CH'
             : state == 'recommending'
                 ? 'Recommending'
                 : state == 'submitted'
                     ? 'Submitted'
                     : 'Validated';
         break;
-      case 'pendingasmapproval':
-      case 'pendingwithasm':
+      case 'pendingchapproval':
+      case 'pendingwithch':
+      case 'pendingch':
         bgColor = const Color(0xFFDBEAFE);
         textColor = const Color(0xFF1E40AF);
-        label = 'Pending with ASM';
+        label = 'Pending with CH';
         break;
       case 'pendinghqapproval':
       case 'pendingwithra':
+      case 'pendingra':
         bgColor = const Color(0xFFFEF3C7);
         textColor = const Color(0xFF92400E);
         label = 'Pending with RA';
@@ -1165,11 +1175,11 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
       case 'rejected':
         return 'Rejected';
       case 'rejected_by_asm':
-        return 'Rejected by ASM';
+        return 'Rejected by CH';
       case 'rejected_by_hq':
         return 'Rejected by HQ/RA';
       case 'pending_asm':
-        return 'Pending ASM Approval';
+        return 'Pending CH Approval';
       case 'pending_hq':
         return 'Pending HQ/RA Approval';
       case 'under_review':
@@ -1196,13 +1206,14 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
     if (['uploaded', 'extracting', 'validating'].contains(state))
       return 'pending';
     if (['validated', 'recommending'].contains(state)) return 'pending';
-    if (['pendingasmapproval', 'pendingapproval', 'pendingwithasm']
+    if (['pendingch', 'pendingchapproval', 'pendingapproval', 'pendingwithch']
         .contains(state)) return 'pending_asm';
-    if (['pendinghqapproval', 'pendingwithra'].contains(state))
+    if (['pendingra', 'pendinghqapproval', 'pendingwithra'].contains(state))
       return 'pending_hq';
     if (state == 'approved') return 'approved';
-    if (state == 'rejectedbyasm') return 'rejected_by_asm';
-    if (['rejectedbyhq', 'rejectedbyra'].contains(state))
+    if (['chrejected', 'rejectedbyasm'].contains(state))
+      return 'rejected_by_asm';
+    if (['rarejected', 'rejectedbyhq', 'rejectedbyra'].contains(state))
       return 'rejected_by_hq';
     if (['rejected', 'validationfailed', 'reuploadrequested'].contains(state))
       return 'rejected';
@@ -1251,7 +1262,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
               _buildDetailRow(
                   'Documents', '${request['documentCount'] ?? 0} files'),
 
-              // Show ASM rejection notes if rejected by ASM
+              // Show CH rejection notes if rejected by CH
               if (status == 'rejected_by_asm' &&
                   asmReviewNotes != null &&
                   asmReviewNotes.toString().isNotEmpty) ...[
@@ -1272,7 +1283,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
                               color: Color(0xFFDC2626), size: 20),
                           const SizedBox(width: 8),
                           Text(
-                            'Rejected by ASM',
+                            'Rejected by CH',
                             style: AppTextStyles.bodyMedium.copyWith(
                               fontWeight: FontWeight.bold,
                               color: const Color(0xFFB91C1C),
@@ -1352,7 +1363,7 @@ class _AgencyDashboardPageState extends State<AgencyDashboardPage> {
           ),
         ),
         actions: [
-          // Show Resubmit button if rejected by ASM
+          // Show Resubmit button if rejected by CH
           if (status == 'rejected_by_asm')
             ElevatedButton.icon(
               onPressed: () {

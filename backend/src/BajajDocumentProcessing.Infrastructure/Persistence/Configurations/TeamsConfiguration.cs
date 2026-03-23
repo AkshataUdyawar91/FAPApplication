@@ -39,6 +39,8 @@ public class TeamsConfiguration : IEntityTypeConfiguration<Teams>
             .IsRequired()
             .HasDefaultValue(1);
 
+        builder.Property(t => t.TeamNumber);
+
         // Relationships - Teams belongs directly to Package
         builder.HasOne(t => t.Package)
             .WithMany(p => p.Teams)

@@ -137,7 +137,7 @@ public class AnalyticsPlugin
             var totalSubmissions = packages.Count;
             var approvedCount = packages.Count(p => p.State == Domain.Enums.PackageState.Approved);
             var rejectedCount = packages.Count(p => 
-                p.State == Domain.Enums.PackageState.ASMRejected || 
+                p.State == Domain.Enums.PackageState.CHRejected || 
                 p.State == Domain.Enums.PackageState.RARejected);
             var approvalRate = totalSubmissions > 0 ? (double)approvedCount / totalSubmissions * 100 : 0;
 
@@ -236,7 +236,7 @@ public class AnalyticsPlugin
 
             if (approvalLevel?.ToLower() == "asm")
             {
-                query = query.Where(p => p.State == Domain.Enums.PackageState.PendingASM);
+                query = query.Where(p => p.State == Domain.Enums.PackageState.PendingCH);
             }
             else if (approvalLevel?.ToLower() == "hq")
             {
@@ -245,7 +245,7 @@ public class AnalyticsPlugin
             else
             {
                 query = query.Where(p => 
-                    p.State == Domain.Enums.PackageState.PendingASM || 
+                    p.State == Domain.Enums.PackageState.PendingCH || 
                     p.State == Domain.Enums.PackageState.PendingRA);
             }
 
@@ -353,7 +353,7 @@ public class AnalyticsPlugin
         try
         {
             var submissions = _context.DocumentPackages
-                .Where(p => p.State == Domain.Enums.PackageState.ASMRejected || 
+                .Where(p => p.State == Domain.Enums.PackageState.CHRejected || 
                            p.State == Domain.Enums.PackageState.RARejected)
                 .Where(p => !_currentUserId.HasValue || p.SubmittedByUserId == _currentUserId.Value)
                 .OrderByDescending(p => p.UpdatedAt ?? p.CreatedAt)
@@ -410,10 +410,10 @@ public class AnalyticsPlugin
             var summary = new
             {
                 Total = allPackages.Count,
-                PendingASM = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingASM),
+                PendingCH = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingCH),
                 PendingRA = allPackages.Count(p => p.State == Domain.Enums.PackageState.PendingRA),
                 Approved = allPackages.Count(p => p.State == Domain.Enums.PackageState.Approved),
-                ASMRejected = allPackages.Count(p => p.State == Domain.Enums.PackageState.ASMRejected),
+                CHRejected = allPackages.Count(p => p.State == Domain.Enums.PackageState.CHRejected),
                 RARejected = allPackages.Count(p => p.State == Domain.Enums.PackageState.RARejected),
                 Processing = allPackages.Count(p => 
                     p.State == Domain.Enums.PackageState.Uploaded ||

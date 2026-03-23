@@ -346,11 +346,15 @@ public class HierarchicalSubmissionController : ControllerBase
             if (package == null)
                 return NotFound(new { error = "Package not found" });
 
-            // Verify campaign belongs to this package
-            var campaignExists = await _context.Teams
-                .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
-            if (!campaignExists)
-                return NotFound(new { error = "Campaign not found" });
+            // Cost summary is package-level. campaignId is accepted in the route for API consistency
+            // but only validated when a real (non-empty) campaign ID is provided.
+            if (campaignId != Guid.Empty)
+            {
+                var campaignExists = await _context.Teams
+                    .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+                if (!campaignExists)
+                    return NotFound(new { error = "Campaign not found" });
+            }
 
             var blobUrl = await _fileStorage.UploadFileAsync(file, "cost-summaries", $"{Guid.NewGuid()}_{file.FileName}");
 
@@ -428,6 +432,30 @@ public class HierarchicalSubmissionController : ControllerBase
                                     parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount, b.Quantity, b.Unit, b.IsFixedCost, b.IsVariableCost }));
                             }
                         }
+
+                        // Upsert ValidationResult for this cost summary
+                        var existing = await ctx.ValidationResults
+                            .FirstOrDefaultAsync(v => v.DocumentId == csDocId
+                                && v.DocumentType == Domain.Enums.DocumentType.CostSummary);
+                        if (existing == null)
+                        {
+                            ctx.ValidationResults.Add(new Domain.Entities.ValidationResult
+                            {
+                                Id = Guid.NewGuid(),
+                                DocumentType = Domain.Enums.DocumentType.CostSummary,
+                                DocumentId = csDocId,
+                                CompletenessCheckPassed = entity.TotalCost > 0,
+                                AllValidationsPassed = false, // full cross-doc validation runs at submit time
+                                CreatedAt = DateTime.UtcNow,
+                                UpdatedAt = DateTime.UtcNow
+                            });
+                        }
+                        else
+                        {
+                            existing.CompletenessCheckPassed = entity.TotalCost > 0;
+                            existing.UpdatedAt = DateTime.UtcNow;
+                        }
+
                         await ctx.SaveChangesAsync(CancellationToken.None);
                     }
                 }
@@ -468,11 +496,14 @@ public class HierarchicalSubmissionController : ControllerBase
             if (package == null)
                 return NotFound(new { error = "Package not found" });
 
-            // Verify campaign belongs to this package
-            var campaignExists = await _context.Teams
-                .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
-            if (!campaignExists)
-                return NotFound(new { error = "Campaign not found" });
+            // Activity summary is package-level. campaignId only validated when a real (non-empty) ID is provided.
+            if (campaignId != Guid.Empty)
+            {
+                var campaignExists = await _context.Teams
+                    .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+                if (!campaignExists)
+                    return NotFound(new { error = "Campaign not found" });
+            }
 
             var blobUrl = await _fileStorage.UploadFileAsync(file, "activity-summaries", $"{Guid.NewGuid()}_{file.FileName}");
 
@@ -552,6 +583,30 @@ public class HierarchicalSubmissionController : ControllerBase
                                 entity.ActivityDescription = $"Activity across {locations.Count} location(s): {string.Join(", ", locations)}";
                             }
                         }
+
+                        // Upsert ValidationResult for this activity summary
+                        var existing = await ctx.ValidationResults
+                            .FirstOrDefaultAsync(v => v.DocumentId == actDocId
+                                && v.DocumentType == Domain.Enums.DocumentType.ActivitySummary);
+                        if (existing == null)
+                        {
+                            ctx.ValidationResults.Add(new Domain.Entities.ValidationResult
+                            {
+                                Id = Guid.NewGuid(),
+                                DocumentType = Domain.Enums.DocumentType.ActivitySummary,
+                                DocumentId = actDocId,
+                                CompletenessCheckPassed = !string.IsNullOrEmpty(entity.ExtractedDataJson),
+                                AllValidationsPassed = false, // full cross-doc validation runs at submit time
+                                CreatedAt = DateTime.UtcNow,
+                                UpdatedAt = DateTime.UtcNow
+                            });
+                        }
+                        else
+                        {
+                            existing.CompletenessCheckPassed = !string.IsNullOrEmpty(entity.ExtractedDataJson);
+                            existing.UpdatedAt = DateTime.UtcNow;
+                        }
+
                         await ctx.SaveChangesAsync(CancellationToken.None);
                     }
                 }
@@ -651,6 +706,30 @@ public class HierarchicalSubmissionController : ControllerBase
                         entity.ExtractionConfidence = confidence;
                         entity.IsFlaggedForReview = enquiryData.IsFlaggedForReview;
                         entity.UpdatedAt = DateTime.UtcNow;
+
+                        // Upsert ValidationResult for this enquiry document
+                        var existing = await ctx.ValidationResults
+                            .FirstOrDefaultAsync(v => v.DocumentId == enqDocId
+                                && v.DocumentType == Domain.Enums.DocumentType.EnquiryDocument);
+                        if (existing == null)
+                        {
+                            ctx.ValidationResults.Add(new Domain.Entities.ValidationResult
+                            {
+                                Id = Guid.NewGuid(),
+                                DocumentType = Domain.Enums.DocumentType.EnquiryDocument,
+                                DocumentId = enqDocId,
+                                CompletenessCheckPassed = !string.IsNullOrEmpty(entity.ExtractedDataJson),
+                                AllValidationsPassed = false,
+                                CreatedAt = DateTime.UtcNow,
+                                UpdatedAt = DateTime.UtcNow
+                            });
+                        }
+                        else
+                        {
+                            existing.CompletenessCheckPassed = !string.IsNullOrEmpty(entity.ExtractedDataJson);
+                            existing.UpdatedAt = DateTime.UtcNow;
+                        }
+
                         await ctx.SaveChangesAsync(CancellationToken.None);
                     }
                 }
@@ -967,11 +1046,15 @@ public class HierarchicalSubmissionController : ControllerBase
             if (package == null)
                 return NotFound(new { error = "Package not found" });
 
-            // Verify campaign belongs to this package
-            var campaignExists = await _context.Teams
-                .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
-            if (!campaignExists)
-                return NotFound(new { error = "Campaign not found" });
+            // Package-level docs (cost-summary, activity-summary) use empty GUID as campaignId placeholder.
+            // Only validate campaign when a real ID is provided.
+            if (campaignId != Guid.Empty)
+            {
+                var campaignExists = await _context.Teams
+                    .AnyAsync(c => c.Id == campaignId && c.PackageId == packageId, cancellationToken);
+                if (!campaignExists)
+                    return NotFound(new { error = "Campaign not found" });
+            }
 
             if (docType.Equals("cost-summary", StringComparison.OrdinalIgnoreCase))
             {

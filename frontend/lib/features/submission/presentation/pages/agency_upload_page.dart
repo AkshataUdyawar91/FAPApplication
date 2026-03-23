@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:go_router/go_router.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -10,12 +12,14 @@ import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
+import '../../../../core/router/app_router.dart';
 import '../widgets/campaign_list_section.dart';
 
-class AgencyUploadPage extends StatefulWidget {
+class AgencyUploadPage extends ConsumerStatefulWidget {
   final String token;
   final String userName;
-  final String? submissionId; // If provided, we're in edit mode for an existing submission
+  final String?
+      submissionId; // If provided, we're in edit mode for an existing submission
   /// Optional Dio override — used in tests to inject a mock client.
   final Dio? dio;
 
@@ -28,10 +32,10 @@ class AgencyUploadPage extends StatefulWidget {
   });
 
   @override
-  State<AgencyUploadPage> createState() => _AgencyUploadPageState();
+  ConsumerState<AgencyUploadPage> createState() => _AgencyUploadPageState();
 }
 
-class _AgencyUploadPageState extends State<AgencyUploadPage>
+class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
     with SingleTickerProviderStateMixin {
   late final Dio _dio;
 
@@ -72,6 +76,29 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
 
   bool get _isEditMode => widget.submissionId != null;
 
+  // ── Test helpers (used by integration_test_runner.dart) ──
+  /// Exposes invoices list for test injection.
+  List<InvoiceItemData> get testInvoices => _invoices;
+  set testInvoices(List<InvoiceItemData> v) => _invoices = v;
+  /// Exposes cost summary file for test injection.
+  PlatformFile? get testCostSummaryFile => _costSummaryFile;
+  set testCostSummaryFile(PlatformFile? v) => _costSummaryFile = v;
+  /// Exposes activity summary file for test injection.
+  PlatformFile? get testActivitySummaryFile => _activitySummaryFile;
+  set testActivitySummaryFile(PlatformFile? v) => _activitySummaryFile = v;
+  /// Exposes enquiry doc file for test injection.
+  PlatformFile? get testEnquiryDocFile => _enquiryDocFile;
+  set testEnquiryDocFile(PlatformFile? v) => _enquiryDocFile = v;
+  /// Exposes campaigns list for test injection.
+  List<CampaignItemData> get testCampaigns => _campaigns;
+  set testCampaigns(List<CampaignItemData> v) => _campaigns = v;
+  /// Triggers invoice extraction for a given invoice.
+  Future<void> testExtractInvoice(InvoiceItemData inv) =>
+      _uploadAndAutofillInvoice(inv);
+  /// Triggers a UI rebuild.
+  // ignore: invalid_use_of_protected_member
+  void testRebuild() => setState(() {});
+
   static const int _totalSteps = 3;
 
   static const List<_TabMeta> _tabs = [
@@ -83,7 +110,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   @override
   void initState() {
     super.initState();
-    _dio = widget.dio ?? Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger());
+    _dio = widget.dio ?? Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+      ..interceptors.add(PrettyDioLogger());
     _tabController = TabController(length: _totalSteps, vsync: this)
       ..addListener(() {
         if (!_tabController.indexIsChanging) return;
@@ -113,12 +141,14 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
     try {
       final response = await _dio.get(
         '/pos',
-        queryParameters: search != null && search.isNotEmpty ? {'search': search} : null,
+        queryParameters:
+            search != null && search.isNotEmpty ? {'search': search} : null,
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
         setState(() {
-          _availablePOs = List<Map<String, dynamic>>.from(response.data as List);
+          _availablePOs =
+              List<Map<String, dynamic>>.from(response.data as List);
         });
       }
     } catch (e) {
@@ -137,7 +167,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       );
       if (response.statusCode == 200 && mounted) {
         setState(() {
-          _indianStates = List<Map<String, dynamic>>.from(response.data as List);
+          _indianStates =
+              List<Map<String, dynamic>>.from(response.data as List);
         });
       }
     } catch (e) {
@@ -185,7 +216,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
 
         // Extract package-level documents
         _existingCostSummaryFileName = data['costSummaryFileName']?.toString();
-        _existingActivitySummaryFileName = data['activitySummaryFileName']?.toString();
+        _existingActivitySummaryFileName =
+            data['activitySummaryFileName']?.toString();
         _existingEnquiryDocFileName = data['enquiryDocFileName']?.toString();
 
         // Extract invoices at package level (linked to PO)
@@ -224,7 +256,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         _campaigns = campaigns.map((c) {
           final campaignId = c['id']?.toString() ?? UniqueKey().toString();
           final photos = (c['photos'] as List? ?? []);
-          final existingPhotoNames = photos.map((p) => p['fileName']?.toString() ?? '').toList();
+          final existingPhotoNames =
+              photos.map((p) => p['fileName']?.toString() ?? '').toList();
 
           final campaign = CampaignItemData(
             id: campaignId,
@@ -235,7 +268,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             dealershipName: c['dealershipName']?.toString() ?? '',
             dealershipAddress: c['dealershipAddress']?.toString() ?? '',
           );
-          campaign.existingPhotoFileNames = existingPhotoNames.where((n) => n.isNotEmpty).toList();
+          campaign.existingPhotoFileNames =
+              existingPhotoNames.where((n) => n.isNotEmpty).toList();
 
           return campaign;
         }).toList();
@@ -263,13 +297,27 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
 
   // ─── FILE PICKERS ────────────────────────────────────────────────────
   static const _allowedExtensions = [
-    'pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp',
-    'doc', 'docx', 'xls', 'xlsx', 'csv', 'ppt', 'pptx',
+    'pdf',
+    'jpg',
+    'jpeg',
+    'png',
+    'bmp',
+    'tiff',
+    'webp',
+    'doc',
+    'docx',
+    'xls',
+    'xlsx',
+    'csv',
+    'ppt',
+    'pptx',
   ];
 
-  Future<void> _pickFile(Function(PlatformFile?) setter, {bool isPO = false}) async {
+  Future<void> _pickFile(Function(PlatformFile?) setter,
+      {bool isPO = false}) async {
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: _allowedExtensions);
+      final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom, allowedExtensions: _allowedExtensions);
       if (result != null && result.files.isNotEmpty) {
         setter(result.files.first);
         setState(() {});
@@ -312,19 +360,20 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   Future<void> _pollForPOExtraction(String packageId, String documentId) async {
     const maxAttempts = 25;
     const delayBetweenAttempts = Duration(seconds: 2);
-    
+
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
       await Future.delayed(delayBetweenAttempts);
       if (!mounted) return;
-      
+
       try {
         final response = await _dio.get(
           '/submissions/$packageId',
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          options:
+              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
-        
+
         if (!mounted) return;
-        
+
         if (response.statusCode == 200 && response.data != null) {
           final documents = response.data['documents'] as List?;
           if (documents != null) {
@@ -332,7 +381,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               (doc) => doc['type']?.toString().toLowerCase() == 'po',
               orElse: () => null,
             );
-            
+
             if (poDoc != null) {
               var extractedData = poDoc['extractedData'];
               if (extractedData != null) {
@@ -340,13 +389,23 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                   extractedData = _parseJsonString(extractedData);
                 }
                 if (extractedData is Map) {
-                  final poNumber = extractedData['PONumber'] ?? extractedData['poNumber'];
-                  final totalAmount = extractedData['TotalAmount'] ?? extractedData['totalAmount'];
-                  final vendorName = extractedData['VendorName'] ?? extractedData['vendorName'];
-                  final date = extractedData['PODate'] ?? extractedData['poDate'] ?? extractedData['Date'] ?? extractedData['date'];
-                  if (poNumber != null || totalAmount != null || vendorName != null || date != null) {
+                  final poNumber =
+                      extractedData['PONumber'] ?? extractedData['poNumber'];
+                  final totalAmount = extractedData['TotalAmount'] ??
+                      extractedData['totalAmount'];
+                  final vendorName = extractedData['VendorName'] ??
+                      extractedData['vendorName'];
+                  final date = extractedData['PODate'] ??
+                      extractedData['poDate'] ??
+                      extractedData['Date'] ??
+                      extractedData['date'];
+                  if (poNumber != null ||
+                      totalAmount != null ||
+                      vendorName != null ||
+                      date != null) {
                     if (!mounted) return;
-                    setState(() {}); // trigger rebuild to show PO data in UI if needed
+                    setState(
+                        () {}); // trigger rebuild to show PO data in UI if needed
                     return; // Success - exit polling
                   }
                 }
@@ -373,7 +432,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       final extractResponse = await _dio.post(
         '/documents/extract',
         data: FormData.fromMap({
-          'file': MultipartFile.fromBytes(invoice.file!.bytes!, filename: invoice.file!.name),
+          'file': MultipartFile.fromBytes(invoice.file!.bytes!,
+              filename: invoice.file!.name),
           'documentType': 'Invoice',
         }),
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
@@ -385,11 +445,25 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
           final data = Map<String, dynamic>.from(extractedData);
           if (data.isNotEmpty) {
             setState(() {
-              invoice.invoiceNumber = (data['InvoiceNumber'] ?? data['invoiceNumber'])?.toString() ?? invoice.invoiceNumber;
-              invoice.totalAmount   = (data['TotalAmount'] ?? data['totalAmount'])?.toString() ?? invoice.totalAmount;
-              invoice.gstNumber     = (data['GSTNumber'] ?? data['gstNumber'] ?? data['GSTIN'] ?? data['gstin'])?.toString() ?? invoice.gstNumber;
-              final rawDate = data['InvoiceDate'] ?? data['invoiceDate'] ?? data['Date'] ?? data['date'];
-              if (rawDate != null) invoice.invoiceDate = _formatDateForField(rawDate);
+              invoice.invoiceNumber =
+                  (data['InvoiceNumber'] ?? data['invoiceNumber'])
+                          ?.toString() ??
+                      invoice.invoiceNumber;
+              invoice.totalAmount =
+                  (data['TotalAmount'] ?? data['totalAmount'])?.toString() ??
+                      invoice.totalAmount;
+              invoice.gstNumber = (data['GSTNumber'] ??
+                          data['gstNumber'] ??
+                          data['GSTIN'] ??
+                          data['gstin'])
+                      ?.toString() ??
+                  invoice.gstNumber;
+              final rawDate = data['InvoiceDate'] ??
+                  data['invoiceDate'] ??
+                  data['Date'] ??
+                  data['date'];
+              if (rawDate != null)
+                invoice.invoiceDate = _formatDateForField(rawDate);
               // Sync controllers so the TextFormFields reflect the new values
               invoice.invoiceNumberController.text = invoice.invoiceNumber;
               invoice.totalAmountController.text = invoice.totalAmount;
@@ -403,18 +477,22 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         // Response OK but no data extracted
         setState(() {
           invoice.extractionStatus = ExtractionStatus.failed;
-          invoice.extractionError = 'Could not extract fields from this document';
+          invoice.extractionError =
+              'Could not extract fields from this document';
         });
       } else {
         setState(() {
           invoice.extractionStatus = ExtractionStatus.failed;
-          invoice.extractionError = 'Extraction returned status ${extractResponse.statusCode}';
+          invoice.extractionError =
+              'Extraction returned status ${extractResponse.statusCode}';
         });
       }
     } on DioException catch (e) {
       debugPrint('Invoice autofill DioException: $e');
       if (mounted) {
-        final msg = e.response?.data?['error']?.toString() ?? e.message ?? 'Network error';
+        final msg = e.response?.data?['error']?.toString() ??
+            e.message ??
+            'Network error';
         setState(() {
           invoice.extractionStatus = ExtractionStatus.failed;
           invoice.extractionError = msg;
@@ -425,7 +503,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       if (mounted) {
         setState(() {
           invoice.extractionStatus = ExtractionStatus.failed;
-          invoice.extractionError = 'Extraction failed. Please enter details manually.';
+          invoice.extractionError =
+              'Extraction failed. Please enter details manually.';
         });
       }
     } finally {
@@ -463,12 +542,17 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   // ─── NAVIGATION ──────────────────────────────────────────────────────
   void _handleNext() {
     // Step 1: PO required
-    if (_currentStep == 1 && _purchaseOrder == null && _existingPOFileName == null && _selectedPO == null) {
+    if (_currentStep == 1 &&
+        _purchaseOrder == null &&
+        _existingPOFileName == null &&
+        _selectedPO == null) {
       _showError('Please select a Purchase Order');
       return;
     }
     // Step 1: Activation state required
-    if (_currentStep == 1 && (_selectedActivationState == null || _selectedActivationState!.isEmpty)) {
+    if (_currentStep == 1 &&
+        (_selectedActivationState == null ||
+            _selectedActivationState!.isEmpty)) {
       _showError('Please select an Activation State');
       return;
     }
@@ -501,12 +585,16 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       }
     }
     // Step 1: Cost summary required
-    if (_currentStep == 1 && _costSummaryFile == null && _existingCostSummaryFileName == null) {
+    if (_currentStep == 1 &&
+        _costSummaryFile == null &&
+        _existingCostSummaryFileName == null) {
       _showError('Please upload a Cost Summary');
       return;
     }
     // Step 2: Activity summary required
-    if (_currentStep == 2 && _activitySummaryFile == null && _existingActivitySummaryFileName == null) {
+    if (_currentStep == 2 &&
+        _activitySummaryFile == null &&
+        _existingActivitySummaryFileName == null) {
       _showError('Please upload an Activity Summary');
       return;
     }
@@ -560,27 +648,69 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   }
 
   void _navigateToDashboard() {
-    Navigator.pushReplacementNamed(context, '/agency/dashboard', arguments: {
-      'token': widget.token,
-      'userName': widget.userName,
-    },);
+    context.go('/home');
   }
 
   Future<void> _handleSubmit() async {
-    if (_purchaseOrder == null && _existingPOFileName == null && _selectedPO == null) { _showError('Please select or upload a Purchase Order'); return; }
-    if (_selectedActivationState == null || _selectedActivationState!.isEmpty) { _showError('Please select an Activation State'); return; }
-    if (_invoices.isEmpty) { _showError('Please upload at least one Invoice'); return; }
+    if (_purchaseOrder == null &&
+        _existingPOFileName == null &&
+        _selectedPO == null) {
+      _showError('Please select or upload a Purchase Order');
+      return;
+    }
+    if (_selectedActivationState == null || _selectedActivationState!.isEmpty) {
+      _showError('Please select an Activation State');
+      return;
+    }
+    if (_invoices.isEmpty) {
+      _showError('Please upload at least one Invoice');
+      return;
+    }
     for (int i = 0; i < _invoices.length; i++) {
       final inv = _invoices[i];
       final label = _invoices.length > 1 ? 'Invoice ${i + 1}' : 'Invoice';
-      if (inv.invoiceNumber.trim().isEmpty) { _showError('Please enter $label Number'); return; }
-      if (inv.invoiceDate.trim().isEmpty) { _showError('Please enter $label Date'); return; }
-      if (inv.totalAmount.trim().isEmpty) { _showError('Please enter $label Amount'); return; }
-      if (inv.gstNumber.trim().isEmpty) { _showError('Please enter GSTIN for $label'); return; }
+      if (inv.invoiceNumber.trim().isEmpty) {
+        _showError('Please enter $label Number');
+        return;
+      }
+      if (inv.invoiceDate.trim().isEmpty) {
+        _showError('Please enter $label Date');
+        return;
+      }
+      if (inv.totalAmount.trim().isEmpty) {
+        _showError('Please enter $label Amount');
+        return;
+      }
+      if (inv.gstNumber.trim().isEmpty) {
+        _showError('Please enter GSTIN for $label');
+        return;
+      }
     }
-    if (_costSummaryFile == null && _existingCostSummaryFileName == null) { _showError('Please upload a Cost Summary'); return; }
-    if (_enquiryDocFile == null && _existingEnquiryDocFileName == null) { _showError('Please upload Enquiry Document'); return; }
-    if (_activitySummaryFile == null && _existingActivitySummaryFileName == null) { _showError('Please upload an Activity Summary'); return; }
+    if (_costSummaryFile == null && _existingCostSummaryFileName == null) {
+      _showError('Please upload a Cost Summary');
+      return;
+    }
+    if (_enquiryDocFile == null && _existingEnquiryDocFileName == null) {
+      _showError('Please upload Enquiry Document');
+      return;
+    }
+    if (_activitySummaryFile == null &&
+        _existingActivitySummaryFileName == null) {
+      _showError('Please upload an Activity Summary');
+      return;
+    }
+    // Validate minimum photos per team
+    for (int i = 0; i < _campaigns.length; i++) {
+      final campaign = _campaigns[i];
+      final photoCount = campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0);
+      if (photoCount < CampaignItemData.minPhotos) {
+        final teamLabel = campaign.dealershipName.isNotEmpty
+            ? campaign.dealershipName
+            : 'Team ${i + 1}';
+        _showError('$teamLabel needs at least ${CampaignItemData.minPhotos} photos ($photoCount uploaded)');
+        return;
+      }
+    }
     setState(() => _isUploading = true);
     try {
       String? packageId = _currentPackageId;
@@ -599,17 +729,20 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
           if (createResp.statusCode == 200 || createResp.statusCode == 201) {
-            packageId = (createResp.data['id'] ?? createResp.data['packageId'])?.toString();
+            packageId = (createResp.data['id'] ?? createResp.data['packageId'])
+                ?.toString();
           }
         }
         // If PO was uploaded as a file, upload it now to create the package.
         if (packageId == null && _purchaseOrder?.bytes != null) {
           final poResponse = await _dio.post('/documents/upload',
               data: FormData.fromMap({
-                'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!, filename: _purchaseOrder!.name),
+                'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!,
+                    filename: _purchaseOrder!.name),
                 'documentType': 'PO',
               }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}));
+              options: Options(
+                  headers: {'Authorization': 'Bearer ${widget.token}'}));
           if (poResponse.statusCode == 200) {
             packageId = poResponse.data['packageId']?.toString();
           }
@@ -621,13 +754,17 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       } else {
         // Edit mode: if a new PO was picked, upload it as replacement
         if (_purchaseOrder?.bytes != null) {
-          await _dio.post('/documents/upload',
-              data: FormData.fromMap({
-                'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!, filename: _purchaseOrder!.name),
-                'documentType': 'PO',
-                'packageId': packageId,
-              }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),);
+          await _dio.post(
+            '/documents/upload',
+            data: FormData.fromMap({
+              'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!,
+                  filename: _purchaseOrder!.name),
+              'documentType': 'PO',
+              'packageId': packageId,
+            }),
+            options:
+                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
         }
       }
 
@@ -639,11 +776,13 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
           await _dio.post(
             '/documents/upload',
             data: FormData.fromMap({
-              'file': MultipartFile.fromBytes(invoice.file!.bytes!, filename: invoice.file!.name),
+              'file': MultipartFile.fromBytes(invoice.file!.bytes!,
+                  filename: invoice.file!.name),
               'documentType': 'Invoice',
               'packageId': packageId,
             }),
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            options:
+                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
         }
       }
@@ -652,7 +791,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       for (final campaign in _campaigns) {
         String? campaignId;
 
-        if (_isEditMode && campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_')) {
+        if (_isEditMode &&
+            campaign.id.isNotEmpty &&
+            !campaign.id.startsWith('campaign_')) {
           campaignId = campaign.id;
         } else {
           final campaignResponse = await _dio.post(
@@ -667,10 +808,14 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               'dealershipAddress': campaign.dealershipAddress,
               'state': _selectedActivationState,
             },
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            options:
+                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
           campaignId = campaignResponse.data['campaignId']?.toString();
-          if (campaignId == null) { debugPrint('Failed to create team: ${campaign.campaignName}'); continue; }
+          if (campaignId == null) {
+            debugPrint('Failed to create team: ${campaign.campaignName}');
+            continue;
+          }
         }
 
         // Upload photos for this team
@@ -683,7 +828,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             await _dio.post(
               '/hierarchical/$packageId/campaigns/$campaignId/photos',
               data: FormData.fromMap({'files': photoFiles}),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+              options:
+                  Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
             );
           }
         }
@@ -693,16 +839,19 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       String? anyCampaignId;
       if (_campaigns.isNotEmpty) {
         final firstCampaign = _campaigns.first;
-        if (firstCampaign.id.isNotEmpty && !firstCampaign.id.startsWith('campaign_')) {
+        if (firstCampaign.id.isNotEmpty &&
+            !firstCampaign.id.startsWith('campaign_')) {
           anyCampaignId = firstCampaign.id;
         } else {
           // Fetch from server
           try {
             final structureResp = await _dio.get(
               '/hierarchical/$packageId/structure',
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+              options:
+                  Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
             );
-            final serverCampaigns = structureResp.data['campaigns'] as List? ?? [];
+            final serverCampaigns =
+                structureResp.data['campaigns'] as List? ?? [];
             if (serverCampaigns.isNotEmpty) {
               anyCampaignId = serverCampaigns.first['campaignId']?.toString();
             }
@@ -715,9 +864,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         await _dio.post(
           '/hierarchical/$packageId/campaigns/$anyCampaignId/cost-summary',
           data: FormData.fromMap({
-            'file': MultipartFile.fromBytes(_costSummaryFile!.bytes!, filename: _costSummaryFile!.name),
+            'file': MultipartFile.fromBytes(_costSummaryFile!.bytes!,
+                filename: _costSummaryFile!.name),
           }),
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          options:
+              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
       }
 
@@ -726,9 +877,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         await _dio.post(
           '/hierarchical/$packageId/campaigns/$anyCampaignId/activity-summary',
           data: FormData.fromMap({
-            'file': MultipartFile.fromBytes(_activitySummaryFile!.bytes!, filename: _activitySummaryFile!.name),
+            'file': MultipartFile.fromBytes(_activitySummaryFile!.bytes!,
+                filename: _activitySummaryFile!.name),
           }),
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          options:
+              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
       }
 
@@ -737,29 +890,35 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         await _dio.post(
           '/hierarchical/$packageId/enquiry-doc',
           data: FormData.fromMap({
-            'file': MultipartFile.fromBytes(_enquiryDocFile!.bytes!, filename: _enquiryDocFile!.name),
+            'file': MultipartFile.fromBytes(_enquiryDocFile!.bytes!,
+                filename: _enquiryDocFile!.name),
           }),
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          options:
+              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
       }
 
       // Upload additional documents
       for (final doc in _additionalDocs) {
         if (doc.bytes != null) {
-          await _dio.post('/documents/upload',
-              data: FormData.fromMap({
-                'file': MultipartFile.fromBytes(doc.bytes!, filename: doc.name),
-                'documentType': 'AdditionalDocument',
-                'packageId': packageId,
-              }),
-              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),);
+          await _dio.post(
+            '/documents/upload',
+            data: FormData.fromMap({
+              'file': MultipartFile.fromBytes(doc.bytes!, filename: doc.name),
+              'documentType': 'AdditionalDocument',
+              'packageId': packageId,
+            }),
+            options:
+                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
         }
       }
 
       if (_isEditMode) {
         await _dio.patch(
           '/submissions/$packageId/resubmit',
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          options:
+              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
         );
         _showSuccess('Submission resubmitted successfully!');
       } else {
@@ -784,29 +943,51 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       if (dateStr.isEmpty) return null;
       final parts = dateStr.split('-');
       if (parts.length == 3) {
-        return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+        return DateTime(
+            int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
       }
       return null;
-    } catch (e) { return null; }
+    } catch (e) {
+      return null;
+    }
   }
 
   void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: AppColors.rejectedText),);
+        SnackBar(content: Text(msg), backgroundColor: AppColors.rejectedText),
+      );
 
   void _showSuccess(String msg) => ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: AppColors.approvedText),);
+        SnackBar(content: Text(msg), backgroundColor: AppColors.approvedText),
+      );
 
   // ─── SHARED NAV ITEMS ────────────────────────────────────────────────
   List<NavItem> _getNavItems(BuildContext context) {
     return [
-      NavItem(icon: Icons.dashboard, label: 'Dashboard', onTap: _navigateToDashboard),
-      NavItem(icon: Icons.upload_file, label: 'Upload', isActive: true, onTap: () {}),
-      NavItem(icon: Icons.notifications, label: 'Notifications', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notifications coming soon')));
-      },),
-      NavItem(icon: Icons.settings, label: 'Settings', onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings coming soon')));
-      },),
+      NavItem(
+          icon: Icons.dashboard,
+          label: 'Home',
+          onTap: _navigateToDashboard),
+      NavItem(
+          icon: Icons.upload_file,
+          label: 'New Claim',
+          isActive: true,
+          onTap: () {}),
+      NavItem(
+        icon: Icons.notifications,
+        label: 'Notifications',
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Notifications coming soon')));
+        },
+      ),
+      NavItem(
+        icon: Icons.settings,
+        label: 'Settings',
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Settings coming soon')));
+        },
+      ),
     ];
   }
 
@@ -830,25 +1011,6 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             ),
           ),
           const Spacer(),
-          CircleAvatar(
-            backgroundColor: Colors.white,
-            radius: 18,
-            child: Text(
-              widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
-              style: const TextStyle(color: Color(0xFF003087), fontWeight: FontWeight.bold, fontSize: 14),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(widget.userName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
-              const SizedBox(height: 2),
-              Text('Agency', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
-            ],
-          ),
-          const SizedBox(width: 12),
         ],
       ),
     );
@@ -867,7 +1029,12 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
           appBar: isMobile
               ? AppBar(
                   backgroundColor: const Color(0xFF1E3A8A),
-                  title: Text(_isEditMode ? 'Edit Submission' : 'Create New Request', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                  title: Text(
+                      _isEditMode ? 'Edit Submission' : 'Create New Request',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16)),
                   iconTheme: const IconThemeData(color: Colors.white),
                   leading: IconButton(
                     icon: const Icon(Icons.arrow_back),
@@ -888,7 +1055,7 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                   userName: widget.userName,
                   userRole: 'Agency',
                   navItems: _getNavItems(context),
-                  onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                  onLogout: () => handleLogout(context, ref),
                 )
               : null,
           body: Column(
@@ -902,9 +1069,10 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                         userName: widget.userName,
                         userRole: 'Agency',
                         navItems: _getNavItems(context),
-                        onLogout: () => Navigator.pushReplacementNamed(context, '/'),
+                        onLogout: () => handleLogout(context, ref),
                         isCollapsed: _isSidebarCollapsed,
-                        onToggleCollapse: () => setState(() => _isSidebarCollapsed = !_isSidebarCollapsed),
+                        onToggleCollapse: () => setState(
+                            () => _isSidebarCollapsed = !_isSidebarCollapsed),
                       ),
                     Expanded(
                       child: Column(
@@ -926,7 +1094,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               ),
             ],
           ),
-          endDrawer: isMobile ? ChatEndDrawer(token: widget.token, userName: widget.userName) : null,
+          endDrawer: isMobile
+              ? ChatEndDrawer(token: widget.token, userName: widget.userName)
+              : null,
           floatingActionButton: (_isChatOpen && !isMobile)
               ? null
               : Builder(
@@ -963,13 +1133,18 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         color: Colors.white,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
-      child: Text(_isEditMode ? 'Edit Submission' : 'Create New Request', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF111827))),
+      child: Text(_isEditMode ? 'Edit Submission' : 'Create New Request',
+          style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF111827))),
     );
   }
 
   // ─── CONTENT AREA ────────────────────────────────────────────────────
   Widget _buildContentArea(DeviceType device, double width) {
-    final pad = responsiveValue<double>(width, mobile: 10, tablet: 14, desktop: 16);
+    final pad =
+        responsiveValue<double>(width, mobile: 10, tablet: 14, desktop: 16);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1001,13 +1176,15 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
     return TabBar(
       controller: _tabController,
       isScrollable: device == DeviceType.mobile,
-      tabAlignment: device == DeviceType.mobile ? TabAlignment.start : TabAlignment.fill,
+      tabAlignment:
+          device == DeviceType.mobile ? TabAlignment.start : TabAlignment.fill,
       indicatorColor: AppColors.primary,
       indicatorWeight: 3,
       labelColor: AppColors.primary,
       unselectedLabelColor: const Color(0xFF6B7280),
       labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-      unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+      unselectedLabelStyle:
+          const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
       dividerColor: AppColors.border,
       tabs: _tabs.map((t) {
         final isComplete = _currentStep > t.number;
@@ -1054,20 +1231,26 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   // ─── STEP CONTENT ─────────────────────────────────────────────────────
   Widget _buildStepContent(DeviceType device) {
     if (_isLoadingExisting) {
-      return const Center(child: Column(
+      return const Center(
+          child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           CircularProgressIndicator(),
           SizedBox(height: 16),
-          Text('Loading submission data...', style: TextStyle(color: AppColors.textSecondary)),
+          Text('Loading submission data...',
+              style: TextStyle(color: AppColors.textSecondary)),
         ],
       ));
     }
     switch (_currentStep) {
-      case 1: return SingleChildScrollView(child: _buildInvoiceDetailsStep(device));
-      case 2: return SingleChildScrollView(child: _buildTeamsStep(device));
-      case 3: return SingleChildScrollView(child: _buildEnquiryStep(device));
-      default: return const SizedBox();
+      case 1:
+        return SingleChildScrollView(child: _buildInvoiceDetailsStep(device));
+      case 2:
+        return SingleChildScrollView(child: _buildTeamsStep(device));
+      case 3:
+        return SingleChildScrollView(child: _buildEnquiryStep(device));
+      default:
+        return const SizedBox();
     }
   }
 
@@ -1081,22 +1264,28 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Purchase Order section ──
-          _buildSectionLabel('Purchase Order', 'Select the PO assigned to your agency.', required: true),
+          _buildSectionLabel(
+              'Purchase Order', 'Select the PO assigned to your agency.',
+              required: true),
           const SizedBox(height: 12),
           _buildPOSearchDropdown(device),
           const SizedBox(height: 24),
 
           // ── Activation State section ──
-          _buildSectionLabel('State', 'Select the state where the activation took place.', required: true),
+          _buildSectionLabel(
+              'State', 'Select the state where the activation took place.',
+              required: true),
           const SizedBox(height: 12),
           _buildStateDropdown(),
           const SizedBox(height: 24),
 
           // ── Invoice section ──
-          _buildSectionLabel('Invoice', 'Upload the invoice and enter key details.', required: true),
+          _buildSectionLabel(
+              'Invoice', 'Upload the invoice and enter key details.',
+              required: true),
           const SizedBox(height: 12),
-          ..._invoices.asMap().entries.map((entry) =>
-            _buildInvoiceCard(entry.key, entry.value, device)),
+          ..._invoices.asMap().entries.map(
+              (entry) => _buildInvoiceCard(entry.key, entry.value, device)),
           if (_invoices.isEmpty)
             _buildFileUploadCard(
               'Upload Invoice',
@@ -1104,7 +1293,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               Icons.receipt_long,
               null,
               () async {
-                final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: _allowedExtensions);
+                final result = await FilePicker.platform.pickFiles(
+                    type: FileType.custom,
+                    allowedExtensions: _allowedExtensions);
                 if (result != null && result.files.isNotEmpty) {
                   final invoice = InvoiceItemData(
                     id: 'invoice_${DateTime.now().millisecondsSinceEpoch}',
@@ -1118,20 +1309,25 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             ),
           const SizedBox(height: 8),
           TextButton.icon(
-            onPressed: () => setState(() => _invoices.add(InvoiceItemData(id: 'invoice_${DateTime.now().millisecondsSinceEpoch}'))),
+            onPressed: () => setState(() => _invoices.add(InvoiceItemData(
+                id: 'invoice_${DateTime.now().millisecondsSinceEpoch}'))),
             icon: const Icon(Icons.add, size: 16),
             label: const Text('Add Invoice', style: TextStyle(fontSize: 13)),
-            style: TextButton.styleFrom(foregroundColor: AppColors.primary, padding: EdgeInsets.zero),
+            style: TextButton.styleFrom(
+                foregroundColor: AppColors.primary, padding: EdgeInsets.zero),
           ),
           const SizedBox(height: 24),
 
           // ── Cost Summary section ──
-          _buildSectionLabel('Cost Summary', 'Upload the cost breakdown document.', required: true),
+          _buildSectionLabel(
+              'Cost Summary', 'Upload the cost breakdown document.',
+              required: true),
           const SizedBox(height: 12),
           _buildFlatFileRow(
             file: _costSummaryFile,
             existingFileName: _existingCostSummaryFileName,
-            onPick: () => _pickFile((f) => setState(() => _costSummaryFile = f)),
+            onPick: () =>
+                _pickFile((f) => setState(() => _costSummaryFile = f)),
             onRemove: () => setState(() => _costSummaryFile = null),
           ),
         ],
@@ -1150,7 +1346,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       children: [
         Row(
           children: [
-            const Text('Purchase Order', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
+            const Text('Purchase Order',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF374151))),
             const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
           ],
         ),
@@ -1166,19 +1366,26 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             ),
             child: Row(
               children: [
-                const Icon(Icons.check_circle, color: Color(0xFF16A34A), size: 18),
+                const Icon(Icons.check_circle,
+                    color: Color(0xFF16A34A), size: 18),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     selectedLabel ?? '',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF15803D)),
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF15803D)),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 if (_selectedPO!['totalAmount'] != null)
                   Text(
                     '₹${_formatAmount(_selectedPO!['totalAmount'])}',
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF16A34A), fontWeight: FontWeight.w500),
+                    style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF16A34A),
+                        fontWeight: FontWeight.w500),
                   ),
                 const SizedBox(width: 8),
                 GestureDetector(
@@ -1187,7 +1394,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                     _currentPackageId = null;
                     _poSearchController.clear();
                   }),
-                  child: const Icon(Icons.close, size: 16, color: AppColors.rejectedText),
+                  child: const Icon(Icons.close,
+                      size: 16, color: AppColors.rejectedText),
                 ),
               ],
             ),
@@ -1199,13 +1407,18 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             style: const TextStyle(fontSize: 14),
             decoration: InputDecoration(
               hintText: 'Search by PO number or vendor name...',
-              hintStyle: const TextStyle(color: Color(0xFF9E9E9E), fontSize: 13),
+              hintStyle:
+                  const TextStyle(color: Color(0xFF9E9E9E), fontSize: 13),
               prefixIcon: _isLoadingPOs
                   ? const Padding(
                       padding: EdgeInsets.all(12),
-                      child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                      child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
                     )
-                  : const Icon(Icons.search, color: AppColors.primary, size: 20),
+                  : const Icon(Icons.search,
+                      color: AppColors.primary, size: 20),
               suffixIcon: _poSearchController.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.clear, size: 18),
@@ -1215,10 +1428,18 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                       },
                     )
                   : null,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppColors.border)),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppColors.border)),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide:
+                      const BorderSide(color: AppColors.primary, width: 1.5)),
               isDense: true,
             ),
             onChanged: (v) {
@@ -1237,18 +1458,25 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: AppColors.border),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 4))],
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4))
+                ],
               ),
               child: ListView.separated(
                 shrinkWrap: true,
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 itemCount: _availablePOs.length,
-                separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
+                separatorBuilder: (_, __) =>
+                    const Divider(height: 1, color: AppColors.border),
                 itemBuilder: (context, i) {
                   final po = _availablePOs[i];
                   final poNum = po['poNumber']?.toString() ?? '—';
                   final vendor = po['vendorName']?.toString() ?? '';
-                  final amount = po['totalAmount']; // ignore: unused_local_variable
+                  final amount =
+                      po['totalAmount']; // ignore: unused_local_variable
                   return InkWell(
                     onTap: () {
                       setState(() {
@@ -1258,26 +1486,35 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                       });
                     },
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
                       child: Row(
                         children: [
-                          const Icon(Icons.description_outlined, size: 18, color: AppColors.primary),
+                          const Icon(Icons.description_outlined,
+                              size: 18, color: AppColors.primary),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(poNum, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                                Text(poNum,
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.textPrimary)),
                                 if (vendor.isNotEmpty)
-                                  Text(vendor, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                                  Text(vendor,
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textSecondary)),
                               ],
                             ),
                           ),
-                    // if (amount != null)
-                    //   Text(
-                    //     '₹${_formatAmount(amount)}',
-                    //     style: const TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w500),
-                    //   ),
+                          // if (amount != null)
+                          //   Text(
+                          //     '₹${_formatAmount(amount)}',
+                          //     style: const TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w500),
+                          //   ),
                         ],
                       ),
                     ),
@@ -1294,7 +1531,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: AppColors.border),
               ),
-              child: const Text('No POs found', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+              child: const Text('No POs found',
+                  style:
+                      TextStyle(fontSize: 13, color: AppColors.textSecondary)),
             ),
           ],
         ],
@@ -1320,13 +1559,18 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       children: [
         Row(
           children: [
-            const Text('Activation State', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
+            const Text('Activation State',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF374151))),
             const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
           ],
         ),
         const SizedBox(height: 6),
         // Selected state chip
-        if (_selectedActivationState != null && _selectedActivationState!.isNotEmpty)
+        if (_selectedActivationState != null &&
+            _selectedActivationState!.isNotEmpty)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
@@ -1336,12 +1580,16 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             ),
             child: Row(
               children: [
-                const Icon(Icons.check_circle, color: Color(0xFF16A34A), size: 18),
+                const Icon(Icons.check_circle,
+                    color: Color(0xFF16A34A), size: 18),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     _selectedActivationState!,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF15803D)),
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF15803D)),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -1351,7 +1599,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                     _stateSearchController.clear();
                     _filteredStates = [];
                   }),
-                  child: const Icon(Icons.close, size: 16, color: AppColors.rejectedText),
+                  child: const Icon(Icons.close,
+                      size: 16, color: AppColors.rejectedText),
                 ),
               ],
             ),
@@ -1363,13 +1612,18 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             style: const TextStyle(fontSize: 14),
             decoration: InputDecoration(
               hintText: 'Search state...',
-              hintStyle: const TextStyle(color: Color(0xFF9E9E9E), fontSize: 13),
+              hintStyle:
+                  const TextStyle(color: Color(0xFF9E9E9E), fontSize: 13),
               prefixIcon: _isLoadingStates
                   ? const Padding(
                       padding: EdgeInsets.all(12),
-                      child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                      child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
                     )
-                  : const Icon(Icons.search, color: AppColors.primary, size: 20),
+                  : const Icon(Icons.search,
+                      color: AppColors.primary, size: 20),
               suffixIcon: _stateSearchController.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.clear, size: 18),
@@ -1379,10 +1633,18 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                       },
                     )
                   : null,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.border)),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppColors.border)),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppColors.border)),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide:
+                      const BorderSide(color: AppColors.primary, width: 1.5)),
               isDense: true,
             ),
             onChanged: (v) {
@@ -1391,7 +1653,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                   _filteredStates = [];
                 } else {
                   _filteredStates = _indianStates
-                      .where((s) => (s['stateName']?.toString() ?? '').toLowerCase().contains(v.toLowerCase()))
+                      .where((s) => (s['stateName']?.toString() ?? '')
+                          .toLowerCase()
+                          .contains(v.toLowerCase()))
                       .toList();
                 }
               });
@@ -1406,13 +1670,19 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: AppColors.border),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 4))],
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4))
+                ],
               ),
               child: ListView.separated(
                 shrinkWrap: true,
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 itemCount: _filteredStates.length,
-                separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
+                separatorBuilder: (_, __) =>
+                    const Divider(height: 1, color: AppColors.border),
                 itemBuilder: (context, i) {
                   final state = _filteredStates[i];
                   final name = state['stateName']?.toString() ?? '';
@@ -1426,13 +1696,19 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                       });
                     },
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
                       child: Row(
                         children: [
-                          const Icon(Icons.location_on_outlined, size: 18, color: AppColors.primary),
+                          const Icon(Icons.location_on_outlined,
+                              size: 18, color: AppColors.primary),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                            child: Text(name,
+                                style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textPrimary)),
                           ),
                           // if (gst != null)
                           //   Text(
@@ -1446,7 +1722,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 },
               ),
             ),
-          ] else if (_stateSearchController.text.isNotEmpty && !_isLoadingStates) ...[
+          ] else if (_stateSearchController.text.isNotEmpty &&
+              !_isLoadingStates) ...[
             const SizedBox(height: 4),
             Container(
               padding: const EdgeInsets.all(14),
@@ -1455,7 +1732,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: AppColors.border),
               ),
-              child: const Text('No states found', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+              child: const Text('No states found',
+                  style:
+                      TextStyle(fontSize: 13, color: AppColors.textSecondary)),
             ),
           ],
         ],
@@ -1464,18 +1743,30 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   }
 
   /// Flat section label matching the screenshot style.
-  Widget _buildSectionLabel(String title, String subtitle, {bool required = false}) {
+  Widget _buildSectionLabel(String title, String subtitle,
+      {bool required = false}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
-            if (required) const Text(' *', style: TextStyle(color: Colors.red, fontSize: 16, fontWeight: FontWeight.w600)),
+            Text(title,
+                style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF111827))),
+            if (required)
+              const Text(' *',
+                  style: TextStyle(
+                      color: Colors.red,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600)),
           ],
         ),
         const SizedBox(height: 2),
-        Text(subtitle, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        Text(subtitle,
+            style:
+                const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
       ],
     );
   }
@@ -1504,15 +1795,22 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(displayName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF15803D))),
+                  Text(displayName,
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF15803D))),
                   const SizedBox(height: 2),
-                  const Text('Uploaded', style: TextStyle(fontSize: 11, color: Color(0xFF16A34A))),
+                  const Text('Uploaded',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF16A34A))),
                 ],
               ),
             ),
             TextButton(
               onPressed: onPick,
-              style: TextButton.styleFrom(foregroundColor: AppColors.primary, padding: const EdgeInsets.symmetric(horizontal: 8)),
+              style: TextButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(horizontal: 8)),
               child: const Text('Replace', style: TextStyle(fontSize: 13)),
             ),
           ],
@@ -1528,15 +1826,22 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         padding: const EdgeInsets.symmetric(vertical: 20),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.border, width: 1.5, style: BorderStyle.solid),
+          border: Border.all(
+              color: AppColors.border, width: 1.5, style: BorderStyle.solid),
         ),
         child: Column(
           children: [
-            Icon(Icons.cloud_upload_outlined, size: 32, color: AppColors.primary.withOpacity(0.5)),
+            Icon(Icons.cloud_upload_outlined,
+                size: 32, color: AppColors.primary.withOpacity(0.5)),
             const SizedBox(height: 6),
-            const Text('Click to upload', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.primary)),
+            const Text('Click to upload',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.primary)),
             const SizedBox(height: 2),
-            const Text('PDF, Word, Excel, Images supported', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+            const Text('PDF, Word, Excel, Images supported',
+                style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
           ],
         ),
       ),
@@ -1545,7 +1850,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
 
   /// One invoice entry: file row + 2-col fields grid + remove button.
   /// One invoice entry: card with icon header + file upload + fields grid + remove button.
-  Widget _buildInvoiceCard(int index, InvoiceItemData invoice, DeviceType device) {
+  Widget _buildInvoiceCard(
+      int index, InvoiceItemData invoice, DeviceType device) {
     final isMobile = device == DeviceType.mobile;
     final pad = isMobile ? 20.0 : 24.0;
     return Padding(
@@ -1556,8 +1862,14 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 1),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
+          border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.5), width: 1),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2))
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1566,8 +1878,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               children: [
                 Container(
                   padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
-                  child: const Icon(Icons.receipt_long, color: AppColors.primary, size: 24),
+                  decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.receipt_long,
+                      color: AppColors.primary, size: 24),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -1575,11 +1890,18 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _invoices.length > 1 ? 'Invoice ${index + 1}' : 'Invoice',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                        _invoices.length > 1
+                            ? 'Invoice ${index + 1}'
+                            : 'Invoice',
+                        style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary),
                       ),
                       const SizedBox(height: 4),
-                      const Text('Upload the invoice document (PDF only)', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                      const Text('Upload the invoice document (PDF only)',
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.textSecondary)),
                     ],
                   ),
                 ),
@@ -1589,7 +1911,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                       final removed = _invoices.removeAt(index);
                       removed.dispose();
                     }),
-                    icon: const Icon(Icons.close, color: AppColors.rejectedText, size: 20),
+                    icon: const Icon(Icons.close,
+                        color: AppColors.rejectedText, size: 20),
                     tooltip: 'Remove invoice',
                   ),
               ],
@@ -1599,7 +1922,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             if (invoice.file == null && invoice.existingFileName == null)
               InkWell(
                 onTap: () async {
-                  final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: _allowedExtensions);
+                  final result = await FilePicker.platform.pickFiles(
+                      type: FileType.custom,
+                      allowedExtensions: _allowedExtensions);
                   if (result != null && result.files.isNotEmpty) {
                     setState(() => invoice.file = result.files.first);
                     await _uploadAndAutofillInvoice(invoice);
@@ -1611,17 +1936,27 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                   height: isMobile ? 120 : 140,
                   decoration: BoxDecoration(
                     color: AppColors.primary.withValues(alpha: 0.03),
-                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.3), width: 2),
+                    border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.3),
+                        width: 2),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.cloud_upload_outlined, size: 48, color: AppColors.primary.withValues(alpha: 0.6)),
+                      Icon(Icons.cloud_upload_outlined,
+                          size: 48,
+                          color: AppColors.primary.withValues(alpha: 0.6)),
                       const SizedBox(height: 12),
-                      const Text('Click to upload', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.primary)),
+                      const Text('Click to upload',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primary)),
                       const SizedBox(height: 4),
-                      const Text('PDF, Word, Excel, Images supported', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      const Text('PDF, Word, Excel, Images supported',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.textSecondary)),
                     ],
                   ),
                 ),
@@ -1638,8 +1973,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                   children: [
                     Container(
                       padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
-                      child: const Icon(Icons.check_circle, color: AppColors.approvedText, size: 24),
+                      decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8)),
+                      child: const Icon(Icons.check_circle,
+                          color: AppColors.approvedText, size: 24),
                     ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -1647,14 +1985,24 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            invoice.file?.name ?? invoice.existingFileName ?? '',
-                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.approvedText),
+                            invoice.file?.name ??
+                                invoice.existingFileName ??
+                                '',
+                            style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.approvedText),
                             overflow: TextOverflow.ellipsis,
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            invoice.file != null ? '${(invoice.file!.size / 1024).toStringAsFixed(1)} KB' : 'Already uploaded',
-                            style: TextStyle(fontSize: 12, color: AppColors.approvedText.withValues(alpha: 0.7)),
+                            invoice.file != null
+                                ? '${(invoice.file!.size / 1024).toStringAsFixed(1)} KB'
+                                : 'Already uploaded',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.approvedText
+                                    .withValues(alpha: 0.7)),
                           ),
                         ],
                       ),
@@ -1665,7 +2013,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                         invoice.extractionStatus = ExtractionStatus.none;
                         invoice.extractionError = null;
                       }),
-                      icon: const Icon(Icons.close, color: AppColors.rejectedText, size: 24),
+                      icon: const Icon(Icons.close,
+                          color: AppColors.rejectedText, size: 24),
                       tooltip: 'Remove file',
                     ),
                   ],
@@ -1676,25 +2025,40 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             if (invoice.extractionStatus == ExtractionStatus.extracting)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(
                   color: AppColors.primary.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+                  border: Border.all(
+                      color: AppColors.primary.withValues(alpha: 0.2)),
                 ),
                 child: Row(
                   children: [
-                    SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary))),
+                    SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                AppColors.primary))),
                     const SizedBox(width: 10),
-                    const Expanded(child: Text('Extracting invoice details... Fields will autofill when complete.', style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w500))),
+                    const Expanded(
+                        child: Text(
+                            'Extracting invoice details... Fields will autofill when complete.',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w500))),
                   ],
                 ),
               )
             else if (invoice.extractionStatus == ExtractionStatus.success)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(
                   color: AppColors.approvedBackground,
@@ -1703,16 +2067,24 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 ),
                 child: const Row(
                   children: [
-                    Icon(Icons.auto_awesome, size: 18, color: AppColors.approvedText),
+                    Icon(Icons.auto_awesome,
+                        size: 18, color: AppColors.approvedText),
                     SizedBox(width: 10),
-                    Expanded(child: Text('Fields auto-filled from document. Please verify before proceeding.', style: TextStyle(fontSize: 12, color: AppColors.approvedText, fontWeight: FontWeight.w500))),
+                    Expanded(
+                        child: Text(
+                            'Fields auto-filled from document. Please verify before proceeding.',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.approvedText,
+                                fontWeight: FontWeight.w500))),
                   ],
                 ),
               )
             else if (invoice.extractionStatus == ExtractionStatus.failed)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFFF7ED),
@@ -1721,32 +2093,72 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.info_outline, size: 18, color: Color(0xFFEA580C)),
+                    const Icon(Icons.info_outline,
+                        size: 18, color: Color(0xFFEA580C)),
                     const SizedBox(width: 10),
-                    Expanded(child: Text(invoice.extractionError ?? 'Auto-extraction failed. Please enter details manually.', style: const TextStyle(fontSize: 12, color: Color(0xFFEA580C), fontWeight: FontWeight.w500))),
+                    Expanded(
+                        child: Text(
+                            invoice.extractionError ??
+                                'Auto-extraction failed. Please enter details manually.',
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFFEA580C),
+                                fontWeight: FontWeight.w500))),
                   ],
                 ),
               ),
             // Fields grid
             if (isMobile) ...[
-              _buildFlatField('Invoice Number', invoice.invoiceNumber, (v) => invoice.invoiceNumber = v, required: true, controller: invoice.invoiceNumberController),
+              _buildFlatField('Invoice Number', invoice.invoiceNumber,
+                  (v) => invoice.invoiceNumber = v,
+                  required: true, controller: invoice.invoiceNumberController,
+                  enabled: !invoice.isExtracting),
               const SizedBox(height: 10),
-              _buildFlatDateField('Invoice Date', invoice.invoiceDate, (v) => invoice.invoiceDate = v, required: true, controller: invoice.invoiceDateController),
+              _buildFlatDateField('Invoice Date', invoice.invoiceDate,
+                  (v) => invoice.invoiceDate = v,
+                  required: true, controller: invoice.invoiceDateController,
+                  enabled: !invoice.isExtracting),
               const SizedBox(height: 10),
-              _buildFlatField('Invoice Amount', invoice.totalAmount, (v) => invoice.totalAmount = v, required: true, controller: invoice.totalAmountController),
+              _buildFlatField('Invoice Amount', invoice.totalAmount,
+                  (v) => invoice.totalAmount = v,
+                  required: true, controller: invoice.totalAmountController,
+                  enabled: !invoice.isExtracting),
               const SizedBox(height: 10),
-              _buildFlatField('GSTIN', invoice.gstNumber, (v) => invoice.gstNumber = v, required: true, controller: invoice.gstNumberController),
+              _buildFlatField(
+                  'GSTIN', invoice.gstNumber, (v) => invoice.gstNumber = v,
+                  required: true, controller: invoice.gstNumberController,
+                  enabled: !invoice.isExtracting),
             ] else ...[
               Row(children: [
-                Expanded(child: _buildFlatField('Invoice Number', invoice.invoiceNumber, (v) => invoice.invoiceNumber = v, required: true, controller: invoice.invoiceNumberController)),
+                Expanded(
+                    child: _buildFlatField('Invoice Number',
+                        invoice.invoiceNumber, (v) => invoice.invoiceNumber = v,
+                        required: true,
+                        controller: invoice.invoiceNumberController,
+                        enabled: !invoice.isExtracting)),
                 const SizedBox(width: 16),
-                Expanded(child: _buildFlatDateField('Invoice Date', invoice.invoiceDate, (v) => invoice.invoiceDate = v, required: true, controller: invoice.invoiceDateController)),
+                Expanded(
+                    child: _buildFlatDateField('Invoice Date',
+                        invoice.invoiceDate, (v) => invoice.invoiceDate = v,
+                        required: true,
+                        controller: invoice.invoiceDateController,
+                        enabled: !invoice.isExtracting)),
               ]),
               const SizedBox(height: 12),
               Row(children: [
-                Expanded(child: _buildFlatField('Invoice Amount', invoice.totalAmount, (v) => invoice.totalAmount = v, required: true, controller: invoice.totalAmountController)),
+                Expanded(
+                    child: _buildFlatField('Invoice Amount',
+                        invoice.totalAmount, (v) => invoice.totalAmount = v,
+                        required: true,
+                        controller: invoice.totalAmountController,
+                        enabled: !invoice.isExtracting)),
                 const SizedBox(width: 16),
-                Expanded(child: _buildFlatField('GSTIN', invoice.gstNumber, (v) => invoice.gstNumber = v, required: true, controller: invoice.gstNumberController)),
+                Expanded(
+                    child: _buildFlatField('GSTIN', invoice.gstNumber,
+                        (v) => invoice.gstNumber = v,
+                        required: true,
+                        controller: invoice.gstNumberController,
+                        enabled: !invoice.isExtracting)),
               ]),
             ],
           ],
@@ -1758,27 +2170,48 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   /// Flat labeled text field matching the screenshot style.
   /// When [controller] is provided it is used instead of [initialValue] so
   /// that programmatic updates (e.g. from extraction) are reflected in the UI.
-  Widget _buildFlatField(String label, String value, Function(String) onChanged, {bool required = false, TextEditingController? controller}) {
+  Widget _buildFlatField(String label, String value, Function(String) onChanged,
+      {bool required = false, TextEditingController? controller, bool enabled = true}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
-            if (required) const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
+            Text(label,
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF374151))),
+            if (required)
+              const Text(' *',
+                  style: TextStyle(color: Colors.red, fontSize: 13)),
           ],
         ),
         const SizedBox(height: 6),
         TextFormField(
           controller: controller,
           initialValue: controller == null ? value : null,
-          onChanged: (v) => setState(() => onChanged(v)),
-          style: const TextStyle(fontSize: 14),
+          onChanged: enabled ? (v) => setState(() => onChanged(v)) : null,
+          enabled: enabled,
+          style: TextStyle(fontSize: 14, color: enabled ? null : const Color(0xFF9CA3AF)),
           decoration: InputDecoration(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.border)),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.border)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
+            filled: !enabled,
+            fillColor: !enabled ? const Color(0xFFF3F4F6) : null,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide:
+                    const BorderSide(color: AppColors.primary, width: 1.5)),
             isDense: true,
           ),
         ),
@@ -1787,7 +2220,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
   }
 
   /// Flat date field with calendar picker — matches PO date style.
-  Widget _buildFlatDateField(String label, String value, Function(String) onChanged, {bool required = false, TextEditingController? controller}) {
+  Widget _buildFlatDateField(
+      String label, String value, Function(String) onChanged,
+      {bool required = false, TextEditingController? controller, bool enabled = true}) {
     // Use the provided controller, or create a temporary one for backward compat
     final ctrl = controller ?? TextEditingController(text: value);
     return Column(
@@ -1795,26 +2230,47 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       children: [
         Row(
           children: [
-            Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
-            if (required) const Text(' *', style: TextStyle(color: Colors.red, fontSize: 13)),
+            Text(label,
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF374151))),
+            if (required)
+              const Text(' *',
+                  style: TextStyle(color: Colors.red, fontSize: 13)),
           ],
         ),
         const SizedBox(height: 6),
         TextFormField(
           readOnly: true,
+          enabled: enabled,
           controller: ctrl,
-          style: const TextStyle(fontSize: 14),
+          style: TextStyle(fontSize: 14, color: enabled ? null : const Color(0xFF9CA3AF)),
           decoration: InputDecoration(
             hintText: 'dd-mm-yyyy',
             hintStyle: const TextStyle(color: Color(0xFF9E9E9E), fontSize: 14),
-            suffixIcon: const Icon(Icons.calendar_today, color: AppColors.primary, size: 18),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.border)),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.border)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
+            filled: !enabled,
+            fillColor: !enabled ? const Color(0xFFF3F4F6) : null,
+            suffixIcon: Icon(Icons.calendar_today,
+                color: enabled ? AppColors.primary : const Color(0xFF9CA3AF), size: 18),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: AppColors.border)),
+            disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide:
+                    const BorderSide(color: AppColors.primary, width: 1.5)),
             isDense: true,
           ),
-          onTap: () async {
+          onTap: enabled ? () async {
             DateTime initial = DateTime.now();
             if (value.isNotEmpty) {
               final parsed = _parseDate(value);
@@ -1827,7 +2283,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               lastDate: DateTime.now(),
               builder: (ctx, child) => Theme(
                 data: Theme.of(ctx).copyWith(
-                  colorScheme: const ColorScheme.light(primary: AppColors.primary),
+                  colorScheme:
+                      const ColorScheme.light(primary: AppColors.primary),
                 ),
                 child: child!,
               ),
@@ -1838,12 +2295,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
               ctrl.text = formatted;
               setState(() => onChanged(formatted));
             }
-          },
+          } : null,
         ),
       ],
     );
   }
-
 
   // ─── STEP 2: TEAMS ────────────────────────────────────────────────────
   Widget _buildTeamsStep(DeviceType device) {
@@ -1854,12 +2310,15 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Activity Summary section ──
-          _buildSectionLabel('Activity Summary', 'Upload the activity summary document.', required: true),
+          _buildSectionLabel(
+              'Activity Summary', 'Upload the activity summary document.',
+              required: true),
           const SizedBox(height: 12),
           _buildFlatFileRow(
             file: _activitySummaryFile,
             existingFileName: _existingActivitySummaryFileName,
-            onPick: () => _pickFile((f) => setState(() => _activitySummaryFile = f)),
+            onPick: () =>
+                _pickFile((f) => setState(() => _activitySummaryFile = f)),
             onRemove: () => setState(() => _activitySummaryFile = null),
           ),
           const SizedBox(height: 28),
@@ -1867,9 +2326,11 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
           // ── Teams section ──
           CampaignListSection(
             campaigns: _campaigns,
-            onCampaignsChanged: (campaigns) => setState(() => _campaigns = campaigns),
+            onCampaignsChanged: (campaigns) =>
+                setState(() => _campaigns = campaigns),
             token: widget.token,
             packageId: _currentPackageId,
+            selectedActivationState: _selectedActivationState,
           ),
         ],
       ),
@@ -1886,7 +2347,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Inquiry Document ──
-          _buildSectionLabel('Enquiry Document', 'Upload the enquiry dump with customer leads. This is mandatory.', required: true),
+          _buildSectionLabel('Enquiry Document',
+              'Upload the enquiry dump with customer leads. This is mandatory.',
+              required: true),
           const SizedBox(height: 12),
           _buildFlatFileRow(
             file: _enquiryDocFile,
@@ -1897,7 +2360,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
           const SizedBox(height: 28),
 
           // ── Additional Documents ──
-          _buildSectionLabel('Additional Documents', 'Upload any other supporting documents (optional).'),
+          _buildSectionLabel('Additional Documents',
+              'Upload any other supporting documents (optional).'),
           const SizedBox(height: 12),
           _buildAdditionalDocsUploadArea(),
         ],
@@ -1937,7 +2401,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 const SizedBox(height: 4),
                 const Text(
                   'PDF, Word, Excel, Images — max 50MB',
-                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  style:
+                      TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
               ],
             ),
@@ -1946,38 +2411,52 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         if (_additionalDocs.isNotEmpty) ...[
           const SizedBox(height: 10),
           ..._additionalDocs.asMap().entries.map((e) => Container(
-            margin: const EdgeInsets.only(bottom: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0FDF4),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.insert_drive_file, color: Color(0xFF16A34A), size: 16),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    e.value.name,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF15803D)),
-                  ),
+                margin: const EdgeInsets.only(bottom: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(8),
+                  border:
+                      Border.all(color: const Color(0xFF86EFAC), width: 1.5),
                 ),
-                GestureDetector(
-                  onTap: () => setState(() => _additionalDocs.removeAt(e.key)),
-                  child: const Icon(Icons.close, color: AppColors.rejectedText, size: 16),
+                child: Row(
+                  children: [
+                    const Icon(Icons.insert_drive_file,
+                        color: Color(0xFF16A34A), size: 16),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        e.value.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFF15803D)),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () =>
+                          setState(() => _additionalDocs.removeAt(e.key)),
+                      child: const Icon(Icons.close,
+                          color: AppColors.rejectedText, size: 16),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          )),
+              )),
         ],
       ],
     );
   }
 
-  Widget _buildFileUploadCard(String title, String subtitle, IconData icon, PlatformFile? file,
-      VoidCallback onPick, VoidCallback onRemove, DeviceType device) {
+  Widget _buildFileUploadCard(
+      String title,
+      String subtitle,
+      IconData icon,
+      PlatformFile? file,
+      VoidCallback onPick,
+      VoidCallback onRemove,
+      DeviceType device) {
     final pad = device == DeviceType.mobile ? 20.0 : 24.0;
     return Container(
       width: double.infinity,
@@ -1986,7 +2465,12 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border.withOpacity(0.5), width: 1),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1996,7 +2480,9 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
             children: [
               Container(
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12)),
                 child: Icon(icon, color: AppColors.primary, size: 24),
               ),
               const SizedBox(width: 16),
@@ -2004,9 +2490,15 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                    Text(title,
+                        style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary)),
                     const SizedBox(height: 4),
-                    Text(subtitle, style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                    Text(subtitle,
+                        style: TextStyle(
+                            fontSize: 13, color: AppColors.textSecondary)),
                   ],
                 ),
               ),
@@ -2022,17 +2514,25 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 height: device == DeviceType.mobile ? 120 : 140,
                 decoration: BoxDecoration(
                   color: AppColors.primary.withOpacity(0.03),
-                  border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 2),
+                  border: Border.all(
+                      color: AppColors.primary.withOpacity(0.3), width: 2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.cloud_upload_outlined, size: 48, color: AppColors.primary.withOpacity(0.6)),
+                    Icon(Icons.cloud_upload_outlined,
+                        size: 48, color: AppColors.primary.withOpacity(0.6)),
                     const SizedBox(height: 12),
-                    const Text('Click to upload', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.primary)),
+                    const Text('Click to upload',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary)),
                     const SizedBox(height: 4),
-                    const Text('PDF, Word, Excel, Images supported', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                    const Text('PDF, Word, Excel, Images supported',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.textSecondary)),
                   ],
                 ),
               ),
@@ -2049,21 +2549,37 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
                 children: [
                   Container(
                     padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
-                    child: const Icon(Icons.check_circle, color: AppColors.approvedText, size: 24),
+                    decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.check_circle,
+                        color: AppColors.approvedText, size: 24),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(file.name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.approvedText), overflow: TextOverflow.ellipsis),
+                        Text(file.name,
+                            style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.approvedText),
+                            overflow: TextOverflow.ellipsis),
                         const SizedBox(height: 4),
-                        Text('${(file.size / 1024).toStringAsFixed(1)} KB', style: TextStyle(fontSize: 12, color: AppColors.approvedText.withOpacity(0.7))),
+                        Text('${(file.size / 1024).toStringAsFixed(1)} KB',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color:
+                                    AppColors.approvedText.withOpacity(0.7))),
                       ],
                     ),
                   ),
-                  IconButton(onPressed: onRemove, icon: const Icon(Icons.close, color: AppColors.rejectedText, size: 24), tooltip: 'Remove file'),
+                  IconButton(
+                      onPressed: onRemove,
+                      icon: const Icon(Icons.close,
+                          color: AppColors.rejectedText, size: 24),
+                      tooltip: 'Remove file'),
                 ],
               ),
             ),
@@ -2083,7 +2599,8 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.primary,
         side: BorderSide(color: AppColors.primary.withOpacity(0.3), width: 1.5),
-        padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24, vertical: 12),
+        padding:
+            EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
@@ -2093,22 +2610,27 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.textSecondary,
         side: const BorderSide(color: AppColors.border, width: 1.5),
-        padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24, vertical: 12),
+        padding:
+            EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
-      child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w600)),
+      child:
+          const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w600)),
     );
 
     final nextBtn = _currentStep < 3
         ? ElevatedButton.icon(
             onPressed: _handleNext,
             icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-            label: const Text('Next Step', style: TextStyle(fontWeight: FontWeight.w700)),
+            label: const Text('Next Step',
+                style: TextStyle(fontWeight: FontWeight.w700)),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(horizontal: isMobile ? 20 : 28, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 20 : 28, vertical: 12),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
               elevation: 4,
               shadowColor: AppColors.primary.withOpacity(0.4),
             ),
@@ -2116,14 +2638,28 @@ class _AgencyUploadPageState extends State<AgencyUploadPage>
         : ElevatedButton.icon(
             onPressed: _isUploading ? null : _handleSubmit,
             icon: _isUploading
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)))
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(Colors.white)))
                 : const Icon(Icons.check_circle_rounded, size: 20),
-            label: Text(_isUploading ? 'Submitting...' : (_isEditMode ? 'Resubmit for Validation' : 'Submit for Validation'), style: const TextStyle(fontWeight: FontWeight.w700)),
+            label: Text(
+                _isUploading
+                    ? 'Submitting...'
+                    : (_isEditMode
+                        ? 'Resubmit for Validation'
+                        : 'Submit for Validation'),
+                style: const TextStyle(fontWeight: FontWeight.w700)),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(horizontal: isMobile ? 20 : 28, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 20 : 28, vertical: 12),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
               elevation: 4,
               shadowColor: AppColors.primary.withOpacity(0.4),
             ),

@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:js_interop';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:web/web.dart' as web;
 import '../providers/assistant_notifier.dart';
 import '../providers/assistant_providers.dart';
 import 'assistant_bubble.dart';
@@ -13,6 +17,8 @@ import 'po_search_list.dart';
 import 'file_upload_card.dart';
 import 'chat_input_bar.dart';
 import '../../data/models/assistant_response_model.dart';
+import '../../../../core/network/dio_client.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 
 /// Embeddable side-panel version of the Field Activity Assistant.
 /// Mirrors ChatScreen logic but renders as a Column (no Scaffold).
@@ -43,9 +49,20 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!_initialized) {
         _initialized = true;
+        // Restore token from secure storage into authTokenProvider if not already set
+        final currentToken = ref.read(authTokenProvider);
+        if (currentToken == null || currentToken.isEmpty) {
+          final localDataSource = ref.read(authLocalDataSourceProvider);
+          final storedToken = await localDataSource.getAccessToken();
+          if (storedToken != null && storedToken.isNotEmpty) {
+            ref.read(authTokenProvider.notifier).state = storedToken;
+          }
+        }
+        // Always reset to a fresh state every time the panel opens
+        ref.read(assistantNotifierProvider.notifier).reset();
         ref.read(assistantNotifierProvider.notifier).greet();
       }
     });
@@ -110,6 +127,130 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       }
       ref.read(assistantNotifierProvider.notifier).uploadInvoice(file.bytes!, file.name);
     }
+  }
+
+  Future<void> _captureInvoiceFromCamera() async {
+    final bytes = await _openWebCamera();
+    if (bytes == null) return;
+    ref.read(assistantNotifierProvider.notifier).uploadInvoice(bytes, 'camera_invoice.jpg');
+  }
+
+  Future<void> _captureTeamPhotoFromCamera(String payloadJson) async {
+    final bytes = await _openWebCamera();
+    if (bytes == null) return;
+    ref.read(assistantNotifierProvider.notifier).uploadTeamPhotos([bytes], ['camera_photo.jpg'], payloadJson);
+  }
+
+  Future<Uint8List?> _openWebCamera() async {
+    if (!kIsWeb) {
+      final picker = ImagePicker();
+      final photo = await picker.pickImage(source: ImageSource.camera);
+      if (photo == null) return null;
+      return await photo.readAsBytes();
+    }
+
+    // Web: use getUserMedia to access camera, show preview, capture snapshot
+    final completer = Completer<Uint8List?>();
+
+    // Create overlay UI
+    final overlay = web.HTMLDivElement()
+      ..setAttribute('style',
+          'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;');
+
+    final video = web.HTMLVideoElement()
+      ..setAttribute('autoplay', '')
+      ..setAttribute('playsinline', '')
+      ..setAttribute('style', 'width:100%;max-width:480px;border-radius:8px;');
+
+    final btnRow = web.HTMLDivElement()
+      ..setAttribute('style', 'display:flex;gap:12px;margin-top:16px;');
+
+    final captureBtn = web.HTMLButtonElement()
+      ..textContent = 'Capture'
+      ..setAttribute('style',
+          'padding:12px 32px;background:#003087;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;');
+
+    final cancelBtn = web.HTMLButtonElement()
+      ..textContent = 'Cancel'
+      ..setAttribute('style',
+          'padding:12px 32px;background:#666;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;');
+
+    btnRow.append(captureBtn);
+    btnRow.append(cancelBtn);
+    overlay.append(video);
+    overlay.append(btnRow);
+    web.document.body!.append(overlay);
+
+    web.MediaStream? stream;
+
+    try {
+      // Request front camera
+      final constraints = {
+        'video': {'facingMode': 'user'},
+        'audio': false,
+      }.jsify();
+
+      stream = await web.window.navigator.mediaDevices
+          .getUserMedia(constraints as web.MediaStreamConstraints)
+          .toDart;
+
+      video.srcObject = stream;
+    } catch (e) {
+      overlay.remove();
+      if (!completer.isCompleted) completer.complete(null);
+      return completer.future;
+    }
+
+    void stopStream() {
+      final tracks = stream?.getTracks();
+      if (tracks != null) {
+        for (var i = 0; i < tracks.toDart.length; i++) {
+          tracks.toDart[i].stop();
+        }
+      }
+      overlay.remove();
+    }
+
+    captureBtn.addEventListener(
+      'click',
+      (web.Event _) {
+        final canvas = web.HTMLCanvasElement()
+          ..width = video.videoWidth
+          ..height = video.videoHeight;
+        final ctx = canvas.getContext('2d') as web.CanvasRenderingContext2D?;
+        ctx?.drawImage(video, 0, 0);
+        // Specify image/jpeg so magic bytes match the .jpg filename
+        canvas.toBlob((web.Blob blob) {
+          final reader = web.FileReader();
+          reader.addEventListener(
+            'loadend',
+            (web.Event _) {
+              stopStream();
+              final result = reader.result;
+              if (!completer.isCompleted) {
+                if (result != null) {
+                  final bytes = (result as JSArrayBuffer).toDart.asUint8List();
+                  completer.complete(bytes);
+                } else {
+                  completer.complete(null);
+                }
+              }
+            }.toJS,
+          );
+          reader.readAsArrayBuffer(blob);
+        }.toJS, 'image/jpeg', 0.92.toJS);
+      }.toJS,
+    );
+
+    cancelBtn.addEventListener(
+      'click',
+      (web.Event _) {
+        stopStream();
+        if (!completer.isCompleted) completer.complete(null);
+      }.toJS,
+    );
+
+    return completer.future;
   }
 
   Future<void> _pickCostSummaryFile() async {
@@ -220,6 +361,115 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     );
     if (photoIds.isNotEmpty) {
       ref.read(assistantNotifierProvider.notifier).replacePhoto(photoNumber, photoIds.first, payloadJson);
+    }
+  }
+
+  /// Fetch document bytes from backend and show in a fullscreen dialog.
+  Future<void> _viewDocument(String docId) async {
+    if (docId.isEmpty) return;
+    try {
+      final dio = ref.read(dioProvider);
+      final resp = await dio.get('/api/documents/$docId/download');
+      final data = resp.data as Map<String, dynamic>;
+      final base64Content = data['base64Content'] as String? ?? '';
+      final contentType = data['contentType'] as String? ?? '';
+      final fileName = data['filename'] as String? ?? 'document';
+      if (base64Content.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No content available for this document')),
+          );
+        }
+        return;
+      }
+      final bytes = base64Decode(base64Content);
+      final isImage = contentType.startsWith('image/') ||
+          fileName.toLowerCase().endsWith('.jpg') ||
+          fileName.toLowerCase().endsWith('.jpeg') ||
+          fileName.toLowerCase().endsWith('.png');
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                child: Row(children: [
+                  Expanded(child: Text(fileName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ]),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: isImage
+                    ? InteractiveViewer(child: Image.memory(bytes, fit: BoxFit.contain))
+                    : Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(32),
+                          child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            const Icon(Icons.description, size: 48, color: Color(0xFF6B7280)),
+                            const SizedBox(height: 12),
+                            Text(fileName, style: const TextStyle(fontSize: 14)),
+                            const SizedBox(height: 8),
+                            const Text('Preview not available for this file type.', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                          ]),
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load document: $e')),
+        );
+      }
+    }
+  }
+
+  /// Fetch document bytes from backend and trigger browser download.
+  Future<void> _downloadDocument(String docId, String fallbackName) async {
+    if (docId.isEmpty) return;
+    try {
+      final dio = ref.read(dioProvider);
+      final resp = await dio.get('/api/documents/$docId/download');
+      final data = resp.data as Map<String, dynamic>;
+      final base64Content = data['base64Content'] as String? ?? '';
+      final contentType = data['contentType'] as String? ?? 'application/octet-stream';
+      final fileName = data['filename'] as String? ?? fallbackName;
+      if (base64Content.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No content available for download')),
+          );
+        }
+        return;
+      }
+      if (kIsWeb) {
+        final anchor = web.HTMLAnchorElement()
+          ..href = 'data:$contentType;base64,$base64Content'
+          ..download = fileName
+          ..style.display = 'none';
+        web.document.body!.append(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Downloaded: $fileName')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to download: $e')),
+        );
+      }
     }
   }
 
@@ -474,7 +724,31 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 padding: EdgeInsets.only(bottom: 8),
                 child: Text('Upload Invoice', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
               ),
-              _uploadButton('Upload from device', Icons.upload_file, _pickInvoiceFile),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _pickInvoiceFile,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      side: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    child: const Text('Upload from device', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _captureInvoiceFromCamera,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      side: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    child: const Text('Use Camera', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                  ),
+                ),
+              ]),
               if (ref.watch(assistantNotifierProvider).isLoading && isLast)
                 const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
               Padding(
@@ -587,6 +861,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
               : null,
         );
+      case 'dealer_list':
       case 'dealer_search_results':
         return AssistantBubble(
           message: msg.content,
@@ -615,22 +890,37 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams),
                 ),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: ref.watch(assistantNotifierProvider).isLoading
-                      ? null
-                      : () => _pickMultiplePhotoFiles(r.payloadJson ?? _currentTeamPayload),
-                  icon: const Icon(Icons.photo_library, size: 18),
-                  label: const Text('Choose from gallery'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF003087),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              Row(children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading
+                        ? null
+                        : () => _pickMultiplePhotoFiles(r.payloadJson ?? _currentTeamPayload),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF003087),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Choose from gallery', style: TextStyle(fontSize: 13)),
                   ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading
+                        ? null
+                        : () => _captureTeamPhotoFromCamera(r.payloadJson ?? _currentTeamPayload),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF003087),
+                      side: const BorderSide(color: Color(0xFF003087)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Use Camera', style: TextStyle(fontSize: 13)),
+                  ),
+                ),
+              ]),
               if (ref.watch(assistantNotifierProvider).isLoading && isLast)
                 const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
               Padding(
@@ -953,6 +1243,43 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
+        // View & Download buttons for invoice
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _viewDocument(docId);
+              },
+              icon: const Icon(Icons.visibility, size: 16),
+              label: const Text('View'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _downloadDocument(docId, 'invoice');
+              },
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Download'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -1141,6 +1468,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         2: FlexColumnWidth(),
         3: FlexColumnWidth(),
         4: FlexColumnWidth(),
+        5: FixedColumnWidth(40),
+        6: FixedColumnWidth(40),
       },
       children: [
         TableRow(
@@ -1151,6 +1480,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
             _tableCell('GPS', headerStyle),
             _tableCell('Blue\nT-shirt', headerStyle),
             _tableCell('3W\nVehicle', headerStyle),
+            _tableCell('View', headerStyle),
+            _tableCell('Save', headerStyle),
           ],
         ),
         ...photos.map((photo) => TableRow(
@@ -1161,6 +1492,18 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
             _tableBadgeCell(_badge(_rulePassed(photo, 'gps'))),
             _tableBadgeCell(_badge(_rulePassed(photo, 'blue'))),
             _tableBadgeCell(_badge(_rulePassed(photo, 'vehicle'))),
+            _tableBadgeCell(
+              InkWell(
+                onTap: photo.photoId.isNotEmpty ? () => _viewDocument(photo.photoId) : null,
+                child: Icon(Icons.visibility, size: 18, color: photo.photoId.isNotEmpty ? const Color(0xFF003087) : Colors.grey.shade400),
+              ),
+            ),
+            _tableBadgeCell(
+              InkWell(
+                onTap: photo.photoId.isNotEmpty ? () => _downloadDocument(photo.photoId, photo.fileName) : null,
+                child: Icon(Icons.download, size: 18, color: photo.photoId.isNotEmpty ? const Color(0xFF003087) : Colors.grey.shade400),
+              ),
+            ),
           ],
         )),
       ],
@@ -1380,6 +1723,43 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
+        // View & Download buttons for cost summary
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _viewDocument(docId);
+              },
+              icon: const Icon(Icons.visibility, size: 16),
+              label: const Text('View'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _downloadDocument(docId, 'cost_summary');
+              },
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Download'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -1506,6 +1886,43 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
+        // View & Download buttons for activity summary
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _viewDocument(docId);
+              },
+              icon: const Icon(Icons.visibility, size: 16),
+              label: const Text('View'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _downloadDocument(docId, 'activity_summary');
+              },
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Download'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -1523,7 +1940,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           const SizedBox(width: 8),
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(),
+              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(payloadJson: r.payloadJson),
               icon: const Icon(Icons.arrow_forward, size: 14),
               label: Text(hasIssues ? 'Continue with warnings' : 'Continue →',
                   style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
@@ -1630,6 +2047,43 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
+        // View & Download buttons for enquiry dump
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _viewDocument(docId);
+              },
+              icon: const Icon(Icons.visibility, size: 16),
+              label: const Text('View'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
+                _downloadDocument(docId, 'enquiry_dump');
+              },
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Download'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF003087),
+                side: const BorderSide(color: Color(0xFF003087)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -1725,7 +2179,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Section header with PASS/FAIL badge
+          // Section header — PASS/FAIL badge hidden for PO section
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
             child: Row(children: [
@@ -1733,21 +2187,22 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 child: Text(section.title,
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: section.passed ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  section.passed ? 'PASS' : 'FAIL',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: section.passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+              if (section.title != 'Purchase Order')
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: section.passed ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    section.passed ? 'PASS' : 'FAIL',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: section.passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                    ),
                   ),
                 ),
-              ),
             ]),
           ),
           const Divider(height: 1, color: Color(0xFFE5E7EB)),
@@ -1796,6 +2251,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         newMode = 'state';
       } else if (t == 'dealer_search' || t == 'dealer_search_results') {
         newMode = 'dealer';
+      } else if (t == 'dealer_list') {
+        newMode = 'none'; // dropdown — no search bar needed
       } else if (t == 'team_name_input') {
         newMode = 'team_name';
       } else if (t == 'team_count_input') {
@@ -1842,7 +2299,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Field Activity Assistant',
+                      Text('FieldIQ Assistant',
                           style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
                       Text('Online', style: TextStyle(fontSize: 12, color: Color(0xFF90CAF9))),
                     ],
@@ -1851,7 +2308,10 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 IconButton(
                   icon: const Icon(Icons.refresh, color: Colors.white),
                   tooltip: 'New conversation',
-                  onPressed: () => ref.read(assistantNotifierProvider.notifier).greet(),
+                  onPressed: () {
+                    ref.read(assistantNotifierProvider.notifier).reset();
+                    ref.read(assistantNotifierProvider.notifier).greet();
+                  },
                 ),
                 IconButton(
                   icon: const Icon(Icons.close, color: Colors.white),

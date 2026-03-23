@@ -57,12 +57,17 @@ public interface IApplicationDbContext
     DbSet<CostMaster> CostMasters { get; }
     DbSet<CostMasterStateRate> CostMasterStateRates { get; }
 
+    // Teams bot conversations
+    DbSet<TeamsConversation> TeamsConversations { get; }
     // Audit logs
     DbSet<PoBalanceLog> POBalanceLogs { get; }
     DbSet<POSyncLog> POSyncLogs { get; }
 
     // Email delivery audit
     DbSet<EmailDeliveryLog> EmailDeliveryLogs { get; }
+
+    // Conversational AI audit
+    DbSet<ConversationAuditLog> ConversationAuditLogs { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

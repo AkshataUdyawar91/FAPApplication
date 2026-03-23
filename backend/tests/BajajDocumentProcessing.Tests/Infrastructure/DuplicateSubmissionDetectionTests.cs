@@ -66,7 +66,7 @@ public class DuplicateSubmissionDetectionTests : IDisposable
     #region Helpers
 
     private async Task<(DocumentPackage existing, DocumentPackage current, Invoice invoice)> SeedDuplicateScenarioAsync(
-        PackageState existingState = PackageState.PendingASM,
+        PackageState existingState = PackageState.PendingCH,
         string poNumber = "PO-2026-001",
         string invoiceNumber = "INV-001")
     {
@@ -230,8 +230,8 @@ public class DuplicateSubmissionDetectionTests : IDisposable
     [Fact]
     public async Task InvoiceUpload_RejectedDuplicate_IsIgnored()
     {
-        // Arrange — existing submission is ASMRejected, should not trigger duplicate warning
-        var (_, current, invoice) = await SeedDuplicateScenarioAsync(existingState: PackageState.ASMRejected);
+        // Arrange — existing submission is CHRejected, should not trigger duplicate warning
+        var (_, current, invoice) = await SeedDuplicateScenarioAsync(existingState: PackageState.CHRejected);
         var request = new ConversationRequest
         {
             SubmissionId = current.Id,
