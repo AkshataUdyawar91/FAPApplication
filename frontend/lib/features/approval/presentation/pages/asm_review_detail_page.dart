@@ -51,7 +51,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         'Expires': '0',
       },
     ),
-  )..interceptors.add(PrettyDioLogger());
+  )..interceptors.add(PrettyDioLogger(responseBody: false));
   final _commentsController = TextEditingController();
 
   bool _isLoading = true;
@@ -1377,6 +1377,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                 title: 'Enquiry Validation',
                 fileName: _getEnquiryFileName(),
                 validation: _enquiryValidation,
+                documentId: _getDocumentIdByType('EnquiryDocument'),
               ),
               const SizedBox(height: 24),
             ],
@@ -1475,6 +1476,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     final fileName = photo['fileName'] ?? 'Unknown';
     final validationDetailsJson = photo['validationDetailsJson'] as String?;
     final failureReason = photo['failureReason'] as String?;
+    final photoDocId = photo['documentId']?.toString() ?? photo['id']?.toString() ?? '';
 
     Map<String, dynamic>? validationDetails;
     List<Map<String, dynamic>> allRows = [];
@@ -1508,6 +1510,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
+      documentId: photoDocId,
     );
   }
 

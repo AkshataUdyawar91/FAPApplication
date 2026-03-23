@@ -44,7 +44,7 @@ class AgencySubmissionDetailPage extends ConsumerStatefulWidget {
 class _AgencySubmissionDetailPageState
     extends ConsumerState<AgencySubmissionDetailPage> {
   final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
-    ..interceptors.add(PrettyDioLogger());
+    ..interceptors.add(PrettyDioLogger(responseBody: false));
 
   bool _isLoading = true;
   Map<String, dynamic>? _submission;
@@ -468,6 +468,7 @@ class _AgencySubmissionDetailPageState
                 title: 'Enquiry Validation',
                 fileName: _getEnquiryFileName(),
                 validation: _enquiryValidation,
+                documentId: _getDocumentIdByType('EnquiryDocument'),
               ),
               const SizedBox(height: 24),
             ],
@@ -560,6 +561,7 @@ class _AgencySubmissionDetailPageState
     final fileName = photo['fileName'] ?? 'Unknown';
     final validationDetailsJson = photo['validationDetailsJson'] as String?;
     final failureReason = photo['failureReason'] as String?;
+    final photoDocId = photo['documentId']?.toString() ?? photo['id']?.toString() ?? '';
 
     List<Map<String, dynamic>> allRows = [];
 
@@ -590,6 +592,7 @@ class _AgencySubmissionDetailPageState
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
+      resolvedDocId: photoDocId,
     );
   }
 
@@ -696,10 +699,10 @@ class _AgencySubmissionDetailPageState
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
+      resolvedDocId: resolvedDocId,
+      resolvedBlobUrl: resolvedBlobUrl,
     );
-  }
-
-  /// Extracts all validation rows from ValidationDetailsJson.
+  }  /// Extracts all validation rows from ValidationDetailsJson.
   /// Reads: proactiveRules, fieldPresence, crossDocument, amountConsistency,
   /// lineItemMatching, vendorMatching, completeness — deduplicating by label.
   List<Map<String, dynamic>> _extractAllValidationRows(

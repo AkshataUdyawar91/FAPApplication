@@ -385,7 +385,7 @@ class CampaignDocumentsSection extends StatelessWidget {
     String filename,
   ) async {
     try {
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger())..interceptors.add(PrettyDioLogger());
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger(responseBody: false));
       final response = await dio.get(
         downloadUrl,
         options: Options(
