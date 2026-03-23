@@ -452,7 +452,7 @@ class _TestRunnerPanelState extends State<TestRunnerPanel> {
       }
     });
 
-    await _runStep('Set dates and add team photo', () async {
+    await _runStep('Set dates and add 3 team photos', () async {
       await _scrollToText('Start Date');
       final clsState = _findCampaignListSectionState();
       if (clsState == null) throw Exception('CampaignListSection state not found');
@@ -465,14 +465,26 @@ class _TestRunnerPanelState extends State<TestRunnerPanel> {
       campaign.endDate = '31-01-2026';
       campaign.workingDays = '23';
 
-      // Load a real team photo from bundled assets
-      final photoBytes = await rootBundle.load(TestDocPaths.teamPhotoAsset);
-      final photoFile = PlatformFile(
-        name: 'Team_Photo.jpeg',
-        size: photoBytes.lengthInBytes,
-        bytes: photoBytes.buffer.asUint8List(),
-      );
-      campaign.photos.add(photoFile);
+      // Load all 3 team photos from bundled assets
+      final photoAssets = [
+        (TestDocPaths.teamPhotoAsset, 'Team_Photo.jpeg'),
+        (TestDocPaths.teamPhoto2Asset, 'Team_photo2.jpeg'),
+        (TestDocPaths.teamPhoto3Asset, 'Team_photo3.jpeg'),
+      ];
+
+      for (final (assetPath, fileName) in photoAssets) {
+        final photoBytes = await rootBundle.load(assetPath);
+        final photoFile = PlatformFile(
+          name: fileName,
+          size: photoBytes.lengthInBytes,
+          bytes: photoBytes.buffer.asUint8List(),
+        );
+        campaign.photos.add(photoFile);
+      }
+
+      if (campaign.photos.length != 3) {
+        throw Exception('Expected 3 photos, got ${campaign.photos.length}');
+      }
 
       clsState.testRebuild();
       uploadState.testRebuild();

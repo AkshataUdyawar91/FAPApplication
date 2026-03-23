@@ -38,6 +38,8 @@ class TestDocPaths {
   static const String costSummaryAsset = 'assets/test_docs/Cost_Summary.pdf';
   static const String activitySummaryAsset = 'assets/test_docs/Activity_Summary.jpg';
   static const String teamPhotoAsset = 'assets/test_docs/Team_Photo.jpeg';
+  static const String teamPhoto2Asset = 'assets/test_docs/Team_photo2.jpeg';
+  static const String teamPhoto3Asset = 'assets/test_docs/Team_photo3.jpeg';
   static const String enquiryReportAsset = 'assets/test_docs/Enquiry_Report.xlsx';
 }
 

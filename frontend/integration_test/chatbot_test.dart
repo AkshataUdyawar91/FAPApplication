@@ -701,6 +701,10 @@ class _ChatbotTestRunnerPanelState extends State<ChatbotTestRunnerPanel> {
     final step = _TestStep(name: name, status: _Status.running);
     setState(() => _steps.add(step));
     try {
+      // Scroll chat to the bottom before every action so the latest
+      // messages/buttons are visible and tappable.
+      _scrollChatToEnd();
+      await Future.delayed(const Duration(milliseconds: 200));
       await action();
       setState(() {
         step.status = _Status.passed;
@@ -730,6 +734,34 @@ class _ChatbotTestRunnerPanelState extends State<ChatbotTestRunnerPanel> {
   Future<void> _waitForNotLoading({int timeout = 15}) async {
     await Future.delayed(const Duration(milliseconds: 300));
     await _waitFor(() => !_state.isLoading, timeout: timeout);
+  }
+
+  /// Scrolls the chat ListView inside AssistantChatPanel to the very bottom.
+  /// Finds the ScrollController attached to the Scrollable and jumps to maxScrollExtent.
+  void _scrollChatToEnd() {
+    void visitor(Element element) {
+      // Look for the Scrollable that lives inside AssistantChatPanel's ListView
+      if (element.widget is Scrollable) {
+        final scrollable = element.widget as Scrollable;
+        final controller = scrollable.controller;
+        if (controller != null && controller.hasClients) {
+          controller.jumpTo(controller.position.maxScrollExtent);
+          return; // done — first scrollable in the chat panel is enough
+        }
+      }
+      element.visitChildren(visitor);
+    }
+
+    // Narrow the search to the AssistantChatPanel subtree
+    void findPanel(Element element) {
+      if (element.widget is AssistantChatPanel) {
+        element.visitChildren(visitor);
+        return;
+      }
+      element.visitChildren(findPanel);
+    }
+
+    _rootElement.visitChildren(findPanel);
   }
 
   // =========================================================================
