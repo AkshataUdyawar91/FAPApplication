@@ -299,7 +299,7 @@ public class NotificationDispatcher : INotificationDispatcher
         try
         {
             // Build subject line per Req 7.2
-            var subject = $"ClaimsIQ: New claim from {cardData.AgencyName} — {cardData.InvoiceAmount}";
+            var subject = $"FieldIQ: New claim from {cardData.AgencyName} — {cardData.InvoiceAmount}";
 
             // Build HTML body from template
             var htmlBody = BuildEmailBody(cardData);

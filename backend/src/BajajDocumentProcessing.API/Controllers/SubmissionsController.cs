@@ -577,6 +577,7 @@ public class SubmissionsController : ControllerBase
                 }).ToList(),
                 CostSummaryValidation = costSummaryValidation != null ? new ValidationResultDto
                 {
+                    DocumentId = package.CostSummary?.Id,
                     AllValidationsPassed = costSummaryValidation.AllValidationsPassed,
                     FailureReason = costSummaryValidation.FailureReason,
                     SapVerificationPassed = costSummaryValidation.SapVerificationPassed,
@@ -590,6 +591,7 @@ public class SubmissionsController : ControllerBase
                 } : null,
                 ActivityValidation = activityValidation != null ? new ValidationResultDto
                 {
+                    DocumentId = package.ActivitySummary?.Id,
                     AllValidationsPassed = activityValidation.AllValidationsPassed,
                     FailureReason = activityValidation.FailureReason,
                     SapVerificationPassed = activityValidation.SapVerificationPassed,
@@ -603,6 +605,7 @@ public class SubmissionsController : ControllerBase
                 } : null,
                 EnquiryValidation = enquiryValidation != null ? new ValidationResultDto
                 {
+                    DocumentId = package.EnquiryDocument?.Id,
                     AllValidationsPassed = enquiryValidation.AllValidationsPassed,
                     FailureReason = enquiryValidation.FailureReason,
                     SapVerificationPassed = enquiryValidation.SapVerificationPassed,
