@@ -1625,7 +1625,6 @@ class _AgencySubmissionDetailPageState
     context.pushNamed('agency-upload', extra: {
       'token': widget.token,
       'userName': widget.userName,
-      'submissionId': widget.submissionId,
     });
   }
 
