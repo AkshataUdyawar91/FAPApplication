@@ -18,6 +18,7 @@ public class NotificationDataService : INotificationDataService
     private readonly IApplicationDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly ILogger<NotificationDataService> _logger;
+    private readonly IFileStorageService _fileStorageService;
 
     /// <summary>
     /// Indian number format culture for ₹ currency formatting.
@@ -34,14 +35,21 @@ public class NotificationDataService : INotificationDataService
     /// </summary>
     private const int MaxTopIssues = 3;
 
+    /// <summary>
+    /// SAS token validity for document view URLs.
+    /// </summary>
+    private static readonly TimeSpan SasTokenValidity = TimeSpan.FromHours(1);
+
     public NotificationDataService(
         IApplicationDbContext context,
         IConfiguration configuration,
-        ILogger<NotificationDataService> logger)
+        ILogger<NotificationDataService> logger,
+        IFileStorageService fileStorageService)
     {
         _context = context;
         _configuration = configuration;
         _logger = logger;
+        _fileStorageService = fileStorageService;
     }
 
     /// <inheritdoc />
@@ -753,11 +761,187 @@ public class NotificationDataService : INotificationDataService
         }
         breakdown.CheckGroups = BuildCheckGroupsFromAllDocuments(package, allValidationResults);
 
+        // === Populate document view URLs with SAS tokens ===
+        await PopulateDocumentViewUrlsAsync(breakdown, package, cancellationToken);
+
         _logger.LogInformation(
-            "Validation breakdown assembled for {SubmissionNumber} — {GroupCount} groups, IsAlreadyProcessed={IsProcessed}",
-            shortId, breakdown.CheckGroups.Count, breakdown.IsAlreadyProcessed);
+            "Validation breakdown assembled for {SubmissionNumber} — {GroupCount} groups, IsAlreadyProcessed={IsProcessed}, DocUrls={DocUrlCount}, PhotoTeams={PhotoTeamCount}",
+            shortId, breakdown.CheckGroups.Count, breakdown.IsAlreadyProcessed,
+            breakdown.DocumentViewUrls.Count, breakdown.TeamPhotos.Count);
 
         return breakdown;
+    }
+
+    /// <summary>
+    /// Generates SAS-signed URLs for all documents and photos in the package.
+    /// </summary>
+    private async Task PopulateDocumentViewUrlsAsync(
+        ValidationBreakdownData breakdown,
+        Domain.Entities.DocumentPackage package,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Invoice: prefer team invoices (CampaignInvoice), fall back to direct invoices (Invoice)
+            string? invoiceBlobUrl = null;
+            var campaignInvoice = package.Teams.SelectMany(t => t.Invoices).FirstOrDefault(i => !i.IsDeleted);
+            if (campaignInvoice != null)
+            {
+                invoiceBlobUrl = campaignInvoice.BlobUrl;
+            }
+            else
+            {
+                var directInvoice = package.Invoices.FirstOrDefault(i => !i.IsDeleted);
+                if (directInvoice != null) invoiceBlobUrl = directInvoice.BlobUrl;
+            }
+
+            if (!string.IsNullOrEmpty(invoiceBlobUrl))
+            {
+                var url = await TryGetSasUrlAsync(invoiceBlobUrl);
+                if (url != null) breakdown.DocumentViewUrls["Invoice"] = url;
+            }
+
+            // Cost Summary
+            if (package.CostSummary is { IsDeleted: false } cs && !string.IsNullOrEmpty(cs.BlobUrl))
+            {
+                var url = await TryGetSasUrlAsync(cs.BlobUrl);
+                if (url != null) breakdown.DocumentViewUrls["Cost Summary"] = url;
+            }
+
+            // Activity Summary
+            if (package.ActivitySummary is { IsDeleted: false } actS && !string.IsNullOrEmpty(actS.BlobUrl))
+            {
+                var url = await TryGetSasUrlAsync(actS.BlobUrl);
+                if (url != null) breakdown.DocumentViewUrls["Activity Summary"] = url;
+            }
+
+            // Enquiry Document
+            if (package.EnquiryDocument is { IsDeleted: false } enq && !string.IsNullOrEmpty(enq.BlobUrl))
+            {
+                var url = await TryGetSasUrlAsync(enq.BlobUrl);
+                if (url != null) breakdown.DocumentViewUrls["Enquiry Dump"] = url;
+            }
+
+            // Team Photos — only photos with at least one failed validation check
+            // Load all photo validation results for this package
+            var allPhotoIds = package.Teams
+                .Where(t => !t.IsDeleted)
+                .SelectMany(t => t.Photos)
+                .Where(p => !p.IsDeleted)
+                .Select(p => p.Id)
+                .ToList();
+
+            var photoValidationResults = new Dictionary<Guid, Domain.Entities.ValidationResult>();
+            if (allPhotoIds.Count > 0)
+            {
+                var photoVrs = await _context.ValidationResults
+                    .AsNoTracking()
+                    .Where(vr => vr.DocumentType == DocumentType.TeamPhoto && allPhotoIds.Contains(vr.DocumentId))
+                    .ToListAsync(cancellationToken);
+                foreach (var vr in photoVrs)
+                    photoValidationResults[vr.DocumentId] = vr;
+            }
+
+            foreach (var team in package.Teams.Where(t => !t.IsDeleted))
+            {
+                var photos = team.Photos.Where(p => !p.IsDeleted && !string.IsNullOrEmpty(p.BlobUrl)).ToList();
+                if (photos.Count == 0) continue;
+
+                var teamPhotoData = new TeamPhotoViewData
+                {
+                    TeamName = team.TeamNumber.HasValue
+                        ? $"Team {team.TeamNumber}"
+                        : !string.IsNullOrWhiteSpace(team.CampaignName)
+                            ? team.CampaignName
+                            : $"Team {team.Id.ToString()[..6]}"
+                };
+
+                foreach (var photo in photos)
+                {
+                    // Check if this photo has any failed validation rules
+                    var failedChecks = GetPhotoFailedChecks(photo, photoValidationResults);
+                    if (failedChecks == null) continue; // All passed — skip
+
+                    var url = await TryGetSasUrlAsync(photo.BlobUrl);
+                    if (url != null)
+                    {
+                        teamPhotoData.Photos.Add(new PhotoViewItem
+                        {
+                            FileName = photo.FileName,
+                            ViewUrl = url,
+                            Caption = photo.Caption,
+                            FailedChecks = failedChecks
+                        });
+                    }
+                }
+
+                if (teamPhotoData.Photos.Count > 0)
+                    breakdown.TeamPhotos.Add(teamPhotoData);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to generate document view URLs for package {PackageId} — card will render without view links",
+                package.Id);
+        }
+    }
+
+    /// <summary>
+    /// Returns a comma-separated string of failed validation check labels for a photo,
+    /// or null if all checks passed (meaning the photo should be excluded from the card).
+    /// </summary>
+    private static string? GetPhotoFailedChecks(
+        Domain.Entities.TeamPhotos photo,
+        Dictionary<Guid, Domain.Entities.ValidationResult> photoValidationResults)
+    {
+        if (!photoValidationResults.TryGetValue(photo.Id, out var vr) || vr.RuleResultsJson == null)
+        {
+            // No validation result — check entity-level boolean fields as fallback
+            var entityFails = new List<string>();
+            if (photo.DateVisible == false) entityFails.Add("Date not visible");
+            if (photo.BlueTshirtPresent == false) entityFails.Add("No blue t-shirt");
+            if (photo.ThreeWheelerPresent == false) entityFails.Add("No 3-wheeler");
+
+            return entityFails.Count > 0 ? string.Join(", ", entityFails) : null;
+        }
+
+        try
+        {
+            var rules = JsonSerializer.Deserialize<List<EnquiryRuleResult>>(
+                vr.RuleResultsJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (rules == null || rules.Count == 0) return null;
+
+            var failedLabels = rules
+                .Where(r => !r.Passed)
+                .Select(r => r.Label ?? r.RuleCode ?? "Check failed")
+                .Distinct()
+                .ToList();
+
+            return failedLabels.Count > 0 ? string.Join(", ", failedLabels) : null;
+        }
+        catch
+        {
+            return null; // Malformed JSON — skip photo
+        }
+    }
+
+    /// <summary>
+    /// Attempts to generate a SAS URL for a blob. Returns null on failure.
+    /// </summary>
+    private async Task<string?> TryGetSasUrlAsync(string blobUrl)
+    {
+        try
+        {
+            return await _fileStorageService.GetPublicUrlWithSasAsync(blobUrl, SasTokenValidity);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not generate SAS URL for {BlobUrl}", blobUrl);
+            return null;
+        }
     }
 
     /// <summary>

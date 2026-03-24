@@ -45,6 +45,60 @@ public class ValidationBreakdownData
     /// Deep link URL to the portal review page for this submission.
     /// </summary>
     public string PortalUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Per-document SAS-signed URLs for viewing documents directly from Teams.
+    /// Key = document type label (e.g., "Invoice", "Cost Summary"), Value = SAS URL.
+    /// </summary>
+    public Dictionary<string, string> DocumentViewUrls { get; set; } = new();
+
+    /// <summary>
+    /// SAS-signed URLs for team photos, grouped by team name.
+    /// Each entry contains photo file name and SAS URL.
+    /// </summary>
+    public List<TeamPhotoViewData> TeamPhotos { get; set; } = new();
+}
+
+/// <summary>
+/// Represents a team's photos with SAS-signed URLs for inline viewing.
+/// </summary>
+public class TeamPhotoViewData
+{
+    /// <summary>
+    /// Team name or identifier.
+    /// </summary>
+    public string TeamName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Photos belonging to this team with SAS URLs.
+    /// </summary>
+    public List<PhotoViewItem> Photos { get; set; } = new();
+}
+
+/// <summary>
+/// A single photo with its SAS-signed URL and metadata.
+/// </summary>
+public class PhotoViewItem
+{
+    /// <summary>
+    /// Original file name of the photo.
+    /// </summary>
+    public string FileName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// SAS-signed URL for viewing the photo.
+    /// </summary>
+    public string ViewUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional caption or description.
+    /// </summary>
+    public string? Caption { get; set; }
+
+    /// <summary>
+    /// Summary of failed validation checks for this photo (e.g., "Date not visible, No blue t-shirt").
+    /// </summary>
+    public string? FailedChecks { get; set; }
 }
 
 /// <summary>

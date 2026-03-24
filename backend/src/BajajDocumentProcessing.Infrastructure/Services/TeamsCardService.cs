@@ -338,7 +338,7 @@ public class TeamsCardService : ITeamsCardService
                 var passCount = checks.Count(c => c.Status == "Pass");
                 var failCount = checks.Count - passCount;
 
-                // Document header: name on left, pass/fail summary on right
+                // Document header: name on left, View Doc link + pass/fail summary on right
                 var summaryParts = new Newtonsoft.Json.Linq.JArray();
                 summaryParts.Add(new Newtonsoft.Json.Linq.JObject
                 {
@@ -348,37 +348,73 @@ public class TeamsCardService : ITeamsCardService
                     ["color"] = "Good",
                     ["weight"] = "Bolder"
                 });
-                // Issue count badge removed per requirement
+
+                // Build header columns: doc name | [View Doc] | pass count
+                var headerColumns = new Newtonsoft.Json.Linq.JArray
+                {
+                    new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["type"] = "Column",
+                        ["width"] = "stretch",
+                        ["items"] = new Newtonsoft.Json.Linq.JArray
+                        {
+                            new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["type"] = "TextBlock",
+                                ["text"] = NullFallback(docName),
+                                ["weight"] = "Bolder",
+                                ["size"] = "Small"
+                            }
+                        }
+                    }
+                };
+
+                // Add "📄 View" button if a SAS URL is available for this document type
+                // Invoice group name may be "Invoice" or "Invoices (N)" — match by prefix
+                string? docViewUrl = null;
+                if (data.DocumentViewUrls.TryGetValue(docName, out var exactUrl))
+                {
+                    docViewUrl = exactUrl;
+                }
+                else if (docName.StartsWith("Invoice", StringComparison.OrdinalIgnoreCase)
+                         && data.DocumentViewUrls.TryGetValue("Invoice", out var invoiceUrl))
+                {
+                    docViewUrl = invoiceUrl;
+                }
+
+                if (!string.IsNullOrEmpty(docViewUrl))
+                {
+                    headerColumns.Add(new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["type"] = "Column",
+                        ["width"] = "auto",
+                        ["items"] = new Newtonsoft.Json.Linq.JArray
+                        {
+                            new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["type"] = "TextBlock",
+                                ["text"] = $"[📄 View]({docViewUrl})",
+                                ["size"] = "Small",
+                                ["color"] = "Accent",
+                                ["weight"] = "Bolder"
+                            }
+                        }
+                    });
+                }
+
+                headerColumns.Add(new Newtonsoft.Json.Linq.JObject
+                {
+                    ["type"] = "Column",
+                    ["width"] = "auto",
+                    ["items"] = summaryParts
+                });
 
                 body.Add(new Newtonsoft.Json.Linq.JObject
                 {
                     ["type"] = "ColumnSet",
                     ["separator"] = true,
                     ["spacing"] = "Medium",
-                    ["columns"] = new Newtonsoft.Json.Linq.JArray
-                    {
-                        new Newtonsoft.Json.Linq.JObject
-                        {
-                            ["type"] = "Column",
-                            ["width"] = "stretch",
-                            ["items"] = new Newtonsoft.Json.Linq.JArray
-                            {
-                                new Newtonsoft.Json.Linq.JObject
-                                {
-                                    ["type"] = "TextBlock",
-                                    ["text"] = NullFallback(docName),
-                                    ["weight"] = "Bolder",
-                                    ["size"] = "Small"
-                                }
-                            }
-                        },
-                        new Newtonsoft.Json.Linq.JObject
-                        {
-                            ["type"] = "Column",
-                            ["width"] = "auto",
-                            ["items"] = summaryParts
-                        }
-                    }
+                    ["columns"] = headerColumns
                 });
 
                 // Column headers: #, WHAT WAS CHECKED, RESULT, WHAT WAS FOUND
@@ -492,6 +528,98 @@ public class TeamsCardService : ITeamsCardService
                 ["isSubtle"] = true,
                 ["separator"] = true
             });
+        }
+
+        // === Inline Team Photos (only photos with issues) ===
+        if (data.TeamPhotos.Count > 0)
+        {
+            body.Add(new Newtonsoft.Json.Linq.JObject
+            {
+                ["type"] = "TextBlock",
+                ["text"] = "📷 Photos with Issues",
+                ["weight"] = "Bolder",
+                ["size"] = "Small",
+                ["separator"] = true,
+                ["spacing"] = "Medium"
+            });
+
+            foreach (var team in data.TeamPhotos)
+            {
+                // Team name header
+                body.Add(new Newtonsoft.Json.Linq.JObject
+                {
+                    ["type"] = "TextBlock",
+                    ["text"] = team.TeamName,
+                    ["weight"] = "Bolder",
+                    ["size"] = "Small",
+                    ["isSubtle"] = true,
+                    ["spacing"] = "Small"
+                });
+
+                // Photo grid: show photos in rows of 3 using ColumnSet
+                for (var photoIdx = 0; photoIdx < team.Photos.Count; photoIdx += 3)
+                {
+                    var photoColumns = new Newtonsoft.Json.Linq.JArray();
+                    for (var col = 0; col < 3; col++)
+                    {
+                        var idx = photoIdx + col;
+                        if (idx < team.Photos.Count)
+                        {
+                            var photo = team.Photos[idx];
+                            var columnItems = new Newtonsoft.Json.Linq.JArray
+                            {
+                                new Newtonsoft.Json.Linq.JObject
+                                {
+                                    ["type"] = "Image",
+                                    ["url"] = photo.ViewUrl,
+                                    ["size"] = "Medium",
+                                    ["altText"] = NullFallback(photo.Caption, photo.FileName)
+                                }
+                            };
+
+                            // Show failed checks below the image
+                            var label = !string.IsNullOrWhiteSpace(photo.FailedChecks)
+                                ? $"⚠️ {photo.FailedChecks}"
+                                : photo.FileName;
+                            if (label.Length > 40) label = label[..37] + "...";
+
+                            columnItems.Add(new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["type"] = "TextBlock",
+                                ["text"] = label,
+                                ["size"] = "Small",
+                                ["isSubtle"] = true,
+                                ["horizontalAlignment"] = "Center",
+                                ["wrap"] = true
+                            });
+
+                            photoColumns.Add(new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["type"] = "Column",
+                                ["width"] = "stretch",
+                                ["items"] = columnItems
+                            });
+                        }
+                        else
+                        {
+                            // Empty column to maintain grid alignment
+                            photoColumns.Add(new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["type"] = "Column",
+                                ["width"] = "stretch",
+                                ["items"] = new Newtonsoft.Json.Linq.JArray()
+                            });
+                        }
+                    }
+
+                    body.Add(new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["type"] = "ColumnSet",
+                        ["spacing"] = "Small",
+                        ["columns"] = photoColumns
+                    });
+                }
+            }
         }
 
         // Action buttons — Approve, Reject, Open in Portal
