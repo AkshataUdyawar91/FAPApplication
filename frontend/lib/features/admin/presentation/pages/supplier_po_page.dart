@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:dio/dio.dart';
 
 class SupplierPoPage extends StatefulWidget {
@@ -32,7 +33,7 @@ class _SupplierPoPageState extends State<SupplierPoPage> {
   void initState() {
     super.initState();
     _dio = Dio(BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {'Authorization': 'Bearer ${widget.token}'},
     ));
     _load();

@@ -74,7 +74,7 @@ class _NewLoginPageState extends State<NewLoginPage> {
         if (e.response?.statusCode == 401) {
           _errorMessage = 'Invalid email or password';
         } else if (e.type == DioExceptionType.connectionError || e.type == DioExceptionType.connectionTimeout) {
-          _errorMessage = 'Cannot connect to server at http://localhost:5000. Is the backend running?';
+          _errorMessage = 'Cannot connect to server. Is the backend running?';
         } else {
           _errorMessage = 'Login failed: ${e.message}';
         }

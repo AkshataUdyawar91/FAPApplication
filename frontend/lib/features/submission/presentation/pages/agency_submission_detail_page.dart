@@ -1,4 +1,5 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
@@ -45,10 +46,10 @@ class AgencySubmissionDetailPage extends ConsumerStatefulWidget {
 
 class _AgencySubmissionDetailPageState
     extends ConsumerState<AgencySubmissionDetailPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+  final _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
     ..interceptors.add(PrettyDioLogger());
   // Separate Dio for view/download — no response body logging (base64 floods console)
-  final _dioSilent = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+  final _dioSilent = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
     ..interceptors.add(PrettyDioLogger(responseBody: false));
 
   bool _isLoading = true;

@@ -1,4 +1,5 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -23,7 +24,7 @@ class HQAnalyticsPage extends ConsumerStatefulWidget {
 }
 
 class _HQAnalyticsPageState extends ConsumerState<HQAnalyticsPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+  final _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
     ..interceptors.add(PrettyDioLogger());
 
   bool _isLoading = true;
