@@ -1,4 +1,5 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,7 +17,6 @@ import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/pagination_bar.dart';
-import '../../../../core/network/dio_client.dart';
 
 class AgencyDashboardPage extends ConsumerStatefulWidget {
   final String token;
@@ -34,7 +34,7 @@ class AgencyDashboardPage extends ConsumerStatefulWidget {
 }
 
 class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+  final _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
     ..interceptors.add(PrettyDioLogger());
   final _searchController = TextEditingController();
 
@@ -262,7 +262,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     };
   }
 
-  String _calculateTotalAmount() => '6,60,000';
 
   // ─── BUILD ───────────────────────────────────────────────────────────
   @override
@@ -365,18 +364,39 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     );
   }
 
-  // void _navigateToUpload() {
-  //   context.pushNamed('agency-upload', extra: {
-  //     'token': widget.token,
-  //     'userName': widget.userName,
-  //   });
-  // }
+  void _navigateToUpload() async {
+    if (!mounted) return;
 
-  void _navigateToUpload() {
-    context.pushNamed('agency-upload', extra: {
-      'token': widget.token,
-      'userName': widget.userName,
-    });
+    // Create draft submission first
+    try {
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
+      final response = await dio.post(
+        '/submissions/draft',
+        data: {},
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 201 && mounted) {
+        final submissionId = response.data['submissionId'];
+        debugPrint('Draft submission created: $submissionId');
+
+        context.pushNamed('agency-upload', extra: {
+          'token': widget.token,
+          'userName': widget.userName,
+          'submissionId': submissionId,
+        });
+      }
+    } catch (e) {
+      debugPrint('Error creating draft submission: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to create submission: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _navigateToChatbot() {
@@ -1178,33 +1198,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     );
   }
 
-  String _formatAmount(double amount) {
-    if (amount >= 100000) return '${(amount / 100000).toStringAsFixed(2)} L';
-    if (amount >= 1000) return '${(amount / 1000).toStringAsFixed(1)}K';
-    return amount.toStringAsFixed(0);
-  }
-
-  String _getStatusLabel(String status) {
-    switch (status) {
-      case 'approved':
-        return 'Approved';
-      case 'rejected':
-        return 'Rejected';
-      case 'rejected_by_asm':
-        return 'Rejected by CH';
-      case 'rejected_by_hq':
-        return 'Rejected by HQ/RA';
-      case 'pending_asm':
-        return 'Pending CH Approval';
-      case 'pending_hq':
-        return 'Pending HQ/RA Approval';
-      case 'under_review':
-        return 'Under Review';
-      default:
-        return 'Pending';
-    }
-  }
-
   String _formatDate(dynamic date) {
     if (date == null) return 'N/A';
     try {
@@ -1218,7 +1211,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase();
 
-    // Map backend states to UI states (simplified flow)
     if (['uploaded', 'extracting', 'validating'].contains(state))
       return 'pending';
     if (['validated', 'recommending'].contains(state)) return 'pending';
@@ -1236,246 +1228,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     if (state == 'processingfailed') return 'processing_failed';
 
     return 'pending';
-  }
-
-  void _showSubmissionDetails(Map<String, dynamic> request) {
-    final fapNumber =
-        'FAP-${request['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
-    final status = _normalizeStatus(request['state']?.toString() ?? 'pending');
-    final poNumber =
-        request['poNumber']?.toString() ?? request['poNo']?.toString() ?? 'N/A';
-    final invoiceNumber = request['invoiceNumber']?.toString() ??
-        request['invoiceNo']?.toString() ??
-        'N/A';
-    final poAmount = request['poAmount'];
-    final invoiceAmount = request['invoiceAmount'];
-    final asmReviewNotes = request['asmReviewNotes'];
-    final hqReviewNotes = request['hqReviewNotes'];
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Submission Details'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildDetailRow('FAP Number', fapNumber),
-              _buildDetailRow('Status', _getStatusLabel(status)),
-              _buildDetailRow(
-                  'Submitted Date', _formatDate(request['createdAt'])),
-              _buildDetailRow(
-                  'Last Updated', _formatDate(request['updatedAt'])),
-              _buildDetailRow('PO Number', poNumber),
-              _buildDetailRow('Invoice Number', invoiceNumber),
-              if (poAmount != null)
-                _buildDetailRow('PO Amount',
-                    '₹${_formatAmount(double.parse(poAmount.toString()))}'),
-              if (invoiceAmount != null)
-                _buildDetailRow('Invoice Amount',
-                    '₹${_formatAmount(double.parse(invoiceAmount.toString()))}'),
-              _buildDetailRow(
-                  'Documents', '${request['documentCount'] ?? 0} files'),
-
-              // Show CH rejection notes if rejected by CH
-              if (status == 'rejected_by_asm' &&
-                  asmReviewNotes != null &&
-                  asmReviewNotes.toString().isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFEF4444)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.cancel,
-                              color: Color(0xFFDC2626), size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Rejected by CH',
-                            style: AppTextStyles.bodyMedium.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: const Color(0xFFB91C1C),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Reason:',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF991B1B),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        asmReviewNotes.toString(),
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: const Color(0xFF7F1D1D),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-
-              // Show HQ/RA rejection notes if rejected by HQ/RA
-              if (status == 'rejected_by_hq' &&
-                  hqReviewNotes != null &&
-                  hqReviewNotes.toString().isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFEF4444)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.cancel,
-                              color: Color(0xFFDC2626), size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Rejected by HQ/RA',
-                            style: AppTextStyles.bodyMedium.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: const Color(0xFFB91C1C),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Reason:',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF991B1B),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        hqReviewNotes.toString(),
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: const Color(0xFF7F1D1D),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          // Show Resubmit button if rejected by CH
-          if (status == 'rejected_by_asm')
-            ElevatedButton.icon(
-              onPressed: () {
-                Navigator.pop(context);
-                _resubmitPackage(request['id']);
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Resubmit for Review'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _resubmitPackage(dynamic packageId) async {
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Resubmit Package'),
-        content: const Text(
-          'This will resubmit the package for ASM review. The AI will reprocess all documents. Continue?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-            ),
-            child: const Text('Resubmit'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    try {
-      final response = await _dio.patch(
-        '/submissions/$packageId/resubmit',
-        options: Options(
-          headers: {'Authorization': 'Bearer ${widget.token}'},
-        ),
-      );
-
-      if (response.statusCode == 200 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'Package resubmitted successfully! AI processing started.'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        // Reload requests
-        await _loadRequests();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to resubmit package: ${e.toString()}'),
-            backgroundColor: AppColors.rejectedText,
-          ),
-        );
-      }
-    }
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-              width: 130,
-              child: Text(label,
-                  style: AppTextStyles.bodySmall
-                      .copyWith(fontWeight: FontWeight.w600))),
-          Expanded(child: Text(value, style: AppTextStyles.bodyMedium)),
-        ],
-      ),
-    );
   }
 }
 

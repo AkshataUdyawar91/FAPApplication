@@ -4,6 +4,7 @@ using BajajDocumentProcessing.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace BajajDocumentProcessing.Infrastructure.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260322181415_MakePoPackageIdNullable")]
+    partial class MakePoPackageIdNullable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1317,8 +1320,8 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.HasIndex("PackageId")
                         .IsUnique()
-                        .HasDatabaseName("IX_POs_PackageId")
-                        .HasFilter("[PackageId] IS NOT NULL");
+                        .HasFilter("[PackageId] IS NOT NULL")
+                        .HasDatabaseName("IX_POs_PackageId");
 
                     b.HasIndex("VersionNumber")
                         .HasDatabaseName("IX_POs_VersionNumber");
@@ -2399,7 +2402,8 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.HasOne("BajajDocumentProcessing.Domain.Entities.DocumentPackage", "DocumentPackage")
                         .WithOne("PO")
                         .HasForeignKey("BajajDocumentProcessing.Domain.Entities.PO", "PackageId")
-                        .OnDelete(DeleteBehavior.Cascade);
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("Agency");
 

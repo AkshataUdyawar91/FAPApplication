@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/constants/api_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -94,7 +95,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
   @override
   void initState() {
     super.initState();
-    _dio = widget.dio ?? Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    _dio = widget.dio ?? Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
       ..interceptors.add(PrettyDioLogger());
     _tabController = TabController(length: _totalSteps, vsync: this)
       ..addListener(() {

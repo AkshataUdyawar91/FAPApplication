@@ -129,4 +129,70 @@ public class AuthController : ControllerBase
         _logger.LogInformation("Token refreshed for user: {Email}", response.Email);
         return Ok(response);
     }
+
+    /// <summary>
+    /// Get the Azure AD authorization URL for SSO login.
+    /// The frontend redirects the user to this URL to initiate the SSO flow.
+    /// </summary>
+    /// <param name="redirectUri" example="https://fieldsiq.bajajauto.co.in">
+    /// The URI Azure AD should redirect back to after login
+    /// </param>
+    /// <returns>Azure AD authorization URL</returns>
+    [HttpGet("sso/authorize")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    public IActionResult GetSsoAuthorizeUrl([FromQuery] string redirectUri)
+    {
+        var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+        var tenantId = config["AzureAd:TenantId"];
+        var clientId = config["AzureAd:ClientId"];
+
+        if (string.IsNullOrEmpty(tenantId) || string.IsNullOrEmpty(clientId))
+        {
+            return BadRequest(new MessageResponse { Message = "Azure AD is not configured" });
+        }
+
+        var authorizeUrl = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize"
+            + $"?client_id={clientId}"
+            + $"&response_type=code"
+            + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}"
+            + $"&response_mode=query"
+            + $"&scope={Uri.EscapeDataString("openid profile email")}"
+            + $"&state=sso";
+
+        return Ok(new { authorizeUrl });
+    }
+
+    /// <summary>
+    /// Exchange an Azure AD authorization code for a local JWT token.
+    /// Called by the frontend after the user completes Azure AD login.
+    /// </summary>
+    /// <param name="request">SSO token request containing the authorization code and redirect URI</param>
+    /// <returns>JWT token and user information on successful SSO authentication</returns>
+    /// <response code="200">Returns JWT token and user details</response>
+    /// <response code="400">Bad request - missing code or redirect URI</response>
+    /// <response code="401">Unauthorized - Azure AD validation failed or user not found in local DB</response>
+    [HttpPost("sso/token")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(LoginResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(MessageResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(MessageResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> SsoLogin([FromBody] SsoTokenRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.RedirectUri))
+        {
+            return BadRequest(new MessageResponse { Message = "Authorization code and redirect URI are required" });
+        }
+
+        var response = await _authService.SsoLoginAsync(request.Code, request.RedirectUri);
+
+        if (response == null)
+        {
+            _logger.LogWarning("SSO login failed for code exchange");
+            return Unauthorized(new MessageResponse { Message = "SSO authentication failed. User may not exist in the system." });
+        }
+
+        _logger.LogInformation("SSO login successful for user: {Email}", response.Email);
+        return Ok(response);
+    }
 }

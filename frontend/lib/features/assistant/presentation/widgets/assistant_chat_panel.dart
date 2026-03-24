@@ -19,7 +19,9 @@ import 'file_upload_card.dart';
 import 'chat_input_bar.dart';
 import '../../data/models/assistant_response_model.dart';
 import '../../../../core/network/dio_client.dart';
+import '../../../../core/utils/chat_intent_detector.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
+import '../../../submission/presentation/pages/agency_submission_detail_page.dart';
 
 /// Embeddable side-panel version of the Field Activity Assistant.
 /// Mirrors ChatScreen logic but renders as a Column (no Scaffold).
@@ -693,9 +695,28 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       );
     }
     return ChatInputBar(
-      onSend: (text) => ref.read(assistantNotifierProvider.notifier).sendAction('message'),
+      onSend: (text) => _handleTypedInput(text),
       enabled: !state.isLoading,
     );
+  }
+
+  void _handleTypedInput(String text) {
+    final intent = ChatIntentDetector.detect(text);
+    switch (intent) {
+      case ChatIntent.greeting:
+        ref.read(assistantNotifierProvider.notifier).sendAction('greet', userText: text);
+      case ChatIntent.createRequest:
+        ref.read(assistantNotifierProvider.notifier).sendAction('create_request', userText: text);
+      case ChatIntent.rejectionReason:
+        ref.read(assistantNotifierProvider.notifier).sendAction('pending_approvals', userText: text);
+      case ChatIntent.statusCheck:
+        ref.read(assistantNotifierProvider.notifier).sendAction('message', userText: text);
+      case ChatIntent.help:
+        ref.read(assistantNotifierProvider.notifier).sendAction('help', userText: text);
+      case ChatIntent.fallback:
+      case ChatIntent.unknown:
+        ref.read(assistantNotifierProvider.notifier).sendAction('message', payloadJson: null, userText: text);
+    }
   }
 
   void _submitTeamName() {
@@ -756,6 +777,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     if (r == null) return AssistantBubble(message: msg.content, isActive: isLast);
     switch (r.type) {
       case 'greeting':
+      case 'help':
         return AssistantBubble(
           message: msg.content,
           isActive: isLast,
@@ -858,10 +880,10 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                             child: OutlinedButton.icon(
                               onPressed: () => ref.read(assistantNotifierProvider.notifier).listAllStates(),
                               icon: const Icon(Icons.search, size: 18, color: Color(0xFF003087)),
-                              label: Text(c.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF003087))),
+                              label: Text(c.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
                               style: OutlinedButton.styleFrom(
                                 alignment: Alignment.centerLeft,
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                 side: BorderSide(color: Colors.grey.shade300),
                               ),
@@ -1198,6 +1220,13 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         return AssistantBubble(message: msg.content, isActive: isLast);
       case 'draft_saved':
         return AssistantBubble(message: msg.content, isActive: isLast);
+      case 'status_cards':
+        return AssistantBubble(
+          message: msg.content,
+          child: r.statusCards != null && r.statusCards!.isNotEmpty
+              ? _statusCardsWidget(r.statusCards!)
+              : null,
+        );
       case 'pending_claims':
         return AssistantBubble(message: msg.content, isActive: isLast, child: _pendingClaimsCard(r));
       case 'rejection_history':
@@ -1227,17 +1256,19 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
 
     Color statusBg(String color) {
       switch (color) {
-        case 'blue': return const Color(0xFFDBEAFE);
-        case 'red': return const Color(0xFFFEE2E2);
-        default: return const Color(0xFFFEF3C7);
+        case 'blue':   return const Color(0xFFDBEAFE); // light blue — Pending with CH/RA
+        case 'red':    return const Color(0xFFFEE2E2); // light red — Rejected
+        case 'green':  return const Color(0xFFDCFCE7); // light green — Approved
+        default:       return const Color(0xFFFEF3C7); // amber — Draft / Processing
       }
     }
 
     Color statusFg(String color) {
       switch (color) {
-        case 'blue': return const Color(0xFF1E40AF);
-        case 'red': return const Color(0xFFDC2626);
-        default: return const Color(0xFFD97706);
+        case 'blue':   return const Color(0xFF1D4ED8);
+        case 'red':    return const Color(0xFFDC2626);
+        case 'green':  return const Color(0xFF16A34A);
+        default:       return const Color(0xFFD97706); // amber
       }
     }
 
@@ -1246,72 +1277,74 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
 
     Widget claimCard(PendingClaimItemModel claim) {
       return Container(
-        margin: const EdgeInsets.only(bottom: 8),
+        margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFFE5E7EB)),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 4, offset: const Offset(0, 2))],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2))],
         ),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Row 1: FAP ID + Status pill
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
                     child: Text(
                       claim.fapId,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                     decoration: BoxDecoration(
                       color: statusBg(claim.statusColor),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(24),
                     ),
                     child: Text(
                       claim.statusLabel,
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: statusFg(claim.statusColor)),
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: statusFg(claim.statusColor)),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 10),
               // Row 2: PO Number + Invoice Amount
               Row(children: [
-                const Icon(Icons.receipt_long, size: 13, color: Color(0xFF6B7280)),
-                const SizedBox(width: 4),
+                const Icon(Icons.receipt_long, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
                 Text('PO: ${claim.poNumber}',
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
-                const SizedBox(width: 12),
-                const Icon(Icons.currency_rupee, size: 13, color: Color(0xFF6B7280)),
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 16),
+                const Text('₹', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 2),
                 Text(
                   claim.invoiceAmount > 0 ? formatIndian(claim.invoiceAmount) : '—',
-                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                  style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
                 ),
               ]),
-              const SizedBox(height: 4),
+              const SizedBox(height: 6),
               // Row 3: State + Date
               Row(children: [
-                const Icon(Icons.location_on, size: 13, color: Color(0xFF6B7280)),
-                const SizedBox(width: 4),
+                const Icon(Icons.location_on, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
                 Text(claim.activityState,
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
-                const SizedBox(width: 12),
-                const Icon(Icons.calendar_today, size: 12, color: Color(0xFF6B7280)),
-                const SizedBox(width: 4),
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 16),
+                const Icon(Icons.calendar_today, size: 13, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
                 Text(claim.submittedDate,
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
               ]),
-              const SizedBox(height: 10),
-              // View Details button
-              Center(
-                child: ElevatedButton.icon(
+              const SizedBox(height: 14),
+              // View Details button — full stadium shape
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
                   onPressed: () {
                     context.pushNamed('submission-detail', extra: {
                       'submissionId': claim.submissionId,
@@ -1320,13 +1353,13 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                       'poNumber': claim.poNumber == '—' ? '' : claim.poNumber,
                     });
                   },
-                  icon: const Icon(Icons.open_in_new, size: 14),
-                  label: const Text('View Details', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF003087),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  icon: const Icon(Icons.open_in_new, size: 15),
+                  label: const Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF003087),
+                    side: const BorderSide(color: Color(0xFF003087), width: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: const StadiumBorder(),
                   ),
                 ),
               ),
@@ -1353,64 +1386,108 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     final items = r.rejectionItems ?? [];
     if (items.isEmpty) return const SizedBox.shrink();
 
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    // Indian number format helper (mirrors pending claims)
+    String formatIndian(double amount) {
+      if (amount == 0) return '₹0';
+      final parts = amount.toStringAsFixed(0).split('');
+      final result = StringBuffer();
+      final len = parts.length;
+      for (int i = 0; i < len; i++) {
+        if (i == len - 3 && len > 3) result.write(',');
+        else if (i > (len - 3) && (len - i - 1) % 2 == 0 && i < len - 3) result.write(',');
+        result.write(parts[i]);
+      }
+      return '₹${result.toString()}';
+    }
+
     Widget card(RejectionItemModel item) {
       return Container(
-        margin: const EdgeInsets.only(bottom: 8),
+        margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFFE5E7EB)),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 4, offset: const Offset(0, 2))],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2))],
         ),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // FAP ID + role pill
-              Row(children: [
-                Expanded(
-                  child: Text(item.fapId,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2),
-                    borderRadius: BorderRadius.circular(12),
+              // Row 1: FAP ID + rejected-by-role pill (light blue)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      item.fapId,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+                    ),
                   ),
-                  child: Text(item.rejectedByRole,
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFDC2626))),
-                ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDBEAFE),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Text(
+                      item.rejectedByRole,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF1D4ED8)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              // Row 2: receipt icon + PO number + ₹ amount
+              Row(children: [
+                const Icon(Icons.receipt_long, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text('PO: ${item.poNumber ?? '—'}',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 16),
+                const Text('₹', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 2),
+                const Text('—', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
               ]),
               const SizedBox(height: 6),
-              // Rejected by + date
+              // Row 3: location icon + state + calendar icon + date
               Row(children: [
-                const Icon(Icons.person_outline, size: 13, color: Color(0xFF6B7280)),
-                const SizedBox(width: 4),
-                Text(item.rejectedBy, style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
-                const SizedBox(width: 12),
-                const Icon(Icons.calendar_today, size: 12, color: Color(0xFF6B7280)),
-                const SizedBox(width: 4),
-                Text(item.rejectedAt, style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+                const Icon(Icons.location_on, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text(item.activityState ?? '—',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 16),
+                const Icon(Icons.calendar_today, size: 13, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text(item.rejectedAt,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
               ]),
-              const SizedBox(height: 8),
-              // Reason box
-              Container(
+              const SizedBox(height: 14),
+              // View Details button — full stadium shape, dark blue outlined
+              SizedBox(
                 width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF7ED),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFFED7AA)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Reason', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF92400E))),
-                    const SizedBox(height: 4),
-                    Text(item.reason, style: const TextStyle(fontSize: 12, color: Color(0xFF78350F))),
-                  ],
+                child: OutlinedButton.icon(
+                  onPressed: item.submissionId.isEmpty
+                      ? null
+                      : () {
+                          context.pushNamed('submission-detail', extra: {
+                            'submissionId': item.submissionId,
+                            'token': token,
+                            'userName': userName,
+                            'poNumber': item.poNumber == '—' ? '' : (item.poNumber ?? ''),
+                          });
+                        },
+                  icon: const Icon(Icons.open_in_new, size: 15),
+                  label: const Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF003087),
+                    side: const BorderSide(color: Color(0xFF003087), width: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: const StadiumBorder(),
+                  ),
                 ),
               ),
             ],
@@ -1421,7 +1498,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
 
     return items.length > 5
         ? SizedBox(
-            height: 5 * 180.0,
+            height: 5 * 160.0,
             child: SingleChildScrollView(child: Column(children: items.map(card).toList())),
           )
         : Column(children: items.map(card).toList());
@@ -2707,6 +2784,247 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Maps a nav:// deep-link to the correct detail page.
+  /// Agency submissions open in a modal dialog (no sidebar/drawer).
+  /// ASM and HQ review pages open in a new browser tab.
+  void _openDetailInModal(String deepLink, {String? fapId}) {
+    debugPrint('[Chat] View tapped — fapId: $fapId, deepLink: $deepLink');
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    // ASM and HQ pages open in a new tab
+    if (deepLink.startsWith('nav://asm-review/') ||
+        deepLink.startsWith('nav://hq-review/')) {
+      final id = deepLink.startsWith('nav://asm-review/')
+          ? deepLink.replaceFirst('nav://asm-review/', '')
+          : deepLink.replaceFirst('nav://hq-review/', '');
+      final route = deepLink.startsWith('nav://asm-review/')
+          ? 'asm-review'
+          : 'hq-review';
+      web.window.open(
+        '${web.window.location.origin}/#/$route/$id',
+        '_blank',
+      );
+      return;
+    }
+
+    // Agency detail opens in modal with no sidebar/drawer
+    if (deepLink.startsWith('nav://agency-detail/')) {
+      final id = deepLink.replaceFirst('nav://agency-detail/', '');
+      showDialog(
+        context: context,
+        barrierColor: Colors.black54,
+        builder: (_) => Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: SizedBox(
+            width: MediaQuery.of(context).size.width * 0.92,
+            height: MediaQuery.of(context).size.height * 0.92,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: AgencySubmissionDetailPage(
+                key: ValueKey(id),
+                submissionId: id,
+                token: token,
+                userName: userName,
+                poNumber: '',
+                isModal: true,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _statusCardsWidget(List<StatusCardModel> cards) {
+
+    Color statusBg(String status) {
+      switch (status) {
+        case 'Pending with CH':
+        case 'Pending with RA':
+          return const Color(0xFFDBEAFE);
+        case 'Approved':
+          return const Color(0xFFDCFCE7);
+        case 'Rejected by CH':
+        case 'Rejected by RA':
+          return const Color(0xFFFEE2E2);
+        default:
+          return const Color(0xFFFEF3C7);
+      }
+    }
+
+    Color statusFg(String status) {
+      switch (status) {
+        case 'Pending with CH':
+        case 'Pending with RA':
+          return const Color(0xFF1D4ED8);
+        case 'Approved':
+          return const Color(0xFF16A34A);
+        case 'Rejected by CH':
+        case 'Rejected by RA':
+          return const Color(0xFFDC2626);
+        default:
+          return const Color(0xFFD97706);
+      }
+    }
+
+    String statusLabel(String status) {
+      switch (status) {
+        case 'Rejected by CH': return 'Returned by Circle Head';
+        case 'Rejected by RA': return 'Returned by RA';
+        default: return status;
+      }
+    }
+
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    Widget statusCard(StatusCardModel card) {
+      final submissionId = card.deepLink.contains('/')
+          ? card.deepLink.split('/').last
+          : card.deepLink;
+      final isRejected = card.status == 'Rejected by CH' || card.status == 'Rejected by RA';
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2))],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Row 1: FAP ID + Status pill
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      card.fapId,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: statusBg(card.status),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Text(
+                      statusLabel(card.status),
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: statusFg(card.status)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Row 2: reviewer name + date (for rejected) OR PO/Invoice/Amount (for pending)
+              if (isRejected) ...[
+                Row(children: [
+                  const Icon(Icons.person_outline, size: 14, color: Color(0xFF9CA3AF)),
+                  const SizedBox(width: 5),
+                  Text(
+                    card.reviewerName?.isNotEmpty == true ? card.reviewerName! : '—',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                  ),
+                  const SizedBox(width: 14),
+                  const Icon(Icons.calendar_today, size: 13, color: Color(0xFF9CA3AF)),
+                  const SizedBox(width: 5),
+                  Text(card.submittedDate, style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                ]),
+                const SizedBox(height: 10),
+                // Reason box
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF1EE),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFFFCCBC)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Reason',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFB91C1C))),
+                      const SizedBox(height: 6),
+                      Text(
+                        card.rejectionReason?.isNotEmpty == true ? card.rejectionReason! : 'No reason provided.',
+                        style: const TextStyle(fontSize: 13, color: Color(0xFFB91C1C)),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else ...[
+                Row(children: [
+                  const Icon(Icons.receipt_long, size: 14, color: Color(0xFF9CA3AF)),
+                  const SizedBox(width: 5),
+                  if (card.poNumber != null && card.poNumber!.isNotEmpty) ...[
+                    Text('PO: ${card.poNumber!}', style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                    const SizedBox(width: 10),
+                  ],
+                  if (card.invoiceNumber != null && card.invoiceNumber!.isNotEmpty)
+                    Text('Inv: ${card.invoiceNumber!}', style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                  if (card.amount != null && card.amount!.isNotEmpty) ...[
+                    const SizedBox(width: 16),
+                    Text(
+                      card.amount!.startsWith('₹') ? card.amount! : '₹${card.amount!}',
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                    ),
+                  ],
+                ]),
+                const SizedBox(height: 6),
+                Row(children: [
+                  const Icon(Icons.calendar_today, size: 13, color: Color(0xFF9CA3AF)),
+                  const SizedBox(width: 5),
+                  Text(card.submittedDate, style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                ]),
+              ],
+              const SizedBox(height: 4),
+              if (!isRejected) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      if (submissionId.isNotEmpty) {
+                        context.pushNamed('submission-detail', extra: {
+                          'submissionId': submissionId,
+                          'token': token,
+                          'userName': userName,
+                          'poNumber': '',
+                        });
+                      }
+                    },
+                    icon: const Icon(Icons.open_in_new, size: 15),
+                    label: const Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF003087),
+                      side: const BorderSide(color: Color(0xFF003087), width: 1.5),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: const StadiumBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: cards.map(statusCard).toList(),
     );
   }
 

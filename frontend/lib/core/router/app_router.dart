@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
 import '../../features/auth/presentation/pages/login_page.dart';
+import '../../features/auth/presentation/pages/sso_callback_page.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
 import '../../features/conversational_submission/presentation/pages/conversational_submission_page.dart';
 import '../../features/conversational_submission/presentation/pages/my_submissions_page.dart';
@@ -39,8 +40,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final isAuthenticated = authState.isAuthenticated;
       final isLoggingIn = state.matchedLocation == '/login';
+      final isSsoCallback = state.matchedLocation == '/sso-callback';
 
-      if (!isAuthenticated && !isLoggingIn) {
+      if (!isAuthenticated && !isLoggingIn && !isSsoCallback) {
         return '/login';
       }
 
@@ -76,6 +78,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/login',
         name: 'login',
         builder: (context, state) => const LoginPage(),
+      ),
+      GoRoute(
+        path: '/sso-callback',
+        name: 'sso-callback',
+        builder: (context, state) {
+          final code = state.uri.queryParameters['code'];
+          final error = state.uri.queryParameters['error'];
+          final errorDescription = state.uri.queryParameters['error_description'];
+          return SsoCallbackPage(
+            code: code,
+            error: error,
+            errorDescription: errorDescription,
+          );
+        },
       ),
       GoRoute(
         path: '/home',

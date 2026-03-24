@@ -122,44 +122,21 @@ public class SubmissionsController : ControllerBase
             _context.DocumentPackages.Add(package);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // If a PO was selected, clone it into a new PO record linked to this package
+            // If a PO was selected, link the master PO to this package (no cloning — PO is SAP master data)
             if (request.SelectedPoId.HasValue)
             {
-                var sourcePo = await _context.POs
-                    .AsNoTracking()
+                var masterPo = await _context.POs
                     .FirstOrDefaultAsync(po => po.Id == request.SelectedPoId.Value, cancellationToken);
 
-                if (sourcePo != null)
+                if (masterPo != null)
                 {
-                    var newPo = new Domain.Entities.PO
-                    {
-                        Id = Guid.NewGuid(),
-                        PackageId = package.Id,
-                        AgencyId = user.AgencyId.Value,
-                        PONumber = sourcePo.PONumber,
-                        PODate = sourcePo.PODate,
-                        VendorName = sourcePo.VendorName,
-                        VendorCode = sourcePo.VendorCode,
-                        TotalAmount = sourcePo.TotalAmount,
-                        RemainingBalance = sourcePo.RemainingBalance,
-                        POStatus = sourcePo.POStatus,
-                        FileName = sourcePo.FileName,
-                        BlobUrl = sourcePo.BlobUrl,
-                        FileSizeBytes = sourcePo.FileSizeBytes,
-                        ContentType = sourcePo.ContentType,
-                        ExtractedDataJson = sourcePo.ExtractedDataJson,
-                        ExtractionConfidence = sourcePo.ExtractionConfidence,
-                        RefreshedAt = sourcePo.RefreshedAt,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                    _context.POs.Add(newPo);
+                    masterPo.PackageId = package.Id;
                     await _context.SaveChangesAsync(cancellationToken);
-                    _logger.LogInformation("PO {POId} cloned from {SourcePOId} for package {PackageId}", newPo.Id, sourcePo.Id, package.Id);
+                    _logger.LogInformation("Master PO {POId} linked to package {PackageId}", masterPo.Id, package.Id);
                 }
                 else
                 {
-                    _logger.LogWarning("Selected PO {SelectedPOId} not found — package created without PO", request.SelectedPoId);
+                    _logger.LogWarning("Selected PO {SelectedPOId} not found — package created without PO link", request.SelectedPoId);
                 }
             }
 

@@ -1,67 +1,163 @@
-# =========================
+# =============================================================
 # FAP Deployment Script
-# =========================
+# Supports: HTTP (port 80) and HTTPS (port 7001)
+# Works inside and outside the VM (binds to 0.0.0.0)
+# =============================================================
 
-Write-Host "Starting Deployment..." -ForegroundColor Green
+param(
+    [string]$ApiUrl = "http://0.0.0.0:80;https://0.0.0.0:443;https://0.0.0.0:7001",
+    [string]$PublicBaseUrl = "http://localhost"   # Change to VM IP or domain for external access
+)
 
-# Paths (adjust if needed)
-$backendProject = "..\backend"
-$frontendProject = "..\frontend"
+$ErrorActionPreference = "Stop"
 
-# VM deployment directories
-$apiDeployPath = "C:\deploy\FAPAPI"
-$uiDeployPath = "C:\deploy\FAPUI"
+Write-Host "Starting FAP Deployment..." -ForegroundColor Green
+
+# Resolve absolute paths relative to this script's location
+$scriptDir      = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot       = Resolve-Path "$scriptDir\.."
+$backendSln     = "$repoRoot\backend"
+$frontendDir    = "$repoRoot\frontend"
+
+# Deployment directories on VM
+$apiDeployPath  = "C:\deploy\FAPAPI"
+$uiDeployPath   = "$apiDeployPath\wwwroot"
 
 # -----------------------------
-# Step 1 - Build .NET API
+# Step 1 - Stop running API
 # -----------------------------
-Write-Host "Publishing .NET API..."
+Write-Host "`n[Step 1] Stopping running API processes..." -ForegroundColor Yellow
+Get-Process -Name "BajajDocumentProcessing.API" -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process -Name "dotnet" -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 3
+Write-Host "Processes stopped." -ForegroundColor Green
 
-Set-Location $backendProject
+# -----------------------------
+# Step 2 - Publish .NET API
+# -----------------------------
+Write-Host "`n[Step 2] Publishing .NET API..." -ForegroundColor Yellow
 
-dotnet publish -c Release -o $apiDeployPath
+$tempPublish = "$env:TEMP\FAPAPI_publish"
+if (Test-Path $tempPublish) { Remove-Item $tempPublish -Recurse -Force }
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "API Build Failed!" -ForegroundColor Red
-    exit
+Push-Location $backendSln
+try {
+    dotnet publish src\BajajDocumentProcessing.API -c Release -o $tempPublish
+    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+} finally {
+    Pop-Location
 }
 
-Write-Host "API Published"
+Write-Host "Copying published files to $apiDeployPath..." -ForegroundColor Yellow
+if (!(Test-Path $apiDeployPath)) { New-Item -ItemType Directory -Path $apiDeployPath -Force | Out-Null }
+Copy-Item "$tempPublish\*" -Destination $apiDeployPath -Recurse -Force
+Remove-Item $tempPublish -Recurse -Force
+Write-Host "API published." -ForegroundColor Green
 
 # -----------------------------
-# Step 2 - Build Flutter Web
+# Step 3 - Build Flutter Web
 # -----------------------------
-Write-Host "Building Flutter Web..."
+Write-Host "`n[Step 3] Building Flutter Web..." -ForegroundColor Yellow
 
-Set-Location $frontendProject
-
-flutter build web
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Flutter Build Failed!" -ForegroundColor Red
-    exit
+# API calls use relative /api path — works on same origin (VM internal + external via same IP/domain)
+Push-Location $frontendDir
+try {
+    flutter build web --release --dart-define=API_BASE_URL=/api
+    if ($LASTEXITCODE -ne 0) { throw "Flutter build failed" }
+} finally {
+    Pop-Location
 }
 
-Write-Host "Flutter Build Successful"
+Write-Host "Flutter build complete." -ForegroundColor Green
 
 # -----------------------------
-# Step 3 - Deploy UI
+# Step 4 - Deploy Flutter UI to wwwroot
 # -----------------------------
-Write-Host "Deploying Flutter UI..."
+Write-Host "`n[Step 4] Deploying Flutter UI to wwwroot..." -ForegroundColor Yellow
 
-$flutterBuild = "$frontendProject\build\web\*"
+$flutterBuildSrc = "$frontendDir\build\web"
+if (!(Test-Path $flutterBuildSrc)) { throw "Flutter build output not found at $flutterBuildSrc" }
 
-Remove-Item $uiDeployPath\* -Recurse -Force -ErrorAction SilentlyContinue
-
-Copy-Item $flutterBuild -Destination $uiDeployPath -Recurse
-
-Write-Host "UI Deployment Completed"
+if (Test-Path $uiDeployPath) { Remove-Item $uiDeployPath -Recurse -Force }
+New-Item -ItemType Directory -Path $uiDeployPath -Force | Out-Null
+Copy-Item "$flutterBuildSrc\*" -Destination $uiDeployPath -Recurse -Force
+Write-Host "UI deployed to $uiDeployPath." -ForegroundColor Green
 
 # -----------------------------
-# Step 4 - Restart IIS
+# Step 5 - Open firewall ports (idempotent)
 # -----------------------------
-Write-Host "Restarting IIS..."
+Write-Host "`n[Step 5] Configuring firewall rules..." -ForegroundColor Yellow
 
-iisreset
+$ports = @(80, 443, 7001)
+foreach ($port in $ports) {
+    $ruleName = "FAP-API-Port-$port"
+    if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $port -Action Allow | Out-Null
+        Write-Host "Firewall rule added for port $port." -ForegroundColor Green
+    } else {
+        Write-Host "Firewall rule for port $port already exists." -ForegroundColor Gray
+    }
+}
 
-Write-Host "Deployment Completed Successfully!" -ForegroundColor Cyan
+# -----------------------------
+# Step 6 - Start API (Kestrel)
+# Binds to 0.0.0.0 so it's reachable inside and outside the VM
+# -----------------------------
+Write-Host "`n[Step 6] Starting API..." -ForegroundColor Yellow
+
+$apiExe = "$apiDeployPath\BajajDocumentProcessing.API.exe"
+$apiDll = "$apiDeployPath\BajajDocumentProcessing.API.dll"
+
+# Environment variables passed to the process (override appsettings.json)
+$env:ASPNETCORE_URLS = $ApiUrl
+$env:ASPNETCORE_ENVIRONMENT = "Production"
+
+if (Test-Path $apiExe) {
+    Start-Process -FilePath $apiExe `
+        -WorkingDirectory $apiDeployPath `
+        -WindowStyle Hidden `
+        -PassThru | Out-Null
+} elseif (Test-Path $apiDll) {
+    Start-Process -FilePath "dotnet" `
+        -ArgumentList $apiDll `
+        -WorkingDirectory $apiDeployPath `
+        -WindowStyle Hidden `
+        -PassThru | Out-Null
+} else {
+    throw "API executable not found in $apiDeployPath"
+}
+
+# -----------------------------
+# Step 7 - Health check
+# -----------------------------
+Write-Host "`n[Step 7] Waiting for API to start..." -ForegroundColor Yellow
+$healthUrl = "http://localhost:80/health"
+$maxAttempts = 10
+$attempt = 0
+$started = $false
+
+while ($attempt -lt $maxAttempts) {
+    Start-Sleep -Seconds 3
+    $attempt++
+    try {
+        $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        if ($response.StatusCode -eq 200) {
+            $started = $true
+            break
+        }
+    } catch {
+        Write-Host "  Attempt $attempt/$maxAttempts — not ready yet..." -ForegroundColor Gray
+    }
+}
+
+if ($started) {
+    Write-Host "`nDeployment Completed Successfully!" -ForegroundColor Cyan
+    Write-Host "  HTTP  (internal + external): http://0.0.0.0:80"    -ForegroundColor Cyan
+    Write-Host "  HTTPS (internal + external): https://0.0.0.0:443"  -ForegroundColor Cyan
+    Write-Host "  HTTPS (alt port):            https://0.0.0.0:7001"  -ForegroundColor Cyan
+    Write-Host "  Swagger: http://<VM-IP>/swagger" -ForegroundColor Cyan
+} else {
+    Write-Host "`nAPI did not respond to health check after $maxAttempts attempts." -ForegroundColor Red
+    Write-Host "Check logs in $apiDeployPath or run: dotnet $apiDll" -ForegroundColor Yellow
+    exit 1
+}

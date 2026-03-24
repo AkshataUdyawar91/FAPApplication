@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
+import '../constants/api_constants.dart';
 import '../theme/app_colors.dart';
 
 /// Data model for a single photo thumbnail with validation status.
@@ -46,11 +47,11 @@ class PhotoThumbnailGallery extends StatefulWidget {
 }
 
 class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
-  final Map<String, Uint8List> _imageCache = {};
+  final Map<String, Uint8List> _imageBytes = {};
   final Set<String> _loadingIds = {};
   final Set<String> _failedIds = {};
 
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+  final _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
 
   @override
   void initState() {
@@ -65,7 +66,6 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
     final toLoad = <PhotoThumbnailItem>[];
     for (final photo in widget.photos) {
       if (uniqueIds.add(photo.documentId) &&
-          !_imageCache.containsKey(photo.documentId) &&
           !_loadingIds.contains(photo.documentId)) {
         toLoad.add(photo);
       }
@@ -80,8 +80,7 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
   }
 
   Future<void> _loadImage(String documentId) async {
-    if (_imageCache.containsKey(documentId) ||
-        _loadingIds.contains(documentId)) return;
+    if (_loadingIds.contains(documentId)) return;
 
     _loadingIds.add(documentId);
 
@@ -98,7 +97,7 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
         if (base64Content.isNotEmpty) {
           final bytes = base64.decode(base64Content);
           setState(() {
-            _imageCache[documentId] = Uint8List.fromList(bytes);
+            _imageBytes[documentId] = Uint8List.fromList(bytes);
             _loadingIds.remove(documentId);
           });
           return;
@@ -234,7 +233,7 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
   }
 
   Widget _buildThumbnail(PhotoThumbnailItem photo) {
-    final bytes = _imageCache[photo.documentId];
+    final bytes = _imageBytes[photo.documentId];
     final isLoading = _loadingIds.contains(photo.documentId);
     final isFailed = _failedIds.contains(photo.documentId);
     final borderColor = _borderColor(photo);
@@ -305,8 +304,6 @@ class _HoverThumbnailState extends State<_HoverThumbnail> {
                       ? Image.memory(
                           widget.bytes!,
                           fit: BoxFit.cover,
-                          cacheWidth: 160,
-                          cacheHeight: 160,
                           errorBuilder: (_, __, ___) => _placeholder(Icons.broken_image),
                         )
                       : widget.isLoading

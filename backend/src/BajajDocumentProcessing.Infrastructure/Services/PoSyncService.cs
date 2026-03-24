@@ -292,7 +292,7 @@ public class PoSyncService : IPoSyncService
     {
         Id            = Guid.NewGuid(),
         AgencyId      = agencyId,
-        PackageId     = Guid.Empty,       // SAP-sourced PO — no submission package yet
+        PackageId     = null,              // SAP master data — not yet linked to a submission
         PONumber      = row.PONumber,
         PODate        = row.PODate,
         VendorName    = row.VendorName,

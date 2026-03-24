@@ -18,7 +18,7 @@ public class POConfiguration : IEntityTypeConfiguration<PO>
 
         // Properties
         builder.Property(p => p.PackageId)
-            .IsRequired();
+            .IsRequired(false);
 
         builder.Property(p => p.AgencyId)
             .IsRequired();
@@ -97,6 +97,7 @@ public class POConfiguration : IEntityTypeConfiguration<PO>
         // Unique index on PackageId (enforces one-to-one relationship)
         builder.HasIndex(p => p.PackageId)
             .IsUnique()
+            .HasFilter("[PackageId] IS NOT NULL")
             .HasDatabaseName("IX_POs_PackageId");
 
         // Index on AgencyId for filtering by agency

@@ -14,13 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
 builder.Services.AddSignalR();
-builder.Services.AddControllers()
-    .AddJsonOptions(opts =>
-    {
-        opts.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
-        opts.JsonSerializerOptions.DefaultIgnoreCondition =
-            System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
-    });
+builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -60,6 +54,10 @@ builder.Services.AddSwaggerGen(options =>
 
 // Add Infrastructure layer
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// Register feature flags (IOptionsSnapshot enables hot-reload per request)
+builder.Services.Configure<BajajDocumentProcessing.API.Configuration.FeaturesConfig>(
+    builder.Configuration.GetSection("Features"));
 
 // Override the no-op notification service with the real SignalR implementation
 builder.Services.AddScoped<ISubmissionNotificationService, SignalRSubmissionNotificationService>();
@@ -178,11 +176,32 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 }
 
 // Only redirect to HTTPS in production — breaks Bot Framework Emulator and Flutter web in dev
-if (!app.Environment.IsDevelopment())
-{
-    app.UseHttpsRedirection();
-}
+// HTTPS redirection disabled — API serves Flutter SPA on HTTP 5000
+// and Flutter app is configured to call http://localhost:5000/api
+// if (!app.Environment.IsDevelopment())
+// {
+//     app.UseHttpsRedirection();
+// }
 app.UseCors("AllowFlutterApp");
+
+// Serve Flutter web build from wwwroot (or configured path)
+// In production the deploy script copies build/web here
+var flutterWebPath = builder.Configuration["FlutterWebPath"]
+    ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+
+if (Directory.Exists(flutterWebPath))
+{
+    app.UseDefaultFiles(new DefaultFilesOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(flutterWebPath),
+        RequestPath = ""
+    });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(flutterWebPath),
+        RequestPath = ""
+    });
+}
 
 // Correlation ID middleware - must be early in pipeline
 app.UseMiddleware<CorrelationIdMiddleware>();
@@ -195,5 +214,14 @@ app.UseAuditLogging();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHub<SubmissionNotificationHub>("/hubs/submission");
+
+// SPA fallback — serve index.html for any non-API route (Flutter handles its own routing)
+if (Directory.Exists(flutterWebPath))
+{
+    app.MapFallbackToFile("index.html", new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(flutterWebPath)
+    });
+}
 
 app.Run();

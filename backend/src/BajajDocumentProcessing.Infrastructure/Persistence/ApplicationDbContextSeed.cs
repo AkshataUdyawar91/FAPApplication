@@ -132,62 +132,9 @@ public static class ApplicationDbContextSeed
             Console.WriteLine("[Seed] Added state GST master data");
         }
 
-        // Seed sample POs for the agency (simulates SAP sync)
-        if (!await context.POs.AnyAsync())
-        {
-            var agencyUser2 = await context.Users.FirstOrDefaultAsync(u => u.Email == "agency@bajaj.com");
-            var submitterId = agencyUser2?.Id ?? Guid.NewGuid();
-
-            var poData = new[]
-            {
-                ("PO-2026-001", new DateTime(2026, 1, 15), 500000m, 350000m, "Open", "Maharashtra"),
-                ("PO-2026-002", new DateTime(2026, 2, 20), 250000m, 250000m, "Open", "Gujarat"),
-                ("PO-2025-045", new DateTime(2025, 11, 10), 750000m, 120000m, "PartiallyConsumed", "Karnataka"),
-                ("8110011482", new DateTime(2026, 3, 1), 1200000m, 800000m, "Open", "Tamil Nadu"),
-                ("8110011617", new DateTime(2026, 3, 5), 950000m, 950000m, "Open", "Rajasthan"),
-                ("8110011618", new DateTime(2026, 3, 5), 680000m, 400000m, "PartiallyConsumed", "Uttar Pradesh"),
-                ("8110011700", new DateTime(2026, 2, 28), 320000m, 320000m, "Open", "Maharashtra"),
-                ("8110011755", new DateTime(2026, 3, 10), 1500000m, 1100000m, "Open", "Gujarat"),
-            };
-
-            foreach (var (poNum, poDate, total, remaining, status, activityState) in poData)
-            {
-                var pkgId = Guid.NewGuid();
-                context.DocumentPackages.Add(new DocumentPackage
-                {
-                    Id = pkgId,
-                    AgencyId = agencyId,
-                    SubmittedByUserId = submitterId,
-                    State = PackageState.Uploaded,
-                    ActivityState = activityState,
-                    CurrentStep = 0,
-                    VersionNumber = 1,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                });
-
-                context.POs.Add(new PO
-                {
-                    Id = Guid.NewGuid(),
-                    PackageId = pkgId,
-                    AgencyId = agencyId,
-                    PONumber = poNum,
-                    PODate = poDate,
-                    VendorName = "Demo Agency",
-                    TotalAmount = total,
-                    RemainingBalance = remaining,
-                    POStatus = status,
-                    FileName = "seed.pdf",
-                    BlobUrl = $"seed://{poNum}",
-                    ContentType = "application/pdf",
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                });
-            }
-
-            await context.SaveChangesAsync();
-            Console.WriteLine("[Seed] Added 8 sample POs for Demo Agency");
-        }
+        // POs are NOT seeded here — they come from SAP sync or actual submissions.
+        // POs require a parent DocumentPackage (PackageId FK is non-nullable),
+        // so seeding standalone POs is not possible without also creating packages.
 
         // Seed StateMappings for ASM/RA role-based scoping (1 ASM per state)
         if (!await context.StateMappings.AnyAsync())
