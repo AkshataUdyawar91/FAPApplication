@@ -196,3 +196,20 @@ class PhotoThumbnailGallery extends StatefulWidget {
 - `Map<String, Uint8List>` cache avoids re-fetching on rebuilds; deduplicates by documentId
 - `const` constructors where possible
 - Hover state isolated in `_HoverThumbnail` widget to avoid rebuilding entire gallery
+
+## Changelog
+
+### 2026-03-24 — Fix: Photo Thumbnails No Longer Inherit Aggregate Validation Failures
+
+**Problem**: All photo thumbnails showed red borders and "X failed" badge even when individual photos passed all 4 required checks (date, GPS, blue t-shirt, 3W vehicle).
+
+**Root Cause**: `_collectPhotosWithValidation()` in all 3 detail pages used `validationByDocId[docId] ?? aggregateValidation` as fallback. When no per-photo validation entry existed for a photo, it fell back to the aggregate package-level validation. The aggregate had `allPassed: false` because of the cross-document "No. of Days" check (photo count < cost summary days), which is unrelated to individual photo quality. Every photo inherited `hasError = true` → red border.
+
+**Fix**: Changed `_collectPhotosWithValidation()` to only use per-photo validation (`validationByDocId[docId]`). When only the aggregate exists and no per-photo entry is found, photos show as passed (green border) since cross-document failures aren't about individual photo quality.
+
+**Files Changed**:
+- `frontend/lib/features/submission/presentation/pages/agency_submission_detail_page.dart`
+- `frontend/lib/features/approval/presentation/pages/asm_review_detail_page.dart`
+- `frontend/lib/features/approval/presentation/pages/hq_review_detail_page.dart`
+
+**How to Revert**: In `_collectPhotosWithValidation()`, change `final validation = validationByDocId[docId];` back to `final validation = validationByDocId[docId] ?? aggregateValidation;` and collapse the `else if (aggregateValidation != null)` branch back into the single `if (validation != null)` block.

@@ -1,6 +1,7 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Entities;
 using BajajDocumentProcessing.Domain.Enums;
+using BajajDocumentProcessing.Domain.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -280,6 +281,11 @@ public class HierarchicalSubmissionController : ControllerBase
             _logger.LogInformation("{Count} photos added to campaign {CampaignId} via DocumentService", files.Count, campaignId);
 
             return Ok(new { photoIds, message = $"{files.Count} photos added successfully" });
+        }
+        catch (ValidationException vex)
+        {
+            _logger.LogWarning(vex, "Validation error adding photos to campaign {CampaignId}: {Message}", campaignId, vex.Message);
+            return BadRequest(new { error = vex.Message, details = vex.Errors });
         }
         catch (Exception ex)
         {

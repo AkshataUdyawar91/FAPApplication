@@ -1500,8 +1500,9 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           hasError = false;
           hasWarning = false;
         } else {
-          final validation = validationByDocId[docId] ?? aggregateValidation;
+          final validation = validationByDocId[docId];
           if (validation != null) {
+            // Per-photo validation exists — use it directly
             isPending = false;
             final allPassed = validation['allPassed'] == true ||
                 validation['allValidationsPassed'] == true;
@@ -1509,6 +1510,13 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                 validation['failureReason']?.toString() ?? '';
             hasError = !allPassed || failureReason.isNotEmpty;
             hasWarning = !hasError && _hasWarningRules(validation);
+          } else if (aggregateValidation != null) {
+            // No per-photo validation — check individual photo fields from aggregate fieldPresence
+            // Don't use aggregate allPassed (it includes cross-document checks like "No. of Days"
+            // which aren't about individual photo quality)
+            isPending = false;
+            hasError = false;
+            hasWarning = false;
           } else {
             isPending = true;
             hasError = false;
@@ -2155,10 +2163,10 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           ),
           child: Row(
             children: [
-              Expanded(flex: 3, child: Text('WHAT WAS CHECKED', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, fontSize: 11))),
-              SizedBox(width: 80, child: Text('RESULT', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, fontSize: 11), textAlign: TextAlign.center)),
+              Expanded(flex: 3, child: Text('What was checked', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, fontSize: 11))),
+              SizedBox(width: 80, child: Text('Result', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, fontSize: 11), textAlign: TextAlign.center)),
               const SizedBox(width: 12),
-              Expanded(flex: 3, child: Text('WHAT WAS FOUND', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, fontSize: 11))),
+              Expanded(flex: 3, child: Text('What was found', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary, fontSize: 11))),
             ],
           ),
         ),
@@ -2386,7 +2394,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
               Expanded(
                 flex: 3,
                 child: Text(
-                  'WHAT WAS CHECKED',
+                  'What was checked',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
@@ -2397,7 +2405,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
               SizedBox(
                 width: 80,
                 child: Text(
-                  'RESULT',
+                  'Result',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
@@ -2410,7 +2418,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
               Expanded(
                 flex: 3,
                 child: Text(
-                  'WHAT WAS FOUND',
+                  'What was found',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,

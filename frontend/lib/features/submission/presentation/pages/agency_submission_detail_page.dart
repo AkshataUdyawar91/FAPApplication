@@ -469,8 +469,8 @@ class _AgencySubmissionDetailPageState
           hasError = false;
           hasWarning = false;
         } else {
-          // Try per-photo validation first, then aggregate
-          final validation = validationByDocId[docId] ?? aggregateValidation;
+          // Try per-photo validation first
+          final validation = validationByDocId[docId];
           if (validation != null) {
             isPending = false;
             final allPassed = validation['allPassed'] == true ||
@@ -480,6 +480,12 @@ class _AgencySubmissionDetailPageState
             hasError = !allPassed || failureReason.isNotEmpty;
             // Check for warnings in validationDetailsJson proactiveRules
             hasWarning = !hasError && _hasWarningRules(validation);
+          } else if (aggregateValidation != null) {
+            // No per-photo validation — don't inherit aggregate allPassed
+            // (it includes cross-document checks like "No. of Days" unrelated to individual photo quality)
+            isPending = false;
+            hasError = false;
+            hasWarning = false;
           } else {
             // No validation data — mark as pending (grey border)
             isPending = true;
@@ -1233,7 +1239,7 @@ class _AgencySubmissionDetailPageState
             children: [
               Expanded(
                 flex: 3,
-                child: Text('WHAT WAS CHECKED',
+                child: Text('What was checked',
                     style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,
@@ -1241,7 +1247,7 @@ class _AgencySubmissionDetailPageState
               ),
               SizedBox(
                 width: 80,
-                child: Text('RESULT',
+                child: Text('Result',
                     style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,
@@ -1251,7 +1257,7 @@ class _AgencySubmissionDetailPageState
               const SizedBox(width: 12),
               Expanded(
                 flex: 3,
-                child: Text('WHAT WAS FOUND',
+                child: Text('What was found',
                     style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,
@@ -1348,7 +1354,7 @@ class _AgencySubmissionDetailPageState
               Expanded(
                 flex: 3,
                 child: Text(
-                  'WHAT WAS CHECKED',
+                  'What was checked',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
@@ -1359,7 +1365,7 @@ class _AgencySubmissionDetailPageState
               SizedBox(
                 width: 80,
                 child: Text(
-                  'RESULT',
+                  'Result',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
@@ -1372,7 +1378,7 @@ class _AgencySubmissionDetailPageState
               Expanded(
                 flex: 3,
                 child: Text(
-                  'WHAT WAS FOUND',
+                  'What was found',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
@@ -1520,7 +1526,7 @@ class _AgencySubmissionDetailPageState
               Expanded(
                 flex: 3,
                 child: Text(
-                  'WHAT WAS CHECKED',
+                  'What was checked',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
@@ -1531,7 +1537,7 @@ class _AgencySubmissionDetailPageState
               SizedBox(
                 width: 80,
                 child: Text(
-                  'RESULT',
+                  'Result',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,
@@ -1544,7 +1550,7 @@ class _AgencySubmissionDetailPageState
               Expanded(
                 flex: 3,
                 child: Text(
-                  'WHAT WAS FOUND',
+                  'What was found',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary,

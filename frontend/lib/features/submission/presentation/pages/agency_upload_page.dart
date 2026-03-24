@@ -764,12 +764,17 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
               .map((p) => MultipartFile.fromBytes(p.bytes!, filename: p.name))
               .toList();
           if (photoFiles.isNotEmpty) {
-            await _dio.post(
-              '/hierarchical/$packageId/campaigns/$campaignId/photos',
-              data: FormData.fromMap({'files': photoFiles}),
-              options:
-                  Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-            );
+            try {
+              await _dio.post(
+                '/hierarchical/$packageId/campaigns/$campaignId/photos',
+                data: FormData.fromMap({'files': photoFiles}),
+                options:
+                    Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+              );
+            } catch (e) {
+              debugPrint('Photo upload warning for team ${campaign.campaignName}: $e');
+              // Continue submission — photo validation failures should not block it
+            }
           }
         }
       }

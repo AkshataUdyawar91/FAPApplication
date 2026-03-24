@@ -1386,7 +1386,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           hasError = false;
           hasWarning = false;
         } else {
-          final validation = validationByDocId[docId] ?? aggregateValidation;
+          final validation = validationByDocId[docId];
           if (validation != null) {
             isPending = false;
             final allPassed = validation['allPassed'] == true ||
@@ -1395,6 +1395,12 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                 validation['failureReason']?.toString() ?? '';
             hasError = !allPassed || failureReason.isNotEmpty;
             hasWarning = !hasError && _hasWarningRules(validation);
+          } else if (aggregateValidation != null) {
+            // No per-photo validation — don't inherit aggregate allPassed
+            // (it includes cross-document checks like "No. of Days" unrelated to individual photo quality)
+            isPending = false;
+            hasError = false;
+            hasWarning = false;
           } else {
             isPending = true;
             hasError = false;
@@ -2120,7 +2126,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
             children: [
               Expanded(
                 flex: 3,
-                child: Text('WHAT WAS CHECKED',
+                child: Text('What was checked',
                     style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,
@@ -2128,7 +2134,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               ),
               SizedBox(
                 width: 80,
-                child: Text('RESULT',
+                child: Text('Result',
                     style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,
@@ -2138,7 +2144,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               const SizedBox(width: 12),
               Expanded(
                 flex: 3,
-                child: Text('WHAT WAS FOUND',
+                child: Text('What was found',
                     style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,

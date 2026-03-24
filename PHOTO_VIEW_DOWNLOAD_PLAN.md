@@ -316,3 +316,23 @@ return _buildValidationCard(..., documentId: resolvedPhotoDocId);
 - `backend/src/BajajDocumentProcessing.Infrastructure/Services/ValidationAgent.cs`
 
 **Note**: Validation counts are persisted in `ValidationResults.ValidationDetailsJson` at validation time. To see corrected counts in the UI, validation must be re-run for the package.
+
+
+### 2026-03-24 — Photo Upload: Non-Blocking Validation + Better Error Reporting (T30–T31)
+
+**Problem**: When uploading photos during submission, if any photo failed file validation (size, extension, magic bytes, or malware scan), the entire submission failed with a 500 error. The `ValidateFileAsync` rejection in `DocumentService.UploadDocumentAsync` threw a `ValidationException` that propagated up through `AddPhotos` and killed the whole submission flow.
+
+**Root Cause (Backend)**: `HierarchicalSubmissionController.AddPhotos` had a single `catch (Exception ex)` that returned `500 Internal Server Error` with a generic `"Failed to add photos"` message, hiding the actual validation error details.
+
+**Root Cause (Frontend)**: `agency_upload_page.dart` called `_dio.post('/hierarchical/$packageId/campaigns/$campaignId/photos')` without a try/catch. Any HTTP error (400 or 500) from the photo upload threw a `DioException` that propagated up and failed the entire submission.
+
+**Solution**:
+
+| ID | File | Change | How to Remove |
+|----|------|--------|---------------|
+| T30 | `HierarchicalSubmissionController.cs` | Added a separate `catch (ValidationException vex)` block before the generic `catch (Exception)` that returns `400 Bad Request` with the actual error message and field-level errors (`vex.Errors`). Added `using BajajDocumentProcessing.Domain.Exceptions;` import. | Remove the `catch (ValidationException vex)` block from `AddPhotos`. Remove the `Domain.Exceptions` using if no longer needed. |
+| T31 | `agency_upload_page.dart` | Wrapped the photo upload `_dio.post(...)` call in a try/catch. On failure, logs a debug warning but continues submission — photo validation failures do not block the request. | Remove the try/catch around the `_dio.post('/hierarchical/$packageId/campaigns/$campaignId/photos')` call and let it throw directly. |
+
+**Files Changed**:
+- `backend/src/BajajDocumentProcessing.API/Controllers/HierarchicalSubmissionController.cs` (T30)
+- `frontend/lib/features/submission/presentation/pages/agency_upload_page.dart` (T31)
