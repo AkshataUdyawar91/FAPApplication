@@ -149,7 +149,7 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
             Row(
               children: [
                 const Icon(Icons.photo_library,
-                    color: Color(0xFF003087), size: 24),
+                    color: Color(0xFF3B82F6), size: 24),
                 const SizedBox(width: 12),
                 Text(
                   'Team Photos (${widget.photos.length})',
