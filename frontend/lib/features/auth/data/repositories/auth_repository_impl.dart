@@ -68,4 +68,29 @@ class AuthRepositoryImpl implements AuthRepository {
       return Left(ServerFailure(e.toString()));
     }
   }
+
+  @override
+  Future<Either<Failure, String>> getSsoAuthorizeUrl(String redirectUri) async {
+    try {
+      final url = await remoteDataSource.getSsoAuthorizeUrl(redirectUri);
+      return Right(url);
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, User>> ssoLogin(String code, String redirectUri) async {
+    try {
+      final response = await remoteDataSource.ssoLogin(code, redirectUri);
+
+      // Cache user and token
+      await localDataSource.cacheUser(response.user);
+      await localDataSource.saveTokens(response.token, '');
+
+      return Right(response.user);
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
 }

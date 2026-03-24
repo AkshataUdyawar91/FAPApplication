@@ -5,6 +5,8 @@ import '../models/user_model.dart';
 abstract class AuthRemoteDataSource {
   Future<AuthResponse> login(String email, String password);
   Future<void> refreshToken(String token);
+  Future<String> getSsoAuthorizeUrl(String redirectUri);
+  Future<AuthResponse> ssoLogin(String code, String redirectUri);
 }
 
 class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
@@ -47,6 +49,47 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
       }
     } on DioException catch (e) {
       throw Exception('Network error: ${e.message}');
+    }
+  }
+
+  @override
+  Future<String> getSsoAuthorizeUrl(String redirectUri) async {
+    try {
+      final response = await dio.get(
+        '/auth/sso/authorize',
+        queryParameters: {'redirectUri': redirectUri},
+      );
+
+      if (response.statusCode == 200) {
+        return response.data['authorizeUrl'] as String;
+      } else {
+        throw Exception('Failed to get SSO authorize URL');
+      }
+    } on DioException catch (e) {
+      final message = e.response?.data?['message'] ?? e.message;
+      throw Exception('SSO error: $message');
+    }
+  }
+
+  @override
+  Future<AuthResponse> ssoLogin(String code, String redirectUri) async {
+    try {
+      final response = await dio.post(
+        '/auth/sso/token',
+        data: {
+          'code': code,
+          'redirectUri': redirectUri,
+        },
+      );
+
+      if (response.statusCode == 200) {
+        return AuthResponse.fromJson(response.data);
+      } else {
+        throw Exception('SSO login failed');
+      }
+    } on DioException catch (e) {
+      final message = e.response?.data?['message'] ?? e.message;
+      throw Exception('SSO login failed: $message');
     }
   }
 }

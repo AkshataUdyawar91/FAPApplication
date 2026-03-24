@@ -2,6 +2,8 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.Tokens;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
@@ -9,6 +11,7 @@ using BajajDocumentProcessing.Infrastructure.Persistence;
 using FsCheck;
 using FsCheck.Xunit;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using Xunit;
 
 namespace BajajDocumentProcessing.Tests.Infrastructure.Properties;
@@ -21,6 +24,9 @@ namespace BajajDocumentProcessing.Tests.Infrastructure.Properties;
 /// </summary>
 public class RoleBasedAuthorizationProperties
 {
+    private static readonly IHttpClientFactory _httpClientFactory = new Mock<IHttpClientFactory>().Object;
+    private static readonly ILogger<AuthService> _logger = NullLogger<AuthService>.Instance;
+
     private ApplicationDbContext CreateInMemoryContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -56,7 +62,7 @@ public class RoleBasedAuthorizationProperties
         var userId = Guid.Parse(userIdStr);
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration();
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         // Act
         var token = authService.GenerateToken(userId, email, role.ToString());
@@ -81,7 +87,7 @@ public class RoleBasedAuthorizationProperties
         var userId = Guid.Parse(userIdStr);
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration();
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         // Act
         var token = authService.GenerateToken(userId, email, role.ToString());
@@ -108,7 +114,7 @@ public class RoleBasedAuthorizationProperties
         // Arrange
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration();
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         // Act
         var token = authService.GenerateToken(Guid.NewGuid(), "agency@test.com", UserRole.Agency.ToString());
@@ -128,7 +134,7 @@ public class RoleBasedAuthorizationProperties
         // Arrange
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration();
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         // Act
         var token = authService.GenerateToken(Guid.NewGuid(), "asm@test.com", UserRole.ASM.ToString());
@@ -148,7 +154,7 @@ public class RoleBasedAuthorizationProperties
         // Arrange
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration();
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         // Act
         var token = authService.GenerateToken(Guid.NewGuid(), "ra@test.com", UserRole.RA.ToString());
@@ -168,7 +174,7 @@ public class RoleBasedAuthorizationProperties
         // Arrange
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration();
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         // Act
         var token = authService.GenerateToken(Guid.NewGuid(), "admin@test.com", UserRole.Admin.ToString());
@@ -193,7 +199,7 @@ public class RoleBasedAuthorizationProperties
         var userId = Guid.Parse(userIdStr);
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration();
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         // Act
         var token = authService.GenerateToken(userId, email, role.ToString());

@@ -36,4 +36,14 @@ public interface IAuthService
     /// <param name="role">User's role (Agency, ASM, HQ)</param>
     /// <returns>JWT token string</returns>
     string GenerateToken(Guid userId, string email, string role);
+
+    /// <summary>
+    /// Authenticates a user via Azure AD SSO using an authorization code.
+    /// Exchanges the code for an Azure AD token, extracts the user's email,
+    /// looks up the user in the local database, and returns a local JWT.
+    /// </summary>
+    /// <param name="authorizationCode">Authorization code from Azure AD redirect</param>
+    /// <param name="redirectUri">Redirect URI used in the authorization request</param>
+    /// <returns>Login response with local JWT, or null if user not found in local DB</returns>
+    Task<LoginResponse?> SsoLoginAsync(string authorizationCode, string redirectUri);
 }

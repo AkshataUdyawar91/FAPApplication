@@ -107,4 +107,41 @@ class AuthNotifier extends StateNotifier<AuthState> {
       },
     );
   }
+
+  /// Get the Azure AD SSO authorization URL
+  Future<String?> getSsoAuthorizeUrl(String redirectUri) async {
+    final result = await authRepository.getSsoAuthorizeUrl(redirectUri);
+    return result.fold(
+      (failure) {
+        state = state.copyWith(error: failure.message);
+        return null;
+      },
+      (url) => url,
+    );
+  }
+
+  /// Complete SSO login by exchanging the authorization code
+  Future<void> ssoLogin(String code, String redirectUri) async {
+    state = state.copyWith(isLoading: true, error: null);
+
+    final result = await authRepository.ssoLogin(code, redirectUri);
+
+    result.fold(
+      (failure) {
+        state = state.copyWith(
+          isLoading: false,
+          error: failure.message,
+          isAuthenticated: false,
+        );
+      },
+      (user) {
+        state = state.copyWith(
+          user: user,
+          isLoading: false,
+          error: null,
+          isAuthenticated: true,
+        );
+      },
+    );
+  }
 }
