@@ -1441,14 +1441,34 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     );
   }
 
+  /// Checks if a validation entry has any warning rules that did not pass.
+  bool _hasWarningRules(Map<String, dynamic> validation) {
+    try {
+      final detailsJson = validation['validationDetailsJson']?.toString() ?? '';
+      if (detailsJson.isEmpty) return false;
+      final details = json.decode(detailsJson);
+      final rules = (details is Map ? details['proactiveRules'] : null) as List? ?? [];
+      for (final rule in rules) {
+        final ruleMap = rule as Map<String, dynamic>;
+        if (ruleMap['isWarning'] == true && ruleMap['passed'] != true) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
   /// Collects all photos from campaigns and matches validation status.
-  /// Sorted: failed first, pending next, passed last.
+  /// Sorted: failed first, warning next, pending next, passed last.
   List<PhotoThumbnailItem> _collectPhotosWithValidation() {
     final items = <PhotoThumbnailItem>[];
     final campaigns = _submission?['campaigns'] as List? ?? [];
     final packageId = _submission?['id']?.toString() ?? '';
+    final state = _submission?['state']?.toString().toLowerCase() ?? '';
 
-    // Build a lookup: documentId -> validation entry
+    final isProcessing = state == 'draft' || state == 'uploaded' ||
+        state == 'extracting' || state == 'validating';
+
     final validationByDocId = <String, Map<String, dynamic>>{};
     Map<String, dynamic>? aggregateValidation;
     for (final v in _photoValidations) {
@@ -1471,20 +1491,29 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
             photoMap['photoId']?.toString() ??
             '';
 
-        final validation = validationByDocId[docId] ?? aggregateValidation;
-
         final bool hasError;
+        final bool hasWarning;
         final bool isPending;
-        if (validation != null) {
-          isPending = false;
-          final allPassed = validation['allPassed'] == true ||
-              validation['allValidationsPassed'] == true;
-          final failureReason =
-              validation['failureReason']?.toString() ?? '';
-          hasError = !allPassed || failureReason.isNotEmpty;
-        } else {
+
+        if (isProcessing) {
           isPending = true;
           hasError = false;
+          hasWarning = false;
+        } else {
+          final validation = validationByDocId[docId] ?? aggregateValidation;
+          if (validation != null) {
+            isPending = false;
+            final allPassed = validation['allPassed'] == true ||
+                validation['allValidationsPassed'] == true;
+            final failureReason =
+                validation['failureReason']?.toString() ?? '';
+            hasError = !allPassed || failureReason.isNotEmpty;
+            hasWarning = !hasError && _hasWarningRules(validation);
+          } else {
+            isPending = true;
+            hasError = false;
+            hasWarning = false;
+          }
         }
 
         if (docId.isNotEmpty) {
@@ -1492,18 +1521,20 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
             documentId: docId,
             fileName: fileName,
             hasError: hasError,
+            hasWarning: hasWarning,
             isPending: isPending,
           ));
         }
       }
     }
 
-    // Sort: failed first, then pending, then passed
+    // Sort: failed first, then warning, then pending, then passed
     items.sort((a, b) {
       int priority(PhotoThumbnailItem item) {
         if (item.hasError) return 0;
-        if (item.isPending) return 1;
-        return 2;
+        if (item.hasWarning) return 1;
+        if (item.isPending) return 2;
+        return 3;
       }
       return priority(a).compareTo(priority(b));
     });

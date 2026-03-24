@@ -55,5 +55,6 @@ class AppColors {
   // Photo Validation Border Colors
   static const Color photoBorderPassed = Color(0xFF34D399); // Emerald 400
   static const Color photoBorderFailed = Color(0xFFF87171); // Red 400
+  static const Color photoBorderWarning = Color(0xFFFBBF24); // Amber 400
   static const Color photoBorderPending = Color(0xFFD1D5DB); // Gray 300
 }

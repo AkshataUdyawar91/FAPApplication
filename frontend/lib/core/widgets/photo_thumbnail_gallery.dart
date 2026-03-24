@@ -11,21 +11,24 @@ class PhotoThumbnailItem {
   final String documentId;
   final String fileName;
   final bool hasError;
+  final bool hasWarning;
   final bool isPending;
 
   const PhotoThumbnailItem({
     required this.documentId,
     required this.fileName,
     required this.hasError,
+    this.hasWarning = false,
     required this.isPending,
   });
 }
 
 /// Responsive photo thumbnail gallery using Wrap.
 /// Shows small 80x80 thumbnails with thick colored borders:
-/// - Red (3px) for validation errors
-/// - Green (3px) for passed validation
-/// - Grey (3px) for pending (no validation data)
+/// - Red (2px) for validation errors
+/// - Orange (2px) for warnings (passed required, has warnings)
+/// - Green (2px) for passed validation
+/// - Grey (2px) for pending (no validation data)
 class PhotoThumbnailGallery extends StatefulWidget {
   final List<PhotoThumbnailItem> photos;
   final String token;
@@ -116,6 +119,7 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
   Color _borderColor(PhotoThumbnailItem photo) {
     if (photo.hasError) return AppColors.photoBorderFailed;
     if (photo.isPending) return AppColors.photoBorderPending;
+    if (photo.hasWarning) return AppColors.photoBorderWarning;
     return AppColors.photoBorderPassed;
   }
 
@@ -125,8 +129,10 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
 
     final errorCount =
         widget.photos.where((p) => p.hasError).length;
+    final warningCount =
+        widget.photos.where((p) => p.hasWarning && !p.hasError).length;
     final passedCount =
-        widget.photos.where((p) => !p.hasError && !p.isPending).length;
+        widget.photos.where((p) => !p.hasError && !p.isPending && !p.hasWarning).length;
 
     return Card(
       elevation: 2,
@@ -168,6 +174,24 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                         color: Color(0xFFDC2626),
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: 8),
+                if (warningCount > 0)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF9C3),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '$warningCount warning',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFFA16207),
                       ),
                     ),
                   ),

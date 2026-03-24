@@ -575,15 +575,29 @@ public class SubmissionsController : ControllerBase
                     RuleResultsJson = enquiryValidation.RuleResultsJson,
                     ValidationDetailsJson = enquiryValidation.ValidationDetailsJson
                 } : null,
-                PhotoValidations = photoValidations.Select(v => new DocumentValidationDto
-                {
-                    DocumentType = "TeamPhoto",
-                    DocumentId = v.DocumentId,
-                    FileName = "Team Photos (All)",
-                    AllPassed = v.AllValidationsPassed,
-                    FailureReason = v.FailureReason,
-                    ValidatedAt = v.CreatedAt,
-                    ValidationDetailsJson = v.ValidationDetailsJson
+                PhotoValidations = photoValidations.Select(v => {
+                    // Extract fileName from ValidationDetailsJson (stored by ValidationAgent)
+                    string photoFileName = "Team Photos (All)";
+                    if (!string.IsNullOrEmpty(v.ValidationDetailsJson))
+                    {
+                        try
+                        {
+                            using var doc = System.Text.Json.JsonDocument.Parse(v.ValidationDetailsJson);
+                            if (doc.RootElement.TryGetProperty("fileName", out var fn) && fn.ValueKind == System.Text.Json.JsonValueKind.String)
+                                photoFileName = fn.GetString() ?? photoFileName;
+                        }
+                        catch { /* fall back to default */ }
+                    }
+                    return new DocumentValidationDto
+                    {
+                        DocumentType = "TeamPhoto",
+                        DocumentId = v.DocumentId,
+                        FileName = photoFileName,
+                        AllPassed = v.AllValidationsPassed,
+                        FailureReason = v.FailureReason,
+                        ValidatedAt = v.CreatedAt,
+                        ValidationDetailsJson = v.ValidationDetailsJson
+                    };
                 }).ToList(),
                 ConfidenceScore = package.ConfidenceScore != null ? new ConfidenceScoreDto
                 {
@@ -753,7 +767,24 @@ public class SubmissionsController : ControllerBase
             foreach (var vr in validationResults)
             {
                 var docTypeStr = vr.DocumentType.ToString();
-                var fileName = fileNames.GetValueOrDefault(docTypeStr);
+                string? fileName;
+
+                // For TeamPhoto entries, extract fileName from ValidationDetailsJson
+                if (docTypeStr == "TeamPhoto" && !string.IsNullOrEmpty(vr.ValidationDetailsJson))
+                {
+                    fileName = fileNames.GetValueOrDefault(docTypeStr);
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(vr.ValidationDetailsJson);
+                        if (doc.RootElement.TryGetProperty("fileName", out var fn) && fn.ValueKind == System.Text.Json.JsonValueKind.String)
+                            fileName = fn.GetString() ?? fileName;
+                    }
+                    catch { /* fall back to default */ }
+                }
+                else
+                {
+                    fileName = fileNames.GetValueOrDefault(docTypeStr);
+                }
 
                 var docDto = new DocumentValidationDto
                 {
