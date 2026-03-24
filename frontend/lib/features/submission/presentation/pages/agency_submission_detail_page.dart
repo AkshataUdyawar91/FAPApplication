@@ -558,12 +558,6 @@ class _AgencySubmissionDetailPageState
               const SizedBox(height: 24),
             ],
 
-            // Photo Validations
-            if (_photoValidations.isNotEmpty) ...[
-              _buildPhotoValidationsSection(_photoValidations),
-              const SizedBox(height: 24),
-            ],
-
             // Cost Summary Validation
             if (_costSummaryValidation.isNotEmpty) ...[
               _buildSingleValidationCard(
@@ -596,6 +590,12 @@ class _AgencySubmissionDetailPageState
                 validation: _enquiryValidation,
                 documentId: _getDocumentIdByType('EnquiryDocument'),
               ),
+              const SizedBox(height: 24),
+            ],
+
+            // Photo Validations (at bottom)
+            if (_photoValidations.isNotEmpty) ...[
+              _buildPhotoValidationsSection(_photoValidations),
               const SizedBox(height: 24),
             ],
 
@@ -672,10 +672,19 @@ class _AgencySubmissionDetailPageState
   }
 
   Widget _buildPhotoValidationsSection(List<dynamic> photoValidations) {
+    // Only show the aggregate validation (documentId == packageId), skip per-photo entries
+    final packageId = _submission?['id']?.toString() ?? '';
+    final aggregateEntries = photoValidations.where((photo) {
+      final photoData = photo as Map<String, dynamic>;
+      final docId = photoData['documentId']?.toString() ?? '';
+      return docId == packageId || docId.isEmpty;
+    }).toList();
+    // Fallback: if no aggregate found, show the first entry only
+    final entriesToShow = aggregateEntries.isNotEmpty ? aggregateEntries : (photoValidations.isNotEmpty ? [photoValidations.first] : []);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ...photoValidations.map((photo) {
+        ...entriesToShow.map((photo) {
           final photoData = photo as Map<String, dynamic>;
           return _buildPhotoValidationCard(photoData);
         }),
@@ -711,7 +720,7 @@ class _AgencySubmissionDetailPageState
       try {
         final validationDetails =
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
-        allRows = _extractAllValidationRows(validationDetails);
+        allRows = _extractPhotoValidationRows(validationDetails);
       } catch (e) {
         debugPrint('Error parsing validation details: $e');
       }
@@ -725,17 +734,65 @@ class _AgencySubmissionDetailPageState
       }
     }
 
-    final passedCount = allRows.where((r) => r['passed'] == true).length;
-    final totalCount = allRows.length;
-
     return _buildValidationCardWidget(
       title: 'Photo Validations',
       fileName: fileName,
-      passedCount: passedCount,
-      totalCount: totalCount,
+      passedCount: 0,
+      totalCount: 0,
       rows: allRows,
-      resolvedDocId: resolvedPhotoDocId,
     );
+  }
+
+  /// Extracts photo-specific validation rows with descriptive labels and natural language messages.
+  List<Map<String, dynamic>> _extractPhotoValidationRows(Map<String, dynamic> details) {
+    final rows = <Map<String, dynamic>>[];
+
+    void addRow(String label, bool passed, String message) {
+      rows.add({'label': label, 'passed': passed, 'message': message});
+    }
+
+    final fieldPresence = details['fieldPresence'] as Map<String, dynamic>?;
+    final crossDocument = details['crossDocument'] as Map<String, dynamic>?;
+    final totalPhotos = fieldPresence?['totalPhotos'];
+
+    // Photo Count
+    if (totalPhotos != null && totalPhotos > 0) {
+      addRow('Photo Count', true, '$totalPhotos photos uploaded');
+
+      final photosWithDate = fieldPresence?['photosWithDate'] ?? 0;
+      addRow('Date on Photos', photosWithDate == totalPhotos,
+          '$photosWithDate/$totalPhotos photos have date mentioned');
+
+      final photosWithLocation = fieldPresence?['photosWithLocation'] ?? 0;
+      addRow('GPS Coordinates', photosWithLocation == totalPhotos,
+          '$photosWithLocation/$totalPhotos photos have coordinates present');
+    }
+
+    // No. of Days — uses crossDocument photoCount vs costSummaryDays
+    if (crossDocument != null) {
+      final photoCountMatch = crossDocument['photoCountMatchesManDays'];
+      if (photoCountMatch != null) {
+        final photoCount = crossDocument['photoCount'] ?? totalPhotos ?? 0;
+        final costDays = crossDocument['costSummaryDays'] ?? 0;
+        addRow('No. of Days', photoCountMatch == true,
+            photoCountMatch == true
+                ? 'Photo count ($photoCount) matches days in Cost Summary ($costDays)'
+                : 'Photo count ($photoCount) does not match days in Cost Summary ($costDays)');
+      }
+    }
+
+    // Blue T-shirt & Branded 3W
+    if (totalPhotos != null && totalPhotos > 0) {
+      final photosWithBlueTshirt = fieldPresence?['photosWithBlueTshirt'] ?? 0;
+      addRow('Promoter wearing Blue T-shirt', photosWithBlueTshirt > 0,
+          '$photosWithBlueTshirt/$totalPhotos photos have promoters wear blue T-shirt');
+
+      final photosWithVehicle = fieldPresence?['photosWithVehicle'] ?? 0;
+      addRow('Branded 3 Wheeler', photosWithVehicle > 0,
+          '$photosWithVehicle/$totalPhotos photos have Branded 3W');
+    }
+
+    return rows;
   }
 
   /// Converts a rule code to a readable label.
@@ -907,15 +964,15 @@ class _AgencySubmissionDetailPageState
           final photosWithFace = fieldPresence['photosWithFace'] ?? 0;
 
           addRow('Date in Photos', photosWithDate == totalPhotos,
-              'Present in $photosWithDate/$totalPhotos photos');
+              'Present in ${(photosWithDate * 100 / totalPhotos).toStringAsFixed(1)}% photos');
           addRow('Location in Photos', photosWithLocation == totalPhotos,
-              'Present in $photosWithLocation/$totalPhotos photos');
+              'Present in ${(photosWithLocation * 100 / totalPhotos).toStringAsFixed(1)}% photos');
           addRow('Blue T-shirt Detection', photosWithBlueTshirt > 0,
-              'Detected in $photosWithBlueTshirt/$totalPhotos photos');
+              'Detected in ${(photosWithBlueTshirt * 100 / totalPhotos).toStringAsFixed(1)}% photos');
           addRow('Bajaj Vehicle Detection', photosWithVehicle > 0,
-              'Detected in $photosWithVehicle/$totalPhotos photos');
+              'Detected in ${(photosWithVehicle * 100 / totalPhotos).toStringAsFixed(1)}% photos');
           addRow('Face Detection', photosWithFace > 0,
-              'Detected in $photosWithFace/$totalPhotos photos');
+              'Detected in ${(photosWithFace * 100 / totalPhotos).toStringAsFixed(1)}% photos');
         }
       } else {
         // Enquiry: per-field record counts
@@ -1090,7 +1147,7 @@ class _AgencySubmissionDetailPageState
                         text: TextSpan(
                           children: [
                             TextSpan(
-                              text: '$passedCount/$totalCount ',
+                              text: '${totalCount > 0 ? (passedCount * 100 ~/ totalCount) : 0}% ',
                               style: AppTextStyles.bodySmall.copyWith(
                                 color: AppColors.textPrimary,
                                 fontWeight: FontWeight.w600,

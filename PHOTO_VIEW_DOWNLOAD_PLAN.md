@@ -239,3 +239,59 @@ return _buildValidationCard(..., documentId: resolvedPhotoDocId);
 
 **Additional fix in same session** (related navigation bug):
 - `agency_submission_detail_page.dart`: `_navigateToUpload()` (the "New Claim" drawer nav item) was passing `widget.submissionId` to the upload page, putting it in edit mode and pre-loading existing invoice data. Fixed by removing `submissionId` from the navigation extras so new requests start with a clean form. `_enterEditMode()` still correctly passes `submissionId` for the edit/resubmit flow.
+
+### 2026-03-24 — Photo Validation UI: Percentage Format, Remove Per-Photo Tables, Move to Bottom (T22–T24)
+
+**Problem**: 
+1. Validation header showed "6/15 Passed" (x/y format) — should be percentage (e.g. "40% Passed")
+2. Per-photo validation tables (e.g. T2_image11.jpeg, T2_image9.jpeg) were shown individually — only the aggregate "Team Photos (All)" table should be displayed
+3. Photo validations appeared in the middle of the validation section — should be at the bottom
+
+**Solution (three changes across all 3 detail pages)**:
+
+| ID | File | Change | How to Remove |
+|----|------|--------|---------------|
+| T22 | `agency_submission_detail_page.dart`, `asm_review_detail_page.dart`, `hq_review_detail_page.dart` | Changed `$passedCount/$totalCount` to `${totalCount > 0 ? (passedCount * 100 ~/ totalCount) : 0}%` in the validation card header `RichText` | Revert the `TextSpan` text back to `'$passedCount/$totalCount '` |
+| T23 | Same 3 files | `_buildPhotoValidationsSection()` now filters to only show aggregate entries (where `documentId == packageId` or empty), skipping per-photo entries | Revert `_buildPhotoValidationsSection()` to iterate over all `photoValidations` without filtering |
+| T24 | Same 3 files | Moved the `// Photo Validations` block to after Enquiry Validation in the validation section ordering | Move the `// Photo Validations` block back to its original position (after Invoice in agency, after Activity in ASM/HQ) |
+
+**Files Changed**:
+- `frontend/lib/features/submission/presentation/pages/agency_submission_detail_page.dart` (T22, T23, T24)
+- `frontend/lib/features/approval/presentation/pages/asm_review_detail_page.dart` (T22, T23, T24)
+- `frontend/lib/features/approval/presentation/pages/hq_review_detail_page.dart` (T22, T23, T24)
+
+### 2026-03-24 — Photo Validation: x/y → Percentage in "WHAT WAS FOUND" Column (T25)
+
+**Problem**: Photo validation rows like "Date in Photos", "Location in Photos", "Blue T-shirt Detection" etc. showed "Present in 1/45 photos" or "Detected in 1/45 photos" — should show percentage instead (e.g. "Present in 2.2% photos").
+
+**Solution**:
+
+| ID | File | Change | How to Remove |
+|----|------|--------|---------------|
+| T25 | `agency_submission_detail_page.dart`, `asm_review_detail_page.dart`, `hq_review_detail_page.dart` | Changed photo fieldPresence messages from `'Present in $count/$total photos'` to `'Present in ${(count * 100 / total).toStringAsFixed(1)}% photos'` and same for `'Detected in ...'` messages. Applies to: Date in Photos, Location in Photos, Blue T-shirt Detection, Bajaj Vehicle Detection, Face Detection. | Revert the 5 `addRow()` calls in the `if (totalPhotos != null)` block back to `'Present in $photosWithDate/$totalPhotos photos'` format. |
+
+**Files Changed**:
+- `frontend/lib/features/submission/presentation/pages/agency_submission_detail_page.dart`
+- `frontend/lib/features/approval/presentation/pages/asm_review_detail_page.dart`
+- `frontend/lib/features/approval/presentation/pages/hq_review_detail_page.dart`
+
+
+### 2026-03-24 — Photo Validation: Simplified Labels and Messages (T26)
+
+**Problem**: Photo validation rows used verbose labels like "Date in Photos", "Location in Photos", "Blue T-shirt Detection" and percentage-based messages like "Present in 2.2% photos". User wanted short labels matching the screenshot (Date, GPS, Blue T-shirt, 3W Vehicle) and natural language messages (x/y format or "Field is missing").
+
+**Solution**: Created a dedicated `_extractPhotoValidationRows()` method in all 3 detail pages that bypasses the generic `_extractAllValidationRows()` for photo cards. The card still uses the shared `_buildValidationCardWidget()`/`_buildValidationCard()` (same 3-column layout, percentage header, View/Download buttons, Pass/Fail badges). Only the row text content changed:
+
+- Column 1 (WHAT WAS CHECKED): "Photo Count", "Date on Photos", "GPS Coordinates", "No. of Days", "Promoter wearing Blue T-shirt", "Branded 3 Wheeler"
+- Column 3 (WHAT WAS FOUND): "10 photos uploaded", "7/10 photos have date mentioned", "8/10 photos have coordinates present", "Photo count (45) does not match days in Cost Summary (210)", "9/10 photos have promoters wear blue T-shirt", "5/10 photos have Branded 3W"
+- "No. of Days" row uses `crossDocument.photoCount` and `crossDocument.costSummaryDays` for descriptive message with actual numbers
+- Removed Face Detection row (not in spec)
+
+| ID | File | Change | How to Remove |
+|----|------|--------|---------------|
+| T26 | `agency_submission_detail_page.dart`, `asm_review_detail_page.dart`, `hq_review_detail_page.dart` | `_buildPhotoValidationCard()` now calls `_extractPhotoValidationRows()` instead of `_extractAllValidationRows()`. Added `_extractPhotoValidationRows()` method with simplified labels and messages. | Revert `_buildPhotoValidationCard()` to call `_extractAllValidationRows()`. Remove `_extractPhotoValidationRows()` method. |
+
+**Files Changed**:
+- `frontend/lib/features/submission/presentation/pages/agency_submission_detail_page.dart` (T26)
+- `frontend/lib/features/approval/presentation/pages/asm_review_detail_page.dart` (T26)
+- `frontend/lib/features/approval/presentation/pages/hq_review_detail_page.dart` (T26)
