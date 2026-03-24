@@ -673,67 +673,61 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               : null,
         );
       case 'state_selection':
-        // STATE SELECTION UI HIDDEN — backend auto-selects Maharashtra
-        // To re-enable, remove this return and uncomment the block below
-        return AssistantBubble(message: msg.content);
-        // return AssistantBubble(
-        //   message: msg.content,
-        //   child: r.cards != null
-        //       ? Column(
-        //           crossAxisAlignment: CrossAxisAlignment.start,
-        //           children: [
-        //             const Padding(
-        //               padding: EdgeInsets.only(bottom: 8),
-        //               child: Text('Select State', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-        //             ),
-        //             ...r.cards!.map((c) {
-        //               if (c.action == 'list_states') {
-        //                 return Padding(
-        //                   padding: const EdgeInsets.only(bottom: 4),
-        //                   child: SizedBox(
-        //                     width: double.infinity,
-        //                     child: OutlinedButton.icon(
-        //                       onPressed: () => ref.read(assistantNotifierProvider.notifier).listAllStates(),
-        //                       icon: const Icon(Icons.search, size: 18, color: Color(0xFF003087)),
-        //                       label: Text(c.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
-        //                       style: OutlinedButton.styleFrom(
-        //                         alignment: Alignment.centerLeft,
-        //                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        //                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        //                         side: BorderSide(color: Colors.grey.shade300),
-        //                       ),
-        //                     ),
-        //                   ),
-        //                 );
-        //               }
-        //               return _stateButton(c.title, () => ref.read(assistantNotifierProvider.notifier).selectState(c.title));
-        //             }),
-        //           ],
-        //         )
-        //       : null,
-        // );
+        return AssistantBubble(
+          message: msg.content,
+          child: r.cards != null
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text('Select State', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+                    ),
+                    ...r.cards!.map((c) {
+                      if (c.action == 'list_states') {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () => ref.read(assistantNotifierProvider.notifier).listAllStates(),
+                              icon: const Icon(Icons.search, size: 18, color: Color(0xFF003087)),
+                              label: Text(c.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                              style: OutlinedButton.styleFrom(
+                                alignment: Alignment.centerLeft,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                side: BorderSide(color: Colors.grey.shade300),
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                      return _stateButton(c.title, () => ref.read(assistantNotifierProvider.notifier).selectState(c.title));
+                    }),
+                  ],
+                )
+              : null,
+        );
       case 'state_search_results':
-        // STATE SEARCH UI HIDDEN — backend auto-selects Maharashtra
-        // To re-enable, remove this return and uncomment the block below
-        return AssistantBubble(message: msg.content);
-        // return AssistantBubble(
-        //   message: msg.content,
-        //   child: r.states != null && r.states!.isNotEmpty
-        //       ? Column(
-        //           crossAxisAlignment: CrossAxisAlignment.start,
-        //           children: [
-        //             const Padding(
-        //               padding: EdgeInsets.only(bottom: 8),
-        //               child: Text('States', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-        //             ),
-        //             ...r.states!.map((s) => _stateButton(s, () {
-        //                   _stateSearchCtrl.clear();
-        //                   ref.read(assistantNotifierProvider.notifier).selectState(s);
-        //                 })),
-        //           ],
-        //         )
-        //       : null,
-        // );
+        return AssistantBubble(
+          message: msg.content,
+          child: r.states != null && r.states!.isNotEmpty
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text('States', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+                    ),
+                    ...r.states!.map((s) => _stateButton(s, () {
+                          _stateSearchCtrl.clear();
+                          ref.read(assistantNotifierProvider.notifier).selectState(s);
+                        })),
+                  ],
+                )
+              : null,
+        );
       case 'state_confirmed':
         return AssistantBubble(
           message: msg.content,
