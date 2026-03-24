@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/utils/web_redirect_helper.dart';
 import '../providers/auth_providers.dart';
 import '../providers/auth_notifier.dart';
 
@@ -38,6 +39,21 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             _emailController.text.trim(),
             _passwordController.text,
           );
+    }
+  }
+
+  Future<void> _handleSsoLogin() async {
+    // Build the redirect URI for SSO callback
+    final uri = Uri.base;
+    final redirectUri = '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}/sso-callback';
+
+    final authorizeUrl = await ref
+        .read(authNotifierProvider.notifier)
+        .getSsoAuthorizeUrl(redirectUri);
+
+    if (authorizeUrl != null && mounted) {
+      // Redirect browser to Azure AD login page
+      WebRedirectHelper.redirect(authorizeUrl);
     }
   }
 
@@ -300,6 +316,59 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                         ),
                                 ),
                               ),
+
+                              const SizedBox(height: 16),
+
+                              // Divider
+                              Row(
+                                children: [
+                                  Expanded(child: Divider(color: Colors.grey[300])),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    child: Text('or', style: TextStyle(fontSize: 13, color: Colors.grey[500])),
+                                  ),
+                                  Expanded(child: Divider(color: Colors.grey[300])),
+                                ],
+                              ),
+
+                              const SizedBox(height: 16),
+
+                              // Sign in with Microsoft button
+                              SizedBox(
+                                height: 48,
+                                child: OutlinedButton(
+                                  onPressed: authState.isLoading ? null : _handleSsoLogin,
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(color: Color(0xFFD1D5DB)),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    backgroundColor: Colors.white,
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Image.network(
+                                        'https://learn.microsoft.com/en-us/entra/identity-platform/media/howto-add-branding-in-apps/ms-symbollockup_mssymbol_19.png',
+                                        width: 20,
+                                        height: 20,
+                                        errorBuilder: (context, error, stackTrace) =>
+                                            const Icon(Icons.business, size: 20, color: Color(0xFF5F6368)),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      const Text(
+                                        'Sign in with Microsoft',
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w500,
+                                          color: Color(0xFF3C4043),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+
                               const SizedBox(height: 24),
 
                               // Footer text

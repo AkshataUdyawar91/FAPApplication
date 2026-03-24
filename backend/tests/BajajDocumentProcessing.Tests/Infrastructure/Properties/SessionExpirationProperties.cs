@@ -1,6 +1,8 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using BajajDocumentProcessing.Domain.Entities;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
@@ -8,6 +10,7 @@ using BajajDocumentProcessing.Infrastructure.Persistence;
 using FsCheck;
 using FsCheck.Xunit;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using Xunit;
 
 namespace BajajDocumentProcessing.Tests.Infrastructure.Properties;
@@ -20,6 +23,9 @@ namespace BajajDocumentProcessing.Tests.Infrastructure.Properties;
 /// </summary>
 public class SessionExpirationProperties
 {
+    private static readonly IHttpClientFactory _httpClientFactory = new Mock<IHttpClientFactory>().Object;
+    private static readonly ILogger<AuthService> _logger = NullLogger<AuthService>.Instance;
+
     private ApplicationDbContext CreateInMemoryContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -54,7 +60,7 @@ public class SessionExpirationProperties
         var userId = Guid.Parse(userIdStr);
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration();
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         // Act
         var token = authService.GenerateToken(userId, email, UserRole.Agency.ToString());
@@ -73,7 +79,7 @@ public class SessionExpirationProperties
         // Arrange
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration(30);
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
         var beforeGeneration = DateTime.UtcNow;
 
         // Act
@@ -97,7 +103,7 @@ public class SessionExpirationProperties
         // Arrange - Create token with 0 minute expiration (immediately expired)
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration(0);
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         var token = authService.GenerateToken(Guid.NewGuid(), "test@test.com", UserRole.Agency.ToString());
 
@@ -117,7 +123,7 @@ public class SessionExpirationProperties
         // Arrange
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration(30);
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         var token = authService.GenerateToken(Guid.NewGuid(), "test@test.com", UserRole.Agency.ToString());
 
@@ -141,7 +147,7 @@ public class SessionExpirationProperties
         var email = "test@test.com";
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration(expirationMinutes);
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
         var beforeGeneration = DateTime.UtcNow;
 
         // Act
@@ -165,7 +171,7 @@ public class SessionExpirationProperties
         // Arrange
         var context = CreateInMemoryContext();
         var configuration = CreateTestConfiguration(30);
-        var authService = new AuthService(context, configuration);
+        var authService = new AuthService(context, configuration, _httpClientFactory, _logger);
 
         var user = new User
         {
