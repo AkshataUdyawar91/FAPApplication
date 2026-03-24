@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:web/web.dart' as web;
 import '../providers/assistant_notifier.dart';
@@ -18,7 +19,9 @@ import 'file_upload_card.dart';
 import 'chat_input_bar.dart';
 import '../../data/models/assistant_response_model.dart';
 import '../../../../core/network/dio_client.dart';
+import '../../../../core/utils/chat_intent_detector.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
+import '../../../submission/presentation/pages/agency_submission_detail_page.dart';
 
 /// Embeddable side-panel version of the Field Activity Assistant.
 /// Mirrors ChatScreen logic but renders as a Column (no Scaffold).
@@ -556,9 +559,28 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       );
     }
     return ChatInputBar(
-      onSend: (text) => ref.read(assistantNotifierProvider.notifier).sendAction('message'),
+      onSend: (text) => _handleTypedInput(text),
       enabled: !state.isLoading,
     );
+  }
+
+  void _handleTypedInput(String text) {
+    final intent = ChatIntentDetector.detect(text);
+    switch (intent) {
+      case ChatIntent.greeting:
+        ref.read(assistantNotifierProvider.notifier).sendAction('greet', userText: text);
+      case ChatIntent.createRequest:
+        ref.read(assistantNotifierProvider.notifier).sendAction('create_request', userText: text);
+      case ChatIntent.rejectionReason:
+        ref.read(assistantNotifierProvider.notifier).sendAction('pending_approvals', userText: text);
+      case ChatIntent.statusCheck:
+        ref.read(assistantNotifierProvider.notifier).sendAction('message', userText: text);
+      case ChatIntent.help:
+        ref.read(assistantNotifierProvider.notifier).sendAction('help', userText: text);
+      case ChatIntent.fallback:
+      case ChatIntent.unknown:
+        ref.read(assistantNotifierProvider.notifier).sendAction('message', payloadJson: null, userText: text);
+    }
   }
 
   void _submitTeamName() {
@@ -619,6 +641,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     if (r == null) return AssistantBubble(message: msg.content);
     switch (r.type) {
       case 'greeting':
+      case 'help':
         return AssistantBubble(
           message: msg.content,
           child: r.cards != null
@@ -976,13 +999,291 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         return AssistantBubble(message: msg.content);
       case 'draft_saved':
         return AssistantBubble(message: msg.content);
+      case 'status_cards':
+        return AssistantBubble(
+          message: msg.content,
+          child: r.statusCards != null && r.statusCards!.isNotEmpty
+              ? _statusCardsWidget(r.statusCards!)
+              : null,
+        );
+      case 'pending_claims':
+        return AssistantBubble(message: msg.content, child: _pendingClaimsCard(r));
+      case 'rejection_history':
+        return AssistantBubble(message: msg.content, child: _rejectionHistoryCard(r));
       default:
         return AssistantBubble(message: msg.content);
     }
   }
 
-  Widget _teamProgressIndicator(int current, int total) {
-    return Row(children: [
+  Widget _pendingClaimsCard(AssistantResponseModel r) {
+    final claims = r.pendingClaims ?? [];
+    if (claims.isEmpty) return const SizedBox.shrink();
+
+    // Indian number format helper
+    String formatIndian(double amount) {
+      if (amount == 0) return '₹0';
+      final parts = amount.toStringAsFixed(0).split('');
+      final result = StringBuffer();
+      final len = parts.length;
+      for (int i = 0; i < len; i++) {
+        if (i == len - 3 && len > 3) result.write(',');
+        else if (i > (len - 3) && (len - i - 1) % 2 == 0 && i < len - 3) result.write(',');
+        result.write(parts[i]);
+      }
+      return '₹${result.toString()}';
+    }
+
+    Color statusBg(String color) {
+      switch (color) {
+        case 'blue':   return const Color(0xFFDBEAFE); // light blue — Pending with CH/RA
+        case 'red':    return const Color(0xFFFEE2E2); // light red — Rejected
+        case 'green':  return const Color(0xFFDCFCE7); // light green — Approved
+        default:       return const Color(0xFFFEF3C7); // amber — Draft / Processing
+      }
+    }
+
+    Color statusFg(String color) {
+      switch (color) {
+        case 'blue':   return const Color(0xFF1D4ED8);
+        case 'red':    return const Color(0xFFDC2626);
+        case 'green':  return const Color(0xFF16A34A);
+        default:       return const Color(0xFFD97706); // amber
+      }
+    }
+
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    Widget claimCard(PendingClaimItemModel claim) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2))],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Row 1: FAP ID + Status pill
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      claim.fapId,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: statusBg(claim.statusColor),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Text(
+                      claim.statusLabel,
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: statusFg(claim.statusColor)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              // Row 2: PO Number + Invoice Amount
+              Row(children: [
+                const Icon(Icons.receipt_long, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text('PO: ${claim.poNumber}',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 16),
+                const Text('₹', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 2),
+                Text(
+                  claim.invoiceAmount > 0 ? formatIndian(claim.invoiceAmount) : '—',
+                  style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                ),
+              ]),
+              const SizedBox(height: 6),
+              // Row 3: State + Date
+              Row(children: [
+                const Icon(Icons.location_on, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text(claim.activityState,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 16),
+                const Icon(Icons.calendar_today, size: 13, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text(claim.submittedDate,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+              ]),
+              const SizedBox(height: 14),
+              // View Details button — full stadium shape
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    context.pushNamed('submission-detail', extra: {
+                      'submissionId': claim.submissionId,
+                      'token': token,
+                      'userName': userName,
+                      'poNumber': claim.poNumber == '—' ? '' : claim.poNumber,
+                    });
+                  },
+                  icon: const Icon(Icons.open_in_new, size: 15),
+                  label: const Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF003087),
+                    side: const BorderSide(color: Color(0xFF003087), width: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: const StadiumBorder(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Scrollable if > 5 claims
+    final Widget list = claims.length > 5
+        ? SizedBox(
+            height: 5 * 160.0,
+            child: SingleChildScrollView(
+              child: Column(children: claims.map(claimCard).toList()),
+            ),
+          )
+        : Column(children: claims.map(claimCard).toList());
+
+    return list;
+  }
+
+  Widget _rejectionHistoryCard(AssistantResponseModel r) {
+    final items = r.rejectionItems ?? [];
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    // Indian number format helper (mirrors pending claims)
+    String formatIndian(double amount) {
+      if (amount == 0) return '₹0';
+      final parts = amount.toStringAsFixed(0).split('');
+      final result = StringBuffer();
+      final len = parts.length;
+      for (int i = 0; i < len; i++) {
+        if (i == len - 3 && len > 3) result.write(',');
+        else if (i > (len - 3) && (len - i - 1) % 2 == 0 && i < len - 3) result.write(',');
+        result.write(parts[i]);
+      }
+      return '₹${result.toString()}';
+    }
+
+    Widget card(RejectionItemModel item) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2))],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Row 1: FAP ID + rejected-by-role pill (light blue)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      item.fapId,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDBEAFE),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Text(
+                      item.rejectedByRole,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF1D4ED8)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              // Row 2: receipt icon + PO number + ₹ amount
+              Row(children: [
+                const Icon(Icons.receipt_long, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text('PO: ${item.poNumber ?? '—'}',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 16),
+                const Text('₹', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 2),
+                const Text('—', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+              ]),
+              const SizedBox(height: 6),
+              // Row 3: location icon + state + calendar icon + date
+              Row(children: [
+                const Icon(Icons.location_on, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text(item.activityState ?? '—',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                const SizedBox(width: 16),
+                const Icon(Icons.calendar_today, size: 13, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text(item.rejectedAt,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+              ]),
+              const SizedBox(height: 14),
+              // View Details button — full stadium shape, dark blue outlined
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: item.submissionId.isEmpty
+                      ? null
+                      : () {
+                          context.pushNamed('submission-detail', extra: {
+                            'submissionId': item.submissionId,
+                            'token': token,
+                            'userName': userName,
+                            'poNumber': item.poNumber == '—' ? '' : (item.poNumber ?? ''),
+                          });
+                        },
+                  icon: const Icon(Icons.open_in_new, size: 15),
+                  label: const Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF003087),
+                    side: const BorderSide(color: Color(0xFF003087), width: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: const StadiumBorder(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return items.length > 5
+        ? SizedBox(
+            height: 5 * 160.0,
+            child: SingleChildScrollView(child: Column(children: items.map(card).toList())),
+          )
+        : Column(children: items.map(card).toList());
+  }
+
+  Widget _teamProgressIndicator(int current, int total) {    return Row(children: [
       Text('Team $current of $total',
           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
       const SizedBox(width: 8),
@@ -2233,6 +2534,202 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     );
   }
 
+  /// Maps a nav:// deep-link to the correct detail page.
+  /// Agency submissions open in a modal dialog (no sidebar/drawer).
+  /// ASM and HQ review pages open in a new browser tab.
+  void _openDetailInModal(String deepLink, {String? fapId}) {
+    debugPrint('[Chat] View tapped — fapId: $fapId, deepLink: $deepLink');
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    // ASM and HQ pages open in a new tab
+    if (deepLink.startsWith('nav://asm-review/') ||
+        deepLink.startsWith('nav://hq-review/')) {
+      final id = deepLink.startsWith('nav://asm-review/')
+          ? deepLink.replaceFirst('nav://asm-review/', '')
+          : deepLink.replaceFirst('nav://hq-review/', '');
+      final route = deepLink.startsWith('nav://asm-review/')
+          ? 'asm-review'
+          : 'hq-review';
+      web.window.open(
+        '${web.window.location.origin}/#/$route/$id',
+        '_blank',
+      );
+      return;
+    }
+
+    // Agency detail opens in modal with no sidebar/drawer
+    if (deepLink.startsWith('nav://agency-detail/')) {
+      final id = deepLink.replaceFirst('nav://agency-detail/', '');
+      showDialog(
+        context: context,
+        barrierColor: Colors.black54,
+        builder: (_) => Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: SizedBox(
+            width: MediaQuery.of(context).size.width * 0.92,
+            height: MediaQuery.of(context).size.height * 0.92,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: AgencySubmissionDetailPage(
+                key: ValueKey(id),
+                submissionId: id,
+                token: token,
+                userName: userName,
+                poNumber: '',
+                isModal: true,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _statusCardsWidget(List<StatusCardModel> cards) {
+    Color statusBg(String status) {
+      switch (status) {
+        case 'Pending with CH':
+        case 'Pending with RA':
+          return const Color(0xFFDBEAFE); // light blue
+        case 'Approved':
+          return const Color(0xFFDCFCE7); // light green
+        case 'Rejected':
+          return const Color(0xFFFEE2E2); // light red
+        default:
+          return const Color(0xFFFEF3C7); // amber — Draft / Processing / Validating
+      }
+    }
+
+    Color statusFg(String status) {
+      switch (status) {
+        case 'Pending with CH':
+        case 'Pending with RA':
+          return const Color(0xFF1D4ED8);
+        case 'Approved':
+          return const Color(0xFF16A34A);
+        case 'Rejected':
+          return const Color(0xFFDC2626);
+        default:
+          return const Color(0xFFD97706); // amber
+      }
+    }
+
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    Widget statusCard(StatusCardModel card) {
+      // Extract submissionId from deepLink (e.g. "/submissions/{id}" or just the id)
+      final submissionId = card.deepLink.contains('/')
+          ? card.deepLink.split('/').last
+          : card.deepLink;
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2))],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Row 1: FAP ID + Status pill
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      card.fapId,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: statusBg(card.status),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Text(
+                      card.status,
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: statusFg(card.status)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              // Row 2: PO Number + Invoice Number + Amount
+              Row(children: [
+                const Icon(Icons.receipt_long, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                if (card.poNumber != null && card.poNumber!.isNotEmpty) ...[
+                  Text('PO: ${card.poNumber!}',
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                  const SizedBox(width: 10),
+                ],
+                if (card.invoiceNumber != null && card.invoiceNumber!.isNotEmpty)
+                  Text('Inv: ${card.invoiceNumber!}',
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                if (card.poNumber == null && card.invoiceNumber == null)
+                  const Text('—', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                if (card.amount != null && card.amount!.isNotEmpty) ...[
+                  const SizedBox(width: 16),
+                  Text(
+                    card.amount!.startsWith('₹') ? card.amount! : '₹${card.amount!}',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                  ),
+                ],
+              ]),
+              const SizedBox(height: 6),
+              // Row 3: Date
+              Row(children: [
+                const Icon(Icons.calendar_today, size: 13, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text(card.submittedDate,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+              ]),
+              const SizedBox(height: 14),
+              // View Details button — full stadium shape
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    if (submissionId.isNotEmpty) {
+                      context.pushNamed('submission-detail', extra: {
+                        'submissionId': submissionId,
+                        'token': token,
+                        'userName': userName,
+                        'poNumber': '',
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.open_in_new, size: 15),
+                  label: const Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF003087),
+                    side: const BorderSide(color: Color(0xFF003087), width: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: const StadiumBorder(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: cards.map(statusCard).toList(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(assistantNotifierProvider);
@@ -2248,7 +2745,9 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       if (t == 'po_search' || t == 'po_search_results') {
         newMode = 'po';
       } else if (t == 'state_selection' || t == 'state_search_results') {
-        newMode = 'state';
+        // STATE SELECTION HIDDEN — auto-selects Maharashtra
+        // newMode = 'state';
+        newMode = 'none';
       } else if (t == 'dealer_search' || t == 'dealer_search_results') {
         newMode = 'dealer';
       } else if (t == 'dealer_list') {

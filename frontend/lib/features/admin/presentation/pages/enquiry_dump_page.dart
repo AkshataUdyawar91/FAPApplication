@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:dio/dio.dart';
 import 'extracted_data_page.dart';
 
@@ -30,7 +31,7 @@ class _EnquiryDumpPageState extends State<EnquiryDumpPage> {
   void initState() {
     super.initState();
     _dio = Dio(BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {'Authorization': 'Bearer ${widget.token}'},
     ));
     _load();

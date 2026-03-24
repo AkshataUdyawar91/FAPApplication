@@ -1,6 +1,7 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Application.DTOs.Common;
 using BajajDocumentProcessing.Application.DTOs.Conversation;
+using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -55,6 +56,11 @@ public class PurchaseOrdersController : ControllerBase
 
             var query = _context.POs
                 .Where(po => !po.IsDeleted && po.AgencyId == agencyId.Value)
+                // Only show unlinked master POs, or POs from rejected/reupload submissions (available to reuse)
+                .Where(po => po.PackageId == null ||
+                             _context.DocumentPackages.Any(dp =>
+                                 dp.Id == po.PackageId &&
+                                 (dp.State == PackageState.CHRejected || dp.State == PackageState.RARejected)))
                 .AsQueryable();
 
             // Filter by vendor code if provided
@@ -146,6 +152,11 @@ public class PurchaseOrdersController : ControllerBase
 
             var query = _context.POs
                 .Where(po => !po.IsDeleted && po.AgencyId == agencyId.Value)
+                // Only show unlinked master POs, or POs from rejected/reupload submissions
+                .Where(po => po.PackageId == null ||
+                             _context.DocumentPackages.Any(dp =>
+                                 dp.Id == po.PackageId &&
+                                 (dp.State == PackageState.CHRejected || dp.State == PackageState.RARejected)))
                 .AsQueryable();
 
             // Filter by vendor code

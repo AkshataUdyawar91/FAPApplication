@@ -47,23 +47,21 @@ public class POsController : ControllerBase
             var userId = Guid.Parse(userIdClaim);
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            var query = _context.POs
-                .Include(p => p.Agency)
+            // Resolve agency for the current user
+            var user = await _context.Users
                 .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+            if (user?.AgencyId == null)
+                return Ok(new List<object>()); // no agency linked — return empty
+
+            var agencyId = user.AgencyId.Value;
+
+            // All POs for the logged-in agency — no status filter
+            var query = _context.POs
+                .AsNoTracking()
+                .Where(p => p.AgencyId == agencyId && !p.IsDeleted)
                 .AsQueryable();
-
-            // Agency users see only their own agency's POs
-            if (userRole == "Agency")
-            {
-                var user = await _context.Users
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
-
-                if (user?.AgencyId != null)
-                    query = query.Where(p => p.AgencyId == user.AgencyId);
-                else
-                    query = query.Where(p => false); // no agency linked — return empty
-            }
 
             // Search filter
             if (!string.IsNullOrWhiteSpace(search))
@@ -85,8 +83,8 @@ public class POsController : ControllerBase
                     p.TotalAmount,
                     p.PODate,
                     p.FileName,
-                    AgencyName = p.Agency != null ? p.Agency.SupplierName : null,
-                    PackageId = p.PackageId
+                    p.POStatus,
+                    p.PackageId
                 })
                 .ToListAsync(cancellationToken);
 
@@ -94,8 +92,8 @@ public class POsController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error listing POs");
-            return StatusCode(500, new { error = "An error occurred while listing POs" });
+            _logger.LogError(ex, "Error listing POs: {Message}", ex.Message);
+            return StatusCode(500, new { error = ex.Message, detail = ex.InnerException?.Message });
         }
     }
 

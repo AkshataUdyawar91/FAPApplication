@@ -1,4 +1,5 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
@@ -27,6 +28,7 @@ class AgencySubmissionDetailPage extends ConsumerStatefulWidget {
   final String token;
   final String userName;
   final String poNumber;
+  final bool isModal;
 
   const AgencySubmissionDetailPage({
     super.key,
@@ -34,6 +36,7 @@ class AgencySubmissionDetailPage extends ConsumerStatefulWidget {
     required this.token,
     required this.userName,
     required this.poNumber,
+    this.isModal = false,
   });
 
   @override
@@ -43,10 +46,10 @@ class AgencySubmissionDetailPage extends ConsumerStatefulWidget {
 
 class _AgencySubmissionDetailPageState
     extends ConsumerState<AgencySubmissionDetailPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+  final _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
     ..interceptors.add(PrettyDioLogger());
   // Separate Dio for view/download — no response body logging (base64 floods console)
-  final _dioSilent = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+  final _dioSilent = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
     ..interceptors.add(PrettyDioLogger(responseBody: false));
 
   bool _isLoading = true;
@@ -1571,23 +1574,40 @@ class _AgencySubmissionDetailPageState
         final isMobile = device == DeviceType.mobile;
 
         return Scaffold(
-          appBar: isMobile
+          appBar: widget.isModal
               ? AppBar(
-                  backgroundColor: const Color(0xFF1E3A8A),
-                  title: const Text('Bajaj',
+                  backgroundColor: const Color(0xFF003087),
+                  title: const Text('Submission Details',
                       style: TextStyle(
                           color: Colors.white, fontWeight: FontWeight.bold)),
-                  iconTheme: const IconThemeData(color: Colors.white),
+                  automaticallyImplyLeading: false,
                   actions: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
-                      tooltip: 'Back to Dashboard',
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                      tooltip: 'Close',
                     ),
                   ],
                 )
-              : null,
-          drawer: isMobile
+              : isMobile
+                  ? AppBar(
+                      backgroundColor: const Color(0xFF1E3A8A),
+                      title: const Text('Bajaj',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                      iconTheme: const IconThemeData(color: Colors.white),
+                      actions: [
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back,
+                              color: Colors.white),
+                          onPressed: () => Navigator.pop(context),
+                          tooltip: 'Back to Dashboard',
+                        ),
+                      ],
+                    )
+                  : null,
+          drawer: (!widget.isModal && isMobile)
               ? AppDrawer(
                   userName: widget.userName,
                   userRole: 'Agency',
@@ -1597,11 +1617,11 @@ class _AgencySubmissionDetailPageState
               : null,
           body: Column(
             children: [
-              if (!isMobile) _buildTopBar(),
+              if (!widget.isModal && !isMobile) _buildTopBar(),
               Expanded(
                 child: Row(
                   children: [
-                    if (!isMobile)
+                    if (!widget.isModal && !isMobile)
                       AppSidebar(
                         userName: widget.userName,
                         userRole: 'Agency',
@@ -1638,10 +1658,10 @@ class _AgencySubmissionDetailPageState
               ),
             ],
           ),
-          endDrawer: isMobile
+          endDrawer: (!widget.isModal && isMobile)
               ? ChatEndDrawer(token: widget.token, userName: widget.userName)
               : null,
-          floatingActionButton: (_isChatOpen && !isMobile)
+          floatingActionButton: (widget.isModal || (_isChatOpen && !isMobile))
               ? null
               : Builder(
                   builder: (scaffoldContext) => Padding(
@@ -1666,8 +1686,7 @@ class _AgencySubmissionDetailPageState
   }
 
   Widget _buildDesktopHeader(DeviceType device) {
-    final fapNumber = _submission?['submissionNumber']?.toString() 
-        ?? 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    final fapNumber = 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: device == DeviceType.desktop ? 24 : 16,
@@ -1679,12 +1698,14 @@ class _AgencySubmissionDetailPageState
       ),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
-            tooltip: 'Back to Dashboard',
-          ),
-          const SizedBox(width: 8),
+          if (!widget.isModal) ...[
+            IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.pop(context),
+              tooltip: 'Back to Dashboard',
+            ),
+            const SizedBox(width: 8),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1732,8 +1753,7 @@ class _AgencySubmissionDetailPageState
     if (_submission == null) return const SizedBox();
 
     final state = _submission!['state']?.toString() ?? 'Unknown';
-    final fapNumber = _submission!['submissionNumber']?.toString() 
-        ?? 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    final fapNumber = 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
         mobile: 12, tablet: 16, desktop: 24);
 

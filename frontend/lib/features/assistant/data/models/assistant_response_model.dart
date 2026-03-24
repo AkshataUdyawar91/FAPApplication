@@ -23,6 +23,9 @@ class AssistantResponseModel {
   final int? missingPhoneCount;
   final List<FinalReviewSectionModel>? reviewSections;
   final String? fileName;
+  final List<StatusCardModel>? statusCards;
+  final List<PendingClaimItemModel>? pendingClaims;
+  final List<RejectionItemModel>? rejectionItems;
 
   const AssistantResponseModel({
     required this.type,
@@ -48,6 +51,9 @@ class AssistantResponseModel {
     this.missingPhoneCount,
     this.reviewSections,
     this.fileName,
+    this.statusCards,
+    this.pendingClaims,
+    this.rejectionItems,
   });
 
   factory AssistantResponseModel.fromJson(Map<String, dynamic> json) {
@@ -97,6 +103,15 @@ class AssistantResponseModel {
           ?.map((e) => FinalReviewSectionModel.fromJson(e as Map<String, dynamic>))
           .toList(),
       fileName: json['fileName'] as String?,
+      statusCards: (json['statusCards'] as List<dynamic>?)
+          ?.map((e) => StatusCardModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      pendingClaims: (json['pendingClaims'] as List<dynamic>?)
+          ?.map((e) => PendingClaimItemModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      rejectionItems: (json['rejectionItems'] as List<dynamic>?)
+          ?.map((e) => RejectionItemModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
   }
 }
@@ -336,6 +351,114 @@ class FinalReviewFieldModel {
     return FinalReviewFieldModel(
       label: json['label'] as String? ?? '',
       value: json['value'] as String? ?? '—',
+    );
+  }
+}
+
+class StatusCardModel {
+  final String fapId;
+  final String fullId;
+  final String? poNumber;
+  final String? invoiceNumber;
+  final String status;
+  final String? amount;
+  final String submittedDate;
+  final String deepLink;
+
+  const StatusCardModel({
+    required this.fapId,
+    required this.fullId,
+    this.poNumber,
+    this.invoiceNumber,
+    required this.status,
+    this.amount,
+    required this.submittedDate,
+    required this.deepLink,
+  });
+
+  factory StatusCardModel.fromJson(Map<String, dynamic> json) {
+    return StatusCardModel(
+      fapId: json['fapId'] as String? ?? '',
+      fullId: json['fullId'] as String? ?? '',
+      poNumber: json['poNumber'] as String?,
+      invoiceNumber: json['invoiceNumber'] as String?,
+      status: json['status'] as String? ?? '',
+      amount: json['amount'] as String?,
+      submittedDate: json['submittedDate'] as String? ?? '',
+      deepLink: json['deepLink'] as String? ?? '',
+    );
+  }
+}
+
+class PendingClaimItemModel {
+  final String submissionId;
+  final String fapId;
+  final String poNumber;
+  final double invoiceAmount;
+  final String status;
+  final String statusLabel;
+  final String statusColor;
+  final String submittedDate;
+  final String activityState;
+
+  const PendingClaimItemModel({
+    required this.submissionId,
+    required this.fapId,
+    required this.poNumber,
+    required this.invoiceAmount,
+    required this.status,
+    required this.statusLabel,
+    required this.statusColor,
+    required this.submittedDate,
+    required this.activityState,
+  });
+
+  factory PendingClaimItemModel.fromJson(Map<String, dynamic> json) {
+    return PendingClaimItemModel(
+      submissionId: json['submissionId'] as String? ?? '',
+      fapId: json['fapId'] as String? ?? '',
+      poNumber: json['poNumber'] as String? ?? '—',
+      invoiceAmount: (json['invoiceAmount'] as num?)?.toDouble() ?? 0.0,
+      status: json['status'] as String? ?? '',
+      statusLabel: json['statusLabel'] as String? ?? '',
+      statusColor: json['statusColor'] as String? ?? 'blue',
+      submittedDate: json['submittedDate'] as String? ?? '',
+      activityState: json['activityState'] as String? ?? '—',
+    );
+  }
+}
+
+class RejectionItemModel {
+  final String fapId;
+  final String submissionId;
+  final String? poNumber;
+  final String? activityState;
+  final String rejectedBy;
+  final String rejectedAt;
+  final String reason;
+  final String rejectedByRole;
+
+  const RejectionItemModel({
+    required this.fapId,
+    required this.submissionId,
+    this.poNumber,
+    this.activityState,
+    required this.rejectedBy,
+    required this.rejectedAt,
+    required this.reason,
+    required this.rejectedByRole,
+  });
+
+  factory RejectionItemModel.fromJson(Map<String, dynamic> json) {
+    return RejectionItemModel(
+      fapId: json['fapId'] as String? ?? '—',
+      submissionId: json['submissionId'] as String? ?? '',
+      poNumber: json['poNumber'] as String?,
+      activityState: json['activityState'] as String?,
+      rejectedBy: json['rejectedBy'] as String? ?? '—',
+      rejectedAt: json['rejectedAt'] as String? ?? '—',
+      reason: json['reason'] as String? ?? 'No reason provided.',
+      rejectedByRole: json['rejectedByRole'] as String? ?? '—',
     );
   }
 }

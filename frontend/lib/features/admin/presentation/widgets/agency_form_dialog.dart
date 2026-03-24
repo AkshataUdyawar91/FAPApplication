@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:dio/dio.dart';
 import '../../data/models/agency_dto.dart';
 
@@ -39,7 +40,7 @@ class _AgencyFormDialogState extends State<AgencyFormDialog> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
     final dio = Dio(BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {'Authorization': 'Bearer ${widget.token}'},
     ));
     try {

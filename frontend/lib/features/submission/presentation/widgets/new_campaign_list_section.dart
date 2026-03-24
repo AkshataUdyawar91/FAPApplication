@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import '../../../../core/constants/api_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/web_camera_helper.dart'
     if (dart.library.io) '../../../../core/utils/web_camera_stub.dart';
@@ -169,7 +170,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     if (state == null || state.isEmpty || widget.token == null) return;
     setState(() => _dealerLoading[campaignId] = true);
     try {
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
       final response = await dio.get(
         '/state/dealers',
         queryParameters: {'state': state, 'q': '', 'size': 50},
@@ -352,7 +353,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
       if (photoFiles.isEmpty) return;
 
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
       final response = await dio.post(
         '/hierarchical/$packageId/campaigns/$campaignId/photos',
         data: FormData.fromMap({'files': photoFiles}),
@@ -552,7 +553,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     if (mounted) setState(() => invoice.isExtracting = true);
 
     try {
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
 
       final uploadResponse = await dio.post(
         '/documents/upload',
@@ -590,7 +591,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
   Future<void> _pollForInvoiceExtraction(String packageId, String documentId,
       int campaignIndex, int invoiceIndex) async {
-    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+    final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
     const maxAttempts = 25;
 
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
@@ -751,7 +752,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     try {
       debugPrint('Auto-uploading cost summary: ${file.name}');
 
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
       final formData = FormData.fromMap({
         'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
       });

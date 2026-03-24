@@ -84,15 +84,31 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     }
   }
 
-  Future<void> sendAction(String action, {String? payloadJson}) async {
-    _addUserMessage(action
-        .replaceAll('_', ' ')
-        .split(' ')
-        .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase())
-        .join(' '));
+  Future<void> sendAction(String action, {String? payloadJson, String? userText}) async {
+    // Show the actual typed text as the user bubble if provided,
+    // otherwise format the action name (e.g. "create_request" → "Create Request")
+    const actionLabels = <String, String>{
+      'view_requests': '',
+      'pending_approvals': '',
+      'create_request': 'Start a new submission',
+    };
+    final label = actionLabels[action];
+    final displayText = userText ??
+        (label != null && label.isNotEmpty
+            ? label
+            : action
+                .replaceAll('_', ' ')
+                .split(' ')
+                .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase())
+                .join(' '));
+    _addUserMessage(displayText);
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final response = await _dataSource.sendMessage(action: action, payloadJson: payloadJson);
+      final response = await _dataSource.sendMessage(
+        action: action,
+        message: userText,
+        payloadJson: payloadJson,
+      );
       _addBotMessage(response);
       if (response.selectedPO != null) {
         state = state.copyWith(selectedPO: response.selectedPO);
@@ -124,6 +140,9 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       _addBotMessage(response);
       if (response.selectedPO != null) {
         state = state.copyWith(selectedPO: response.selectedPO);
+      }
+      if (response.submissionId != null) {
+        state = state.copyWith(submissionId: response.submissionId);
       }
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
@@ -666,7 +685,12 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     _addUserMessage('Save as Draft');
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final response = await _dataSource.sendMessage(action: 'save_draft_from_chat');
+      final sid = state.submissionId;
+      final payload = sid != null ? '{"submissionId":"$sid"}' : null;
+      final response = await _dataSource.sendMessage(
+        action: 'save_draft_from_chat',
+        payloadJson: payload,
+      );
       _addBotMessage(response);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());

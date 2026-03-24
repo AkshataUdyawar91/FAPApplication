@@ -1,7 +1,12 @@
 /// API endpoint constants
 class ApiConstants {
-  // Base URL - update this to match your backend
-  static const String baseUrl = 'http://localhost:5000/api';
+  // Base URL — configured via --dart-define=API_BASE_URL=<url> at build time.
+  // Dev default: http://localhost:5000/api
+  // Production build (deploy.ps1): passes /api so requests are same-origin.
+  static const String baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://localhost:5001/api',
+  );
 
   // Auth endpoints
   static const String login = '/auth/login';

@@ -9,9 +9,11 @@ namespace BajajDocumentProcessing.Domain.Entities;
 public class PO : BaseEntity
 {
     /// <summary>
-    /// Foreign key to the parent DocumentPackage (one-to-one relationship).
+    /// Foreign key to the parent DocumentPackage.
+    /// Null for SAP master POs that have not yet been used in a submission.
+    /// Set when a submission is created and this PO is selected.
     /// </summary>
-    public Guid PackageId { get; set; }
+    public Guid? PackageId { get; set; }
 
     /// <summary>
     /// Foreign key to the Agency that submitted this PO.
@@ -104,9 +106,9 @@ public class PO : BaseEntity
     // Navigation Properties
 
     /// <summary>
-    /// Navigation property to the parent DocumentPackage.
+    /// Navigation property to the parent DocumentPackage. Null for unassigned master POs.
     /// </summary>
-    public DocumentPackage DocumentPackage { get; set; } = null!;
+    public DocumentPackage? DocumentPackage { get; set; }
 
     /// <summary>
     /// Navigation property to the Agency.
