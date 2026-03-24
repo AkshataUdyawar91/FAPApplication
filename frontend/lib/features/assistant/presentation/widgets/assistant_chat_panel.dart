@@ -501,7 +501,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               const Text('Progress', style: TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
               const Spacer(),
               Text(
-                currentStep > 0 ? '$currentStep / ${steps.length}' : '0 / ${steps.length}',
+                currentStep > 0 ? '${currentStep.clamp(0, steps.length)} / ${steps.length}' : '0 / ${steps.length}',
                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF003087)),
               ),
             ],
@@ -511,7 +511,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
-              value: currentStep > 0 ? currentStep / steps.length : 0,
+              value: currentStep > 0 ? (currentStep / steps.length).clamp(0.0, 1.0) : 0,
               backgroundColor: const Color(0xFFE5E7EB),
               valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF003087)),
               minHeight: 5,
