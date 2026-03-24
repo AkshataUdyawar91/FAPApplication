@@ -333,91 +333,30 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
   Future<void> _uploadAndExtractPO(PlatformFile file) async {
     if (file.bytes == null) return;
     try {
-      final uploadResponse = await _dio.post(
-        '/documents/upload',
+      // Use extract-only endpoint — does NOT create a package or DB entity.
+      // The actual PO upload happens at submit time.
+      final extractResponse = await _dio.post(
+        '/documents/extract',
         data: FormData.fromMap({
           'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
           'documentType': 'PO',
         }),
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
-      if (uploadResponse.statusCode == 200) {
-        final packageId = uploadResponse.data['packageId']?.toString();
-        final documentId = uploadResponse.data['documentId']?.toString();
-        if (packageId != null) {
-          _currentPackageId = packageId;
-          if (documentId != null) {
-            await _pollForPOExtraction(packageId, documentId);
-          }
+      if (!mounted) return;
+      if (extractResponse.statusCode == 200) {
+        final extractedData = extractResponse.data['extractedData'];
+        if (extractedData != null && extractedData is Map) {
+          // Data extracted — trigger rebuild so PO fields section can display it
+          setState(() {});
         }
       }
     } catch (e) {
-      debugPrint('Error uploading/extracting PO: $e');
+      debugPrint('Error extracting PO: $e');
       _showError('Failed to extract PO data. You can enter details manually.');
     }
   }
 
-  Future<void> _pollForPOExtraction(String packageId, String documentId) async {
-    const maxAttempts = 25;
-    const delayBetweenAttempts = Duration(seconds: 2);
-
-    for (int attempt = 0; attempt < maxAttempts; attempt++) {
-      await Future.delayed(delayBetweenAttempts);
-      if (!mounted) return;
-
-      try {
-        final response = await _dio.get(
-          '/submissions/$packageId',
-          options:
-              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-        );
-
-        if (!mounted) return;
-
-        if (response.statusCode == 200 && response.data != null) {
-          final documents = response.data['documents'] as List?;
-          if (documents != null) {
-            final poDoc = documents.firstWhere(
-              (doc) => doc['type']?.toString().toLowerCase() == 'po',
-              orElse: () => null,
-            );
-
-            if (poDoc != null) {
-              var extractedData = poDoc['extractedData'];
-              if (extractedData != null) {
-                if (extractedData is String && extractedData.isNotEmpty) {
-                  extractedData = _parseJsonString(extractedData);
-                }
-                if (extractedData is Map) {
-                  final poNumber =
-                      extractedData['PONumber'] ?? extractedData['poNumber'];
-                  final totalAmount = extractedData['TotalAmount'] ??
-                      extractedData['totalAmount'];
-                  final vendorName = extractedData['VendorName'] ??
-                      extractedData['vendorName'];
-                  final date = extractedData['PODate'] ??
-                      extractedData['poDate'] ??
-                      extractedData['Date'] ??
-                      extractedData['date'];
-                  if (poNumber != null ||
-                      totalAmount != null ||
-                      vendorName != null ||
-                      date != null) {
-                    if (!mounted) return;
-                    setState(
-                        () {}); // trigger rebuild to show PO data in UI if needed
-                    return; // Success - exit polling
-                  }
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('Polling attempt $attempt failed: $e');
-      }
-    }
-  }
 
   /// Extracts invoice fields from the uploaded file using the extract-only endpoint.
   /// Does NOT require a packageId — extraction happens on a temp blob and returns immediately.
@@ -825,12 +764,17 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
               .map((p) => MultipartFile.fromBytes(p.bytes!, filename: p.name))
               .toList();
           if (photoFiles.isNotEmpty) {
-            await _dio.post(
-              '/hierarchical/$packageId/campaigns/$campaignId/photos',
-              data: FormData.fromMap({'files': photoFiles}),
-              options:
-                  Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-            );
+            try {
+              await _dio.post(
+                '/hierarchical/$packageId/campaigns/$campaignId/photos',
+                data: FormData.fromMap({'files': photoFiles}),
+                options:
+                    Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+              );
+            } catch (e) {
+              debugPrint('Photo upload warning for team ${campaign.campaignName}: $e');
+              // Continue submission — photo validation failures should not block it
+            }
           }
         }
       }
