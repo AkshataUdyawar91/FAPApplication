@@ -34,4 +34,12 @@ public interface IDocumentService
     /// <param name="documentType">Type of document to look up in the correct table</param>
     /// <returns>Document info DTO or null if not found</returns>
     Task<DocumentInfoDto?> GetDocumentAsync(Guid documentId, DocumentType documentType);
+
+    /// <summary>
+    /// Triggers background EXIF + AI extraction for a TeamPhoto that was uploaded without extraction.
+    /// Used to backfill metadata for photos created through the old upload path.
+    /// </summary>
+    /// <param name="photoId">TeamPhoto ID</param>
+    /// <param name="blobUrl">Blob storage URL of the photo</param>
+    Task TriggerPhotoExtractionAsync(Guid photoId, string blobUrl);
 }

@@ -23,6 +23,7 @@ public class ValidationAgent : IValidationAgent
     private readonly IReferenceDataService _referenceDataService;
     private readonly ICorrelationIdService _correlationIdService;
     private readonly IPerceptualHashService _perceptualHashService;
+    private readonly IPoBalanceService _poBalanceService;
     private readonly AsyncCircuitBreakerPolicy _circuitBreakerPolicy;
     private readonly IAsyncPolicy _retryPolicy;
 
@@ -40,7 +41,8 @@ public class ValidationAgent : IValidationAgent
         IHttpClientFactory httpClientFactory,
         IReferenceDataService referenceDataService,
         ICorrelationIdService correlationIdService,
-        IPerceptualHashService perceptualHashService)
+        IPerceptualHashService perceptualHashService,
+        IPoBalanceService poBalanceService)
     {
         _context = context;
         _logger = logger;
@@ -48,6 +50,7 @@ public class ValidationAgent : IValidationAgent
         _referenceDataService = referenceDataService;
         _correlationIdService = correlationIdService;
         _perceptualHashService = perceptualHashService;
+        _poBalanceService = poBalanceService;
 
         // Circuit breaker: Open after 5 failures, stay open for 60 seconds, close after 2 successes
         _circuitBreakerPolicy = Policy
@@ -289,7 +292,7 @@ public class ValidationAgent : IValidationAgent
             // 8. Invoice Cross-Document Validation
             if (invoiceData != null && poData != null)
             {
-                result.InvoiceCrossDocument = ValidateInvoiceCrossDocument(invoiceData, poData);
+                result.InvoiceCrossDocument = await ValidateInvoiceCrossDocumentAsync(invoiceData, poData, cancellationToken);
                 if (!result.InvoiceCrossDocument.AllChecksPass)
                 {
                     foreach (var issue in result.InvoiceCrossDocument.Issues)
@@ -455,7 +458,7 @@ public class ValidationAgent : IValidationAgent
             await SaveValidationResultsAsync(result, package, cancellationToken);
 
             // Update package state - validation no longer sets state (removed Validated/ValidationFailed states)
-            // Package remains in Validating state, workflow orchestrator will move to PendingASM
+            // Package remains in Validating state, workflow orchestrator will move to PendingCH
 
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -896,7 +899,7 @@ public class ValidationAgent : IValidationAgent
     /// <param name="invoiceData">The invoice data to validate</param>
     /// <param name="poData">The PO data to validate against</param>
     /// <returns>An InvoiceCrossDocumentResult containing validation status and any issues</returns>
-    private InvoiceCrossDocumentResult ValidateInvoiceCrossDocument(InvoiceData invoiceData, POData poData)
+    private async Task<InvoiceCrossDocumentResult> ValidateInvoiceCrossDocumentAsync(InvoiceData invoiceData, POData poData, CancellationToken cancellationToken)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
         _logger.LogInformation(
@@ -962,6 +965,37 @@ public class ValidationAgent : IValidationAgent
         {
             result.AllChecksPass = false;
             result.Issues.Add($"Invoice amount ({invoiceData.TotalAmount:F2}) exceeds PO amount ({poData.TotalAmount:F2})");
+        }
+
+        // 5b. Amount vs PO Balance — call SAP PO balance API
+        if (!string.IsNullOrWhiteSpace(poData.PONumber))
+        {
+            try
+            {
+                var balanceResponse = await _poBalanceService.GetPoBalanceAsync(
+                    "BAL", poData.PONumber, requestedBy: null, correlationId, cancellationToken);
+
+                result.PoBalanceAmount = balanceResponse.Balance;
+                result.PoBalanceValid = invoiceData.TotalAmount <= balanceResponse.Balance;
+
+                if (!result.PoBalanceValid)
+                {
+                    result.AllChecksPass = false;
+                    var indian = new System.Globalization.CultureInfo("en-IN");
+                    result.Issues.Add(
+                        $"₹{invoiceData.TotalAmount.ToString("N0", indian)} exceeds available PO balance (₹{balanceResponse.Balance.ToString("N0", indian)})");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "PO balance check failed for PO {PONumber} — API call failed. CorrelationId: {CorrelationId}",
+                    poData.PONumber, correlationId);
+                // Mark as failed when we can't verify the balance
+                result.PoBalanceValid = false;
+                result.AllChecksPass = false;
+                result.Issues.Add($"PO balance check failed for PO {poData.PONumber}: unable to fetch balance from API");
+            }
         }
 
         // 6. GST Percentage validation (should match default 18% or state-specific rate)
@@ -1598,7 +1632,7 @@ public class ValidationAgent : IValidationAgent
 
         var documentResults = BuildPerDocumentResults(result, package);
 
-        foreach (var (documentType, documentId, allPassed, detailsJson, failureReason) in documentResults)
+        foreach (var (documentType, documentId, allPassed, failureReason, detailsJson, ruleResultsJson) in documentResults)
         {
             try
             {
@@ -1607,11 +1641,20 @@ public class ValidationAgent : IValidationAgent
                         v => v.DocumentType == documentType && v.DocumentId == documentId,
                         cancellationToken);
 
+                // Merge the current run's rules into ValidationDetailsJson so the web detail pages
+                // always have a "proactiveRules" key with all validation rows.
+                // For existing records with prior chatbot rules, combine both rule sets first.
+                // New reactive rules take precedence (primary) over old stored rules (secondary)
+                // because reactive rules use live API data (e.g. PO balance) that may have changed.
+                var combinedRulesJson = CombineRuleArrays(ruleResultsJson, existing?.RuleResultsJson);
+                var mergedDetailsJson = MergeProactiveRulesIntoDetails(detailsJson, combinedRulesJson);
+
                 if (existing != null)
                 {
                     existing.AllValidationsPassed = allPassed;
-                    existing.ValidationDetailsJson = detailsJson;
                     existing.FailureReason = failureReason;
+                    existing.ValidationDetailsJson = mergedDetailsJson;
+                    existing.RuleResultsJson = ruleResultsJson;
                     existing.UpdatedAt = DateTime.UtcNow;
                 }
                 else
@@ -1622,8 +1665,9 @@ public class ValidationAgent : IValidationAgent
                         DocumentType = documentType,
                         DocumentId = documentId,
                         AllValidationsPassed = allPassed,
-                        ValidationDetailsJson = detailsJson,
                         FailureReason = failureReason,
+                        ValidationDetailsJson = mergedDetailsJson,
+                        RuleResultsJson = ruleResultsJson,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     });
@@ -1646,93 +1690,380 @@ public class ValidationAgent : IValidationAgent
     }
 
     /// <summary>
-    /// Builds a list of per-document-type validation result tuples from the package validation result.
+    /// Merges proactive rule results (from RuleResultsJson) into the reactive ValidationDetailsJson.
+    /// Proactive rules are added under a "proactiveRules" key. Reactive checks that overlap with
+    /// proactive rules (by matching rule code patterns) are not duplicated — the proactive version
+    /// is kept since it has richer detail (extractedValue, expectedValue, message).
     /// </summary>
-    private static List<(DocumentType Type, Guid DocumentId, bool AllPassed, string DetailsJson, string? FailureReason)>
+    private static string MergeProactiveRulesIntoDetails(string? reactiveDetailsJson, string? ruleResultsJson)
+    {
+        if (string.IsNullOrWhiteSpace(ruleResultsJson))
+            return reactiveDetailsJson ?? "{}";
+
+        try
+        {
+            // Parse the reactive details (e.g. {"fieldPresence": {...}, "crossDocument": {...}})
+            using var reactiveDoc = JsonDocument.Parse(reactiveDetailsJson ?? "{}");
+
+            // Parse the proactive rules array
+            using var proactiveDoc = JsonDocument.Parse(ruleResultsJson);
+            if (proactiveDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return reactiveDetailsJson ?? "{}";
+
+            // Collect proactive rule codes for dedup
+            var proactiveRuleCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rule in proactiveDoc.RootElement.EnumerateArray())
+            {
+                if (rule.TryGetProperty("RuleCode", out var rc) || rule.TryGetProperty("ruleCode", out rc))
+                {
+                    var code = rc.GetString();
+                    if (!string.IsNullOrEmpty(code))
+                        proactiveRuleCodes.Add(code);
+                }
+            }
+
+            // Build reactive rules from fieldPresence.missingFields and crossDocument.issues
+            // to detect overlap with proactive rules
+            var reactiveFieldNames = ExtractReactiveFieldNames(reactiveDoc.RootElement);
+
+            // Build merged JSON: copy all reactive properties + add proactiveRules array
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = false }))
+            {
+                writer.WriteStartObject();
+
+                // Copy all existing reactive properties
+                foreach (var prop in reactiveDoc.RootElement.EnumerateObject())
+                {
+                    prop.WriteTo(writer);
+                }
+
+                // Add proactive rules array
+                writer.WritePropertyName("proactiveRules");
+                proactiveDoc.RootElement.WriteTo(writer);
+
+                writer.WriteEndObject();
+            }
+
+            return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        }
+        catch (JsonException ex)
+        {
+            // If JSON parsing fails, return reactive details unchanged
+            System.Diagnostics.Debug.WriteLine($"Failed to merge proactive rules: {ex.Message}");
+            return reactiveDetailsJson ?? "{}";
+        }
+    }
+
+    /// <summary>
+    /// Extracts field names referenced in reactive validation details for dedup awareness.
+    /// </summary>
+    private static HashSet<string> ExtractReactiveFieldNames(JsonElement root)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (root.TryGetProperty("fieldPresence", out var fp) &&
+            fp.TryGetProperty("missingFields", out var mf) &&
+            mf.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var field in mf.EnumerateArray())
+            {
+                var val = field.GetString();
+                if (!string.IsNullOrEmpty(val))
+                    names.Add(val);
+            }
+        }
+
+        if (root.TryGetProperty("crossDocument", out var cd) &&
+            cd.TryGetProperty("issues", out var issues) &&
+            issues.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var issue in issues.EnumerateArray())
+            {
+                var val = issue.GetString();
+                if (!string.IsNullOrEmpty(val))
+                    names.Add(val);
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// Combines two JSON rule arrays into one, deduplicating by ruleCode.
+    /// The primary array takes precedence over the secondary for duplicate codes.
+    /// </summary>
+    private static string? CombineRuleArrays(string? primaryJson, string? secondaryJson)
+    {
+        if (string.IsNullOrWhiteSpace(primaryJson) && string.IsNullOrWhiteSpace(secondaryJson))
+            return null;
+        if (string.IsNullOrWhiteSpace(secondaryJson))
+            return primaryJson;
+        if (string.IsNullOrWhiteSpace(primaryJson))
+            return secondaryJson;
+
+        try
+        {
+            using var primaryDoc = JsonDocument.Parse(primaryJson);
+            using var secondaryDoc = JsonDocument.Parse(secondaryJson);
+
+            if (primaryDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return secondaryJson;
+            if (secondaryDoc.RootElement.ValueKind != JsonValueKind.Array)
+                return primaryJson;
+
+            // Collect rule codes from primary
+            var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rule in primaryDoc.RootElement.EnumerateArray())
+            {
+                if (rule.TryGetProperty("RuleCode", out var rc) || rule.TryGetProperty("ruleCode", out rc))
+                {
+                    var code = rc.GetString();
+                    if (!string.IsNullOrEmpty(code))
+                        seenCodes.Add(code);
+                }
+            }
+
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartArray();
+
+                // Write all primary rules
+                foreach (var rule in primaryDoc.RootElement.EnumerateArray())
+                    rule.WriteTo(writer);
+
+                // Write secondary rules not already in primary
+                foreach (var rule in secondaryDoc.RootElement.EnumerateArray())
+                {
+                    string? code = null;
+                    if (rule.TryGetProperty("RuleCode", out var rc) || rule.TryGetProperty("ruleCode", out rc))
+                        code = rc.GetString();
+
+                    if (string.IsNullOrEmpty(code) || !seenCodes.Contains(code))
+                        rule.WriteTo(writer);
+                }
+
+                writer.WriteEndArray();
+            }
+
+            return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        }
+        catch (JsonException)
+        {
+            return primaryJson ?? secondaryJson;
+        }
+    }
+
+    /// <summary>
+    /// Builds a list of per-document-type validation result tuples from the package validation result.
+    /// Each tuple includes RuleResultsJson in the same format as the chatbot pipeline.
+    /// </summary>
+    private static List<(DocumentType Type, Guid DocumentId, bool AllPassed, string? FailureReason, string? DetailsJson, string? RuleResultsJson)>
         BuildPerDocumentResults(PackageValidationResult result, Domain.Entities.DocumentPackage package)
     {
-        var items = new List<(DocumentType, Guid, bool, string, string?)>();
+        var items = new List<(DocumentType, Guid, bool, string?, string?, string?)>();
+        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
+
+        // Helper: serialize rules list to RuleResultsJson
+        static string? SerializeRules(IEnumerable<object> rules) =>
+            JsonSerializer.Serialize(rules);
 
         // PO: SAP verification + date validation
-        if (package.PO != null && (result.SAPVerification != null || result.DateValidation != null))
+        if (package.PO != null)
         {
             var passed = (result.SAPVerification?.IsVerified ?? true || result.SAPVerification?.SAPConnectionFailed == true)
                          && (result.DateValidation?.IsValid ?? true);
-            var details = new { result.SAPVerification, result.DateValidation };
             var issues = new List<string>();
             if (result.SAPVerification != null && !result.SAPVerification.IsVerified && !result.SAPVerification.SAPConnectionFailed)
                 issues.AddRange(result.SAPVerification.Discrepancies);
             if (result.DateValidation != null && !result.DateValidation.IsValid)
                 issues.AddRange(result.DateValidation.DateIssues);
 
+            var details = new { sapVerification = result.SAPVerification, dateValidation = result.DateValidation };
+            var poRules = new List<object>
+            {
+                new { ruleCode = "PO_SAP_VERIFIED", type = "Required", passed = result.SAPVerification?.IsVerified ?? true, isWarning = false, label = "SAP Verification", extractedValue = result.SAPVerification?.IsVerified == true ? "Verified" : (string?)null, message = result.SAPVerification?.IsVerified == false ? string.Join("; ", result.SAPVerification.Discrepancies) : null },
+                new { ruleCode = "PO_DATE_VALID", type = "Required", passed = result.DateValidation?.IsValid ?? true, isWarning = false, label = "Date Validation", extractedValue = (string?)null, message = result.DateValidation?.IsValid == false ? string.Join("; ", result.DateValidation.DateIssues) : null }
+            };
             items.Add((DocumentType.PO, package.PO.Id, passed,
-                JsonSerializer.Serialize(details),
-                issues.Count > 0 ? string.Join("; ", issues) : null));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(poRules)));
         }
 
-        // Invoice: field presence + cross-document
+        // Invoice: field presence + cross-document + cross-cutting checks (amount consistency, line items, vendor matching)
         var invoiceDoc = package.Invoices.FirstOrDefault();
-        if (invoiceDoc != null && (result.InvoiceFieldPresence != null || result.InvoiceCrossDocument != null))
+        if (invoiceDoc != null)
         {
             var invPassed = (result.InvoiceFieldPresence?.AllFieldsPresent ?? true)
                             && (result.InvoiceCrossDocument?.AllChecksPass ?? true);
-            var invDetails = new { result.InvoiceFieldPresence, result.InvoiceCrossDocument };
             var invIssues = new List<string>();
             if (result.InvoiceFieldPresence != null && !result.InvoiceFieldPresence.AllFieldsPresent)
                 invIssues.AddRange(result.InvoiceFieldPresence.MissingFields);
             if (result.InvoiceCrossDocument != null && !result.InvoiceCrossDocument.AllChecksPass)
                 invIssues.AddRange(result.InvoiceCrossDocument.Issues);
 
+            // Include cross-cutting validations that involve the invoice
+            if (result.AmountConsistency != null && !result.AmountConsistency.IsConsistent)
+                invIssues.Add($"Amount mismatch: Invoice {result.AmountConsistency.InvoiceTotal:F2} vs Cost Summary {result.AmountConsistency.CostSummaryTotal:F2} (diff {result.AmountConsistency.PercentageDifference:F1}%)");
+            if (result.LineItemMatching != null && !result.LineItemMatching.AllItemsMatched)
+                invIssues.Add($"Missing {result.LineItemMatching.MissingItemCodes.Count} PO line items: {string.Join(", ", result.LineItemMatching.MissingItemCodes)}");
+            if (result.VendorMatching != null && !result.VendorMatching.IsMatched)
+                invIssues.Add($"Vendor mismatch: PO={result.VendorMatching.POVendor}, Invoice={result.VendorMatching.InvoiceVendor}, SAP={result.VendorMatching.SAPVendor}");
+
+            var details = new
+            {
+                fieldPresence = result.InvoiceFieldPresence,
+                crossDocument = result.InvoiceCrossDocument,
+                amountConsistency = result.AmountConsistency,
+                lineItemMatching = result.LineItemMatching,
+                vendorMatching = result.VendorMatching
+            };
+            // Read agency/billing/state from ExtractedDataJson (not stored as dedicated columns on Invoice entity)
+            string? invAgencyName = null, invAgencyAddr = null, invBillingName = null, invBillingAddr = null, invStateVal = null;
+            if (!string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
+            {
+                try
+                {
+                    var invJson = JsonSerializer.Deserialize<JsonElement>(invoiceDoc.ExtractedDataJson);
+                    if (invJson.TryGetProperty("AgencyName", out var an) || invJson.TryGetProperty("agencyName", out an)) invAgencyName = an.GetString();
+                    if (invJson.TryGetProperty("AgencyAddress", out var aa) || invJson.TryGetProperty("agencyAddress", out aa)) invAgencyAddr = aa.GetString();
+                    if (invJson.TryGetProperty("BillingName", out var bn) || invJson.TryGetProperty("billingName", out bn)) invBillingName = bn.GetString();
+                    if (invJson.TryGetProperty("BillingAddress", out var ba) || invJson.TryGetProperty("billingAddress", out ba)) invBillingAddr = ba.GetString();
+                    if (invJson.TryGetProperty("StateName", out var sn) || invJson.TryGetProperty("stateName", out sn)) invStateVal = sn.GetString();
+                    if (string.IsNullOrWhiteSpace(invStateVal) && (invJson.TryGetProperty("StateCode", out var sc) || invJson.TryGetProperty("stateCode", out sc))) invStateVal = sc.GetString();
+                }
+                catch { }
+            }
+            var invAgencyOk = !string.IsNullOrWhiteSpace(invAgencyName) && !string.IsNullOrWhiteSpace(invAgencyAddr);
+            var invAgencyExtracted = invAgencyOk ? $"{invAgencyName}, {invAgencyAddr}" : invAgencyName ?? invAgencyAddr;
+            var invBillingOk = !string.IsNullOrWhiteSpace(invBillingName) && !string.IsNullOrWhiteSpace(invBillingAddr);
+            var invBillingExtracted = invBillingOk ? $"{invBillingName}, {invBillingAddr}" : invBillingName ?? invBillingAddr;
+            var invStateOk = !string.IsNullOrWhiteSpace(invStateVal);
+
+            var invRules = new List<object>
+            {
+                new { ruleCode = "INV_NUMBER_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Number") ?? false), isWarning = false, label = "Invoice Number", extractedValue = invoiceDoc.InvoiceNumber, message = (string?)null },
+                new { ruleCode = "INV_DATE_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Date") ?? false), isWarning = false, label = "Invoice Date", extractedValue = invoiceDoc.InvoiceDate?.ToString("dd-MMM-yyyy"), message = (string?)null },
+                new { ruleCode = "INV_AMOUNT_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Amount") ?? false), isWarning = false, label = "Invoice Amount", extractedValue = invoiceDoc.TotalAmount.HasValue ? $"₹{invoiceDoc.TotalAmount:N0}" : null, message = (string?)null },
+                new { ruleCode = "INV_GST_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("GST Number") ?? false), isWarning = false, label = "GST Number", extractedValue = invoiceDoc.GSTNumber, message = (string?)null },
+                new { ruleCode = "INV_AGENCY_NAME_ADDRESS", type = "Required", passed = invAgencyOk, isWarning = false, label = "Agency Name & Address", extractedValue = invAgencyExtracted, message = invAgencyOk ? null : (string.IsNullOrWhiteSpace(invAgencyName) ? "Supplier name not detected" : "Supplier address not detected") },
+                new { ruleCode = "INV_BILLING_NAME_ADDRESS", type = "Required", passed = invBillingOk, isWarning = false, label = "Billing Name & Address", extractedValue = invBillingExtracted, message = invBillingOk ? null : (string.IsNullOrWhiteSpace(invBillingName) ? "Recipient name not detected" : "Recipient address not detected") },
+                new { ruleCode = "INV_SUPPLIER_STATE", type = "Required", passed = invStateOk, isWarning = false, label = "Supplier State", extractedValue = invStateVal, message = invStateOk ? null : "Supplier state not detected" },
+                new { ruleCode = "INV_PO_MATCH", type = "Required", passed = result.InvoiceCrossDocument?.PONumberMatches ?? true, isWarning = false, label = "PO Number Match", extractedValue = (string?)null, message = result.InvoiceCrossDocument?.PONumberMatches == false ? "PO number mismatch" : null },
+            };
+            // Only include PO balance rule when the balance was actually checked (PoBalanceAmount has a value).
+            // This prevents a default "passed: true" from overriding a chatbot rule that correctly has "Passed: false".
+            if (result.InvoiceCrossDocument?.PoBalanceAmount.HasValue == true)
+            {
+                var indian = new System.Globalization.CultureInfo("en-IN");
+                var poBalPassed = result.InvoiceCrossDocument.PoBalanceValid;
+                var extractedAmt = invoiceDoc.TotalAmount.HasValue
+                    ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)}"
+                    : (string?)null;
+                var poBalMsg = !poBalPassed && invoiceDoc.TotalAmount.HasValue
+                    ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)} exceeds available PO balance (₹{result.InvoiceCrossDocument.PoBalanceAmount.Value.ToString("N0", indian)})"
+                    : (string?)null;
+                invRules.Add(new { ruleCode = "INV_AMOUNT_VS_PO_BALANCE", type = "Required", passed = poBalPassed, isWarning = false, label = "Amount vs PO Balance", extractedValue = extractedAmt, message = poBalMsg });
+            }
             items.Add((DocumentType.Invoice, invoiceDoc.Id, invPassed,
-                JsonSerializer.Serialize(invDetails),
-                invIssues.Count > 0 ? string.Join("; ", invIssues) : null));
+                invIssues.Count > 0 ? string.Join("; ", invIssues) : null,
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(invRules)));
         }
 
-        // CostSummary: field presence + cross-document
-        if (package.CostSummary != null && (result.CostSummaryFieldPresence != null || result.CostSummaryCrossDocument != null))
+        // CostSummary: field presence + cross-document + completeness check (package-level)
+        if (package.CostSummary != null)
         {
             var passed = (result.CostSummaryFieldPresence?.AllFieldsPresent ?? true)
                          && (result.CostSummaryCrossDocument?.AllChecksPass ?? true);
-            var details = new { result.CostSummaryFieldPresence, result.CostSummaryCrossDocument };
             var issues = new List<string>();
             if (result.CostSummaryFieldPresence != null && !result.CostSummaryFieldPresence.AllFieldsPresent)
                 issues.AddRange(result.CostSummaryFieldPresence.MissingFields);
             if (result.CostSummaryCrossDocument != null && !result.CostSummaryCrossDocument.AllChecksPass)
                 issues.AddRange(result.CostSummaryCrossDocument.Issues);
+            if (result.Completeness != null && !result.Completeness.IsComplete)
+                issues.Add($"Missing {result.Completeness.MissingItems.Count} required items: {string.Join(", ", result.Completeness.MissingItems)}");
 
+            var details = new { fieldPresence = result.CostSummaryFieldPresence, crossDocument = result.CostSummaryCrossDocument, completeness = result.Completeness };
+            var cs = package.CostSummary;
+            var csRules = new List<object>
+            {
+                new { ruleCode = "CS_PLACE_OF_SUPPLY", type = "Required", passed = !string.IsNullOrWhiteSpace(cs.PlaceOfSupply), isWarning = false, label = "Place of Supply", extractedValue = cs.PlaceOfSupply, message = (string?)null },
+                new { ruleCode = "CS_NUMBER_OF_DAYS", type = "Required", passed = cs.NumberOfDays.HasValue && cs.NumberOfDays > 0, isWarning = false, label = "No. of Days", extractedValue = cs.NumberOfDays?.ToString(), message = (string?)null },
+                new { ruleCode = "CS_NUMBER_OF_ACTIVATIONS", type = "Required", passed = cs.NumberOfActivations.HasValue && cs.NumberOfActivations > 0, isWarning = false, label = "No. of Activations", extractedValue = cs.NumberOfActivations?.ToString(), message = (string?)null },
+                new { ruleCode = "CS_NUMBER_OF_TEAMS", type = "Required", passed = cs.NumberOfTeams.HasValue && cs.NumberOfTeams > 0, isWarning = false, label = "No. of Teams", extractedValue = cs.NumberOfTeams?.ToString(), message = (string?)null },
+                new { ruleCode = "CS_ELEMENT_WISE_COST", type = "Required", passed = !string.IsNullOrWhiteSpace(cs.ElementWiseCostsJson) && cs.ElementWiseCostsJson != "[]", isWarning = false, label = "Element-wise Cost", extractedValue = "Cost breakdown detected", message = (string?)null },
+                new { ruleCode = "CS_ELEMENT_WISE_QTY", type = "Required", passed = !string.IsNullOrWhiteSpace(cs.ElementWiseQuantityJson) && cs.ElementWiseQuantityJson != "[]", isWarning = false, label = "Element-wise Quantity", extractedValue = "Quantity breakdown detected", message = (string?)null },
+                new { ruleCode = "CS_FIXED_COST_LIMITS", type = "Check", passed = result.CostSummaryCrossDocument?.FixedCostsValid ?? true, isWarning = !(result.CostSummaryCrossDocument?.FixedCostsValid ?? true), label = "Fixed Cost Limits", extractedValue = (string?)null, message = (result.CostSummaryCrossDocument?.FixedCostsValid ?? true) ? "Fixed cost items within state limits" : "One or more fixed cost items exceed state limit" },
+                new { ruleCode = "CS_VARIABLE_COST_LIMITS", type = "Check", passed = result.CostSummaryCrossDocument?.VariableCostsValid ?? true, isWarning = !(result.CostSummaryCrossDocument?.VariableCostsValid ?? true), label = "Variable Cost Limits", extractedValue = (string?)null, message = (result.CostSummaryCrossDocument?.VariableCostsValid ?? true) ? "Variable cost items within state limits" : "One or more variable cost items exceed state limit" }
+            };
             items.Add((DocumentType.CostSummary, package.CostSummary.Id, passed,
-                JsonSerializer.Serialize(details),
-                issues.Count > 0 ? string.Join("; ", issues) : null));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(csRules)));
         }
 
         // ActivitySummary: field presence + cross-document
-        if (package.ActivitySummary != null && (result.ActivityFieldPresence != null || result.ActivityCrossDocument != null))
+        if (package.ActivitySummary != null)
         {
             var passed = (result.ActivityFieldPresence?.AllFieldsPresent ?? true)
                          && (result.ActivityCrossDocument?.AllChecksPass ?? true);
-            var details = new { result.ActivityFieldPresence, result.ActivityCrossDocument };
             var issues = new List<string>();
             if (result.ActivityFieldPresence != null && !result.ActivityFieldPresence.AllFieldsPresent)
                 issues.AddRange(result.ActivityFieldPresence.MissingFields);
             if (result.ActivityCrossDocument != null && !result.ActivityCrossDocument.AllChecksPass)
                 issues.AddRange(result.ActivityCrossDocument.Issues);
 
+            var details = new { fieldPresence = result.ActivityFieldPresence, crossDocument = result.ActivityCrossDocument };
+            var act = package.ActivitySummary;
+            var actDays = act.TotalDays ?? 0;
+            var csDays = package.CostSummary?.NumberOfDays ?? 0;
+            var daysMatch = actDays == csDays;
+            var actRules = new List<object>
+            {
+                new { ruleCode = "AS_DEALER_LOCATION_PRESENT", type = "Required", passed = result.ActivityFieldPresence?.AllFieldsPresent ?? true, isWarning = false, label = "Dealer & Location Details", extractedValue = act.DealerName, message = (string?)null },
+                new { ruleCode = "AS_TOTAL_DAYS", type = "Info", passed = true, isWarning = false, label = "Total No. of Days", extractedValue = act.TotalDays?.ToString(), message = (string?)null },
+                new { ruleCode = "AS_TOTAL_WORKING_DAYS", type = "Info", passed = true, isWarning = false, label = "Total No. of Working Days", extractedValue = act.TotalWorkingDays?.ToString(), message = (string?)null },
+                new { ruleCode = "AS_DAYS_MATCH_COST_SUMMARY", type = "Required", passed = daysMatch, isWarning = false, label = "Days Match with Cost Summary", extractedValue = $"Activity: {actDays} days | Cost Summary: {csDays} days", message = daysMatch ? null : $"Activity Summary days ({actDays}) does not match Cost Summary days ({csDays})" }
+            };
             items.Add((DocumentType.ActivitySummary, package.ActivitySummary.Id, passed,
-                JsonSerializer.Serialize(details),
-                issues.Count > 0 ? string.Join("; ", issues) : null));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(actRules)));
         }
 
-        // EnquiryDocument: field presence only
-        if (package.EnquiryDocument != null && result.EnquiryDumpFieldPresence != null)
+        // EnquiryDocument: field presence + cross-document
+        if (package.EnquiryDocument != null)
         {
-            var passed = result.EnquiryDumpFieldPresence.AllFieldsPresent;
-            var details = new { result.EnquiryDumpFieldPresence };
-            var issues = result.EnquiryDumpFieldPresence.AllFieldsPresent
-                ? null
-                : string.Join("; ", result.EnquiryDumpFieldPresence.MissingFields);
+            var passed = (result.EnquiryDumpFieldPresence?.AllFieldsPresent ?? true)
+                         && (result.EnquiryDumpCrossDocument?.AllChecksPass ?? true);
+            var issues = new List<string>();
+            if (result.EnquiryDumpFieldPresence != null && !result.EnquiryDumpFieldPresence.AllFieldsPresent)
+                issues.AddRange(result.EnquiryDumpFieldPresence.MissingFields);
+            if (result.EnquiryDumpCrossDocument != null && !result.EnquiryDumpCrossDocument.AllChecksPass)
+                issues.AddRange(result.EnquiryDumpCrossDocument.Issues);
 
+            var details = new { fieldPresence = result.EnquiryDumpFieldPresence, crossDocument = result.EnquiryDumpCrossDocument };
+            // Build per-field rules from EnquiryDumpFieldPresence
+            var eq = result.EnquiryDumpFieldPresence;
+            var eqRules = new List<object>
+            {
+                new { ruleCode = "EQ_STATE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("State")) ?? false), isWarning = false, label = "State", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_DATE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Date")) ?? false), isWarning = false, label = "Date", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_DEALER_CODE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Dealer Code")) ?? false), isWarning = false, label = "Dealer Code", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_DEALER_NAME", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Dealer Name")) ?? false), isWarning = false, label = "Dealer Name", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_DISTRICT", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("District")) ?? false), isWarning = false, label = "District", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_PINCODE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Pincode")) ?? false), isWarning = false, label = "Pincode", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_CUSTOMER_NAME", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Customer Name")) ?? false), isWarning = false, label = "Customer Name", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_CUSTOMER_PHONE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Customer Phone")) ?? false), isWarning = false, label = "Customer Phone", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "EQ_TEST_RIDE", type = "Required", passed = !(eq?.MissingFields?.Any(f => f.Contains("Test Ride")) ?? false), isWarning = false, label = "Test Ride", extractedValue = (string?)null, message = (string?)null }
+            };
             items.Add((DocumentType.EnquiryDocument, package.EnquiryDocument.Id, passed,
-                JsonSerializer.Serialize(details), issues));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(eqRules)));
         }
 
         // TeamPhotos: field presence + cross-document (use package ID as the "document" since photos are a collection)
@@ -1740,16 +2071,26 @@ public class ValidationAgent : IValidationAgent
         {
             var passed = (result.PhotoFieldPresence?.AllFieldsPresent ?? true)
                          && (result.PhotoCrossDocument?.AllChecksPass ?? true);
-            var details = new { result.PhotoFieldPresence, result.PhotoCrossDocument };
             var issues = new List<string>();
             if (result.PhotoFieldPresence != null && !result.PhotoFieldPresence.AllFieldsPresent)
                 issues.AddRange(result.PhotoFieldPresence.MissingFields);
             if (result.PhotoCrossDocument != null && !result.PhotoCrossDocument.AllChecksPass)
                 issues.AddRange(result.PhotoCrossDocument.Issues);
 
+            var details = new { fieldPresence = result.PhotoFieldPresence, crossDocument = result.PhotoCrossDocument };
+            var ph = result.PhotoFieldPresence;
+            var phRules = new List<object>
+            {
+                new { ruleCode = "PHOTO_COUNT", type = "Required", passed = ph?.AllFieldsPresent ?? true, isWarning = false, label = "Photo Count", extractedValue = (string?)null, message = ph?.AllFieldsPresent == false ? string.Join("; ", ph.MissingFields) : null },
+                new { ruleCode = "PHOTO_DATE_VISIBLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("date") || f.Contains("Date")) ?? false), isWarning = false, label = "Date", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "PHOTO_GPS_VISIBLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("GPS") || f.Contains("location")) ?? false), isWarning = false, label = "GPS", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "PHOTO_BLUE_TSHIRT", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("t-shirt") || f.Contains("tshirt") || f.Contains("Blue")) ?? false), isWarning = false, label = "Blue T-shirt", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "PHOTO_3W_VEHICLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("vehicle") || f.Contains("Vehicle") || f.Contains("3W")) ?? false), isWarning = false, label = "3W Vehicle", extractedValue = (string?)null, message = (string?)null }
+            };
             items.Add((DocumentType.TeamPhoto, package.Id, passed,
-                JsonSerializer.Serialize(details),
-                issues.Count > 0 ? string.Join("; ", issues) : null));
+                issues.Count > 0 ? string.Join("; ", issues) : null,
+                JsonSerializer.Serialize(details, jsonOptions),
+                SerializeRules(phRules)));
         }
 
         return items;

@@ -1,9 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Bot.Builder;
+using Microsoft.Bot.Builder.Integration.AspNet.Core;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Infrastructure.Persistence;
 using BajajDocumentProcessing.Infrastructure.Services;
+using BajajDocumentProcessing.Infrastructure.Services.Teams;
 
 namespace BajajDocumentProcessing.Infrastructure;
 
@@ -17,9 +20,11 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         // Database configuration
+        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(
-                configuration.GetConnectionString("DefaultConnection"),
+                connectionString,
                 b => b.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName)));
 
         services.AddScoped<IApplicationDbContext>(provider => 
@@ -115,6 +120,11 @@ public static class DependencyInjection
             services.AddScoped<IAnalyticsAgent, NullAnalyticsAgent>();
         }
 
+        // Notification Data Service (Scoped — depends on DbContext)
+        services.AddScoped<INotificationDataService, NotificationDataService>();
+
+        // Notification Dispatcher (Scoped — depends on DbContext)
+        services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
         // Submission Number Service
         services.AddScoped<ISubmissionNumberService, SubmissionNumberService>();
 
@@ -127,11 +137,20 @@ public static class DependencyInjection
         // CIRCLE HEAD Auto-Assignment Service
         services.AddScoped<ICircleHeadAssignmentService, CircleHeadAssignmentService>();
 
+        // RA Auto-Assignment Service
+        services.AddScoped<IRAAssignmentService, RAAssignmentService>();
+
         // Conversational Submission Service (State Machine)
         services.AddScoped<IConversationalSubmissionService, ConversationalSubmissionService>();
 
         // Workflow Orchestrator
         services.AddScoped<IWorkflowOrchestrator, WorkflowOrchestrator>();
+
+        // Admin — User Management
+        services.AddScoped<IUserManagementService, UserManagementService>();
+
+        // Admin — Agency/Supplier Master
+        services.AddScoped<IAgencyService, AgencyService>();
 
         // Audit Logging
         services.AddScoped<IAuditLogService, AuditLogService>();
@@ -142,12 +161,43 @@ public static class DependencyInjection
         // Correlation ID Service
         services.AddScoped<ICorrelationIdService, CorrelationIdService>();
 
+        // PO Balance Service
+        services.AddScoped<IPoBalanceService, PoBalanceService>();
+
+        // SAP PO_CREATE sync
+        services.AddHttpClient("SapPoCreate", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(60);
+        });
+        services.AddScoped<IPoSyncService, PoSyncService>();
+
+        // Scheduled daily 11 PM PO sync job
+        services.AddHostedService<PoSyncScheduler>();
+
         // Azure services configuration will be added in subsequent tasks
         
         // Background workflow processor
         services.AddSingleton<BackgroundWorkflowProcessor>();
         services.AddHostedService(provider => provider.GetRequiredService<BackgroundWorkflowProcessor>());
         services.AddSingleton<IBackgroundWorkflowQueue, BackgroundWorkflowQueue>();
+
+        // Teams Bot Framework (Singleton — required by Bot Framework SDK)
+        services.AddSingleton<IBotFrameworkHttpAdapter, AdapterWithErrorHandler>();
+        services.AddSingleton<PilotTeamsConfig>(sp =>
+        {
+            var config = new PilotTeamsConfig
+            {
+                IsPilotMode = configuration.GetValue<bool>("TeamsBot:IsPilotMode", true)
+            };
+            return config;
+        });
+        services.AddSingleton<IBot, TeamsBotService>();
+
+        // Teams proactive notification service (Singleton — depends on Singleton adapter + PilotConfig)
+        services.AddSingleton<ITeamsNotificationService, TeamsNotificationService>();
+
+        // Teams Adaptive Card templating service (Singleton — stateless, loads templates once)
+        services.AddSingleton<ITeamsCardService, TeamsCardService>();
         
         return services;
     }

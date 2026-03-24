@@ -22,53 +22,6 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
-            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.ASM", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<string>("Location")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<Guid?>("UserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsDeleted");
-
-                    b.HasIndex("Location");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("ASMs", (string)null);
-                });
-
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.ActivitySummary", b =>
                 {
                     b.Property<Guid>("Id")
@@ -335,6 +288,67 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.ToTable("AuditLogs", (string)null);
                 });
 
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.ConfidenceScore", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<double>("ActivityConfidence")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("float(5)");
+
+                    b.Property<double>("CostSummaryConfidence")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("float(5)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<double>("InvoiceConfidence")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("float(5)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsFlaggedForReview")
+                        .HasColumnType("bit");
+
+                    b.Property<double>("OverallConfidence")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("float(5)");
+
+                    b.Property<Guid>("PackageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<double>("PhotosConfidence")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("float(5)");
+
+                    b.Property<double>("PoConfidence")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("float(5)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OverallConfidence");
+
+                    b.HasIndex("PackageId")
+                        .IsUnique();
+
+                    b.ToTable("ConfidenceScores", (string)null);
+                });
+
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.CampaignInvoice", b =>
                 {
                     b.Property<Guid>("Id")
@@ -425,67 +439,6 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.HasIndex("PackageId");
 
                     b.ToTable("CampaignInvoices", (string)null);
-                });
-
-            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.ConfidenceScore", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<double>("ActivityConfidence")
-                        .HasPrecision(5, 2)
-                        .HasColumnType("float(5)");
-
-                    b.Property<double>("CostSummaryConfidence")
-                        .HasPrecision(5, 2)
-                        .HasColumnType("float(5)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("CreatedBy")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<double>("InvoiceConfidence")
-                        .HasPrecision(5, 2)
-                        .HasColumnType("float(5)");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("IsFlaggedForReview")
-                        .HasColumnType("bit");
-
-                    b.Property<double>("OverallConfidence")
-                        .HasPrecision(5, 2)
-                        .HasColumnType("float(5)");
-
-                    b.Property<Guid>("PackageId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<double>("PhotosConfidence")
-                        .HasPrecision(5, 2)
-                        .HasColumnType("float(5)");
-
-                    b.Property<double>("PoConfidence")
-                        .HasPrecision(5, 2)
-                        .HasColumnType("float(5)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("UpdatedBy")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OverallConfidence");
-
-                    b.HasIndex("PackageId")
-                        .IsUnique();
-
-                    b.ToTable("ConfidenceScores", (string)null);
                 });
 
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.Conversation", b =>
@@ -678,6 +631,12 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("ElementWiseCostsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ElementWiseQuantityJson")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("ExtractedDataJson")
                         .HasColumnType("nvarchar(max)");
 
@@ -700,27 +659,21 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
+                    b.Property<int?>("NumberOfActivations")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("NumberOfDays")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("NumberOfTeams")
+                        .HasColumnType("int");
+
                     b.Property<Guid>("PackageId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("PlaceOfSupply")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
-
-                    b.Property<int?>("NumberOfDays")
-                        .HasColumnType("int");
-
-                    b.Property<int?>("NumberOfActivations")
-                        .HasColumnType("int");
-
-                    b.Property<int?>("NumberOfTeams")
-                        .HasColumnType("int");
-
-                    b.Property<string>("ElementWiseCostsJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ElementWiseQuantityJson")
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal?>("TotalCost")
                         .HasColumnType("decimal(18,2)");
@@ -751,6 +704,68 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.ToTable("CostSummaries", (string)null);
                 });
 
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.Dealer", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("City")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DealerCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("DealerName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DealerCode")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Dealers_DealerCode");
+
+                    b.HasIndex("State")
+                        .HasDatabaseName("IX_Dealers_State");
+
+                    b.HasIndex("State", "IsActive")
+                        .HasDatabaseName("IX_Dealers_State_IsActive");
+
+                    b.ToTable("Dealers", (string)null);
+                });
+
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.DocumentPackage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -765,6 +780,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<Guid?>("AssignedCircleHeadUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("AssignedRAUserId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("CreatedAt")
@@ -829,6 +847,73 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasDatabaseName("IX_DocumentPackages_SubmittedByUserId_CreatedAt");
 
                     b.ToTable("DocumentPackages", (string)null);
+                });
+
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.EmailDeliveryLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AttemptsCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("MessageId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("PackageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RecipientEmail")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("TemplateName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PackageId")
+                        .HasDatabaseName("IX_EmailDeliveryLogs_PackageId");
+
+                    b.HasIndex("TemplateName")
+                        .HasDatabaseName("IX_EmailDeliveryLogs_TemplateName");
+
+                    b.ToTable("EmailDeliveryLogs", (string)null);
                 });
 
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.EnquiryDocument", b =>
@@ -1063,6 +1148,24 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
+                    b.Property<int>("Channel")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1);
+
+                    b.Property<int>("DeliveryStatus")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(2);
+
+                    b.Property<string>("ExternalMessageId")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
                     b.Property<string>("Message")
                         .IsRequired()
                         .HasMaxLength(2000)
@@ -1073,6 +1176,14 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.Property<Guid?>("RelatedEntityId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("RetryCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -1100,6 +1211,12 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.HasIndex("RelatedEntityId");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("RelatedEntityId", "Channel")
+                        .HasDatabaseName("IX_Notifications_RelatedEntityId_Channel");
+
+                    b.HasIndex("UserId", "Channel", "DeliveryStatus")
+                        .HasDatabaseName("IX_Notifications_UserId_Channel_DeliveryStatus");
 
                     b.ToTable("Notifications", (string)null);
                 });
@@ -1165,6 +1282,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<Guid>("PackageId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime?>("RefreshedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<decimal?>("RemainingBalance")
                         .HasColumnType("decimal(18,2)");
 
@@ -1209,6 +1329,138 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasDatabaseName("IX_POs_VersionNumber");
 
                     b.ToTable("POs", (string)null);
+                });
+
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.POSyncLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("AgencyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ImportedRecords")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid?>("POId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ProcessedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SourceSystem")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AgencyId");
+
+                    b.HasIndex("POId");
+
+                    b.ToTable("POSyncLogs");
+                });
+
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.PoBalanceLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWID()");
+
+                    b.Property<decimal?>("Balance")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("CompanyCode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<long>("ElapsedMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsSuccess")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("PoNum")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTime>("RequestedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("RequestedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTime?>("SapCalledAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("SapHttpStatus")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SapRequestBody")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("SapRespondedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SapResponseBody")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsSuccess")
+                        .HasDatabaseName("IX_POBalanceLogs_IsSuccess");
+
+                    b.HasIndex("PoNum")
+                        .HasDatabaseName("IX_POBalanceLogs_PoNum");
+
+                    b.HasIndex("RequestedAt")
+                        .IsDescending()
+                        .HasDatabaseName("IX_POBalanceLogs_RequestedAt");
+
+                    b.ToTable("POBalanceLogs", (string)null);
                 });
 
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.Recommendation", b =>
@@ -1277,6 +1529,10 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.Property<int>("ApproverRole")
                         .HasColumnType("int");
+
+                    b.Property<string>("Channel")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.Property<string>("Comments")
                         .HasMaxLength(2000)
@@ -1388,6 +1644,56 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.ToTable("RequestComments", (string)null);
                 });
 
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.StateCity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("State")
+                        .HasDatabaseName("IX_StateCities_State");
+
+                    b.HasIndex("State", "City")
+                        .IsUnique()
+                        .HasDatabaseName("IX_StateCities_State_City");
+
+                    b.ToTable("StateCities", (string)null);
+                });
+
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.StateGstMaster", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1400,7 +1706,7 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<decimal>("GstRate")
+                    b.Property<decimal>("GstPercentage")
                         .HasColumnType("decimal(5,2)");
 
                     b.Property<bool>("IsActive")
@@ -1440,8 +1746,7 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("City")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -1450,14 +1755,10 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("DealerCode")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("DealerName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
@@ -1468,6 +1769,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
+
+                    b.Property<Guid?>("RAUserId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("State")
                         .IsRequired()
@@ -1482,10 +1786,14 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DealerCode")
-                        .HasDatabaseName("IX_StateMappings_DealerCode");
+                    b.HasIndex("CircleHeadUserId")
+                        .HasDatabaseName("IX_StateMappings_CircleHeadUserId");
+
+                    b.HasIndex("RAUserId")
+                        .HasDatabaseName("IX_StateMappings_RAUserId");
 
                     b.HasIndex("State")
+                        .IsUnique()
                         .HasDatabaseName("IX_StateMappings_State");
 
                     b.HasIndex("State", "IsActive")
@@ -1520,9 +1828,11 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
 
+                    b.Property<bool?>("BlueTshirtPresent")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Caption")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ContentType")
                         .IsRequired()
@@ -1534,6 +1844,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.Property<string>("CreatedBy")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool?>("DateVisible")
+                        .HasColumnType("bit");
 
                     b.Property<string>("DeviceModel")
                         .HasMaxLength(200)
@@ -1576,11 +1889,18 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Property<Guid>("PackageId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("PhotoDateOverlay")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<DateTime?>("PhotoTimestamp")
                         .HasColumnType("datetime2");
 
                     b.Property<Guid>("TeamId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool?>("ThreeWheelerPresent")
+                        .HasColumnType("bit");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -1637,9 +1957,6 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<Guid?>("InvoiceId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
@@ -1657,8 +1974,8 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<string>("TeamsJson")
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<int?>("TeamNumber")
+                        .HasColumnType("int");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -1678,8 +1995,6 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.HasIndex("CampaignName");
 
-                    b.HasIndex("InvoiceId");
-
                     b.HasIndex("PackageId");
 
                     b.HasIndex("State");
@@ -1691,11 +2006,99 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.ToTable("Teams", (string)null);
                 });
 
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.TeamsConversation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("BotId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("BotName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ChannelId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ConversationId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("ConversationReferenceJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastActivityAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastMessageSentAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ServiceUrl")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("TeamsUserId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("TeamsUserName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TenantId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("TeamsUserId");
+
+                    b.HasIndex("UserId")
+                        .HasFilter("IsActive = 1");
+
+                    b.ToTable("TeamsConversations", (string)null);
+                });
+
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AadObjectId")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
 
                     b.Property<Guid?>("AgencyId")
                         .HasColumnType("uniqueidentifier");
@@ -1823,16 +2226,6 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("ValidationResults", (string)null);
-                });
-
-            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.ASM", b =>
-                {
-                    b.HasOne("BajajDocumentProcessing.Domain.Entities.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.ActivitySummary", b =>
@@ -1964,7 +2357,7 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.Invoice", b =>
                 {
                     b.HasOne("BajajDocumentProcessing.Domain.Entities.PO", "PO")
-                        .WithMany()
+                        .WithMany("Invoices")
                         .HasForeignKey("POId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
@@ -2015,6 +2408,21 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Navigation("Agency");
 
                     b.Navigation("DocumentPackage");
+                });
+
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.POSyncLog", b =>
+                {
+                    b.HasOne("BajajDocumentProcessing.Domain.Entities.Agency", "Agency")
+                        .WithMany()
+                        .HasForeignKey("AgencyId");
+
+                    b.HasOne("BajajDocumentProcessing.Domain.Entities.PO", "PO")
+                        .WithMany()
+                        .HasForeignKey("POId");
+
+                    b.Navigation("Agency");
+
+                    b.Navigation("PO");
                 });
 
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.Recommendation", b =>
@@ -2087,10 +2495,6 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.Teams", b =>
                 {
-                    b.HasOne("BajajDocumentProcessing.Domain.Entities.Invoice", null)
-                        .WithMany("Teams")
-                        .HasForeignKey("InvoiceId");
-
                     b.HasOne("BajajDocumentProcessing.Domain.Entities.DocumentPackage", "Package")
                         .WithMany("Teams")
                         .HasForeignKey("PackageId")
@@ -2098,6 +2502,16 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Package");
+                });
+
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.TeamsConversation", b =>
+                {
+                    b.HasOne("BajajDocumentProcessing.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.User", b =>
@@ -2153,9 +2567,9 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.Navigation("Teams");
                 });
 
-            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.Invoice", b =>
+            modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.PO", b =>
                 {
-                    b.Navigation("Teams");
+                    b.Navigation("Invoices");
                 });
 
             modelBuilder.Entity("BajajDocumentProcessing.Domain.Entities.Teams", b =>

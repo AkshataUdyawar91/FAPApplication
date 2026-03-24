@@ -89,7 +89,7 @@ public class CostBreakdown
     /// <summary>
     /// Quantity of items in this category
     /// </summary>
-    public int? Quantity { get; set; }
+    public decimal? Quantity { get; set; }
     
     /// <summary>
     /// Unit of measurement (e.g., "days", "pieces", "hours")

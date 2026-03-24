@@ -6,6 +6,7 @@ using BajajDocumentProcessing.Domain.Enums;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 // CHANGE: Added ClosedXML for reading Excel files (Enquiry Dump)
@@ -1118,7 +1119,7 @@ Ensure the JSON strictly follows the schema above."),
                 InvoiceNumber = parsed.InvoiceNumber ?? string.Empty,
                 VendorName = parsed.VendorName ?? string.Empty,
                 VendorCode = parsed.VendorCode ?? string.Empty,
-                InvoiceDate = parsed.InvoiceDate ?? DateTime.Now,
+                InvoiceDate = DateTime.TryParse(parsed.InvoiceDate, out var parsedDate) ? parsedDate : DateTime.Now,
                 AgencyName = parsed.AgencyName ?? string.Empty,
                 AgencyAddress = parsed.AgencyAddress ?? string.Empty,
                 AgencyCode = parsed.AgencyCode ?? string.Empty,
@@ -1167,7 +1168,7 @@ Ensure the JSON strictly follows the schema above."),
         public string? InvoiceNumber { get; set; }
         public string? VendorName { get; set; }
         public string? VendorCode { get; set; }
-        public DateTime? InvoiceDate { get; set; }
+        public string? InvoiceDate { get; set; }
         public string? AgencyName { get; set; }
         public string? AgencyAddress { get; set; }
         public string? AgencyCode { get; set; }
@@ -1406,7 +1407,11 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
         public string? CampaignName { get; set; }
         public string? State { get; set; }
         public string? PlaceOfSupply { get; set; }
+
+        [JsonConverter(typeof(NullableDateTimeConverter))]
         public DateTime? CampaignStartDate { get; set; }
+
+        [JsonConverter(typeof(NullableDateTimeConverter))]
         public DateTime? CampaignEndDate { get; set; }
         public decimal TotalCost { get; set; }
         public int? NumberOfDays { get; set; }
@@ -1422,10 +1427,44 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
         public string? Category { get; set; }
         public string? ElementName { get; set; }
         public decimal Amount { get; set; }
-        public int? Quantity { get; set; }
+        public decimal? Quantity { get; set; }
         public string? Unit { get; set; }
         public bool IsFixedCost { get; set; }
         public bool IsVariableCost { get; set; }
+    }
+
+    /// <summary>
+    /// Handles empty strings and various date formats from AI responses, returning null instead of throwing.
+    /// </summary>
+    private class NullableDateTimeConverter : JsonConverter<DateTime?>
+    {
+        public override DateTime? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Null)
+                return null;
+
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                var value = reader.GetString();
+                if (string.IsNullOrWhiteSpace(value))
+                    return null;
+
+                if (DateTime.TryParse(value, out var date))
+                    return date;
+
+                return null;
+            }
+
+            return reader.GetDateTime();
+        }
+
+        public override void Write(Utf8JsonWriter writer, DateTime? value, JsonSerializerOptions options)
+        {
+            if (value.HasValue)
+                writer.WriteStringValue(value.Value);
+            else
+                writer.WriteNullValue();
+        }
     }
 
     /// <summary>
@@ -1864,12 +1903,12 @@ Analyze the provided text extracted from an invoice document and extract ALL str
 REQUIRED FIELDS TO EXTRACT:
 1. Invoice Number - Look for: 'Invoice No', 'Invoice Number', 'Bill No', 'Inv No', 'Document No'
 2. Invoice Date - Date of invoice (format: YYYY-MM-DD)
-3. Agency Name - Name of the agency/customer/recipient receiving the invoice
-4. Agency Address - Full address of the agency/recipient
+3. Agency Name - Name of the SUPPLIER/SELLER who issued the invoice (look near 'Supplier', 'From', 'M/S', 'Issued By')
+4. Agency Address - Full address of the SUPPLIER/SELLER
 5. Agency Code - Agency identifier code (alphanumeric, 4-10 characters)
-6. Billing Name - Bill to party name (may be same as agency)
-7. Billing Address - Bill to address
-8. Vendor Name - Supplier/vendor company name (look near 'Supplier', 'From', 'M/S')
+6. Billing Name - Name of the RECIPIENT/BUYER/BILL-TO party (look near 'Recipient', 'Bill To', 'Buyer')
+7. Billing Address - Full address of the RECIPIENT/BUYER
+8. Vendor Name - Supplier/vendor company name (same as Agency Name — look near 'Supplier', 'From', 'M/S')
 9. Vendor Code - Vendor identifier code
 10. State Name - State where service/goods supplied (e.g., 'Maharashtra', 'Bihar', 'Karnataka')
 11. State Code - 2-digit state code (e.g., '27' for Maharashtra, '10' for Bihar)
@@ -1889,7 +1928,8 @@ CRITICAL INSTRUCTIONS FOR INDIAN INVOICES:
 - State Name: Derive from state code or 'Place of Supply' field.
 - HSN/SAC Code: Usually in the line items table header.
 - Total Amount: If multiple totals exist, use the FINAL payable amount.
-- Agency = Recipient/Customer/Bill To party.
+- Agency = SUPPLIER (the party who issued/sent the invoice, listed under 'Supplier' section).
+- Billing = RECIPIENT (the party receiving the invoice, listed under 'Recipient' section).
 - If a field is not found, use empty string for text, 0 for numbers.
 
 Respond ONLY with a JSON object in this exact format:
@@ -2446,8 +2486,8 @@ Respond ONLY with a JSON object in this exact format:
     // CHANGE: Simple single-call approach for EnquiryDump extraction via OpenAI, prompt updated to match actual Excel columns
     private async Task<EnquiryDumpData> AnalyzeEnquiryDumpTextAsync(string extractedText, CancellationToken cancellationToken)
     {
-        // CHANGE: Truncate text if too large to avoid token limits — send first 30000 chars
-        var textToSend = extractedText.Length > 30000 ? extractedText.Substring(0, 30000) : extractedText;
+        // CHANGE: Truncate text if too large to avoid token limits — send first 60000 chars
+        var textToSend = extractedText.Length > 60000 ? extractedText.Substring(0, 60000) : extractedText;
         DebugLog($"[ENQUIRY] Sending text length: {textToSend.Length} (original: {extractedText.Length})");
 
         var chatCompletionsOptions = new ChatCompletionsOptions
@@ -2455,33 +2495,36 @@ Respond ONLY with a JSON object in this exact format:
             DeploymentName = _deploymentName,
             Messages =
             {
-                new ChatRequestSystemMessage(@"You are a data extraction expert. Extract structured records from the tabular text below.
+                new ChatRequestSystemMessage(@"You are a data extraction expert. Extract structured records from tabular Excel data.
 
-The text is from an Excel file with enquiry records. The columns may include:
-Sr No, Date, Dealership Name, District, Segment, Company Name, Brand, Address, Principal Name, Contact, Secondary Name, Contact, 3W, EV, 4W, Total Van, Category, Remark, Age, Test Drive, Visit, and possibly others.
+The Excel columns are (in order):
+Sr No | Date | Dealership Name | District | Segment | Company Name | Brand | Address | Principal Name | Contact | Secondary Name | Secondary Contact | (possibly more columns like 3W, EV, 4W, Category, Remark, Age, Test Drive, Visit)
 
-For EACH row, extract these fields (map from whatever columns exist):
-- state: State name from document context (e.g. Bihar)
-- date: Date value, convert to YYYY-MM-DD format
-- dealerCode: Dealer code if present, otherwise empty string
-- dealerName: Dealership Name or Dealer Name
-- district: District
-- pincode: Pincode if present, otherwise empty string
-- customerName: Principal Name or Company Name or Customer Name
-- customerNumber: Contact number (first contact column)
-- testRideTaken: Test Drive value, normalize to Yes or No
+Map each row to these fields:
+- state: Infer the state from district names in the data (e.g. Muzaffarpur → Bihar). Use one state for all records.
+- date: From ""Date"" column, convert to YYYY-MM-DD format
+- dealerCode: Empty string (not present in this format)
+- dealerName: From ""Dealership Name"" column
+- district: From ""District"" column
+- pincode: Empty string (not present)
+- customerName: From ""Principal Name"" column (or ""Company Name"" if Principal Name is empty)
+- customerNumber: From ""Contact"" column (first contact column, column J)
+- testRideTaken: From ""Test Drive"" or ""Visit"" column if present, normalize to Yes/No. If not present use empty string.
 
-CRITICAL: Extract EVERY row. Do NOT skip any rows. Do NOT summarize.
-If a field is missing, use empty string.
+CRITICAL RULES:
+- Extract EVERY data row. Do NOT skip rows. Do NOT summarize.
+- Skip only the header row and any completely blank rows.
+- If a field is missing or N/A, use empty string.
+- Phone numbers may appear as scientific notation (e.g. 9.63E+09) — convert to full number string (e.g. ""9630000000"").
 
-Return ONLY valid JSON:
+Return ONLY valid JSON (no markdown, no explanation):
 {
-  ""state"": ""overall state"",
-  ""totalRecords"": number,
-  ""records"": [{""state"":"""",""date"":"""",""dealerCode"":"""",""dealerName"":"""",""district"":"""",""pincode"":"""",""customerName"":"""",""customerNumber"":"""",""testRideTaken"":""""}],
-  ""confidence"": 0.8
+  ""state"": ""Bihar"",
+  ""totalRecords"": 479,
+  ""records"": [{""state"":""Bihar"",""date"":""2025-02-15"",""dealerCode"":"""",""dealerName"":""HY Motors"",""district"":""Muzaffarpur"",""pincode"":"""",""customerName"":""Nitish"",""customerNumber"":""9630000000"",""testRideTaken"":""""}],
+  ""confidence"": 0.9
 }"),
-                new ChatRequestUserMessage($"Extract ALL records from this data:\n\n{textToSend}")
+                new ChatRequestUserMessage($"Extract ALL records from this Excel data:\n\n{textToSend}")
             }
         };
 

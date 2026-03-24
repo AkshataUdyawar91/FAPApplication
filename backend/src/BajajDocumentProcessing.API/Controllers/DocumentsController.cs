@@ -22,12 +22,14 @@ public class DocumentsController : ControllerBase
     private readonly IFileStorageService _fileStorageService;
     private readonly IProactiveValidationService? _proactiveValidationService;
     private readonly IProactiveValidator _proactiveValidator;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
 
     public DocumentsController(
         IDocumentService documentService, 
         ILogger<DocumentsController> logger,
         IApplicationDbContext context,
         IFileStorageService fileStorageService,
+        IServiceScopeFactory serviceScopeFactory,
         IProactiveValidationService? proactiveValidationService = null,
         IProactiveValidator proactiveValidator = null!)
     {
@@ -35,6 +37,7 @@ public class DocumentsController : ControllerBase
         _logger = logger;
         _context = context;
         _fileStorageService = fileStorageService;
+        _serviceScopeFactory = serviceScopeFactory;
         _proactiveValidationService = proactiveValidationService;
         _proactiveValidator = proactiveValidator;
     }
@@ -66,8 +69,7 @@ public class DocumentsController : ControllerBase
         [FromForm] int? campaignWorkingDays = null,
         [FromForm] string? dealershipName = null,
         [FromForm] string? dealershipAddress = null,
-        [FromForm] string? gpsLocation = null,
-        [FromForm] string? teamsJson = null)
+        [FromForm] string? gpsLocation = null)
     {
         try
         {
@@ -134,9 +136,6 @@ public class DocumentsController : ControllerBase
                     if (!string.IsNullOrEmpty(dealershipAddress)) team.DealershipAddress = dealershipAddress;
                     if (!string.IsNullOrEmpty(gpsLocation)) team.GPSLocation = gpsLocation;
                     
-                    // Note: TeamsJson is now stored at Team level
-                    if (!string.IsNullOrEmpty(teamsJson)) team.TeamsJson = teamsJson;
-                    
                     team.UpdatedAt = DateTime.UtcNow;
                     package.UpdatedAt = DateTime.UtcNow;
                     
@@ -158,16 +157,23 @@ public class DocumentsController : ControllerBase
             {
                 try
                 {
+                    var docId = response.DocumentId;
+                    var docType = documentType;
+                    var pkgId = effectivePackageId.Value;
                     _ = Task.Run(async () =>
                     {
                         try
                         {
-                            await _proactiveValidationService.ValidateDocumentAsync(
-                                response.DocumentId, documentType, effectivePackageId.Value);
+                            using var scope = _serviceScopeFactory.CreateScope();
+                            var scopedService = scope.ServiceProvider.GetService<IProactiveValidationService>();
+                            if (scopedService != null)
+                            {
+                                await scopedService.ValidateDocumentAsync(docId, docType, pkgId);
+                            }
                         }
                         catch (Exception valEx)
                         {
-                            _logger.LogError(valEx, "Proactive validation failed for document {DocumentId}", response.DocumentId);
+                            _logger.LogError(valEx, "Proactive validation failed for document {DocumentId}", docId);
                         }
                     });
                     _logger.LogInformation("Proactive validation triggered for document {DocumentId}", response.DocumentId);
@@ -190,6 +196,168 @@ public class DocumentsController : ControllerBase
         {
             _logger.LogError(ex, "Error uploading document");
             return StatusCode(500, new { message = "An error occurred while uploading the document" });
+        }
+    }
+
+    /// <summary>
+    /// Extract data from a document. When packageId is provided for an Invoice, the file is
+    /// persisted to blob storage and an Invoice row (+ ValidationResult) is saved to the database.
+    /// Returns extracted fields and, for persisted invoices, the new documentId.
+    /// </summary>
+    /// <param name="file">Document file to extract data from</param>
+    /// <param name="documentType">Type of document (Invoice, CostSummary, etc.)</param>
+    /// <param name="packageId">Optional package ID — when provided for Invoice, saves to DB</param>
+    /// <param name="documentAgent">Document agent for AI extraction</param>
+    /// <returns>Extracted data as JSON, plus documentId when persisted</returns>
+    /// <response code="200">Extraction successful</response>
+    /// <response code="400">Bad request - no file or unsupported type</response>
+    /// <response code="500">Extraction failed</response>
+    [HttpPost("extract")]
+    [Authorize]
+    [RequestSizeLimit(52428800)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ExtractDocument(
+        [FromForm] IFormFile file,
+        [FromForm] string documentType,
+        [FromForm] Guid? packageId,
+        [FromServices] IDocumentAgent documentAgent,
+        CancellationToken cancellationToken)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { error = "No file provided" });
+
+        var docTypeLower = documentType.Trim().ToLowerInvariant();
+        string? blobUrl = null;
+        bool isPersisted = false;
+
+        try
+        {
+            var ext = Path.GetExtension(file.FileName);
+
+            // For invoices with a packageId we keep the blob permanently; otherwise use a temp path
+            var blobName = (docTypeLower == "invoice" && packageId.HasValue)
+                ? $"invoices/{packageId}/{Guid.NewGuid()}{ext}"
+                : $"temp-extract/{Guid.NewGuid()}{ext}";
+
+            blobUrl = await _fileStorageService.UploadFileAsync(file, "documents", blobName);
+            _logger.LogInformation("Extract: uploaded blob {BlobUrl} for {DocType} (packageId={PackageId})", blobUrl, documentType, packageId);
+
+            object? extracted = null;
+
+            if (docTypeLower == "invoice")
+            {
+                extracted = await documentAgent.ExtractInvoiceAsync(blobUrl, cancellationToken);
+            }
+            else if (docTypeLower == "costsummary")
+            {
+                extracted = await documentAgent.ExtractCostSummaryAsync(blobUrl, cancellationToken);
+            }
+            else if (docTypeLower == "activitysummary")
+            {
+                extracted = await documentAgent.ExtractActivityAsync(blobUrl, cancellationToken);
+            }
+            else if (docTypeLower == "po")
+            {
+                extracted = await documentAgent.ExtractPOAsync(blobUrl, cancellationToken);
+            }
+            else
+            {
+                return BadRequest(new { error = $"Extraction not supported for document type: {documentType}" });
+            }
+
+            // Persist Invoice + ValidationResult when packageId is provided
+            Guid? savedDocumentId = null;
+            if (docTypeLower == "invoice" && packageId.HasValue && extracted is InvoiceData invoiceData)
+            {
+                var package = await _context.DocumentPackages
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == packageId.Value, cancellationToken);
+
+                if (package != null)
+                {
+                    // Use the package's selected PO; fall back to any PO linked to this package
+                    var poId = package.SelectedPOId;
+                    if (poId == null)
+                    {
+                        var anyPo = await _context.POs.AsNoTracking()
+                            .Where(p => p.AgencyId == package.AgencyId && !p.IsDeleted)
+                            .OrderByDescending(p => p.CreatedAt)
+                            .Select(p => (Guid?)p.Id)
+                            .FirstOrDefaultAsync(cancellationToken);
+                        poId = anyPo;
+                    }
+
+                    if (poId.HasValue)
+                    {
+                        var confidence = invoiceData.FieldConfidences.Values.Any()
+                            ? invoiceData.FieldConfidences.Values.Average() : 0.5;
+
+                        var invoice = new Domain.Entities.Invoice
+                        {
+                            Id = Guid.NewGuid(),
+                            PackageId = packageId.Value,
+                            POId = poId.Value,
+                            VersionNumber = package.VersionNumber,
+                            FileName = file.FileName,
+                            BlobUrl = blobUrl,
+                            ContentType = file.ContentType,
+                            FileSizeBytes = file.Length,
+                            InvoiceNumber = invoiceData.InvoiceNumber,
+                            InvoiceDate = invoiceData.InvoiceDate == default ? null : invoiceData.InvoiceDate,
+                            VendorName = invoiceData.VendorName,
+                            GSTNumber = invoiceData.GSTNumber,
+                            SubTotal = invoiceData.SubTotal,
+                            TaxAmount = invoiceData.TaxAmount,
+                            TotalAmount = invoiceData.TotalAmount,
+                            ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(invoiceData),
+                            ExtractionConfidence = confidence,
+                            IsFlaggedForReview = invoiceData.IsFlaggedForReview,
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow
+                        };
+                        _context.Invoices.Add(invoice);
+
+                        var validationResult = new Domain.Entities.ValidationResult
+                        {
+                            Id = Guid.NewGuid(),
+                            DocumentType = Domain.Enums.DocumentType.Invoice,
+                            DocumentId = invoice.Id,
+                            CompletenessCheckPassed = !string.IsNullOrEmpty(invoiceData.InvoiceNumber) && invoiceData.TotalAmount > 0,
+                            AllValidationsPassed = false, // full cross-doc validation runs at submit time
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow
+                        };
+                        _context.ValidationResults.Add(validationResult);
+
+                        await _context.SaveChangesAsync(cancellationToken);
+                        savedDocumentId = invoice.Id;
+                        isPersisted = true;
+
+                        _logger.LogInformation("Invoice {InvoiceId} saved to DB for package {PackageId}", invoice.Id, packageId.Value);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("No PO found for package {PackageId} — invoice not persisted", packageId.Value);
+                    }
+                }
+            }
+
+            return Ok(new { extractedData = extracted, documentId = savedDocumentId });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Extract failed for {DocType}: {Error}", documentType, ex.Message);
+            return StatusCode(500, new { error = "Extraction failed. You can enter details manually." });
+        }
+        finally
+        {
+            // Only delete the blob if it was a temp (not persisted)
+            if (!isPersisted && blobUrl != null)
+            {
+                try { await _fileStorageService.DeleteFileAsync(blobUrl); }
+                catch (Exception delEx) { _logger.LogWarning(delEx, "Failed to delete temp blob {BlobUrl}", blobUrl); }
+            }
         }
     }
 
@@ -249,7 +417,7 @@ public class DocumentsController : ControllerBase
                 return NotFound(new { message = "Document not found" });
             }
 
-            // Verify resource ownership for Agency users
+            // Verify resource ownership for Agency users — scoped to agency, not individual user
             if (userRole == "Agency")
             {
                 var package = await _context.DocumentPackages
@@ -261,11 +429,18 @@ public class DocumentsController : ControllerBase
                     return NotFound(new { message = "Document not found" });
                 }
 
-                if (package.SubmittedByUserId != userId)
+                // Look up the user's agency from the Users table
+                var userAgencyId = await _context.Users
+                    .AsNoTracking()
+                    .Where(u => u.Id == userId && !u.IsDeleted)
+                    .Select(u => u.AgencyId)
+                    .FirstOrDefaultAsync();
+
+                if (userAgencyId == null || package.AgencyId != userAgencyId.Value)
                 {
                     _logger.LogWarning(
-                        "User {UserId} attempted to access document {DocumentId} owned by {OwnerId}",
-                        userId, id, package.SubmittedByUserId);
+                        "User {UserId} (Agency {UserAgencyId}) attempted to access document {DocumentId} owned by Agency {PackageAgencyId}",
+                        userId, userAgencyId, id, package.AgencyId);
                     return StatusCode(403, new { message = "You do not have permission to access this document" });
                 }
             }

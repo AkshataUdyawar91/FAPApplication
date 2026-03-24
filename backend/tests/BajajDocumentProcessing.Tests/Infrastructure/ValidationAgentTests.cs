@@ -4,12 +4,14 @@ using BajajDocumentProcessing.Domain.Entities;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Moq.Protected;
 using System.Net;
 using System.Text.Json;
 using Xunit;
+using TeamsEntity = BajajDocumentProcessing.Domain.Entities.Teams;
 
 namespace BajajDocumentProcessing.Tests.Infrastructure;
 
@@ -38,8 +40,12 @@ public class ValidationAgentTests : IDisposable
         _mockPackageSet = new Mock<DbSet<DocumentPackage>>();
         _mockValidationResultSet = new Mock<DbSet<ValidationResult>>();
 
+        // Setup ValidationResults with async support (empty by default)
+        SetupMockDbSet(_mockValidationResultSet, new List<ValidationResult>());
+
         _mockContext.Setup(c => c.DocumentPackages).Returns(_mockPackageSet.Object);
         _mockContext.Setup(c => c.ValidationResults).Returns(_mockValidationResultSet.Object);
+        _mockContext.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
 
         // Setup HTTP client for SAP
         var mockHttpMessageHandler = new Mock<HttpMessageHandler>();
@@ -67,7 +73,8 @@ public class ValidationAgentTests : IDisposable
             _mockHttpClientFactory.Object,
             _mockReferenceDataService.Object,
             mockCorrelationIdService.Object,
-            mockPerceptualHashService.Object);
+            mockPerceptualHashService.Object,
+            new Mock<IPoBalanceService>().Object);
     }
 
     public void Dispose()
@@ -90,7 +97,7 @@ public class ValidationAgentTests : IDisposable
             Id = packageId,
             CreatedAt = DateTime.UtcNow,
             State = PackageState.Uploaded,
-            Teams = new List<Teams>()
+            Teams = new List<TeamsEntity>()
         };
 
         if (poData != null)
@@ -138,7 +145,7 @@ public class ValidationAgentTests : IDisposable
 
         if (photoCount > 0)
         {
-            var team = new Teams
+            var team = new TeamsEntity
             {
                 Id = Guid.NewGuid(),
                 PackageId = packageId,
@@ -283,10 +290,95 @@ public class ValidationAgentTests : IDisposable
     private void SetupMockDbSet<T>(Mock<DbSet<T>> mockSet, List<T> data) where T : class
     {
         var queryable = data.AsQueryable();
-        mockSet.As<IQueryable<T>>().Setup(m => m.Provider).Returns(queryable.Provider);
+        mockSet.As<IQueryable<T>>().Setup(m => m.Provider).Returns(new TestAsyncQueryProvider<T>(queryable.Provider));
         mockSet.As<IQueryable<T>>().Setup(m => m.Expression).Returns(queryable.Expression);
         mockSet.As<IQueryable<T>>().Setup(m => m.ElementType).Returns(queryable.ElementType);
         mockSet.As<IQueryable<T>>().Setup(m => m.GetEnumerator()).Returns(queryable.GetEnumerator());
+
+        mockSet.As<IAsyncEnumerable<T>>()
+            .Setup(m => m.GetAsyncEnumerator(It.IsAny<CancellationToken>()))
+            .Returns(new TestAsyncEnumerator<T>(queryable.GetEnumerator()));
+    }
+
+    private class TestAsyncQueryProvider<TEntity> : IAsyncQueryProvider
+    {
+        private readonly IQueryProvider _inner;
+
+        internal TestAsyncQueryProvider(IQueryProvider inner)
+        {
+            _inner = inner;
+        }
+
+        public IQueryable CreateQuery(System.Linq.Expressions.Expression expression)
+        {
+            return new TestAsyncEnumerable<TEntity>(expression);
+        }
+
+        public IQueryable<TElement> CreateQuery<TElement>(System.Linq.Expressions.Expression expression)
+        {
+            return new TestAsyncEnumerable<TElement>(expression);
+        }
+
+        public object? Execute(System.Linq.Expressions.Expression expression)
+        {
+            return _inner.Execute(expression);
+        }
+
+        public TResult Execute<TResult>(System.Linq.Expressions.Expression expression)
+        {
+            return _inner.Execute<TResult>(expression);
+        }
+
+        public TResult ExecuteAsync<TResult>(System.Linq.Expressions.Expression expression, CancellationToken cancellationToken = default)
+        {
+            var expectedResultType = typeof(TResult).GetGenericArguments()[0];
+            var executionResult = ((IQueryProvider)this).Execute(
+                System.Linq.Expressions.Expression.Call(
+                    null,
+                    typeof(Queryable).GetMethods()
+                        .First(m => m.Name == "FirstOrDefault" && m.GetParameters().Length == 1)
+                        .MakeGenericMethod(expectedResultType),
+                    expression));
+
+            return (TResult)typeof(Task).GetMethod(nameof(Task.FromResult))!
+                .MakeGenericMethod(expectedResultType)
+                .Invoke(null, new[] { executionResult })!;
+        }
+    }
+
+    private class TestAsyncEnumerable<T> : EnumerableQuery<T>, IAsyncEnumerable<T>, IQueryable<T>
+    {
+        public TestAsyncEnumerable(System.Linq.Expressions.Expression expression) : base(expression) { }
+
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            return new TestAsyncEnumerator<T>(this.AsEnumerable().GetEnumerator());
+        }
+
+        IQueryProvider IQueryable.Provider => new TestAsyncQueryProvider<T>(this);
+    }
+
+    private class TestAsyncEnumerator<T> : IAsyncEnumerator<T>
+    {
+        private readonly IEnumerator<T> _inner;
+
+        public TestAsyncEnumerator(IEnumerator<T> inner)
+        {
+            _inner = inner;
+        }
+
+        public T Current => _inner.Current;
+
+        public ValueTask<bool> MoveNextAsync()
+        {
+            return new ValueTask<bool>(_inner.MoveNext());
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _inner.Dispose();
+            return new ValueTask();
+        }
     }
 
     #endregion

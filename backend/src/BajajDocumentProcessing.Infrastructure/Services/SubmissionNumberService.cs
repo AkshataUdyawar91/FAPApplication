@@ -6,9 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
 /// <summary>
-/// Generates unique sequential submission numbers in CIQ-YYYY-XXXXX format.
-/// Uses an atomic MERGE SQL statement on the SubmissionSequences table
-/// to ensure thread-safe increment even under concurrent requests.
+/// Generates unique submission numbers in FAP-YYYY-NNNNN format (e.g. FAP-2026-00042).
 /// </summary>
 public class SubmissionNumberService : ISubmissionNumberService
 {
@@ -27,29 +25,16 @@ public class SubmissionNumberService : ISubmissionNumberService
     public async Task<string> GenerateAsync(CancellationToken cancellationToken = default)
     {
         var year = DateTime.UtcNow.Year;
+        var prefix = $"FAP-{year}-";
 
-        _logger.LogInformation("Generating submission number for year {Year}", year);
+        // Count existing submissions for this year to get the next sequence number
+        var count = await _context.DocumentPackages
+            .Where(p => p.SubmissionNumber != null && p.SubmissionNumber.StartsWith(prefix))
+            .CountAsync(cancellationToken);
 
-        // Atomic upsert + increment using MERGE, then SELECT the new value.
-        // MERGE guarantees thread safety: concurrent calls each get a unique number.
-        var sql = @"
-            MERGE SubmissionSequences AS target
-            USING (SELECT {0} AS Year) AS source ON target.Year = source.Year
-            WHEN MATCHED THEN UPDATE SET LastNumber = LastNumber + 1
-            WHEN NOT MATCHED THEN INSERT (Year, LastNumber) VALUES ({0}, 1);
+        var submissionNumber = $"{prefix}{(count + 1):D5}";
 
-            SELECT LastNumber FROM SubmissionSequences WHERE Year = {0};";
-
-        var result = await _context.Database
-            .SqlQueryRaw<int>(sql, year)
-            .ToListAsync(cancellationToken);
-
-        var number = result.First();
-        var submissionNumber = $"CIQ-{year}-{number:D5}";
-
-        _logger.LogInformation(
-            "Generated submission number {SubmissionNumber} (Year={Year}, Seq={Seq})",
-            submissionNumber, year, number);
+        _logger.LogInformation("Generated submission number {SubmissionNumber}", submissionNumber);
 
         return submissionNumber;
     }

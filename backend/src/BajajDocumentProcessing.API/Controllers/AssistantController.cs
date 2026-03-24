@@ -1,5 +1,6 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
 using BajajDocumentProcessing.Domain.Enums;
+using BajajDocumentProcessing.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -21,51 +22,89 @@ public class AssistantController : ControllerBase
     private readonly IApplicationDbContext _context;
     private readonly ILogger<AssistantController> _logger;
     private readonly IReferenceDataService _referenceData;
+    private readonly ISubmissionNumberService _submissionNumberService;
+    private readonly IBackgroundWorkflowQueue _backgroundQueue;
 
     public AssistantController(
         IApplicationDbContext context,
         ILogger<AssistantController> logger,
-        IReferenceDataService referenceData)
+        IReferenceDataService referenceData,
+        ISubmissionNumberService submissionNumberService,
+        IBackgroundWorkflowQueue backgroundQueue)
     {
         _context = context;
         _logger = logger;
         _referenceData = referenceData;
+        _submissionNumberService = submissionNumberService;
+        _backgroundQueue = backgroundQueue;
     }
 
     /// <summary>
     /// Process an assistant message and return the next response.
     /// </summary>
     [HttpPost("message")]
-    [Authorize(Roles = "Agency")]
+    [Authorize(Roles = "Agency,ASM,HQ")]
     public async Task<IActionResult> ProcessMessage(
         [FromBody] AssistantRequest request,
         CancellationToken ct = default)
     {
         var agencyId = await GetAgencyIdAsync(ct);
-        if (agencyId == null) return Forbid();
+        var action = request.Action?.ToLowerInvariant();
+
+        // Actions that don't require an agencyId (available to all roles)
+        var publicActions = new HashSet<string>
+        {
+            "greet", "create_request",
+            "search_state", "list_states", "submit_team_name",
+            "search_dealer", "select_dealer", "submit_team_dates",
+            "reupload_invoice", "reupload_activity_summary",
+            "reupload_cost_summary", "reupload_enquiry_dump",
+            "continue_after_cost_summary", "continue_after_teams",
+        };
+
+        if (!publicActions.Contains(action ?? "") && agencyId == null)
+            return Forbid();
 
         try
         {
-            var response = request.Action?.ToLowerInvariant() switch
+            var response = action switch
             {
                 "greet" => BuildGreeting(),
                 "create_request" => BuildCreateRequestPrompt(),
-                "view_requests" => BuildViewRequestsPrompt(),
-                "pending_approvals" => BuildPendingApprovalsPrompt(),
-                "search_po" => await HandleSearchPO(request, agencyId.Value, ct),
-                "select_po" => await HandleSelectPO(request, agencyId.Value, ct),
-                "select_state" => await HandleSelectState(request, agencyId.Value, ct),
+                "view_requests" => await HandleViewRequests(agencyId ?? Guid.Empty, ct),
+                "pending_approvals" => await HandlePendingApprovals(agencyId ?? Guid.Empty, ct),
+                "search_po" => await HandleSearchPO(request, agencyId!.Value, ct),
+                "select_po" => await HandleSelectPO(request, agencyId!.Value, ct),
+                "select_state" => await HandleSelectState(request, agencyId!.Value, ct),
                 "search_state" => HandleSearchState(request, ct),
                 "list_states" => HandleListAllStates(),
-                "invoice_uploaded" => await HandleInvoiceUploaded(request, agencyId.Value, ct),
-                "continue_invoice" => await HandleContinueInvoice(request, agencyId.Value, ct),
+                "invoice_uploaded" => await HandleInvoiceUploaded(request, agencyId!.Value, ct),
+                "continue_invoice" => await HandleContinueInvoice(request, agencyId!.Value, ct),
                 "reupload_invoice" => HandleReuploadInvoice(),
-                "activity_summary_uploaded" => await HandleActivitySummaryUploaded(request, agencyId.Value, ct),
+                "activity_summary_uploaded" => await HandleActivitySummaryUploaded(request, agencyId!.Value, ct),
                 "reupload_activity_summary" => HandleReuploadActivitySummary(),
-                "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId.Value, ct),
-                "cost_summary_uploaded" => await HandleCostSummaryUploaded(request, agencyId.Value, ct),
+                "continue_after_activity" => await HandleContinueAfterActivity(request, agencyId!.Value, ct),
+                "start_team_entry" => await HandleStartTeamEntry(request, agencyId!.Value, ct),
+                "submit_team_count" => await HandleSubmitTeamCount(request, agencyId!.Value, ct),
+                "submit_team_name" => await HandleSubmitTeamName(request, ct),
+                "search_dealer" => await HandleSearchDealer(request, ct),
+                "select_dealer" => HandleSelectDealer(request),
+                "submit_team_dates" => HandleSubmitTeamDates(request),
+                "confirm_team" => await HandleConfirmTeam(request, agencyId!.Value, ct),
+                "start_photo_upload" => await HandleStartPhotoUpload(request, agencyId!.Value, ct),
+                "photos_uploaded" => await HandlePhotosUploaded(request, agencyId!.Value, ct),
+                "replace_photo" => await HandleReplacePhoto(request, agencyId!.Value, ct),
+                "add_more_photos" => await HandleAddMorePhotos(request, agencyId!.Value, ct),
+                "done_team_photos" => await HandleDoneTeamPhotos(request, agencyId!.Value, ct),
+                "cost_summary_uploaded" => await HandleCostSummaryUploaded(request, agencyId!.Value, ct),
                 "reupload_cost_summary" => HandleReuploadCostSummary(),
                 "continue_after_cost_summary" => HandleContinueAfterCostSummary(request),
+                "continue_after_teams" => HandleEnquiryDumpUpload(),
+                "enquiry_dump_uploaded" => await HandleEnquiryDumpUploaded(request, agencyId!.Value, ct),
+                "reupload_enquiry_dump" => HandleEnquiryDumpUpload(),
+                "continue_after_enquiry" => await HandleFinalReview(request, agencyId!.Value, ct),
+                "submit_from_chat" => await HandleSubmitFromChat(request, agencyId!.Value, ct),
+                "save_draft_from_chat" => await HandleSaveDraftFromChat(request, agencyId ?? Guid.Empty, ct),
                 _ => BuildGreeting(),
             };
 
@@ -87,12 +126,12 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "greeting",
-            Message = "Hello! I am your Field Activity Assistant. I can help you manage campaign requests.",
+            Message = "Hey! I'm your FieldIQ assistant. I can help you submit claims and track approvals.",
             Cards = new List<WorkflowCard>
             {
-                new() { Id = "create_request", Title = "Create Request", Subtitle = "Start a new campaign claim", Icon = "add_circle_outline", Action = "create_request" },
-                new() { Id = "view_requests", Title = "View My Requests", Subtitle = "Track your submissions", Icon = "list_alt", Action = "view_requests" },
-                new() { Id = "pending_approvals", Title = "Pending Approvals", Subtitle = "Items awaiting action", Icon = "pending_actions", Action = "pending_approvals" },
+                new() { Id = "create_request", Title = "Start a new submission", Subtitle = "I'll guide you step by step", Icon = "add_circle_outline", Action = "create_request" },
+                new() { Id = "view_requests", Title = "Show my pending claims", Subtitle = "Track under review claims", Icon = "list_alt", Action = "view_requests" },
+                new() { Id = "pending_approvals", Title = "Why was my claim returned", Subtitle = "Get correction guidance", Icon = "pending_actions", Action = "pending_approvals" },
             },
         };
     }
@@ -108,12 +147,81 @@ public class AssistantController : ControllerBase
         };
     }
 
-    private static AssistantResponse BuildViewRequestsPrompt()
+    private async Task<AssistantResponse> HandleViewRequests(Guid agencyId, CancellationToken ct)
     {
+        // Pending states: everything except Draft (0) and Approved (8)
+        var pendingStates = new[]
+        {
+            PackageState.Draft,
+            PackageState.Uploaded,
+            PackageState.Extracting,
+            PackageState.Validating,
+            PackageState.PendingCH,
+            PackageState.PendingRA,
+        };
+
+        var packages = await _context.DocumentPackages
+            .Where(p => p.AgencyId == agencyId && !p.IsDeleted && pendingStates.Contains(p.State))
+            .OrderByDescending(p => p.CreatedAt)
+            .Select(p => new
+            {
+                p.Id,
+                p.SubmissionNumber,
+                p.State,
+                p.CreatedAt,
+                p.ActivityState,
+                InvoiceAmount = p.Invoices
+                    .Where(i => !i.IsDeleted && i.TotalAmount.HasValue)
+                    .Sum(i => (decimal?)i.TotalAmount) ?? 0m,
+                PONumber = p.SelectedPOId != null
+                    ? _context.POs
+                        .Where(po => po.Id == p.SelectedPOId && !po.IsDeleted)
+                        .Select(po => po.PONumber)
+                        .FirstOrDefault()
+                    : null,
+            })
+            .ToListAsync(ct);
+
+        if (packages.Count == 0)
+        {
+            return new AssistantResponse
+            {
+                Type = "text",
+                Message = "You have no pending claims right now. All your submissions are either approved or not yet started.",
+            };
+        }
+
+        var claims = packages.Select(p => new PendingClaimItem
+        {
+            SubmissionId = p.Id.ToString(),
+            FapId = p.SubmissionNumber ?? "—",
+            PoNumber = p.PONumber ?? "—",
+            InvoiceAmount = p.InvoiceAmount,
+            Status = p.State.ToString(),
+            StatusLabel = p.State switch
+            {
+                PackageState.Draft => "Draft",
+                PackageState.PendingCH => "Pending with CH",
+                PackageState.PendingRA => "Pending with RA",
+                PackageState.Validating or PackageState.Extracting => "Processing",
+                PackageState.Uploaded => "Processing",
+                _ => p.State.ToString(),
+            },
+            StatusColor = p.State switch
+            {
+                PackageState.Draft => "orange",
+                PackageState.PendingCH or PackageState.PendingRA => "blue",
+                _ => "orange",
+            },
+            SubmittedDate = p.CreatedAt.ToString("dd-MMM-yyyy"),
+            ActivityState = p.ActivityState ?? "—",
+        }).ToList();
+
         return new AssistantResponse
         {
-            Type = "text",
-            Message = "This feature is coming soon. You'll be able to view and track all your submissions here.",
+            Type = "pending_claims",
+            Message = "Here are your pending claims.",
+            PendingClaims = claims,
         };
     }
 
@@ -123,6 +231,65 @@ public class AssistantController : ControllerBase
         {
             Type = "text",
             Message = "This feature is coming soon. You'll see items pending your review here.",
+        };
+    }
+
+    private async Task<AssistantResponse> HandlePendingApprovals(Guid agencyId, CancellationToken ct)
+    {
+        // Explicitly join DocumentPackages with IgnoreQueryFilters on both sides so that
+        // soft-deleted packages (resubmitted claims) are still included in the results.
+        var rejections = await _context.RequestApprovalHistories
+            .IgnoreQueryFilters()
+            .Where(h => !h.IsDeleted && h.Action == ApprovalAction.Rejected)
+            .Join(
+                _context.DocumentPackages.IgnoreQueryFilters().Where(p => p.AgencyId == agencyId),
+                h => h.PackageId,
+                p => p.Id,
+                (h, p) => new
+                {
+                    PackageId = h.PackageId,
+                    FapId = p.SubmissionNumber,
+                    RejectedBy = h.Approver.FullName,
+                    RejectedAt = h.ActionDate,
+                    Reason = h.Comments,
+                    Role = h.ApproverRole,
+                })
+            .OrderByDescending(x => x.RejectedAt)
+            .Take(50)
+            .ToListAsync(ct);
+
+        // Deduplicate: keep only the most recent rejection per package
+        var seen = new HashSet<Guid>();
+        var deduped = new List<dynamic>();
+        foreach (var r in rejections)
+        {
+            if (seen.Add(r.PackageId))
+                deduped.Add(r);
+        }
+
+        if (deduped.Count == 0)
+        {
+            return new AssistantResponse
+            {
+                Type = "text",
+                Message = "I don't see any recently rejected claims.",
+            };
+        }
+
+        var items = deduped.Select(r => new RejectionItem
+        {
+            FapId = r.FapId ?? "—",
+            RejectedBy = r.RejectedBy,
+            RejectedAt = r.RejectedAt.ToString("dd-MMM-yyyy"),
+            Reason = string.IsNullOrWhiteSpace(r.Reason) ? "No reason provided." : r.Reason,
+            RejectedByRole = r.Role == UserRole.ASM ? "Rejected by CH" : "Rejected by RA",
+        }).ToList();
+
+        return new AssistantResponse
+        {
+            Type = "rejection_history",
+            Message = "Here are your recently rejected claims.",
+            RejectionItems = items,
         };
     }
 
@@ -199,9 +366,31 @@ public class AssistantController : ControllerBase
             };
         }
 
-        // PO selected — skip upload, go directly to state selection
-        var stateResponse = await BuildStateSelectionPrompt(agencyId, po.PONumber ?? poId.ToString(), ct);
-        // Return selectedPO so frontend stores it for the invoice upload step
+        // PO selected — auto-select Maharashtra (state selection UI hidden for now)
+        // To re-enable state selection, replace the block below with:
+        // var stateResponse = await BuildStateSelectionPrompt(agencyId, po.PONumber ?? poId.ToString(), ct);
+        // and return the stateResponse with SelectedPO attached.
+
+        var autoStateRequest = new AssistantRequest
+        {
+            Action = "select_state",
+            Message = "Maharashtra",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { poId = po.Id.ToString() }),
+        };
+        var stateResponse = await HandleSelectState(autoStateRequest, agencyId, ct);
+
+        var selectedPoItem = new POItem
+        {
+            Id = po.Id.ToString(),
+            PONumber = po.PONumber ?? "",
+            PODate = po.PODate ?? DateTime.MinValue,
+            VendorName = po.VendorName ?? "",
+            TotalAmount = po.TotalAmount ?? 0,
+            RemainingBalance = po.RemainingBalance,
+            POStatus = po.POStatus ?? "Unknown",
+        };
+
+        // Reconstruct response with SelectedPO attached (init-only properties)
         return new AssistantResponse
         {
             Type = stateResponse.Type,
@@ -209,16 +398,8 @@ public class AssistantController : ControllerBase
             Cards = stateResponse.Cards,
             InputHint = stateResponse.InputHint,
             MinSearchLength = stateResponse.MinSearchLength,
-            SelectedPO = new POItem
-            {
-                Id = po.Id.ToString(),
-                PONumber = po.PONumber ?? "",
-                PODate = po.PODate ?? DateTime.MinValue,
-                VendorName = po.VendorName ?? "",
-                TotalAmount = po.TotalAmount ?? 0,
-                RemainingBalance = po.RemainingBalance,
-                POStatus = po.POStatus ?? "Unknown",
-            },
+            SubmissionId = stateResponse.SubmissionId,
+            SelectedPO = selectedPoItem,
         };
     }
 
@@ -331,6 +512,7 @@ public class AssistantController : ControllerBase
         Guid? submissionId = null;
         try
         {
+            var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
             var package = new Domain.Entities.DocumentPackage
             {
                 Id = Guid.NewGuid(),
@@ -339,6 +521,7 @@ public class AssistantController : ControllerBase
                 State = Domain.Enums.PackageState.Draft,
                 SelectedPOId = selectedPoId,
                 ActivityState = validState,
+                SubmissionNumber = submissionNumber,
                 CurrentStep = 4,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
@@ -346,7 +529,7 @@ public class AssistantController : ControllerBase
             _context.DocumentPackages.Add(package);
             await _context.SaveChangesAsync(ct);
             submissionId = package.Id;
-            _logger.LogInformation("Draft submission {Id} created for state {State}", package.Id, validState);
+            _logger.LogInformation("Draft submission {Id} created for state {State}, SubmissionNumber: {SubNum}", package.Id, validState, submissionNumber);
         }
         catch (Exception ex)
         {
@@ -356,7 +539,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "invoice_upload",
-            Message = $"State set to {validState}. Please upload the invoice document.",
+            Message = "Please upload the invoice document.",
             AllowedFormats = new List<string> { "PDF", "JPG", "PNG" },
             SubmissionId = submissionId,
             Cards = new List<WorkflowCard>
@@ -441,9 +624,9 @@ public class AssistantController : ControllerBase
         // Short summary message — the validation card widget shows the detail
         string botMessage;
         if (failCount == 0 && warnCount == 0)
-            botMessage = $"Invoice analysed. All {totalChecks} checks passed!";
+            botMessage = $"Invoice reviewed. All {totalChecks} checks passed!";
         else
-            botMessage = $"Invoice analysed. {passCount} of {totalChecks} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")}{(warnCount > 0 ? $" {warnCount} warning(s)." : "")} Review below and continue or re-upload.";
+            botMessage = $"Invoice reviewed. {passCount} of {totalChecks} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")} Review below and continue or re-upload.";
 
         // Always persist validation results to ValidationResults table — regardless of pass/fail
         try
@@ -468,10 +651,13 @@ public class AssistantController : ControllerBase
             var existingResult = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
 
+            var validationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
             if (existingResult != null)
             {
                 existingResult.AllValidationsPassed = failCount == 0;
                 existingResult.RuleResultsJson = ruleResultsJson;
+                existingResult.ValidationDetailsJson = validationDetailsJson;
                 existingResult.FailureReason = failureReason;
                 existingResult.UpdatedAt = DateTime.UtcNow;
             }
@@ -484,6 +670,7 @@ public class AssistantController : ControllerBase
                     DocumentId = docId,
                     AllValidationsPassed = failCount == 0,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = validationDetailsJson,
                     FailureReason = failureReason,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
@@ -536,6 +723,7 @@ public class AssistantController : ControllerBase
             FailedCount = failCount,
             WarningCount = warnCount,
             SubmissionId = submissionIdFromPayload ?? invoice.PackageId,
+            FileName = invoice.FileName,
         };
     }
 
@@ -648,7 +836,91 @@ public class AssistantController : ControllerBase
             Message = hsnPresent ? null : "HSN/SAC code not detected",
         });
 
-        // 7. INV_VENDOR_CODE_PRESENT — Required
+        // 7. INV_AGENCY_NAME_ADDRESS — Supplier name & address (Agency = Supplier on invoice)
+        string? agencyName = null;
+        string? agencyAddress = null;
+        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
+                if (json.TryGetProperty("AgencyName", out var an) || json.TryGetProperty("agencyName", out an))
+                    agencyName = an.GetString();
+                if (json.TryGetProperty("AgencyAddress", out var aa) || json.TryGetProperty("agencyAddress", out aa))
+                    agencyAddress = aa.GetString();
+            }
+            catch { }
+        }
+        var agencyNamePresent = !string.IsNullOrWhiteSpace(agencyName);
+        var agencyAddressPresent = !string.IsNullOrWhiteSpace(agencyAddress);
+        var agencyNameAddressOk = agencyNamePresent && agencyAddressPresent;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "INV_AGENCY_NAME_ADDRESS",
+            Type = "Required",
+            Passed = agencyNameAddressOk,
+            IsWarning = false,
+            Label = "Agency Name & Address",
+            ExtractedValue = agencyNamePresent ? $"{agencyName}, {agencyAddress}" : agencyName,
+            Message = agencyNameAddressOk ? null
+                : (!agencyNamePresent ? "Supplier name not detected" : "Supplier address not detected"),
+        });
+
+        // 8. INV_BILLING_NAME_ADDRESS — Recipient name & address (Billing = Recipient on invoice)
+        string? billingName = null;
+        string? billingAddress = null;
+        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
+                if (json.TryGetProperty("BillingName", out var bn) || json.TryGetProperty("billingName", out bn))
+                    billingName = bn.GetString();
+                if (json.TryGetProperty("BillingAddress", out var ba) || json.TryGetProperty("billingAddress", out ba))
+                    billingAddress = ba.GetString();
+            }
+            catch { }
+        }
+        var billingNamePresent = !string.IsNullOrWhiteSpace(billingName);
+        var billingAddressPresent = !string.IsNullOrWhiteSpace(billingAddress);
+        var billingNameAddressOk = billingNamePresent && billingAddressPresent;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "INV_BILLING_NAME_ADDRESS",
+            Type = "Required",
+            Passed = billingNameAddressOk,
+            IsWarning = false,
+            Label = "Billing Name & Address",
+            ExtractedValue = billingNamePresent ? $"{billingName}, {billingAddress}" : billingName,
+            Message = billingNameAddressOk ? null
+                : (!billingNamePresent ? "Recipient name not detected" : "Recipient address not detected"),
+        });
+
+        // 9. INV_SUPPLIER_STATE — Supplier state name/code (Place of Supply)
+        string? supplierState = null;
+        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
+                if (json.TryGetProperty("StateName", out var sn) || json.TryGetProperty("stateName", out sn))
+                    supplierState = sn.GetString();
+            }
+            catch { }
+        }
+        var supplierStatePresent = !string.IsNullOrWhiteSpace(supplierState);
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "INV_SUPPLIER_STATE",
+            Type = "Required",
+            Passed = supplierStatePresent,
+            IsWarning = false,
+            Label = "Supplier State",
+            ExtractedValue = supplierState,
+            Message = supplierStatePresent ? null : "Supplier state name/code not detected",
+        });
+
+        // 10. INV_VENDOR_CODE_PRESENT — Required
         string? vendorCode = null;
         if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
         {
@@ -672,7 +944,7 @@ public class AssistantController : ControllerBase
             Message = vendorCodePresent ? null : "Vendor code not detected",
         });
 
-        // 8. INV_PO_NUMBER_MATCH — Check (extracted PO number == POs.PONumber)
+        // 11. INV_PO_NUMBER_MATCH — Check (extracted PO number == POs.PONumber)
         string? extractedPoNumber = null;
         if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
         {
@@ -715,7 +987,7 @@ public class AssistantController : ControllerBase
             Message = poMatchMsg,
         });
 
-        // 9. INV_AMOUNT_VS_PO_BALANCE — Check (warning if exceeded, not hard block)
+        // 12. INV_AMOUNT_VS_PO_BALANCE — Check (warning if exceeded, not hard block)
         // Uses live balance computed at this exact moment: PO.TotalAmount - sum of other invoices on this PO
         bool amountOk;
         bool isAmountWarning;
@@ -787,6 +1059,7 @@ public class AssistantController : ControllerBase
     {
         string? documentId = request.Message?.Trim();
         Guid? submissionIdFromPayload = null;
+        string? costSummaryDocumentId = null;
 
         if (!string.IsNullOrEmpty(request.PayloadJson))
         {
@@ -797,6 +1070,8 @@ public class AssistantController : ControllerBase
                     documentId = docProp.GetString();
                 if (payload.TryGetProperty("submissionId", out var subProp) && Guid.TryParse(subProp.GetString(), out var sid))
                     submissionIdFromPayload = sid;
+                if (payload.TryGetProperty("costSummaryDocumentId", out var csdProp))
+                    costSummaryDocumentId = csdProp.GetString();
             }
             catch { }
         }
@@ -812,8 +1087,25 @@ public class AssistantController : ControllerBase
         if (actSummary == null)
             return new AssistantResponse { Type = "error", Message = "Activity Summary document not found. Please try uploading again." };
 
+        // Fetch cost summary for the same package (for AS_DAYS_MATCH_COST_SUMMARY check)
+        // Prefer exact document ID to avoid picking up stale previous uploads
+        Domain.Entities.CostSummary? costSummary = null;
+        if (!string.IsNullOrEmpty(costSummaryDocumentId) && Guid.TryParse(costSummaryDocumentId, out var csDocId))
+        {
+            costSummary = await _context.CostSummaries
+                .Where(c => c.Id == csDocId && !c.IsDeleted)
+                .FirstOrDefaultAsync(ct);
+        }
+        if (costSummary == null)
+        {
+            costSummary = await _context.CostSummaries
+                .Where(c => c.PackageId == actSummary.PackageId && !c.IsDeleted)
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
+
         // Run validation rules
-        var rules = RunActivitySummaryValidationRules(actSummary);
+        var rules = RunActivitySummaryValidationRules(actSummary, costSummary?.NumberOfDays);
 
         int passCount = rules.Count(r => r.Passed && !r.IsWarning);
         int failCount = rules.Count(r => !r.Passed && !r.IsWarning);
@@ -821,7 +1113,7 @@ public class AssistantController : ControllerBase
 
         string botMessage = failCount == 0 && warnCount == 0
             ? $"Activity Summary analysed. All {rules.Count} checks passed!"
-            : $"Activity Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")}{(warnCount > 0 ? $" {warnCount} warning(s)." : "")} Review below and continue or re-upload.";
+            : $"Activity Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")} Review below and continue or re-upload.";
 
         // Persist to ValidationResults table
         try
@@ -842,6 +1134,8 @@ public class AssistantController : ControllerBase
                 : warnCount > 0 ? string.Join("; ", rules.Where(r => r.IsWarning).Select(r => r.Message ?? r.Label))
                 : null;
 
+            var validationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
             var existing = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
 
@@ -849,6 +1143,7 @@ public class AssistantController : ControllerBase
             {
                 existing.AllValidationsPassed = failCount == 0;
                 existing.RuleResultsJson = ruleResultsJson;
+                existing.ValidationDetailsJson = validationDetailsJson;
                 existing.FailureReason = failureReason;
                 existing.UpdatedAt = DateTime.UtcNow;
             }
@@ -861,6 +1156,7 @@ public class AssistantController : ControllerBase
                     DocumentId = docId,
                     AllValidationsPassed = failCount == 0,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = validationDetailsJson,
                     FailureReason = failureReason,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
@@ -909,10 +1205,15 @@ public class AssistantController : ControllerBase
             FailedCount = failCount,
             WarningCount = warnCount,
             SubmissionId = submissionIdFromPayload ?? actSummary.PackageId,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                submissionId = (submissionIdFromPayload ?? actSummary.PackageId).ToString(),
+                costSummaryDocumentId,
+            }),
         };
     }
 
-    private List<ValidationRuleResult> RunActivitySummaryValidationRules(Domain.Entities.ActivitySummary actSummary)
+    private List<ValidationRuleResult> RunActivitySummaryValidationRules(Domain.Entities.ActivitySummary actSummary, int? costSummaryDays = null)
     {
         var rules = new List<ValidationRuleResult>();
 
@@ -994,6 +1295,38 @@ public class AssistantController : ControllerBase
             Message = null,
         });
 
+        // AS_DAYS_MATCH_COST_SUMMARY: TotalDays must match CostSummary.NumberOfDays
+        int? actDays = actSummary.TotalDays;
+        if (actDays == null || costSummaryDays == null)
+        {
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = "AS_DAYS_MATCH_COST_SUMMARY",
+                Type = "Required",
+                Passed = false,
+                IsWarning = true,
+                Label = "Days Match with Cost Summary",
+                ExtractedValue = actDays.HasValue ? actDays.ToString() : null,
+                Message = actDays == null
+                    ? "Activity Summary days not extracted — cannot compare with Cost Summary"
+                    : "Cost Summary days not available — cannot compare",
+            });
+        }
+        else
+        {
+            bool match = actDays.Value == costSummaryDays.Value;
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = "AS_DAYS_MATCH_COST_SUMMARY",
+                Type = "Required",
+                Passed = match,
+                IsWarning = false,
+                Label = "Days Match with Cost Summary",
+                ExtractedValue = $"Activity: {actDays.Value} days | Cost Summary: {costSummaryDays.Value} days",
+                Message = match ? null : $"Activity Summary days ({actDays.Value}) does not match Cost Summary days ({costSummaryDays.Value})",
+            });
+        }
+
         return rules;
     }
 
@@ -1001,11 +1334,1663 @@ public class AssistantController : ControllerBase
     private async Task<AssistantResponse> HandleContinueAfterActivity(
         AssistantRequest request, Guid agencyId, CancellationToken ct)
     {
+        // Kick off team entry — read team count from cost summary
+        var submissionId = ExtractSubmissionId(request);
+
+        // Try to get the exact cost summary document ID from payload (set by HandleCostSummaryUploaded)
+        Guid? costSummaryDocId = null;
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var pl = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (pl.TryGetProperty("costSummaryDocumentId", out var csdProp) && Guid.TryParse(csdProp.GetString(), out var csd))
+                    costSummaryDocId = csd;
+            }
+            catch { }
+        }
+
+        int? totalTeams = null;
+        if (submissionId.HasValue)
+        {
+            // Prefer exact document ID to avoid picking up stale previous uploads
+            if (costSummaryDocId.HasValue)
+            {
+                var cs = await _context.CostSummaries
+                    .Where(c => c.Id == costSummaryDocId.Value && !c.IsDeleted)
+                    .Select(c => new { c.NumberOfTeams, c.ExtractedDataJson })
+                    .FirstOrDefaultAsync(ct);
+
+                // Read from the DB column first (populated by DocumentService during extraction)
+                if (cs?.NumberOfTeams > 0)
+                {
+                    totalTeams = cs.NumberOfTeams;
+                }
+                else if (!string.IsNullOrEmpty(cs?.ExtractedDataJson))
+                {
+                    // Fallback: parse ExtractedDataJson — note JsonElement.TryGetProperty is case-sensitive
+                    // so try both PascalCase and camelCase keys
+                    try
+                    {
+                        var json = JsonSerializer.Deserialize<JsonElement>(cs.ExtractedDataJson);
+                        if ((json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                            && nt.ValueKind == JsonValueKind.Number)
+                        {
+                            var extracted = nt.GetInt32();
+                            if (extracted > 0) totalTeams = extracted;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            else
+            {
+                // Fallback: latest cost summary for the package
+                var cs = await _context.CostSummaries
+                    .Where(c => c.PackageId == submissionId.Value && !c.IsDeleted)
+                    .OrderByDescending(c => c.CreatedAt)
+                    .Select(c => new { c.NumberOfTeams, c.ExtractedDataJson })
+                    .FirstOrDefaultAsync(ct);
+
+                if (cs?.NumberOfTeams > 0)
+                {
+                    totalTeams = cs.NumberOfTeams;
+                }
+                else if (!string.IsNullOrEmpty(cs?.ExtractedDataJson))
+                {
+                    try
+                    {
+                        var json = JsonSerializer.Deserialize<JsonElement>(cs.ExtractedDataJson);
+                        if ((json.TryGetProperty("NumberOfTeams", out var nt) || json.TryGetProperty("numberOfTeams", out nt))
+                            && nt.ValueKind == JsonValueKind.Number)
+                        {
+                            var extracted = nt.GetInt32();
+                            if (extracted > 0) totalTeams = extracted;
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        if (!totalTeams.HasValue || totalTeams.Value <= 0)
+        {
+            // Cannot determine team count — ask user to enter it manually
+            var askPayload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                submissionId = submissionId?.ToString(),
+            });
+            return new AssistantResponse
+            {
+                Type = "team_count_input",
+                Message = "Activity Summary accepted. Could not determine team count from Cost Summary. How many teams were there?",
+                PayloadJson = askPayload,
+                SubmissionId = submissionId,
+            };
+        }
+
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            submissionId = submissionId?.ToString(),
+            totalTeams = totalTeams.Value,
+            currentTeam = 1,
+        });
+
+        return new AssistantResponse
+        {
+            Type = "team_name_input",
+            Message = $"Activity Summary accepted. Your cost summary mentions {totalTeams.Value} team{(totalTeams.Value > 1 ? "s" : "")}. Let's add details for each team.\n\nStarting with Team 1 of {totalTeams.Value}.\n\nPlease enter Team 1 name:",
+            TeamContext = new TeamContextDto { CurrentTeam = 1, TotalTeams = totalTeams.Value },
+            PayloadJson = payloadJson,
+            SubmissionId = submissionId,
+        };
+    }
+
+    private async Task<AssistantResponse> HandleStartTeamEntry(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        return await HandleContinueAfterActivity(request, agencyId, ct);
+    }
+
+    private async Task<AssistantResponse> HandleSubmitTeamCount(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        if (!int.TryParse(request.Message?.Trim(), out var totalTeams) || totalTeams <= 0)
+        {
+            return new AssistantResponse
+            {
+                Type = "team_count_input",
+                Message = "Please enter a valid number of teams (e.g. 2):",
+                PayloadJson = request.PayloadJson,
+            };
+        }
+
+        var submissionId = ExtractSubmissionId(request);
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            submissionId = submissionId?.ToString(),
+            totalTeams,
+            currentTeam = 1,
+        });
+
+        return new AssistantResponse
+        {
+            Type = "team_name_input",
+            Message = $"Starting with Team 1 of {totalTeams}.\n\nPlease enter Team 1 name:",
+            TeamContext = new TeamContextDto { CurrentTeam = 1, TotalTeams = totalTeams },
+            PayloadJson = payloadJson,
+            SubmissionId = submissionId,
+        };
+    }
+
+    private async Task<AssistantResponse> HandleSubmitTeamName(AssistantRequest request, CancellationToken ct)
+    {
+        // Read team name from message, carry forward payload
+        var teamName = request.Message?.Trim();
+        if (string.IsNullOrWhiteSpace(teamName))
+        {
+            return new AssistantResponse
+            {
+                Type = "team_name_input",
+                Message = "Team name cannot be empty. Please enter a valid team name:",
+            };
+        }
+
+        // Parse existing payload and add teamName
+        var ctx = ParseTeamPayload(request.PayloadJson);
+        ctx["teamName"] = teamName;
+
+        var currentTeam = ctx.TryGetValue("currentTeam", out var ct2) ? (ct2 is JsonElement ct2e ? ct2e.GetInt32() : Convert.ToInt32(ct2)) : 1;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+
+        // Load all dealers for the selected state upfront — no typing required
+        string? activityState = null;
+        var submissionId = ExtractSubmissionId(request);
+        _logger.LogInformation("=== SUBMIT TEAM NAME === Team: {TeamName}, SubmissionId: {SubmissionId}, PayloadJson: {Payload}",
+            teamName, submissionId, request.PayloadJson);
+
+        if (submissionId.HasValue)
+        {
+            activityState = await _context.DocumentPackages
+                .Where(p => p.Id == submissionId.Value && !p.IsDeleted)
+                .Select(p => p.ActivityState)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        _logger.LogInformation("=== SUBMIT TEAM NAME === ActivityState: {ActivityState}", activityState);
+
+        var dealerQuery = _context.Dealers.Where(d => d.IsActive && !d.IsDeleted);
+        if (!string.IsNullOrEmpty(activityState))
+            dealerQuery = dealerQuery.Where(d => d.State == activityState);
+
+        var dealers = await dealerQuery
+            .OrderBy(d => d.DealerName)
+            .Select(d => new DealerItem
+            {
+                DealerCode = d.DealerCode,
+                DealerName = d.DealerName,
+                City = d.City ?? "",
+                State = d.State,
+            })
+            .ToListAsync(ct);
+
+        var stateLabel = !string.IsNullOrEmpty(activityState) ? $" in {activityState}" : "";
+
+        // If dealers found, show as selectable list; otherwise fall back to search mode
+        if (dealers.Count > 0)
+        {
+            return new AssistantResponse
+            {
+                Type = "dealer_list",
+                Message = $"Which dealer was Team {teamName} assigned to? Select from the list below{stateLabel}:",
+                Dealers = dealers,
+                TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
+                PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
+            };
+        }
+
+        // No dealers found — fall back to dealer search so user can type to search
+        return new AssistantResponse
+        {
+            Type = "dealer_search",
+            Message = $"No dealers found{stateLabel}. Type a dealer name to search:",
+            InputHint = "Type dealer name (min 2 chars)...",
+            MinSearchLength = 2,
+            TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
+        };
+    }
+
+    private async Task<AssistantResponse> HandleSearchDealer(
+        AssistantRequest request, CancellationToken ct)
+    {
+        var query = request.Message?.Trim() ?? "";
+        if (query.Length < 2)
+        {
+            return new AssistantResponse
+            {
+                Type = "dealer_search",
+                Message = "Type at least 2 characters to search for a dealer.",
+                InputHint = "Type dealer name (min 2 chars)...",
+                MinSearchLength = 2,
+            };
+        }
+
+        // Get the state selected earlier in the chatbot flow
+        string? activityState = null;
+        var submissionId = ExtractSubmissionId(request);
+        _logger.LogInformation("=== SEARCH DEALER === Query: {Query}, SubmissionId: {SubmissionId}, PayloadJson: {Payload}",
+            query, submissionId, request.PayloadJson);
+
+        if (submissionId.HasValue)
+        {
+            activityState = await _context.DocumentPackages
+                .Where(p => p.Id == submissionId.Value && !p.IsDeleted)
+                .Select(p => p.ActivityState)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        _logger.LogInformation("=== SEARCH DEALER === ActivityState: {ActivityState}", activityState);
+
+        var q = query.ToLower();
+        var dealerQuery = _context.Dealers
+            .Where(d => d.IsActive && !d.IsDeleted &&
+                (d.DealerName.ToLower().Contains(q) ||
+                 d.DealerCode.ToLower().Contains(q) ||
+                 (d.City != null && d.City.ToLower().Contains(q))));
+
+        // Filter by state if we have one from the chatbot flow
+        if (!string.IsNullOrEmpty(activityState))
+            dealerQuery = dealerQuery.Where(d => d.State == activityState);
+
+        var dealers = await dealerQuery
+            .Take(10)
+            .Select(d => new DealerItem
+            {
+                DealerCode = d.DealerCode,
+                DealerName = d.DealerName,
+                City = d.City ?? "",
+                State = d.State,
+            })
+            .ToListAsync(ct);
+
+        var stateLabel = !string.IsNullOrEmpty(activityState) ? $" in {activityState}" : "";
+        return new AssistantResponse
+        {
+            Type = "dealer_search_results",
+            Message = dealers.Count > 0
+                ? $"Found {dealers.Count} dealer(s) matching \"{query}\"{stateLabel}. Select one:"
+                : $"No dealers found matching \"{query}\"{stateLabel}. Try a different name.",
+            Dealers = dealers,
+            InputHint = "Type dealer name (min 2 chars)...",
+            MinSearchLength = 2,
+            PayloadJson = request.PayloadJson,
+        };
+    }
+
+    private static AssistantResponse HandleSelectDealer(AssistantRequest request)
+    {
+        // Dealer info comes in PayloadJson under "selectedDealer"
+        var ctx = ParseTeamPayload(request.PayloadJson);
+
+        string? dealerName = null, dealerCode = null, city = null, state = null;
+        if (ctx.TryGetValue("selectedDealer", out var sd) && sd is System.Text.Json.JsonElement sdElem)
+        {
+            dealerCode = sdElem.TryGetProperty("dealerCode", out var dc) ? dc.GetString() : null;
+            dealerName = sdElem.TryGetProperty("dealerName", out var dn) ? dn.GetString() : null;
+            city = sdElem.TryGetProperty("city", out var c) ? c.GetString() : null;
+            state = sdElem.TryGetProperty("state", out var st) ? st.GetString() : null;
+        }
+
+        var teamName = ctx.TryGetValue("teamName", out var tn) ? tn?.ToString() : "the team";
+        var currentTeam = ctx.TryGetValue("currentTeam", out var ct2) ? (ct2 is JsonElement ct2e ? ct2e.GetInt32() : Convert.ToInt32(ct2)) : 1;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+
+        return new AssistantResponse
+        {
+            Type = "date_picker_start",
+            Message = $"Dealer: {dealerName}, {city}\n\nActivity period for Team {teamName}?\nPick start & end date:",
+            TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
+        };
+    }
+
+    private static AssistantResponse HandleSubmitTeamDates(AssistantRequest request)
+    {
+        // Expects payload: startDate + endDate (ISO strings)
+        var ctx = ParseTeamPayload(request.PayloadJson);
+
+        DateTime? startDate = null, endDate = null;
+        if (ctx.TryGetValue("startDate", out var sd) && sd != null)
+        {
+            var sdStr = sd is JsonElement sde ? sde.GetString() : sd.ToString();
+            if (DateTime.TryParse(sdStr, out var sdt)) startDate = sdt;
+        }
+        if (ctx.TryGetValue("endDate", out var ed) && ed != null)
+        {
+            var edStr = ed is JsonElement ede ? ede.GetString() : ed.ToString();
+            if (DateTime.TryParse(edStr, out var edt)) endDate = edt;
+        }
+
+        if (!startDate.HasValue || !endDate.HasValue)
+        {
+            return new AssistantResponse
+            {
+                Type = "date_picker_start",
+                Message = "Could not parse dates. Please pick the start date again:",
+                PayloadJson = request.PayloadJson,
+            };
+        }
+
+        if (endDate.Value < startDate.Value)
+        {
+            return new AssistantResponse
+            {
+                Type = "date_picker_start",
+                Message = "End date cannot be before start date. Please pick the start date again:",
+                PayloadJson = request.PayloadJson,
+            };
+        }
+
+        int workingDays = CalculateWorkingDays(startDate.Value, endDate.Value);
+        var teamName = ctx.TryGetValue("teamName", out var tn) ? tn?.ToString() : "the team";
+        var currentTeam = ctx.TryGetValue("currentTeam", out var ct2) ? (ct2 is JsonElement ct2e ? ct2e.GetInt32() : Convert.ToInt32(ct2)) : 1;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+
+        ctx["workingDays"] = workingDays;
+
+        return new AssistantResponse
+        {
+            Type = "team_dates_confirm",
+            Message = $"Start: {startDate.Value:dd-MMM-yyyy} | End: {endDate.Value:dd-MMM-yyyy}\nWorking days: {workingDays}",
+            TeamContext = new TeamContextDto { CurrentTeam = currentTeam, TotalTeams = totalTeams },
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(ctx),
+        };
+    }
+
+    private async Task<AssistantResponse> HandleConfirmTeam(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        var ctx = ParseTeamPayload(request.PayloadJson);
+
+        var submissionId = ctx.TryGetValue("submissionId", out var sid) && sid != null
+            ? (Guid.TryParse(sid is JsonElement side ? side.GetString() : sid.ToString(), out var g) ? g : (Guid?)null)
+            : null;
+        var teamName = ctx.TryGetValue("teamName", out var tn) ? tn?.ToString() : null;
+        var currentTeam = ctx.TryGetValue("currentTeam", out var ct2) ? (ct2 is JsonElement ct2e ? ct2e.GetInt32() : Convert.ToInt32(ct2)) : 1;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+
+        // Extract dealer info
+        string? dealerName = null, dealerCode = null, city = null, state = null;
+        if (ctx.TryGetValue("selectedDealer", out var sd) && sd is System.Text.Json.JsonElement sdElem)
+        {
+            dealerCode = sdElem.TryGetProperty("dealerCode", out var dc) ? dc.GetString() : null;
+            dealerName = sdElem.TryGetProperty("dealerName", out var dn) ? dn.GetString() : null;
+            city = sdElem.TryGetProperty("city", out var c) ? c.GetString() : null;
+            state = sdElem.TryGetProperty("state", out var st) ? st.GetString() : null;
+        }
+
+        // Extract dates
+        DateTime? startDate = null, endDate = null;
+        if (ctx.TryGetValue("startDate", out var sdv) && sdv != null)
+        {
+            var sdvStr = sdv is JsonElement sdve ? sdve.GetString() : sdv.ToString();
+            if (DateTime.TryParse(sdvStr, out var sdt)) startDate = sdt;
+        }
+        if (ctx.TryGetValue("endDate", out var edv) && edv != null)
+        {
+            var edvStr = edv is JsonElement edve ? edve.GetString() : edv.ToString();
+            if (DateTime.TryParse(edvStr, out var edt)) endDate = edt;
+        }
+
+        int workingDays = ctx.TryGetValue("workingDays", out var wd)
+            ? (wd is JsonElement wde ? wde.GetInt32() : Convert.ToInt32(wd))
+            : 0;
+
+        // Save to Teams table
+        if (submissionId.HasValue)
+        {
+            try
+            {
+                var team = new Domain.Entities.Teams
+                {
+                    Id = Guid.NewGuid(),
+                    PackageId = submissionId.Value,
+                    CampaignName = teamName,
+                    TeamCode = dealerCode,
+                    TeamNumber = currentTeam,
+                    StartDate = startDate,
+                    EndDate = endDate,
+                    WorkingDays = workingDays,
+                    DealershipName = dealerName,
+                    DealershipAddress = city,
+                    State = state,
+                    VersionNumber = 1,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
+                };
+                _context.Teams.Add(team);
+                await _context.SaveChangesAsync(ct);
+                _logger.LogInformation("Team {TeamNum} saved for package {PackageId}", currentTeam, submissionId.Value);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save team {TeamNum} for package {PackageId}", currentTeam, submissionId.Value);
+            }
+        }
+
+        // If more teams remain, loop to next team
+        if (currentTeam < totalTeams)
+        {
+            int nextTeam = currentTeam + 1;
+            var nextPayload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                submissionId = submissionId?.ToString(),
+                totalTeams,
+                currentTeam = nextTeam,
+            });
+
+            return new AssistantResponse
+            {
+                Type = "team_name_input",
+                Message = $"Team {teamName} details saved!\n\nNow let's add details for Team {nextTeam} of {totalTeams}.\n\nPlease enter Team {nextTeam} name:",
+                TeamContext = new TeamContextDto { CurrentTeam = nextTeam, TotalTeams = totalTeams },
+                PayloadJson = nextPayload,
+                SubmissionId = submissionId,
+            };
+        }
+
+        // All teams done — start Phase 9: photo upload loop
+        var photoPayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            submissionId = submissionId?.ToString(),
+            totalTeams,
+            currentPhotoTeam = 1,
+        });
+        return new AssistantResponse
+        {
+            Type = "photo_upload",
+            Message = await BuildPhotoUploadMessage(submissionId, 1, totalTeams, ct),
+            TeamContext = new TeamContextDto { CurrentTeam = 1, TotalTeams = totalTeams },
+            PayloadJson = photoPayload,
+            SubmissionId = submissionId,
+        };
+    }
+
+    // ── Phase 9: Photo Proofs Upload ─────────────────────────────────────
+
+    private async Task<string> BuildPhotoUploadMessage(Guid? submissionId, int currentPhotoTeam, int totalTeams, CancellationToken ct)
+    {
+        string teamName = $"Team {currentPhotoTeam}";
+        if (submissionId.HasValue)
+        {
+            var team = await _context.Teams
+                .Where(t => t.PackageId == submissionId.Value && t.TeamNumber == currentPhotoTeam && !t.IsDeleted)
+                .Select(t => new { t.CampaignName })
+                .FirstOrDefaultAsync(ct);
+            if (!string.IsNullOrWhiteSpace(team?.CampaignName))
+                teamName = team.CampaignName;
+        }
+        return $"Now upload photo proofs for {teamName} (Team {currentPhotoTeam} of {totalTeams}).\nMinimum 3 photos, maximum 10 photos.";
+    }
+
+    private async Task<AssistantResponse> HandleStartPhotoUpload(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        var ctx = ParseTeamPayload(request.PayloadJson);
+        var submissionId = ctx.TryGetValue("submissionId", out var sid) && sid != null
+            ? (Guid.TryParse(sid is JsonElement side ? side.GetString() : sid.ToString(), out var g) ? g : (Guid?)null)
+            : null;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+        var currentPhotoTeam = ctx.TryGetValue("currentPhotoTeam", out var cpt) ? (cpt is JsonElement cpte ? cpte.GetInt32() : Convert.ToInt32(cpt)) : 1;
+
+        return new AssistantResponse
+        {
+            Type = "photo_upload",
+            Message = await BuildPhotoUploadMessage(submissionId, currentPhotoTeam, totalTeams, ct),
+            TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams },
+            PayloadJson = request.PayloadJson,
+            SubmissionId = submissionId,
+        };
+    }
+
+    private async Task<AssistantResponse> HandlePhotosUploaded(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        var ctx = ParseTeamPayload(request.PayloadJson);
+        var submissionId = ctx.TryGetValue("submissionId", out var sid) && sid != null
+            ? (Guid.TryParse(sid is JsonElement side ? side.GetString() : sid.ToString(), out var g) ? g : (Guid?)null)
+            : null;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+        var currentPhotoTeam = ctx.TryGetValue("currentPhotoTeam", out var cpt) ? (cpt is JsonElement cpte ? cpte.GetInt32() : Convert.ToInt32(cpt)) : 1;
+
+        // Parse photo IDs from message (comma-separated) or payload
+        var photoIds = new List<Guid>();
+        if (!string.IsNullOrEmpty(request.Message))
+        {
+            foreach (var part in request.Message.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                if (Guid.TryParse(part.Trim(), out var pid)) photoIds.Add(pid);
+        }
+
+        if (photoIds.Count == 0)
+            return new AssistantResponse { Type = "error", Message = "No photos received. Please try uploading again.", PayloadJson = request.PayloadJson };
+
+        // Enforce max 10
+        if (photoIds.Count > 10)
+            return new AssistantResponse
+            {
+                Type = "photo_upload",
+                Message = "Maximum 10 photos per team. Please select up to 10 photos.",
+                TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams },
+                PayloadJson = request.PayloadJson,
+                SubmissionId = submissionId,
+            };
+
+        // Find the team record
+        Guid? teamId = null;
+        string teamName = $"Team {currentPhotoTeam}";
+        if (submissionId.HasValue)
+        {
+            var team = await _context.Teams
+                .Where(t => t.PackageId == submissionId.Value && t.TeamNumber == currentPhotoTeam && !t.IsDeleted)
+                .Select(t => new { t.Id, t.CampaignName })
+                .FirstOrDefaultAsync(ct);
+            if (team != null)
+            {
+                teamId = team.Id;
+                if (!string.IsNullOrWhiteSpace(team.CampaignName)) teamName = team.CampaignName;
+            }
+        }
+
+        // Get existing photo count for this team (for replace/add-more scenarios)
+        int existingCount = 0;
+        if (teamId.HasValue)
+            existingCount = await _context.TeamPhotos.CountAsync(p => p.TeamId == teamId.Value && !p.IsDeleted, ct);
+
+        if (existingCount + photoIds.Count > 10)
+            return new AssistantResponse
+            {
+                Type = "photo_validation_results",
+                Message = $"Maximum 10 photos per team. You already have {existingCount} photo(s). Remove a photo first or proceed with current set.",
+                TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams, TeamName = teamName },
+                PayloadJson = request.PayloadJson,
+                SubmissionId = submissionId,
+            };
+
+        // Run AI vision validation on each photo and save to TeamPhotos + ValidationResults
+        var photoResults = new List<PhotoValidationResult>();
+        int displayOrder = existingCount + 1;
+
+        foreach (var photoId in photoIds)
+        {
+            var photo = await _context.TeamPhotos
+                .FirstOrDefaultAsync(p => p.Id == photoId && !p.IsDeleted, ct);
+
+            if (photo == null) continue;
+
+            // Link to team if not already linked
+            if (teamId.HasValue && photo.TeamId == Guid.Empty)
+            {
+                photo.TeamId = teamId.Value;
+                photo.PackageId = submissionId ?? photo.PackageId;
+                photo.DisplayOrder = displayOrder++;
+                photo.UpdatedAt = DateTime.UtcNow;
+            }
+
+            // Run vision validation rules
+            var rules = RunPhotoValidationRules(photo);
+            int passCount = rules.Count(r => r.Passed);
+            int failCount = rules.Count(r => !r.Passed);
+            bool allPassed = failCount == 0;
+
+            photo.IsFlaggedForReview = !allPassed;
+            photo.UpdatedAt = DateTime.UtcNow;
+
+            // Persist validation result
+            try
+            {
+                var ruleJson = JsonSerializer.Serialize(rules.Select(r => new
+                {
+                    ruleCode = r.RuleCode, type = r.Type, passed = r.Passed,
+                    isWarning = r.IsWarning, label = r.Label,
+                    extractedValue = r.ExtractedValue, message = r.Message,
+                }));
+
+                var existing = await _context.ValidationResults
+                    .FirstOrDefaultAsync(v => v.DocumentId == photoId, ct);
+
+                var validationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
+                if (existing != null)
+                {
+                    existing.AllValidationsPassed = allPassed;
+                    existing.RuleResultsJson = ruleJson;
+                    existing.ValidationDetailsJson = validationDetailsJson;
+                    existing.FailureReason = allPassed ? null : string.Join("; ", rules.Where(r => !r.Passed).Select(r => r.Message ?? r.Label));
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _context.ValidationResults.Add(new Domain.Entities.ValidationResult
+                    {
+                        Id = Guid.NewGuid(),
+                        DocumentType = DocumentType.TeamPhoto,
+                        DocumentId = photoId,
+                        AllValidationsPassed = allPassed,
+                        RuleResultsJson = ruleJson,
+                        ValidationDetailsJson = validationDetailsJson,
+                        FailureReason = allPassed ? null : string.Join("; ", rules.Where(r => !r.Passed).Select(r => r.Message ?? r.Label)),
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow,
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to persist photo validation for {PhotoId}", photoId);
+            }
+
+            photoResults.Add(new PhotoValidationResult
+            {
+                PhotoId = photoId.ToString(),
+                DisplayOrder = photo.DisplayOrder,
+                FileName = photo.FileName,
+                Rules = rules,
+                AllPassed = allPassed,
+            });
+        }
+
+        await _context.SaveChangesAsync(ct);
+
+        // Get total photo count for this team now
+        int totalPhotos = teamId.HasValue
+            ? await _context.TeamPhotos.CountAsync(p => p.TeamId == teamId.Value && !p.IsDeleted, ct)
+            : photoResults.Count;
+
+        int fullyPassed = photoResults.Count(p => p.AllPassed);
+        int withIssues = photoResults.Count(p => !p.AllPassed);
+
+        string summary = $"{totalPhotos} photo(s) uploaded for {teamName}.\n";
+        if (withIssues > 0)
+            summary += $"{fullyPassed} of {photoResults.Count} passed. {withIssues} failed checks.";
+        else
+            summary += $"All {fullyPassed} passed AI analysis.";
+
+        var newPayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            submissionId = submissionId?.ToString(),
+            totalTeams,
+            currentPhotoTeam,
+            totalPhotos,
+        });
+
+        return new AssistantResponse
+        {
+            Type = "photo_validation_results",
+            Message = summary,
+            TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams, TeamName = teamName },
+            PhotoResults = photoResults,
+            PayloadJson = newPayload,
+            SubmissionId = submissionId,
+        };
+    }
+
+    private async Task<AssistantResponse> HandleReplacePhoto(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        var ctx = ParseTeamPayload(request.PayloadJson);
+        var submissionId = ctx.TryGetValue("submissionId", out var sid) && sid != null
+            ? (Guid.TryParse(sid is JsonElement side ? side.GetString() : sid.ToString(), out var g) ? g : (Guid?)null)
+            : null;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+        var currentPhotoTeam = ctx.TryGetValue("currentPhotoTeam", out var cpt) ? (cpt is JsonElement cpte ? cpte.GetInt32() : Convert.ToInt32(cpt)) : 1;
+
+        // Expects message = "photoNumber,newPhotoId"
+        var parts = request.Message?.Split(',') ?? Array.Empty<string>();
+        if (parts.Length < 2 || !int.TryParse(parts[0].Trim(), out var photoNumber) || !Guid.TryParse(parts[1].Trim(), out var newPhotoId))
+        {
+            return new AssistantResponse
+            {
+                Type = "photo_replace_prompt",
+                Message = "Which photo number would you like to replace? (Enter the number shown in the grid)",
+                PayloadJson = request.PayloadJson,
+                SubmissionId = submissionId,
+            };
+        }
+
+        // Find team
+        Guid? teamId = null;
+        if (submissionId.HasValue)
+        {
+            var team = await _context.Teams
+                .Where(t => t.PackageId == submissionId.Value && t.TeamNumber == currentPhotoTeam && !t.IsDeleted)
+                .Select(t => new { t.Id })
+                .FirstOrDefaultAsync(ct);
+            teamId = team?.Id;
+        }
+
+        // Soft-delete old photo at that display order
+        if (teamId.HasValue)
+        {
+            var oldPhoto = await _context.TeamPhotos
+                .FirstOrDefaultAsync(p => p.TeamId == teamId.Value && p.DisplayOrder == photoNumber && !p.IsDeleted, ct);
+            if (oldPhoto != null)
+            {
+                oldPhoto.IsDeleted = true;
+                oldPhoto.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        // Link new photo and re-run validation
+        var newPhoto = await _context.TeamPhotos.FirstOrDefaultAsync(p => p.Id == newPhotoId && !p.IsDeleted, ct);
+        if (newPhoto != null && teamId.HasValue)
+        {
+            newPhoto.TeamId = teamId.Value;
+            newPhoto.PackageId = submissionId ?? newPhoto.PackageId;
+            newPhoto.DisplayOrder = photoNumber;
+            newPhoto.UpdatedAt = DateTime.UtcNow;
+
+            var rules = RunPhotoValidationRules(newPhoto);
+            newPhoto.IsFlaggedForReview = rules.Any(r => !r.Passed);
+
+            var ruleJson = JsonSerializer.Serialize(rules.Select(r => new
+            {
+                ruleCode = r.RuleCode, type = r.Type, passed = r.Passed,
+                isWarning = r.IsWarning, label = r.Label,
+                extractedValue = r.ExtractedValue, message = r.Message,
+            }));
+            var existingVr = await _context.ValidationResults
+                .FirstOrDefaultAsync(v => v.DocumentType == DocumentType.TeamPhoto && v.DocumentId == newPhotoId, ct);
+
+            var photoValidationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
+            if (existingVr != null)
+            {
+                existingVr.AllValidationsPassed = !newPhoto.IsFlaggedForReview;
+                existingVr.RuleResultsJson = ruleJson;
+                existingVr.ValidationDetailsJson = photoValidationDetailsJson;
+                existingVr.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _context.ValidationResults.Add(new Domain.Entities.ValidationResult
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentType = DocumentType.TeamPhoto,
+                    DocumentId = newPhotoId,
+                    AllValidationsPassed = !newPhoto.IsFlaggedForReview,
+                    RuleResultsJson = ruleJson,
+                    ValidationDetailsJson = photoValidationDetailsJson,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
+                });
+            }
+        }
+        await _context.SaveChangesAsync(ct);
+
+        // Build photo validation results directly from all team photos (avoids double-count in HandlePhotosUploaded)
+        var photoResults = new List<PhotoValidationResult>();
+        if (teamId.HasValue)
+        {
+            var allPhotos = await _context.TeamPhotos
+                .Where(p => p.TeamId == teamId.Value && !p.IsDeleted)
+                .OrderBy(p => p.DisplayOrder)
+                .ToListAsync(ct);
+
+            foreach (var photo in allPhotos)
+            {
+                var rules = RunPhotoValidationRules(photo);
+                bool allPassed = rules.All(r => r.Passed);
+                photoResults.Add(new PhotoValidationResult
+                {
+                    PhotoId = photo.Id.ToString(),
+                    DisplayOrder = photo.DisplayOrder,
+                    FileName = photo.FileName,
+                    Rules = rules,
+                    AllPassed = allPassed,
+                });
+            }
+        }
+
+        int totalPhotos = photoResults.Count;
+        int fullyPassed = photoResults.Count(p => p.AllPassed);
+        int withIssues = photoResults.Count(p => !p.AllPassed);
+        string summary = $"{totalPhotos} photo(s) for Team {currentPhotoTeam}. Photo {photoNumber} replaced.\n";
+        if (withIssues > 0)
+            summary += $"{fullyPassed} of {totalPhotos} passed. {withIssues} failed checks.";
+        else
+            summary += $"All {fullyPassed} passed AI analysis.";
+
+        var newPayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            submissionId = submissionId?.ToString(),
+            totalTeams,
+            currentPhotoTeam,
+            totalPhotos,
+        });
+
+        return new AssistantResponse
+        {
+            Type = "photo_validation_results",
+            Message = summary,
+            TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams, TeamName = $"Team {currentPhotoTeam}" },
+            PhotoResults = photoResults,
+            PayloadJson = newPayload,
+            SubmissionId = submissionId,
+        };
+    }
+
+    private async Task<AssistantResponse> HandleAddMorePhotos(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        var ctx = ParseTeamPayload(request.PayloadJson);
+        var submissionId = ctx.TryGetValue("submissionId", out var sid) && sid != null
+            ? (Guid.TryParse(sid is JsonElement side ? side.GetString() : sid.ToString(), out var g) ? g : (Guid?)null)
+            : null;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+        var currentPhotoTeam = ctx.TryGetValue("currentPhotoTeam", out var cpt) ? (cpt is JsonElement cpte ? cpte.GetInt32() : Convert.ToInt32(cpt)) : 1;
+        var totalPhotos = ctx.TryGetValue("totalPhotos", out var tp) ? (tp is JsonElement tpe ? tpe.GetInt32() : Convert.ToInt32(tp)) : 0;
+
+        return new AssistantResponse
+        {
+            Type = "photo_upload",
+            Message = $"You have {totalPhotos} photo(s) so far. Upload more (max 10 total):",
+            TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams },
+            PayloadJson = request.PayloadJson,
+            SubmissionId = submissionId,
+        };
+    }
+
+    private async Task<AssistantResponse> HandleDoneTeamPhotos(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        var ctx = ParseTeamPayload(request.PayloadJson);
+        var submissionId = ctx.TryGetValue("submissionId", out var sid) && sid != null
+            ? (Guid.TryParse(sid is JsonElement side ? side.GetString() : sid.ToString(), out var g) ? g : (Guid?)null)
+            : null;
+        var totalTeams = ctx.TryGetValue("totalTeams", out var tt) ? (tt is JsonElement tte ? tte.GetInt32() : Convert.ToInt32(tt)) : 1;
+        var currentPhotoTeam = ctx.TryGetValue("currentPhotoTeam", out var cpt) ? (cpt is JsonElement cpte ? cpte.GetInt32() : Convert.ToInt32(cpt)) : 1;
+
+        // Enforce minimum 3 photos
+        int photoCount = 0;
+        if (submissionId.HasValue)
+        {
+            var team = await _context.Teams
+                .Where(t => t.PackageId == submissionId.Value && t.TeamNumber == currentPhotoTeam && !t.IsDeleted)
+                .Select(t => new { t.Id })
+                .FirstOrDefaultAsync(ct);
+            if (team != null)
+                photoCount = await _context.TeamPhotos.CountAsync(p => p.TeamId == team.Id && !p.IsDeleted, ct);
+        }
+
+        if (photoCount < 3)
+        {
+            return new AssistantResponse
+            {
+                Type = "photo_validation_results",
+                Message = $"Minimum 3 photos required per team. Please upload at least {3 - photoCount} more photo(s).",
+                TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams, TeamName = $"Team {currentPhotoTeam}" },
+                PayloadJson = request.PayloadJson,
+                SubmissionId = submissionId,
+            };
+        }
+
+        // Move to next team's photos or show final summary
+        if (currentPhotoTeam < totalTeams)
+        {
+            int nextPhotoTeam = currentPhotoTeam + 1;
+            var nextPayload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                submissionId = submissionId?.ToString(),
+                totalTeams,
+                currentPhotoTeam = nextPhotoTeam,
+            });
+            return new AssistantResponse
+            {
+                Type = "photo_upload",
+                Message = await BuildPhotoUploadMessage(submissionId, nextPhotoTeam, totalTeams, ct),
+                TeamContext = new TeamContextDto { CurrentTeam = nextPhotoTeam, TotalTeams = totalTeams },
+                PayloadJson = nextPayload,
+                SubmissionId = submissionId,
+            };
+        }
+
+        // All teams done — build final summary
+        return await BuildFinalTeamSummary(submissionId, totalTeams, ct);
+    }
+
+    private async Task<AssistantResponse> BuildFinalTeamSummary(Guid? submissionId, int totalTeams, CancellationToken ct)
+    {
+        var teamSummaries = new List<TeamSummaryItem>();
+        if (submissionId.HasValue)
+        {
+            var teams = await _context.Teams
+                .Where(t => t.PackageId == submissionId.Value && !t.IsDeleted)
+                .OrderBy(t => t.TeamNumber)
+                .ToListAsync(ct);
+
+            foreach (var team in teams)
+            {
+                var photoCount = await _context.TeamPhotos.CountAsync(p => p.TeamId == team.Id && !p.IsDeleted, ct);
+                var passedPhotos = await _context.TeamPhotos
+                    .Where(p => p.TeamId == team.Id && !p.IsDeleted && !p.IsFlaggedForReview)
+                    .CountAsync(ct);
+
+                teamSummaries.Add(new TeamSummaryItem
+                {
+                    TeamNumber = team.TeamNumber ?? 0,
+                    TeamName = team.CampaignName ?? $"Team {team.TeamNumber}",
+                    DealerName = team.DealershipName ?? "",
+                    City = team.DealershipAddress ?? "",
+                    State = team.State ?? "",
+                    StartDate = team.StartDate?.ToString("dd-MMM-yyyy") ?? "",
+                    EndDate = team.EndDate?.ToString("dd-MMM-yyyy") ?? "",
+                    WorkingDays = team.WorkingDays ?? 0,
+                    PhotoCount = photoCount,
+                    PhotosPassed = passedPhotos,
+                });
+            }
+        }
+
+        return new AssistantResponse
+        {
+            Type = "team_summary",
+            Message = $"All {totalTeams} team(s) and photo proofs submitted successfully!\n\nHere's a summary of all teams:",
+            TeamSummaries = teamSummaries,
+            SubmissionId = submissionId,
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { submissionId = submissionId?.ToString() }),
+        };
+    }
+
+    // ── Phase 10: Enquiry Dump Upload ─────────────────────────────────────
+
+    private static AssistantResponse HandleEnquiryDumpUpload()
+    {
+        return new AssistantResponse
+        {
+            Type = "enquiry_dump_upload",
+            Message = "Please upload Enquiry Dump Document.",
+            AllowedFormats = new List<string> { "XLSX", "CSV", "PDF" },
+        };
+    }
+
+    private async Task<AssistantResponse> HandleEnquiryDumpUploaded(
+        AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        string? documentId = request.Message?.Trim();
+        Guid? submissionIdFromPayload = null;
+
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var payload = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (string.IsNullOrEmpty(documentId) && payload.TryGetProperty("documentId", out var docProp))
+                    documentId = docProp.GetString();
+                if (payload.TryGetProperty("submissionId", out var subProp) && Guid.TryParse(subProp.GetString(), out var sid))
+                    submissionIdFromPayload = sid;
+            }
+            catch { }
+        }
+
+        if (string.IsNullOrWhiteSpace(documentId) || !Guid.TryParse(documentId, out var docId))
+            return new AssistantResponse { Type = "error", Message = "Enquiry Dump upload confirmation missing. Please try uploading again." };
+
+        _logger.LogInformation("=== ENQUIRY DUMP VALIDATION === DocumentId: {DocId}", docId);
+
+        var enquiryDoc = await _context.EnquiryDocuments
+            .FirstOrDefaultAsync(e => e.Id == docId && !e.IsDeleted, ct);
+
+        if (enquiryDoc == null)
+            return new AssistantResponse { Type = "error", Message = "Enquiry Dump document not found. Please try uploading again." };
+
+        // Wait for background extraction to complete (up to 60s)
+        if (string.IsNullOrEmpty(enquiryDoc.ExtractedDataJson))
+        {
+            _logger.LogInformation("Waiting for enquiry dump extraction to complete for {DocId}", docId);
+            for (int i = 0; i < 30; i++)
+            {
+                await Task.Delay(2000, ct);
+                var refreshed = await _context.EnquiryDocuments
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(e => e.Id == docId && !e.IsDeleted, ct);
+                if (!string.IsNullOrEmpty(refreshed?.ExtractedDataJson))
+                {
+                    enquiryDoc = refreshed;
+                    break;
+                }
+            }
+        }
+
+        // Parse extracted records
+        List<Application.DTOs.Documents.EnquiryRecord> records = new();
+        if (!string.IsNullOrEmpty(enquiryDoc.ExtractedDataJson))
+        {
+            try
+            {
+                var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var data = JsonSerializer.Deserialize<Application.DTOs.Documents.EnquiryDumpData>(enquiryDoc.ExtractedDataJson, opts);
+                records = data?.Records ?? new();
+            }
+            catch { }
+        }
+
+        int totalRecords = records.Count;
+        int missingPhone = records.Count(r => string.IsNullOrWhiteSpace(r.CustomerNumber));
+
+        // Run 9 validation rules — ≥80% threshold per field
+        var rules = RunEnquiryDumpValidationRules(records);
+
+        int passCount = rules.Count(r => r.Passed);
+        int failCount = rules.Count(r => !r.Passed);
+
+        string botMessage = $"FieldIQ Enquiry Dump processed:\n• {totalRecords} enquiry records found\n• {missingPhone} records with missing Customer Phone";
+
+        // Persist to ValidationResults
+        try
+        {
+            var ruleResultsJson = JsonSerializer.Serialize(rules.Select(r => new
+            {
+                ruleCode = r.RuleCode, type = r.Type, passed = r.Passed,
+                isWarning = r.IsWarning, label = r.Label,
+                extractedValue = r.ExtractedValue, message = r.Message,
+            }));
+
+            var enquiryValidationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
+            var existing = await _context.ValidationResults
+                .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
+
+            if (existing != null)
+            {
+                existing.AllValidationsPassed = failCount == 0;
+                existing.RuleResultsJson = ruleResultsJson;
+                existing.ValidationDetailsJson = enquiryValidationDetailsJson;
+                existing.FailureReason = failCount > 0 ? string.Join("; ", rules.Where(r => !r.Passed).Select(r => r.Message ?? r.Label)) : null;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _context.ValidationResults.Add(new Domain.Entities.ValidationResult
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentType = DocumentType.EnquiryDocument,
+                    DocumentId = docId,
+                    AllValidationsPassed = failCount == 0,
+                    RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = enquiryValidationDetailsJson,
+                    FailureReason = failCount > 0 ? string.Join("; ", rules.Where(r => !r.Passed).Select(r => r.Message ?? r.Label)) : null,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
+                });
+            }
+            await _context.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist enquiry dump validation for {DocId}", docId);
+        }
+
+        // Read back from DB
+        List<ValidationRuleResult> responseRules = rules;
+        try
+        {
+            var saved = await _context.ValidationResults.AsNoTracking()
+                .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
+            if (saved?.RuleResultsJson != null)
+            {
+                var dbRules = JsonSerializer.Deserialize<List<ValidationRuleResult>>(
+                    saved.RuleResultsJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (dbRules != null && dbRules.Count > 0)
+                {
+                    responseRules = dbRules;
+                    passCount = responseRules.Count(r => r.Passed);
+                    failCount = responseRules.Count(r => !r.Passed);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read back enquiry dump validation from DB for {DocId}", docId);
+        }
+
+        return new AssistantResponse
+        {
+            Type = "enquiry_dump_validation",
+            Message = botMessage,
+            ValidationRules = responseRules,
+            PassedCount = passCount,
+            FailedCount = failCount,
+            WarningCount = 0,
+            TotalRecords = totalRecords,
+            MissingPhoneCount = missingPhone,
+            SubmissionId = submissionIdFromPayload ?? enquiryDoc.PackageId,
+        };
+    }
+
+    private static List<ValidationRuleResult> RunEnquiryDumpValidationRules(
+        List<Application.DTOs.Documents.EnquiryRecord> records)
+    {
+        var rules = new List<ValidationRuleResult>();
+        if (records.Count == 0)
+        {
+            // No records — all fail
+            var fields = new[] {
+                ("EQ_CUSTOMER_PHONE", "Customer Phone"),
+                ("EQ_STATE", "State"),
+                ("EQ_DATE", "Date"),
+                ("EQ_DEALER_CODE", "Dealer Code"),
+                ("EQ_DEALER_NAME", "Dealer Name"),
+                ("EQ_DISTRICT", "District"),
+                ("EQ_PINCODE", "Pincode"),
+                ("EQ_CUSTOMER_NAME", "Customer Name"),
+                ("EQ_TEST_RIDE", "Test Ride"),
+            };
+            foreach (var (code, label) in fields)
+                rules.Add(new ValidationRuleResult { RuleCode = code, Type = "Required", Passed = false, IsWarning = false, Label = label, Message = "No records found" });
+            return rules;
+        }
+
+        int total = records.Count;
+        double threshold = 0.8;
+
+        int phonePresent = records.Count(r => !string.IsNullOrWhiteSpace(r.CustomerNumber));
+        int statePresent = records.Count(r => !string.IsNullOrWhiteSpace(r.State));
+        int datePresent = records.Count(r => r.Date.HasValue);
+        int dealerCodePresent = records.Count(r => !string.IsNullOrWhiteSpace(r.DealerCode));
+        int dealerNamePresent = records.Count(r => !string.IsNullOrWhiteSpace(r.DealerName));
+        int districtPresent = records.Count(r => !string.IsNullOrWhiteSpace(r.District));
+        int pincodePresent = records.Count(r => !string.IsNullOrWhiteSpace(r.Pincode));
+        int customerNamePresent = records.Count(r => !string.IsNullOrWhiteSpace(r.CustomerName));
+        int testRidePresent = records.Count(r => !string.IsNullOrWhiteSpace(r.TestRideTaken));
+
+        (string code, string label, int count)[] checks = {
+            ("EQ_CUSTOMER_PHONE", "Customer Phone", phonePresent),
+            ("EQ_STATE", "State", statePresent),
+            ("EQ_DATE", "Date", datePresent),
+            ("EQ_DEALER_CODE", "Dealer Code", dealerCodePresent),
+            ("EQ_DEALER_NAME", "Dealer Name", dealerNamePresent),
+            ("EQ_DISTRICT", "District", districtPresent),
+            ("EQ_PINCODE", "Pincode", pincodePresent),
+            ("EQ_CUSTOMER_NAME", "Customer Name", customerNamePresent),
+            ("EQ_TEST_RIDE", "Test Ride", testRidePresent),
+        };
+
+        foreach (var (code, label, count) in checks)
+        {
+            double pct = (double)count / total;
+            bool passed = pct >= threshold;
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = code,
+                Type = "Required",
+                Passed = passed,
+                IsWarning = false,
+                Label = label,
+                ExtractedValue = $"{count}/{total} records ({pct:P0})",
+                Message = passed ? null : $"Only {pct:P0} of records have {label} (min 80% required)",
+            });
+        }
+
+        return rules;
+    }
+
+    private static AssistantResponse HandleContinueAfterEnquiry()
+    {
         return new AssistantResponse
         {
             Type = "text",
-            Message = "Activity Summary accepted. Phase 8 (Team Details) coming soon.",
+            Message = "✅ Enquiry Dump accepted. Your submission is complete. Thank you!",
         };
+    }
+
+    private async Task<AssistantResponse> HandleFinalReview(AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        Guid? submissionId = null;
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var p = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (p.TryGetProperty("submissionId", out var sp) && Guid.TryParse(sp.GetString(), out var sid))
+                    submissionId = sid;
+            }
+            catch { }
+        }
+
+        if (submissionId == null)
+            return new AssistantResponse { Type = "error", Message = "Submission ID missing for final review." };
+
+        var package = await _context.DocumentPackages
+            .AsNoTracking()
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
+            .Include(p => p.CostSummary)
+            .Include(p => p.ActivitySummary)
+            .Include(p => p.EnquiryDocument)
+            .Include(p => p.Teams.Where(t => !t.IsDeleted))
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(p => p.Id == submissionId.Value && !p.IsDeleted, ct);
+
+        if (package == null)
+            return new AssistantResponse { Type = "error", Message = "Submission not found." };
+
+        // Load selected PO via SelectedPOId (chatbot flow — no uploaded PO document)
+        Domain.Entities.PO? selectedPo = null;
+        if (package.SelectedPOId.HasValue)
+            selectedPo = await _context.POs.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == package.SelectedPOId.Value && !p.IsDeleted, ct);
+
+        // Helper: get validation status for a document
+        async Task<bool?> GetValidationPassed(Guid docId)
+        {
+            var vr = await _context.ValidationResults.AsNoTracking()
+                .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
+            return vr?.AllValidationsPassed;
+        }
+
+        // PO
+        var poSection = selectedPo == null ? null : new FinalReviewSection
+        {
+            Title = "Purchase Order",
+            Icon = "description",
+            Passed = true,
+            Fields = new List<FinalReviewField>
+            {
+                new() { Label = "PO Number", Value = selectedPo.PONumber ?? "—" },
+                new() { Label = "PO Date", Value = selectedPo.PODate?.ToString("dd MMM yyyy") ?? "—" },
+                new() { Label = "Vendor", Value = selectedPo.VendorName ?? "—" },
+                new() { Label = "Amount", Value = selectedPo.TotalAmount.HasValue ? $"₹{selectedPo.TotalAmount:N2}" : "—" },
+            }
+        };
+
+        // Invoice (latest)
+        var latestInvoice = package.Invoices.OrderByDescending(i => i.CreatedAt).FirstOrDefault();
+        bool? invPassed = latestInvoice != null ? await GetValidationPassed(latestInvoice.Id) : null;
+        var invoiceSection = latestInvoice == null ? null : new FinalReviewSection
+        {
+            Title = "Invoice",
+            Icon = "receipt_long",
+            Passed = invPassed ?? true,
+            Fields = new List<FinalReviewField>
+            {
+                new() { Label = "Invoice No", Value = latestInvoice.InvoiceNumber ?? "—" },
+                new() { Label = "Invoice Date", Value = latestInvoice.InvoiceDate?.ToString("dd MMM yyyy") ?? "—" },
+                new() { Label = "Amount", Value = latestInvoice.TotalAmount.HasValue ? $"₹{latestInvoice.TotalAmount:N2}" : "—" },
+                new() { Label = "GST No", Value = latestInvoice.GSTNumber ?? "—" },
+            }
+        };
+
+        // Cost Summary
+        bool? csPassed = package.CostSummary != null ? await GetValidationPassed(package.CostSummary.Id) : null;
+        var csSection = package.CostSummary == null ? null : new FinalReviewSection
+        {
+            Title = "Cost Summary",
+            Icon = "table_chart",
+            Passed = csPassed ?? true,
+            Fields = new List<FinalReviewField>
+            {
+                new() { Label = "State", Value = package.CostSummary.PlaceOfSupply ?? package.ActivityState ?? "—" },
+                new() { Label = "No. of Teams", Value = package.CostSummary.NumberOfTeams?.ToString() ?? "—" },
+                new() { Label = "No. of Days", Value = package.CostSummary.NumberOfDays?.ToString() ?? "—" },
+                new() { Label = "Total Cost", Value = package.CostSummary.TotalCost.HasValue ? $"₹{package.CostSummary.TotalCost:N2}" : "—" },
+            }
+        };
+
+        // Activity Summary
+        bool? actPassed = package.ActivitySummary != null ? await GetValidationPassed(package.ActivitySummary.Id) : null;
+        var actSection = package.ActivitySummary == null ? null : new FinalReviewSection
+        {
+            Title = "Activity Summary",
+            Icon = "event_note",
+            Passed = actPassed ?? true,
+            Fields = new List<FinalReviewField>
+            {
+                new() { Label = "Dealer", Value = package.ActivitySummary.DealerName ?? "—" },
+                new() { Label = "Total Days", Value = package.ActivitySummary.TotalDays?.ToString() ?? "—" },
+                new() { Label = "Working Days", Value = package.ActivitySummary.TotalWorkingDays?.ToString() ?? "—" },
+            }
+        };
+
+        // Teams
+        var teamFields = package.Teams.OrderBy(t => t.TeamNumber).Select(t => new FinalReviewField
+        {
+            Label = $"Team {t.TeamNumber}",
+            Value = $"{t.CampaignName ?? "—"} | {t.DealershipName ?? "—"} | {t.StartDate?.ToString("dd MMM") ?? "?"} – {t.EndDate?.ToString("dd MMM yyyy") ?? "?"}",
+        }).ToList();
+        var teamsSection = new FinalReviewSection
+        {
+            Title = "Teams",
+            Icon = "groups",
+            Passed = true,
+            Fields = teamFields
+        };
+
+        // Enquiry Dump
+        bool? enqPassed = package.EnquiryDocument != null ? await GetValidationPassed(package.EnquiryDocument.Id) : null;
+        int enqTotal = 0;
+        int enqMissingPhone = 0;
+        if (package.EnquiryDocument?.ExtractedDataJson != null)
+        {
+            try
+            {
+                var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var enqData = JsonSerializer.Deserialize<Application.DTOs.Documents.EnquiryDumpData>(package.EnquiryDocument.ExtractedDataJson, opts);
+                enqTotal = enqData?.TotalRecords ?? enqData?.Records?.Count ?? 0;
+                enqMissingPhone = enqData?.Records?.Count(r => string.IsNullOrWhiteSpace(r.CustomerNumber)) ?? 0;
+            }
+            catch { }
+        }
+        var enqSection = package.EnquiryDocument == null ? null : new FinalReviewSection
+        {
+            Title = "Enquiry Dump",
+            Icon = "people_alt",
+            Passed = enqPassed ?? true,
+            Fields = new List<FinalReviewField>
+            {
+                new() { Label = "Total Records", Value = enqTotal > 0 ? enqTotal.ToString() : "—" },
+                new() { Label = "Missing Phone", Value = enqMissingPhone.ToString() },
+            }
+        };
+
+        var sections = new List<FinalReviewSection>();
+        if (poSection != null) sections.Add(poSection);
+        if (invoiceSection != null) sections.Add(invoiceSection);
+        if (csSection != null) sections.Add(csSection);
+        if (actSection != null) sections.Add(actSection);
+        sections.Add(teamsSection);
+        if (enqSection != null) sections.Add(enqSection);
+
+        return new AssistantResponse
+        {
+            Type = "final_review",
+            Message = "Please review your submission details below.",
+            SubmissionId = submissionId,
+            ReviewSections = sections,
+        };
+    }
+
+    private async Task<AssistantResponse> HandleSubmitFromChat(AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        Guid? submissionId = null;
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var p = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (p.TryGetProperty("submissionId", out var sp) && Guid.TryParse(sp.GetString(), out var sid))
+                    submissionId = sid;
+            }
+            catch { }
+        }
+
+        if (submissionId == null)
+            return new AssistantResponse { Type = "error", Message = "Submission ID missing." };
+
+        var userId = GetUserIdSync();
+        if (userId == null)
+            return new AssistantResponse { Type = "error", Message = "User not found." };
+
+        var package = await _context.DocumentPackages
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
+            .Include(p => p.Teams.Where(t => !t.IsDeleted))
+                .ThenInclude(t => t.Photos.Where(ph => !ph.IsDeleted))
+            .Include(p => p.CostSummary)
+            .Include(p => p.ActivitySummary)
+            .Include(p => p.EnquiryDocument)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(p => p.Id == submissionId.Value && !p.IsDeleted, ct);
+
+        if (package == null)
+            return new AssistantResponse { Type = "error", Message = "Submission not found." };
+
+        if (package.SubmittedByUserId != userId.Value)
+            return new AssistantResponse { Type = "error", Message = "You are not authorised to submit this package." };
+
+        if (package.State != Domain.Enums.PackageState.Draft && package.State != Domain.Enums.PackageState.Uploaded)
+            return new AssistantResponse { Type = "error", Message = $"Package is already in {package.State} state." };
+
+        // Validate required docs — PO is selected via SelectedPOId in chatbot flow
+        if (!package.SelectedPOId.HasValue) return new AssistantResponse { Type = "error", Message = "PO is required." };
+        if (!package.Invoices.Any()) return new AssistantResponse { Type = "error", Message = "Invoice document is required." };
+        if (package.CostSummary == null) return new AssistantResponse { Type = "error", Message = "Cost Summary is required." };
+        if (package.ActivitySummary == null) return new AssistantResponse { Type = "error", Message = "Activity Summary is required." };
+        if (package.EnquiryDocument == null) return new AssistantResponse { Type = "error", Message = "Enquiry Dump is required." };
+        if (!package.Teams.Any(t => t.Photos.Count >= 3)) return new AssistantResponse { Type = "error", Message = "At least one team with 3+ photos is required." };
+
+        // Generate submission number only if not already assigned (draft creation assigns it)
+        if (string.IsNullOrEmpty(package.SubmissionNumber))
+        {
+            var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
+            package.SubmissionNumber = submissionNumber;
+        }
+
+        // Do NOT set state to PendingCH here — let WorkflowOrchestrator handle state transition,
+        // CH assignment, Teams notification, email, and SignalR push.
+        package.CurrentStep = 10;
+        package.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Package {PackageId} submitted from chat by user {UserId}. SubmissionNumber: {SubNum} — triggering orchestrator",
+            submissionId, userId, package.SubmissionNumber);
+
+        // Queue workflow via background processor (proper scoped execution, avoids disposed context issues)
+        await _backgroundQueue.QueueWorkflowAsync(package.Id);
+
+        return new AssistantResponse
+        {
+            Type = "submit_success",
+            Message = "Your submission has been submitted successfully!",
+            SubmissionId = submissionId,
+        };
+    }
+
+    private async Task<AssistantResponse> HandleSaveDraftFromChat(AssistantRequest request, Guid agencyId, CancellationToken ct)
+    {
+        Guid? submissionId = null;
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var p = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (p.TryGetProperty("submissionId", out var sp) && Guid.TryParse(sp.GetString(), out var sid))
+                    submissionId = sid;
+            }
+            catch { }
+        }
+
+        if (submissionId.HasValue)
+        {
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == submissionId.Value && p.AgencyId == agencyId && !p.IsDeleted, ct);
+            if (package != null && package.State == Domain.Enums.PackageState.Draft)
+            {
+                package.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync(ct);
+            }
+        }
+
+        return new AssistantResponse
+        {
+            Type = "draft_saved",
+            Message = "Draft saved. You can find it in your pending claims and continue later.",
+        };
+    }
+
+    private static List<ValidationRuleResult> RunPhotoValidationRules(Domain.Entities.TeamPhotos photo)    {
+        var rules = new List<ValidationRuleResult>();
+
+        // Prefer dedicated columns (populated by DocumentService after extraction)
+        // Fall back to parsing ExtractedMetadataJson if columns are null
+
+        // --- Date ---
+        bool dateVisible = photo.DateVisible ?? photo.PhotoTimestamp.HasValue;
+        string? dateVal = photo.PhotoTimestamp?.ToString("dd-MMM-yyyy HH:mm") ?? photo.PhotoDateOverlay;
+
+        // --- GPS (Lat/Long columns) ---
+        bool gpsVisible = photo.Latitude.HasValue && photo.Longitude.HasValue;
+        string? gpsVal = gpsVisible ? $"{photo.Latitude:F4}, {photo.Longitude:F4}" : null;
+
+        // --- AI detection columns ---
+        bool blueTshirt = photo.BlueTshirtPresent ?? false;
+        bool threeWheeler = photo.ThreeWheelerPresent ?? false;
+
+        // Fallback: parse ExtractedMetadataJson if dedicated columns are still null
+        if (photo.DateVisible == null && photo.BlueTshirtPresent == null && !string.IsNullOrEmpty(photo.ExtractedMetadataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(photo.ExtractedMetadataJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (!dateVisible)
+                {
+                    if (json.TryGetProperty("timestamp", out var ts) && ts.ValueKind != JsonValueKind.Null)
+                    { dateVal = ts.GetString(); dateVisible = !string.IsNullOrEmpty(dateVal); }
+                    if (json.TryGetProperty("photoDateFromOverlay", out var ov) && ov.ValueKind != JsonValueKind.Null)
+                    { dateVal ??= ov.GetString(); dateVisible = dateVisible || !string.IsNullOrEmpty(dateVal); }
+                }
+
+                if (!gpsVisible)
+                {
+                    if (json.TryGetProperty("latitude", out var lat) && json.TryGetProperty("longitude", out var lon)
+                        && lat.ValueKind == JsonValueKind.Number && lon.ValueKind == JsonValueKind.Number)
+                    { gpsVisible = true; gpsVal = $"{lat.GetDouble():F4}, {lon.GetDouble():F4}"; }
+                }
+
+                if (!blueTshirt)
+                {
+                    if (json.TryGetProperty("hasBlueTshirtPerson", out var bt)) blueTshirt = bt.GetBoolean();
+                    else if (json.TryGetProperty("blueTshirtPresent", out var bt2)) blueTshirt = bt2.GetBoolean();
+                }
+
+                if (!threeWheeler)
+                {
+                    if (json.TryGetProperty("has3WVehicle", out var tw)) threeWheeler = tw.GetBoolean();
+                    else if (json.TryGetProperty("threeWheelerPresent", out var tw2)) threeWheeler = tw2.GetBoolean();
+                }
+            }
+            catch { }
+        }
+
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "PHOTO_DATE_VISIBLE",
+            Type = "Required",
+            Passed = dateVisible,
+            IsWarning = false,
+            Label = "Date",
+            ExtractedValue = dateVal,
+            Message = dateVisible ? null : "Date not visible in photo",
+        });
+
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "PHOTO_GPS_VISIBLE",
+            Type = "Required",
+            Passed = gpsVisible,
+            IsWarning = false,
+            Label = "GPS",
+            ExtractedValue = gpsVal,
+            Message = gpsVisible ? null : "GPS coordinates not detected",
+        });
+
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "PHOTO_BLUE_TSHIRT",
+            Type = "Required",
+            Passed = blueTshirt,
+            IsWarning = false,
+            Label = "Blue T-shirt",
+            ExtractedValue = blueTshirt ? "Present ✓" : null,
+            Message = blueTshirt ? null : "Person with blue T-shirt not detected",
+        });
+
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "PHOTO_3W_VEHICLE",
+            Type = "Required",
+            Passed = threeWheeler,
+            IsWarning = false,
+            Label = "3W Vehicle",
+            ExtractedValue = threeWheeler ? "Present ✓" : null,
+            Message = threeWheeler ? null : "3-wheel vehicle not detected",
+        });
+
+        return rules;
+    }
+
+    /// <summary>
+    /// Calculates working days between two dates, excluding Sundays and Indian public holidays.
+    /// </summary>
+    private static int CalculateWorkingDays(DateTime start, DateTime end)
+    {
+        // Indian public holidays (hardcoded for 2025 and 2026)
+        var holidays = new HashSet<DateTime>
+        {
+            // 2025
+            new(2025, 1, 26), // Republic Day
+            new(2025, 3, 14), // Holi
+            new(2025, 4, 14), // Dr. Ambedkar Jayanti / Baisakhi
+            new(2025, 4, 18), // Good Friday
+            new(2025, 5, 12), // Buddha Purnima
+            new(2025, 8, 15), // Independence Day
+            new(2025, 8, 27), // Janmashtami
+            new(2025, 10, 2), // Gandhi Jayanti
+            new(2025, 10, 2), // Dussehra (same day)
+            new(2025, 10, 20), // Diwali
+            new(2025, 11, 5), // Guru Nanak Jayanti
+            new(2025, 12, 25), // Christmas
+            // 2026
+            new(2026, 1, 26), // Republic Day
+            new(2026, 3, 3),  // Holi
+            new(2026, 4, 3),  // Good Friday
+            new(2026, 4, 14), // Dr. Ambedkar Jayanti
+            new(2026, 5, 31), // Buddha Purnima
+            new(2026, 8, 15), // Independence Day
+            new(2026, 8, 16), // Janmashtami
+            new(2026, 10, 2), // Gandhi Jayanti
+            new(2026, 10, 20), // Dussehra
+            new(2026, 11, 8), // Diwali
+            new(2026, 11, 24), // Guru Nanak Jayanti
+            new(2026, 12, 25), // Christmas
+        };
+
+        int count = 0;
+        for (var d = start.Date; d <= end.Date; d = d.AddDays(1))
+        {
+            if (d.DayOfWeek != DayOfWeek.Sunday && !holidays.Contains(d))
+                count++;
+        }
+        return count;
+    }
+
+    private static Dictionary<string, object?> ParseTeamPayload(string? payloadJson)
+    {
+        if (string.IsNullOrEmpty(payloadJson))
+            return new Dictionary<string, object?>();
+        try
+        {
+            var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var elem = JsonSerializer.Deserialize<JsonElement>(payloadJson, opts);
+            var dict = new Dictionary<string, object?>();
+            foreach (var prop in elem.EnumerateObject())
+            {
+                dict[prop.Name] = prop.Value.ValueKind switch
+                {
+                    JsonValueKind.String => (object?)prop.Value.GetString(),
+                    JsonValueKind.Number => prop.Value.TryGetInt32(out var i) ? i : prop.Value.GetDecimal(),
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Null => null,
+                    _ => prop.Value, // keep as JsonElement for objects/arrays
+                };
+            }
+            return dict;
+        }
+        catch
+        {
+            return new Dictionary<string, object?>();
+        }
     }
 
     private async Task<AssistantResponse> HandleCostSummaryUploaded(
@@ -1081,7 +3066,7 @@ public class AssistantController : ControllerBase
 
         string botMessage = failCount == 0 && warnCount == 0
             ? $"Cost Summary analysed. All {rules.Count} checks passed!"
-            : $"Cost Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")}{(warnCount > 0 ? $" {warnCount} warning(s)." : "")} Review below and continue or re-upload.";
+            : $"Cost Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")} Review below and continue or re-upload.";
 
         // Persist to ValidationResults
         try
@@ -1102,6 +3087,8 @@ public class AssistantController : ControllerBase
                 : warnCount > 0 ? string.Join("; ", rules.Where(r => r.IsWarning).Select(r => r.Message ?? r.Label))
                 : null;
 
+            var costValidationDetailsJson = BuildValidationDetailsJson("proactive", rules);
+
             var existing = await _context.ValidationResults
                 .FirstOrDefaultAsync(v => v.DocumentId == docId, ct);
 
@@ -1109,6 +3096,7 @@ public class AssistantController : ControllerBase
             {
                 existing.AllValidationsPassed = failCount == 0;
                 existing.RuleResultsJson = ruleResultsJson;
+                existing.ValidationDetailsJson = costValidationDetailsJson;
                 existing.FailureReason = failureReason;
                 existing.UpdatedAt = DateTime.UtcNow;
             }
@@ -1121,6 +3109,7 @@ public class AssistantController : ControllerBase
                     DocumentId = docId,
                     AllValidationsPassed = failCount == 0,
                     RuleResultsJson = ruleResultsJson,
+                    ValidationDetailsJson = costValidationDetailsJson,
                     FailureReason = failureReason,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
@@ -1169,6 +3158,11 @@ public class AssistantController : ControllerBase
             FailedCount = failCount,
             WarningCount = warnCount,
             SubmissionId = submissionIdFromPayload ?? costSummary.PackageId,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                submissionId = (submissionIdFromPayload ?? costSummary.PackageId).ToString(),
+                costSummaryDocumentId = docId.ToString(),
+            }),
         };
     }
 
@@ -1316,7 +3310,7 @@ public class AssistantController : ControllerBase
             Passed = costsPresent,
             IsWarning = false,
             Label = "Element-wise Cost",
-            ExtractedValue = costsPresent ? elementWiseCosts : null,
+            ExtractedValue = null,
             Message = costsPresent ? null : "Element-wise cost breakdown not detected",
         });
 
@@ -1329,9 +3323,185 @@ public class AssistantController : ControllerBase
             Passed = qtyPresent,
             IsWarning = false,
             Label = "Element-wise Quantity",
-            ExtractedValue = qtyPresent ? elementWiseQuantity : null,
+            ExtractedValue = null,
             Message = qtyPresent ? null : "Element-wise quantity breakdown not detected",
         });
+
+        // CS_FIXED_COST_LIMITS: Check fixed cost elements against state rates
+        {
+            string? stateCode = null;
+            if (!string.IsNullOrWhiteSpace(placeOfSupply))
+            {
+                // Try to resolve state code from place of supply via reference data
+                stateCode = _referenceData.GetStateCodeByName(placeOfSupply) ?? placeOfSupply;
+            }
+
+            List<(string element, decimal amount)> fixedItems = new();
+            List<(string element, decimal amount)> failedFixed = new();
+
+            // Prefer CostBreakdownJson; fall back to ExtractedDataJson.costBreakdowns
+            var breakdownSource = !string.IsNullOrWhiteSpace(costSummary.CostBreakdownJson)
+                ? costSummary.CostBreakdownJson
+                : TryExtractBreakdownFromJson(costSummary.ExtractedDataJson);
+
+            if (!string.IsNullOrWhiteSpace(breakdownSource))
+            {
+                try
+                {
+                    var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var breakdowns = JsonSerializer.Deserialize<JsonElement>(breakdownSource, opts);
+                    if (breakdowns.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var b in breakdowns.EnumerateArray())
+                        {
+                            var isFixed = b.TryGetProperty("isFixedCost", out var fc) && fc.GetBoolean();
+                            if (!isFixed) continue;
+                            var elem = (b.TryGetProperty("elementName", out var en) ? en.GetString() : null)
+                                    ?? (b.TryGetProperty("category", out var cat) ? cat.GetString() : null)
+                                    ?? "";
+                            var amt = b.TryGetProperty("amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0;
+                            if (!string.IsNullOrWhiteSpace(elem))
+                                fixedItems.Add((elem, amt));
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (fixedItems.Count == 0)
+            {
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_FIXED_COST_LIMITS",
+                    Type = "Check",
+                    Passed = true,
+                    IsWarning = false,
+                    Label = "Fixed Cost Limits",
+                    ExtractedValue = null,
+                    Message = "No fixed cost items found to validate",
+                });
+            }
+            else if (string.IsNullOrWhiteSpace(stateCode))
+            {
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_FIXED_COST_LIMITS",
+                    Type = "Check",
+                    Passed = false,
+                    IsWarning = true,
+                    Label = "Fixed Cost Limits",
+                    ExtractedValue = null,
+                    Message = "State not identified — cannot check fixed cost limits",
+                });
+            }
+            else
+            {
+                foreach (var (elem, amt) in fixedItems)
+                {
+                    if (!_referenceData.ValidateFixedCostLimit(elem, amt, stateCode))
+                        failedFixed.Add((elem, amt));
+                }
+                bool fixedOk = failedFixed.Count == 0;
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_FIXED_COST_LIMITS",
+                    Type = "Check",
+                    Passed = fixedOk,
+                    IsWarning = !fixedOk,
+                    Label = "Fixed Cost Limits",
+                    ExtractedValue = $"{fixedItems.Count} fixed cost item(s) checked",
+                    Message = fixedOk
+                        ? $"All {fixedItems.Count} fixed cost item(s) within state limits"
+                        : $"{failedFixed.Count} item(s) exceed state limit: {string.Join(", ", failedFixed.Select(f => f.element))}",
+                });
+            }
+        }
+
+        // CS_VARIABLE_COST_LIMITS: Check variable cost elements against state rates
+        {
+            string? stateCode = null;
+            if (!string.IsNullOrWhiteSpace(placeOfSupply))
+                stateCode = _referenceData.GetStateCodeByName(placeOfSupply) ?? placeOfSupply;
+
+            List<(string element, decimal amount)> varItems = new();
+            List<(string element, decimal amount)> failedVar = new();
+
+            var breakdownSource = !string.IsNullOrWhiteSpace(costSummary.CostBreakdownJson)
+                ? costSummary.CostBreakdownJson
+                : TryExtractBreakdownFromJson(costSummary.ExtractedDataJson);
+
+            if (!string.IsNullOrWhiteSpace(breakdownSource))
+            {
+                try
+                {
+                    var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var breakdowns = JsonSerializer.Deserialize<JsonElement>(breakdownSource, opts);
+                    if (breakdowns.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var b in breakdowns.EnumerateArray())
+                        {
+                            var isVar = b.TryGetProperty("isVariableCost", out var vc) && vc.GetBoolean();
+                            if (!isVar) continue;
+                            var elem = (b.TryGetProperty("elementName", out var en) ? en.GetString() : null)
+                                    ?? (b.TryGetProperty("category", out var cat) ? cat.GetString() : null)
+                                    ?? "";
+                            var amt = b.TryGetProperty("amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0;
+                            if (!string.IsNullOrWhiteSpace(elem))
+                                varItems.Add((elem, amt));
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (varItems.Count == 0)
+            {
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_VARIABLE_COST_LIMITS",
+                    Type = "Check",
+                    Passed = true,
+                    IsWarning = false,
+                    Label = "Variable Cost Limits",
+                    ExtractedValue = null,
+                    Message = "No variable cost items found to validate",
+                });
+            }
+            else if (string.IsNullOrWhiteSpace(stateCode))
+            {
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_VARIABLE_COST_LIMITS",
+                    Type = "Check",
+                    Passed = false,
+                    IsWarning = true,
+                    Label = "Variable Cost Limits",
+                    ExtractedValue = null,
+                    Message = "State not identified — cannot check variable cost limits",
+                });
+            }
+            else
+            {
+                foreach (var (elem, amt) in varItems)
+                {
+                    if (!_referenceData.ValidateVariableCostLimit(elem, amt, stateCode))
+                        failedVar.Add((elem, amt));
+                }
+                bool varOk = failedVar.Count == 0;
+                rules.Add(new ValidationRuleResult
+                {
+                    RuleCode = "CS_VARIABLE_COST_LIMITS",
+                    Type = "Check",
+                    Passed = varOk,
+                    IsWarning = !varOk,
+                    Label = "Variable Cost Limits",
+                    ExtractedValue = $"{varItems.Count} variable cost item(s) checked",
+                    Message = varOk
+                        ? $"All {varItems.Count} variable cost item(s) within state limits"
+                        : $"{failedVar.Count} item(s) exceed state limit: {string.Join(", ", failedVar.Select(f => f.element))}",
+                });
+            }
+        }
 
         // CS_TOTAL_VS_INVOICE: Total Cost <= Invoice Amount
         if (totalCost == null || invoiceAmount == null)
@@ -1387,12 +3557,33 @@ public class AssistantController : ControllerBase
     private AssistantResponse HandleContinueAfterCostSummary(AssistantRequest request)
     {
         var submissionId = ExtractSubmissionId(request);
+
+        // Preserve costSummaryDocumentId through the payload chain
+        string? costSummaryDocumentId = null;
+        if (!string.IsNullOrEmpty(request.PayloadJson))
+        {
+            try
+            {
+                var pl = JsonSerializer.Deserialize<JsonElement>(request.PayloadJson);
+                if (pl.TryGetProperty("costSummaryDocumentId", out var csdProp))
+                    costSummaryDocumentId = csdProp.GetString();
+            }
+            catch { }
+        }
+
+        var payloadJson = JsonSerializer.Serialize(new
+        {
+            submissionId = submissionId?.ToString(),
+            costSummaryDocumentId,
+        });
+
         return new AssistantResponse
         {
             Type = "activity_summary_upload",
             Message = "Cost Summary accepted. Now please upload the Activity Summary document.",
             AllowedFormats = new List<string> { "PDF", "JPG", "PNG", "XLS", "XLSX" },
             SubmissionId = submissionId,
+            PayloadJson = payloadJson,
             Cards = new List<WorkflowCard>
             {
                 new() { Id = "upload_activity", Title = "Upload Activity Summary", Subtitle = "Select a file from your device", Icon = "upload_file", Action = "upload_activity_summary" },
@@ -1479,6 +3670,92 @@ public class AssistantController : ControllerBase
     };
 
     /// <summary>
+    /// Upload team photos. Returns list of photo IDs for use with photos_uploaded action.
+    /// </summary>
+    [HttpPost("/api/assistant/upload-photos")]
+    [Authorize(Roles = "Agency")]
+    [RequestSizeLimit(104857600)] // 100 MB total
+    public async Task<IActionResult> UploadTeamPhotos(
+        [FromForm] List<IFormFile> files,
+        [FromForm] string? submissionId,
+        [FromForm] int teamNumber = 1,
+        CancellationToken ct = default)
+    {
+        var agencyId = await GetAgencyIdAsync(ct);
+        if (agencyId == null) return Forbid();
+
+        if (files == null || files.Count == 0)
+            return BadRequest(new { error = "No files provided." });
+
+        if (files.Count > 10)
+            return BadRequest(new { error = "Maximum 10 photos per upload." });
+
+        Guid? packageId = Guid.TryParse(submissionId, out var pid) ? pid : null;
+
+        // Resolve user ID
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+        if (!Guid.TryParse(userIdClaim, out var userId))
+            return Unauthorized();
+
+        // Find team to get teamId and existing photo count
+        Guid? teamId = null;
+        if (packageId.HasValue)
+        {
+            var team = await _context.Teams
+                .Where(t => t.PackageId == packageId.Value && t.TeamNumber == teamNumber && !t.IsDeleted)
+                .Select(t => new { t.Id })
+                .FirstOrDefaultAsync(ct);
+            teamId = team?.Id;
+        }
+
+        int existingCount = teamId.HasValue
+            ? await _context.TeamPhotos.CountAsync(p => p.TeamId == teamId.Value && !p.IsDeleted, ct)
+            : 0;
+
+        // Allow +1 overage for single-photo replace operations (the old photo gets soft-deleted after)
+        var effectiveLimit = files.Count == 1 ? 11 : 10;
+        if (existingCount + files.Count > effectiveLimit)
+            return BadRequest(new { error = $"Maximum 10 photos per team. You already have {existingCount}." });
+
+        // Route each photo through DocumentService so blob upload + EXIF/AI extraction runs
+        var documentService = HttpContext.RequestServices.GetRequiredService<IDocumentService>();
+        var photoIds = new List<string>();
+        int displayOrder = existingCount + 1;
+
+        foreach (var file in files)
+        {
+            var allowed = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (!allowed.Contains(ext)) continue;
+
+            try
+            {
+                // Upload via DocumentService — saves to TeamPhotos, uploads to blob, triggers background EXIF+AI extraction
+                var uploadResult = await documentService.UploadDocumentAsync(
+                    file, DocumentType.TeamPhoto, packageId, userId);
+
+                // Link to the correct team and set display order
+                var photo = await _context.TeamPhotos.FindAsync(uploadResult.DocumentId);
+                if (photo != null)
+                {
+                    photo.TeamId = teamId ?? Guid.Empty;
+                    photo.DisplayOrder = displayOrder++;
+                    photo.UpdatedAt = DateTime.UtcNow;
+                }
+
+                photoIds.Add(uploadResult.DocumentId.ToString());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to upload photo {FileName} for team {TeamNumber}", file.FileName, teamNumber);
+            }
+        }
+
+        await _context.SaveChangesAsync(ct);
+        return Ok(new { photoIds });
+    }
+
+    /// <summary>
     /// Upload a PO document. Wraps the existing document upload and returns assistant-style response.
     /// </summary>
     [HttpPost("/api/upload/po")]
@@ -1546,23 +3823,90 @@ public class AssistantController : ControllerBase
     public async Task<IActionResult> GetDocumentExtractionStatus(
         Guid id, CancellationToken ct = default)
     {
+        // Check Invoices first
         var invoice = await _context.Invoices
             .AsNoTracking()
             .Where(i => i.Id == id && !i.IsDeleted)
             .Select(i => new { i.Id, i.ExtractedDataJson, i.ExtractionConfidence, i.InvoiceNumber })
             .FirstOrDefaultAsync(ct);
 
-        if (invoice == null)
-            return NotFound(new { status = "not_found" });
-
-        var isExtracted = !string.IsNullOrEmpty(invoice.ExtractedDataJson) || !string.IsNullOrEmpty(invoice.InvoiceNumber);
-
-        return Ok(new
+        if (invoice != null)
         {
-            documentId = invoice.Id,
-            status = isExtracted ? "extracted" : "processing",
-            extractionConfidence = invoice.ExtractionConfidence,
-        });
+            var isExtracted = !string.IsNullOrEmpty(invoice.ExtractedDataJson) || !string.IsNullOrEmpty(invoice.InvoiceNumber);
+            return Ok(new { documentId = invoice.Id, status = isExtracted ? "extracted" : "processing", extractionConfidence = invoice.ExtractionConfidence });
+        }
+
+        // Check TeamPhotos
+        var photo = await _context.TeamPhotos
+            .AsNoTracking()
+            .Where(p => p.Id == id && !p.IsDeleted)
+            .Select(p => new { p.Id, p.ExtractedMetadataJson, p.ExtractionConfidence })
+            .FirstOrDefaultAsync(ct);
+
+        if (photo != null)
+        {
+            var isExtracted = !string.IsNullOrEmpty(photo.ExtractedMetadataJson);
+            return Ok(new { documentId = photo.Id, status = isExtracted ? "extracted" : "processing", extractionConfidence = photo.ExtractionConfidence });
+        }
+
+        // Check CostSummaries
+        var cs = await _context.CostSummaries
+            .AsNoTracking()
+            .Where(c => c.Id == id && !c.IsDeleted)
+            .Select(c => new { c.Id, c.ExtractedDataJson, c.ExtractionConfidence })
+            .FirstOrDefaultAsync(ct);
+
+        if (cs != null)
+        {
+            var isExtracted = !string.IsNullOrEmpty(cs.ExtractedDataJson);
+            return Ok(new { documentId = cs.Id, status = isExtracted ? "extracted" : "processing", extractionConfidence = cs.ExtractionConfidence });
+        }
+
+        // Check ActivitySummaries
+        var act = await _context.ActivitySummaries
+            .AsNoTracking()
+            .Where(a => a.Id == id && !a.IsDeleted)
+            .Select(a => new { a.Id, a.ExtractedDataJson, a.ExtractionConfidence })
+            .FirstOrDefaultAsync(ct);
+
+        if (act != null)
+        {
+            var isExtracted = !string.IsNullOrEmpty(act.ExtractedDataJson);
+            return Ok(new { documentId = act.Id, status = isExtracted ? "extracted" : "processing", extractionConfidence = act.ExtractionConfidence });
+        }
+
+        // Check EnquiryDocuments
+        var enq = await _context.EnquiryDocuments
+            .AsNoTracking()
+            .Where(e => e.Id == id && !e.IsDeleted)
+            .Select(e => new { e.Id, e.ExtractedDataJson })
+            .FirstOrDefaultAsync(ct);
+
+        if (enq != null)
+        {
+            var isExtracted = !string.IsNullOrEmpty(enq.ExtractedDataJson);
+            return Ok(new { documentId = enq.Id, status = isExtracted ? "extracted" : "processing" });
+        }
+
+        return NotFound(new { status = "not_found" });
+    }
+
+    /// <summary>
+    /// Extracts the costBreakdowns array JSON string from ExtractedDataJson.
+    /// Returns null if not found or not an array.
+    /// </summary>
+    private static string? TryExtractBreakdownFromJson(string? extractedDataJson)
+    {
+        if (string.IsNullOrWhiteSpace(extractedDataJson)) return null;
+        try
+        {
+            var json = JsonSerializer.Deserialize<JsonElement>(extractedDataJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (json.TryGetProperty("costBreakdowns", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                return arr.GetRawText();
+        }
+        catch { }
+        return null;
     }
 
     private async Task<Guid?> GetAgencyIdAsync(CancellationToken ct)
@@ -1578,6 +3922,46 @@ public class AssistantController : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         return user?.AgencyId;
+    }
+
+    private Guid? GetUserIdSync()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                          ?? User.FindFirst("sub")?.Value;
+        return Guid.TryParse(userIdClaim, out var userId) ? userId : null;
+    }
+
+    /// <summary>
+    /// Builds a unified ValidationDetailsJson combining source info and rule results.
+    /// Used by both proactive (assistant) and reactive (ValidationAgent) flows.
+    /// </summary>
+    private static string BuildValidationDetailsJson(string source, List<ValidationRuleResult> rules)
+    {
+        var details = new
+        {
+            source,
+            validatedAt = DateTime.UtcNow.ToString("o"),
+            totalRules = rules.Count,
+            passed = rules.Count(r => r.Passed && !r.IsWarning),
+            failed = rules.Count(r => !r.Passed && !r.IsWarning),
+            warnings = rules.Count(r => r.IsWarning),
+            rules = rules.Select(r => new
+            {
+                ruleCode = r.RuleCode,
+                type = r.Type,
+                passed = r.Passed,
+                isWarning = r.IsWarning,
+                label = r.Label,
+                extractedValue = r.ExtractedValue,
+                message = r.Message,
+            })
+        };
+
+        return JsonSerializer.Serialize(details, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        });
     }
 }
 
@@ -1665,6 +4049,90 @@ public class AssistantResponse
 
     [JsonPropertyName("warningCount")]
     public int? WarningCount { get; init; }
+
+    [JsonPropertyName("dealers")]
+    public List<DealerItem>? Dealers { get; init; }
+
+    [JsonPropertyName("teamContext")]
+    public TeamContextDto? TeamContext { get; init; }
+
+    [JsonPropertyName("payloadJson")]
+    public string? PayloadJson { get; init; }
+
+    [JsonPropertyName("photoResults")]
+    public List<PhotoValidationResult>? PhotoResults { get; init; }
+
+    [JsonPropertyName("teamSummaries")]
+    public List<TeamSummaryItem>? TeamSummaries { get; init; }
+
+    [JsonPropertyName("totalRecords")]
+    public int? TotalRecords { get; init; }
+
+    [JsonPropertyName("missingPhoneCount")]
+    public int? MissingPhoneCount { get; init; }
+
+    [JsonPropertyName("reviewSections")]
+    public List<FinalReviewSection>? ReviewSections { get; init; }
+
+    [JsonPropertyName("pendingClaims")]
+    public List<PendingClaimItem>? PendingClaims { get; init; }
+
+    [JsonPropertyName("rejectionItems")]
+    public List<RejectionItem>? RejectionItems { get; init; }
+
+    [JsonPropertyName("fileName")]
+    public string? FileName { get; init; }
+}
+
+public class PhotoValidationResult
+{
+    [JsonPropertyName("photoId")]
+    public required string PhotoId { get; init; }
+
+    [JsonPropertyName("displayOrder")]
+    public int DisplayOrder { get; init; }
+
+    [JsonPropertyName("fileName")]
+    public string FileName { get; init; } = "";
+
+    [JsonPropertyName("rules")]
+    public List<ValidationRuleResult> Rules { get; init; } = new();
+
+    [JsonPropertyName("allPassed")]
+    public bool AllPassed { get; init; }
+}
+
+public class TeamSummaryItem
+{
+    [JsonPropertyName("teamNumber")]
+    public int TeamNumber { get; init; }
+
+    [JsonPropertyName("teamName")]
+    public required string TeamName { get; init; }
+
+    [JsonPropertyName("dealerName")]
+    public required string DealerName { get; init; }
+
+    [JsonPropertyName("city")]
+    public required string City { get; init; }
+
+    [JsonPropertyName("state")]
+    public required string State { get; init; }
+
+    [JsonPropertyName("startDate")]
+    public required string StartDate { get; init; }
+
+    [JsonPropertyName("endDate")]
+    public required string EndDate { get; init; }
+
+    [JsonPropertyName("workingDays")]
+    public int WorkingDays { get; init; }
+
+    [JsonPropertyName("photoCount")]
+    public int PhotoCount { get; init; }
+
+    [JsonPropertyName("photosPassed")]
+    public int PhotosPassed { get; init; }
 }
 
 public class WorkflowCard
@@ -1707,4 +4175,103 @@ public class POItem
 
     [JsonPropertyName("poStatus")]
     public required string POStatus { get; init; }
+}
+
+public class DealerItem
+{
+    [JsonPropertyName("dealerCode")]
+    public required string DealerCode { get; init; }
+
+    [JsonPropertyName("dealerName")]
+    public required string DealerName { get; init; }
+
+    [JsonPropertyName("city")]
+    public required string City { get; init; }
+
+    [JsonPropertyName("state")]
+    public required string State { get; init; }
+}
+
+public class TeamContextDto
+{
+    [JsonPropertyName("currentTeam")]
+    public int CurrentTeam { get; init; }
+
+    [JsonPropertyName("totalTeams")]
+    public int TotalTeams { get; init; }
+
+    [JsonPropertyName("teamName")]
+    public string? TeamName { get; init; }
+}
+
+public class FinalReviewSection
+{
+    [JsonPropertyName("title")]
+    public required string Title { get; init; }
+
+    [JsonPropertyName("icon")]
+    public required string Icon { get; init; }
+
+    [JsonPropertyName("passed")]
+    public bool Passed { get; init; }
+
+    [JsonPropertyName("fields")]
+    public List<FinalReviewField> Fields { get; init; } = new();
+}
+
+public class FinalReviewField
+{
+    [JsonPropertyName("label")]
+    public required string Label { get; init; }
+
+    [JsonPropertyName("value")]
+    public required string Value { get; init; }
+}
+
+public class PendingClaimItem
+{
+    [JsonPropertyName("submissionId")]
+    public required string SubmissionId { get; init; }
+
+    [JsonPropertyName("fapId")]
+    public required string FapId { get; init; }
+
+    [JsonPropertyName("poNumber")]
+    public required string PoNumber { get; init; }
+
+    [JsonPropertyName("invoiceAmount")]
+    public decimal InvoiceAmount { get; init; }
+
+    [JsonPropertyName("status")]
+    public required string Status { get; init; }
+
+    [JsonPropertyName("statusLabel")]
+    public required string StatusLabel { get; init; }
+
+    [JsonPropertyName("statusColor")]
+    public required string StatusColor { get; init; }
+
+    [JsonPropertyName("submittedDate")]
+    public required string SubmittedDate { get; init; }
+
+    [JsonPropertyName("activityState")]
+    public required string ActivityState { get; init; }
+}
+
+public class RejectionItem
+{
+    [JsonPropertyName("fapId")]
+    public required string FapId { get; init; }
+
+    [JsonPropertyName("rejectedBy")]
+    public required string RejectedBy { get; init; }
+
+    [JsonPropertyName("rejectedAt")]
+    public required string RejectedAt { get; init; }
+
+    [JsonPropertyName("reason")]
+    public required string Reason { get; init; }
+
+    [JsonPropertyName("rejectedByRole")]
+    public required string RejectedByRole { get; init; }
 }

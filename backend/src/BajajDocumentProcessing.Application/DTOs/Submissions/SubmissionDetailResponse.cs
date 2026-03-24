@@ -86,6 +86,42 @@ public class SubmissionDetailResponse
     public ValidationResultDto? ValidationResult { get; init; }
     
     /// <summary>
+    /// PO validation result
+    /// </summary>
+    [JsonPropertyName("poValidation")]
+    public ValidationResultDto? POValidation { get; init; }
+    
+    /// <summary>
+    /// Invoice validation results (one per invoice)
+    /// </summary>
+    [JsonPropertyName("invoiceValidations")]
+    public List<DocumentValidationDto>? InvoiceValidations { get; init; }
+    
+    /// <summary>
+    /// Cost Summary validation result
+    /// </summary>
+    [JsonPropertyName("costSummaryValidation")]
+    public ValidationResultDto? CostSummaryValidation { get; init; }
+    
+    /// <summary>
+    /// Activity Summary validation result
+    /// </summary>
+    [JsonPropertyName("activityValidation")]
+    public ValidationResultDto? ActivityValidation { get; init; }
+    
+    /// <summary>
+    /// Enquiry Document validation result
+    /// </summary>
+    [JsonPropertyName("enquiryValidation")]
+    public ValidationResultDto? EnquiryValidation { get; init; }
+    
+    /// <summary>
+    /// Photo validation results (one per photo)
+    /// </summary>
+    [JsonPropertyName("photoValidations")]
+    public List<DocumentValidationDto>? PhotoValidations { get; init; }
+    
+    /// <summary>
     /// Confidence scores
     /// </summary>
     [JsonPropertyName("confidenceScore")]
@@ -206,6 +242,12 @@ public class SubmissionDocumentDto
 public class ValidationResultDto
 {
     /// <summary>
+    /// The document ID this validation belongs to
+    /// </summary>
+    [JsonPropertyName("documentId")]
+    public Guid? DocumentId { get; init; }
+
+    /// <summary>
     /// Whether all validations passed
     /// </summary>
     [JsonPropertyName("allValidationsPassed")]
@@ -216,6 +258,54 @@ public class ValidationResultDto
     /// </summary>
     [JsonPropertyName("failureReason")]
     public string? FailureReason { get; init; }
+    
+    /// <summary>
+    /// SAP verification passed
+    /// </summary>
+    [JsonPropertyName("sapVerificationPassed")]
+    public bool SapVerificationPassed { get; init; }
+    
+    /// <summary>
+    /// Amount consistency passed
+    /// </summary>
+    [JsonPropertyName("amountConsistencyPassed")]
+    public bool AmountConsistencyPassed { get; init; }
+    
+    /// <summary>
+    /// Line item matching passed
+    /// </summary>
+    [JsonPropertyName("lineItemMatchingPassed")]
+    public bool LineItemMatchingPassed { get; init; }
+    
+    /// <summary>
+    /// Completeness check passed
+    /// </summary>
+    [JsonPropertyName("completenessCheckPassed")]
+    public bool CompletenessCheckPassed { get; init; }
+    
+    /// <summary>
+    /// Date validation passed
+    /// </summary>
+    [JsonPropertyName("dateValidationPassed")]
+    public bool DateValidationPassed { get; init; }
+    
+    /// <summary>
+    /// Vendor matching passed
+    /// </summary>
+    [JsonPropertyName("vendorMatchingPassed")]
+    public bool VendorMatchingPassed { get; init; }
+    
+    /// <summary>
+    /// Rule results JSON (proactive validation rules)
+    /// </summary>
+    [JsonPropertyName("ruleResultsJson")]
+    public string? RuleResultsJson { get; init; }
+    
+    /// <summary>
+    /// Detailed validation results with proactive, reactive, and checks
+    /// </summary>
+    [JsonPropertyName("validationDetailsJson")]
+    public string? ValidationDetailsJson { get; init; }
 }
 
 /// <summary>
@@ -324,34 +414,31 @@ public class CampaignDto
     
     [JsonPropertyName("photos")]
     public List<CampaignPhotoDto> Photos { get; init; } = new();
+
+    [JsonPropertyName("invoices")]
+    public List<CampaignInvoiceDto> Invoices { get; init; } = new();
 }
 
 /// <summary>
-/// Invoice within a submission (linked to PO)
+/// Invoice data within a campaign response
 /// </summary>
 public class CampaignInvoiceDto
 {
     [JsonPropertyName("id")]
     public Guid Id { get; init; }
-    
+
     [JsonPropertyName("invoiceNumber")]
     public string? InvoiceNumber { get; init; }
-    
-    [JsonPropertyName("invoiceDate")]
-    public DateTime? InvoiceDate { get; init; }
-    
+
     [JsonPropertyName("vendorName")]
     public string? VendorName { get; init; }
-    
-    [JsonPropertyName("gstNumber")]
-    public string? GSTNumber { get; init; }
-    
+
     [JsonPropertyName("totalAmount")]
     public decimal? TotalAmount { get; init; }
-    
+
     [JsonPropertyName("fileName")]
     public string FileName { get; init; } = "";
-    
+
     [JsonPropertyName("blobUrl")]
     public string BlobUrl { get; init; } = "";
 }

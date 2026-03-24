@@ -9,5 +9,10 @@ public enum NotificationType
     FlaggedForReview = 2,
     Approved = 3,
     Rejected = 4,
-    ReuploadRequested = 5
+    ReuploadRequested = 5,
+
+    /// <summary>
+    /// ASM notification when a submission reaches PendingASM and is ready for review.
+    /// </summary>
+    ReadyForReview = 6
 }

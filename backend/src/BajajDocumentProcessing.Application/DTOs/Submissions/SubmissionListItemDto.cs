@@ -84,4 +84,10 @@ public class SubmissionListItemDto
     /// </summary>
     [JsonPropertyName("versionNumber")]
     public int VersionNumber { get; init; } = 1;
+
+    /// <summary>
+    /// Human-readable submission number (e.g. FAP-20260318-0001)
+    /// </summary>
+    [JsonPropertyName("submissionNumber")]
+    public string? SubmissionNumber { get; init; }
 }

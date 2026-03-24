@@ -43,3 +43,6 @@ logs/
 
 # Local storage
 C:/BajajDocuments/
+
+# Test documents (large binary files, not for version control)
+frontend/assets/test_docs/

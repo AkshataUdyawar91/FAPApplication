@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/network/dio_client.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 import '../providers/conversation_providers.dart';
 import '../providers/conversation_notifier.dart';
 import '../providers/signalr_notifier.dart';
@@ -40,6 +41,16 @@ class _ConversationalSubmissionPageState
     if (_initialized) return;
     _initialized = true;
 
+    // Restore token from secure storage into authTokenProvider if not already set
+    final currentToken = ref.read(authTokenProvider);
+    if (currentToken == null || currentToken.isEmpty) {
+      final localDataSource = ref.read(authLocalDataSourceProvider);
+      final storedToken = await localDataSource.getAccessToken();
+      if (storedToken != null && storedToken.isNotEmpty) {
+        ref.read(authTokenProvider.notifier).state = storedToken;
+      }
+    }
+
     // Start the conversation
     await ref.read(conversationNotifierProvider.notifier).startConversation();
 
@@ -75,6 +86,18 @@ class _ConversationalSubmissionPageState
 
     // Determine document type from current step
     final fileUploadType = _fileUploadTypeForStep(chatState.currentStep);
+
+    // Wire the upload-success callback before starting the upload so it's
+    // set when the notifier fires it (immediately after documentId is returned).
+    ref.read(fileUploadNotifierProvider.notifier).onUploadSuccess = (documentId) {
+      if (!mounted) return;
+      ref.read(conversationNotifierProvider.notifier).sendAction(
+            'upload_confirmed',
+            '{"documentId":"$documentId"}',
+          );
+      // Reset upload zone so it's ready for the next document
+      ref.read(fileUploadNotifierProvider.notifier).reset();
+    };
 
     await ref.read(fileUploadNotifierProvider.notifier).uploadFile(
           fileBytes: file.bytes,

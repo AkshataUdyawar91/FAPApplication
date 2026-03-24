@@ -4,7 +4,7 @@ import '../models/user_model.dart';
 /// Remote data source for authentication
 abstract class AuthRemoteDataSource {
   Future<AuthResponse> login(String email, String password);
-  Future<void> refreshToken(String refreshToken);
+  Future<void> refreshToken(String token);
 }
 
 class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
@@ -29,16 +29,17 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
         throw Exception('Login failed');
       }
     } on DioException catch (e) {
-      throw Exception('Network error: ${e.message}');
+      final message = e.response?.data?['message'] ?? e.message;
+      throw Exception('Login failed: $message');
     }
   }
 
   @override
-  Future<void> refreshToken(String refreshToken) async {
+  Future<void> refreshToken(String token) async {
     try {
       final response = await dio.post(
         '/auth/refresh',
-        data: {'refreshToken': refreshToken},
+        data: {'token': token},
       );
 
       if (response.statusCode != 200) {
@@ -50,23 +51,29 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
   }
 }
 
-/// Authentication response model
+/// Authentication response matching backend LoginResponse DTO.
+/// Backend returns: { token, userId, email, role, expiresAt }
 class AuthResponse {
   final UserModel user;
-  final String accessToken;
-  final String refreshToken;
+  final String token;
 
   AuthResponse({
     required this.user,
-    required this.accessToken,
-    required this.refreshToken,
+    required this.token,
   });
 
   factory AuthResponse.fromJson(Map<String, dynamic> json) {
+    // Backend returns flat: { token, userId, email, fullName, role, expiresAt }
+    final user = UserModel(
+      id: json['userId'] as String,
+      email: json['email'] as String,
+      name: json['fullName'] as String,
+      role: json['role'] as String,
+    );
+
     return AuthResponse(
-      user: UserModel.fromJson(json['user']),
-      accessToken: json['accessToken'],
-      refreshToken: json['refreshToken'],
+      user: user,
+      token: json['token'] as String,
     );
   }
 }

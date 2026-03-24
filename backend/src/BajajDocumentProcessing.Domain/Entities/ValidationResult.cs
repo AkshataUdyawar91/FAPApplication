@@ -56,10 +56,10 @@ public class ValidationResult : BaseEntity
     public bool AllValidationsPassed { get; set; }
     
     /// <summary>
-    /// Gets or sets the JSON representation of detailed validation results for each check
+    /// Gets or sets the JSON containing detailed validation results (field presence, cross-document checks, etc.)
     /// </summary>
     public string? ValidationDetailsJson { get; set; }
-    
+
     /// <summary>
     /// Gets or sets the reason for validation failure, if any checks failed
     /// </summary>

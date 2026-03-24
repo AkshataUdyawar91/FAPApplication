@@ -22,13 +22,13 @@ public class ValidationResultConfiguration : IEntityTypeConfiguration<Validation
         builder.Property(v => v.DocumentId)
             .IsRequired();
 
-        builder.Property(v => v.ValidationDetailsJson)
-            .HasColumnType("nvarchar(max)");
-
         builder.Property(v => v.FailureReason)
             .HasMaxLength(2000);
 
         builder.Property(v => v.RuleResultsJson)
+            .HasColumnType("nvarchar(max)");
+
+        builder.Property(v => v.ValidationDetailsJson)
             .HasColumnType("nvarchar(max)");
 
         builder.HasIndex(v => new { v.DocumentType, v.DocumentId })

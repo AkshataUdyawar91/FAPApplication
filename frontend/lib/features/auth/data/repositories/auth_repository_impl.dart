@@ -21,11 +21,11 @@ class AuthRepositoryImpl implements AuthRepository {
     try {
       final response = await remoteDataSource.login(email, password);
       
-      // Cache user and tokens
+      // Cache user and token
       await localDataSource.cacheUser(response.user);
       await localDataSource.saveTokens(
-        response.accessToken,
-        response.refreshToken,
+        response.token,
+        '', // Backend uses token refresh endpoint, no separate refresh token
       );
 
       return Right(response.user);

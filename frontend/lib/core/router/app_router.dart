@@ -1,10 +1,35 @@
-import 'package:flutter/material.dart';
+import 'package:bajaj_document_processing/features/submission/presentation/pages/new_agency_upload_page.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter/material.dart';
 import '../../features/auth/presentation/pages/login_page.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
 import '../../features/conversational_submission/presentation/pages/conversational_submission_page.dart';
 import '../../features/conversational_submission/presentation/pages/my_submissions_page.dart';
+import '../../features/submission/presentation/pages/agency_submission_detail_page.dart';
+import '../../features/submission/presentation/pages/agency_dashboard_page.dart';
+import '../../features/submission/presentation/pages/agency_upload_page.dart';
+import '../../features/approval/presentation/pages/asm_review_page.dart';
+import '../../features/approval/presentation/pages/asm_review_detail_page.dart';
+import '../../features/approval/presentation/pages/hq_review_page.dart';
+import '../../features/approval/presentation/pages/hq_review_detail_page.dart';
+import '../../features/admin/presentation/pages/admin_dashboard_page.dart';
+import 'dashboard_wrapper.dart';
+import '../../features/assistant/presentation/providers/assistant_providers.dart';
+import '../network/dio_client.dart';
+
+/// Helper function to handle logout with GoRouter
+/// Call this instead of Navigator.pushReplacementNamed(context, '/')
+void handleLogout(BuildContext context, WidgetRef ref) {
+  // Clear assistant chat history on logout
+  ref.read(assistantNotifierProvider.notifier).reset();
+  // Clear auth token
+  ref.read(authTokenProvider.notifier).state = null;
+  // Logout from auth notifier
+  ref.read(authNotifierProvider.notifier).logout();
+  // Navigate to login page
+  context.go('/login');
+}
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authNotifierProvider);
@@ -20,7 +45,28 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       }
 
       if (isAuthenticated && isLoggingIn) {
-        return '/home';
+        // Redirect to role-specific dashboard
+        final userRole = authState.user?.role.toLowerCase();
+        print('[Router] User authenticated with role: $userRole');
+
+        switch (userRole) {
+          case 'agency':
+            print('[Router] Redirecting to Agency dashboard: /home');
+            return '/home';
+          case 'asm':
+            print('[Router] Redirecting to ASM dashboard: /asm/dashboard');
+            return '/asm/dashboard';
+          case 'ra':
+            print('[Router] Redirecting to RA/HQ dashboard: /hq/dashboard');
+            return '/hq/dashboard';
+          case 'admin':
+            print('[Router] Redirecting to Admin dashboard: /admin/dashboard');
+            return '/admin/dashboard';
+          default:
+            print(
+                '[Router] Unknown role, defaulting to Agency dashboard: /home');
+            return '/home';
+        }
       }
 
       return null;
@@ -34,110 +80,130 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/home',
         name: 'home',
-        builder: (context, state) => const HomePage(),
+        builder: (context, state) {
+          return DashboardWrapper(
+            builder: (token, userName, onLogout) => AgencyDashboardPage(
+              token: token,
+              userName: userName,
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/asm/dashboard',
+        name: 'asm-dashboard',
+        builder: (context, state) {
+          return DashboardWrapper(
+            builder: (token, userName, onLogout) => ASMReviewPage(
+              token: token,
+              userName: userName,
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/hq/dashboard',
+        name: 'hq-dashboard',
+        builder: (context, state) {
+          return DashboardWrapper(
+            builder: (token, userName, onLogout) => HQReviewPage(
+              token: token,
+              userName: userName,
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/admin/dashboard',
+        name: 'admin-dashboard',
+        builder: (context, state) {
+          return DashboardWrapper(
+            builder: (token, userName, onLogout) => AdminDashboardPage(
+              token: token,
+              userName: userName,
+              onLogout: onLogout,
+            ),
+          );
+        },
       ),
       GoRoute(
         path: '/conversational-submission',
         name: 'conversational-submission',
-        builder: (context, state) =>
-            const ConversationalSubmissionPage(),
+        builder: (context, state) => const ConversationalSubmissionPage(),
       ),
       GoRoute(
         path: '/my-submissions',
         name: 'my-submissions',
         builder: (context, state) => const MySubmissionsPage(),
       ),
+      GoRoute(
+        path: '/agency/submission-detail',
+        name: 'submission-detail',
+        builder: (context, state) {
+          final args = state.extra as Map<String, dynamic>?;
+          final submissionId = args?['submissionId']?.toString() ?? '';
+          final token = args?['token']?.toString() ?? '';
+          final userName = args?['userName']?.toString() ?? '';
+          final poNumber = args?['poNumber']?.toString() ?? '';
+
+          return AgencySubmissionDetailPage(
+            submissionId: submissionId,
+            token: token,
+            userName: userName,
+            poNumber: poNumber,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/agency/upload',
+        name: 'agency-upload',
+        builder: (context, state) {
+          final args = state.extra as Map<String, dynamic>?;
+          final token = args?['token']?.toString() ?? '';
+          final userName = args?['userName']?.toString() ?? '';
+          final submissionId = args?['submissionId']?.toString();
+
+          return NewAgencyUploadPage(
+            token: token,
+            userName: userName,
+            submissionId: submissionId,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/asm/review-detail',
+        name: 'asm-review-detail',
+        builder: (context, state) {
+          final args = state.extra as Map<String, dynamic>?;
+          final submissionId = args?['submissionId']?.toString() ?? '';
+          final token = args?['token']?.toString() ?? '';
+          final userName = args?['userName']?.toString() ?? '';
+          final poNumber = args?['poNumber']?.toString();
+
+          return ASMReviewDetailPage(
+            submissionId: submissionId,
+            token: token,
+            userName: userName,
+            poNumber: poNumber,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/hq/review-detail',
+        name: 'hq-review-detail',
+        builder: (context, state) {
+          final args = state.extra as Map<String, dynamic>?;
+          final submissionId = args?['submissionId']?.toString() ?? '';
+          final token = args?['token']?.toString() ?? '';
+          final userName = args?['userName']?.toString() ?? '';
+
+          return HQReviewDetailPage(
+            submissionId: submissionId,
+            token: token,
+            userName: userName,
+          );
+        },
+      ),
     ],
   );
 });
-
-// Home page with navigation to conversational submission
-class HomePage extends StatelessWidget {
-  const HomePage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('ClaimsIQ'),
-        backgroundColor: const Color(0xFF003087),
-        foregroundColor: Colors.white,
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(
-                Icons.description_outlined,
-                size: 72,
-                color: Color(0xFF003087),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Welcome to ClaimsIQ',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF003087),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Submit and manage your FAP claims',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: 280,
-                child: ElevatedButton.icon(
-                  onPressed: () => context.go('/conversational-submission'),
-                  icon: const Icon(Icons.add_comment),
-                  label: const Text('New Submission'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF003087),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    textStyle: const TextStyle(fontSize: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: 280,
-                child: OutlinedButton.icon(
-                  onPressed: () => context.go('/my-submissions'),
-                  icon: const Icon(Icons.list_alt),
-                  label: const Text('My Submissions'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF003087),
-                    side: const BorderSide(color: Color(0xFF003087)),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    textStyle: const TextStyle(fontSize: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.go('/conversational-submission'),
-        backgroundColor: const Color(0xFF003087),
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: const Text('New Claim'),
-      ),
-    );
-  }
-}

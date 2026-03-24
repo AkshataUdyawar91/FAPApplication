@@ -184,6 +184,17 @@ public class InvoiceCrossDocumentResult
     public bool HSNSACCodeValid { get; set; }
     public bool InvoiceAmountValid { get; set; }
     public bool GSTPercentageValid { get; set; }
+
+    /// <summary>
+    /// Whether the invoice amount is within the available PO balance fetched from SAP.
+    /// </summary>
+    public bool PoBalanceValid { get; set; } = true;
+
+    /// <summary>
+    /// The PO balance returned by the SAP PO_Data API (null if the call was skipped or failed).
+    /// </summary>
+    public decimal? PoBalanceAmount { get; set; }
+
     public List<string> Issues { get; set; } = new();
 }
 

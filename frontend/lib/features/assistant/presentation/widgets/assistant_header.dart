@@ -25,7 +25,7 @@ class AssistantHeader extends StatelessWidget implements PreferredSizeWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Field Activity Assistant',
+            'FieldIQ Assistant',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
           ),
           Text(

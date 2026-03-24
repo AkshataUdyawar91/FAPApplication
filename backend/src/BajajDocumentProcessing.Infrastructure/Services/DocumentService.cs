@@ -176,35 +176,47 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.POs.AddAsync(po);
                 break;
 
             case DocumentType.Invoice:
-                // First try: PO linked via package's SelectedPOId (assistant flow)
-                // Second try: PO uploaded directly to this package (legacy flow)
-                _logger.LogInformation("=== INVOICE: Looking for PO === SelectedPOId: {SelPO}, PackageId: {PkgId}",
-                    package.SelectedPOId, actualPackageId);
+                // First try: PO linked via package's SelectedPOId (assistant/dropdown flow)
+                // Second try: PO uploaded directly to this package (file upload flow)
                 var existingPo = package.SelectedPOId.HasValue
                     ? await _context.POs.FirstOrDefaultAsync(p => p.Id == package.SelectedPOId.Value)
                     : await _context.POs.FirstOrDefaultAsync(p => p.PackageId == actualPackageId);
-                var poId = existingPo?.Id ?? Guid.Empty;
-                _logger.LogInformation("=== INVOICE: PO lookup result === Found: {Found}, POId: {POId}, PONumber: {PONum}",
-                    existingPo != null, poId, existingPo?.PONumber);
+
+                if (existingPo == null)
+                {
+                    _logger.LogWarning("No PO found for invoice upload — package {PkgId}, SelectedPOId: {SelPO}. Invoice will be rejected.",
+                        actualPackageId, package.SelectedPOId);
+                    throw new Domain.Exceptions.ValidationException(
+                        new Dictionary<string, string[]>
+                        {
+                            { "invoice", new[] { "Cannot upload invoice: no Purchase Order is linked to this submission. Please select a PO first." } }
+                        });
+                }
+
+                _logger.LogInformation("=== INVOICE: PO found === POId: {POId}, PONumber: {PONum}", existingPo.Id, existingPo.PONumber);
 
                 var invoice = new Invoice
                 {
                     Id = entityId,
                     PackageId = actualPackageId,
-                    POId = poId,
+                    POId = existingPo.Id,
                     FileName = file.FileName,
                     BlobUrl = blobUrl,
                     FileSizeBytes = file.Length,
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.Invoices.AddAsync(invoice);
                 break;
@@ -220,7 +232,9 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.CostSummaries.AddAsync(costSummary);
                 break;
@@ -236,7 +250,9 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.ActivitySummaries.AddAsync(activitySummary);
                 break;
@@ -252,32 +268,40 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.EnquiryDocuments.AddAsync(enquiryDocument);
                 break;
 
             case DocumentType.TeamPhoto:
-                // Find or create a team for this package
-                var team = await _context.Teams
-                    .FirstOrDefaultAsync(t => t.PackageId == actualPackageId);
-                if (team == null)
+                // TeamId will be set by the caller (UploadTeamPhotos endpoint) after this returns.
+                // We need a valid TeamId for the FK — find the first non-deleted team for this package.
+                // If none exists yet, create a placeholder; the endpoint will correct it immediately after.
+                var photoTeam = await _context.Teams
+                    .Where(t => t.PackageId == actualPackageId && !t.IsDeleted)
+                    .OrderBy(t => t.TeamNumber)
+                    .FirstOrDefaultAsync();
+                if (photoTeam == null)
                 {
-                    team = new Teams
+                    photoTeam = new Domain.Entities.Teams
                     {
                         Id = Guid.NewGuid(),
                         PackageId = actualPackageId,
                         CreatedAt = now,
-                        CreatedBy = createdBy
+                        UpdatedAt = now,
+                        CreatedBy = createdBy,
+                        UpdatedBy = createdBy
                     };
-                    await _context.Teams.AddAsync(team);
+                    await _context.Teams.AddAsync(photoTeam);
                     await _context.SaveChangesAsync();
                 }
 
                 var teamPhoto = new TeamPhotos
                 {
                     Id = entityId,
-                    TeamId = team.Id,
+                    TeamId = photoTeam.Id,
                     PackageId = actualPackageId,
                     FileName = file.FileName,
                     BlobUrl = blobUrl,
@@ -285,7 +309,9 @@ public class DocumentService : IDocumentService
                     ContentType = file.ContentType,
                     VersionNumber = package.VersionNumber,
                     CreatedAt = now,
-                    CreatedBy = createdBy
+                    UpdatedAt = now,
+                    CreatedBy = createdBy,
+                    UpdatedBy = createdBy
                 };
                 await _context.TeamPhotos.AddAsync(teamPhoto);
                 break;
@@ -307,8 +333,7 @@ public class DocumentService : IDocumentService
         // IMMEDIATE EXTRACTION: Extract critical UI fields synchronously for instant feedback
         string? immediateExtractedData = null;
         if (documentType == DocumentType.PO || documentType == DocumentType.Invoice)
-        {
-            try
+        {            try
             {
                 _logger.LogInformation("Starting immediate extraction for {DocumentType} {DocumentId}", documentType, entityId);
                 
@@ -325,6 +350,11 @@ public class DocumentService : IDocumentService
                         poEntity.ExtractionConfidence = poData.FieldConfidences.Values.Any() 
                             ? poData.FieldConfidences.Values.Average() 
                             : 0.5;
+                        // Save typed fields so ListSubmissions can read them directly
+                        poEntity.PONumber = poData.PONumber;
+                        poEntity.PODate = poData.PODate;
+                        poEntity.VendorName = poData.VendorName;
+                        poEntity.TotalAmount = poData.TotalAmount;
                         await _context.SaveChangesAsync();
                     }
                     
@@ -408,16 +438,19 @@ public class DocumentService : IDocumentService
 
     private async Task ExtractDocumentDataAsync(Guid documentId, string blobUrl, DocumentType documentType)
     {
-        // Create a new scope for the background task
+        // Create a new scope for the background task — resolves scoped services safely
         using var scope = _serviceScopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        // IMPORTANT: IDocumentAgent is scoped — must resolve from the new scope, not use the
+        // outer _documentAgent field which is disposed when the request scope ends.
+        var documentAgent = scope.ServiceProvider.GetRequiredService<IDocumentAgent>();
         
         try
         {
             _logger.LogInformation("Starting extraction for document {DocumentId}, Type: {Type}", documentId, documentType);
 
             // Classify document first
-            var classification = await _documentAgent.ClassifyAsync(blobUrl);
+            var classification = await documentAgent.ClassifyAsync(blobUrl);
             
             _logger.LogInformation(
                 "Document {DocumentId} classified as {Type} with confidence {Confidence}",
@@ -430,25 +463,25 @@ public class DocumentService : IDocumentService
             switch (documentType)
             {
                 case DocumentType.PO:
-                    var poData = await _documentAgent.ExtractPOAsync(blobUrl);
+                    var poData = await documentAgent.ExtractPOAsync(blobUrl);
                     extractedJson = System.Text.Json.JsonSerializer.Serialize(poData);
                     confidence = poData.FieldConfidences.Values.Any() ? poData.FieldConfidences.Values.Average() : 0.5;
                     break;
 
                 case DocumentType.Invoice:
-                    var invoiceData = await _documentAgent.ExtractInvoiceAsync(blobUrl);
+                    var invoiceData = await documentAgent.ExtractInvoiceAsync(blobUrl);
                     extractedJson = System.Text.Json.JsonSerializer.Serialize(invoiceData);
                     confidence = invoiceData.FieldConfidences.Values.Any() ? invoiceData.FieldConfidences.Values.Average() : 0.5;
                     break;
 
                 case DocumentType.CostSummary:
-                    var costSummaryData = await _documentAgent.ExtractCostSummaryAsync(blobUrl);
+                    var costSummaryData = await documentAgent.ExtractCostSummaryAsync(blobUrl);
                     extractedJson = System.Text.Json.JsonSerializer.Serialize(costSummaryData);
                     confidence = costSummaryData.FieldConfidences.Values.Any() ? costSummaryData.FieldConfidences.Values.Average() : 0.5;
                     break;
 
                 case DocumentType.TeamPhoto:
-                    var photoMetadata = await _documentAgent.ExtractPhotoMetadataAsync(blobUrl);
+                    var photoMetadata = await documentAgent.ExtractPhotoMetadataAsync(blobUrl);
                     extractedJson = System.Text.Json.JsonSerializer.Serialize(photoMetadata);
                     confidence = photoMetadata.FieldConfidences.Values.Any() 
                         ? photoMetadata.FieldConfidences.Values.Average() 
@@ -456,7 +489,7 @@ public class DocumentService : IDocumentService
                     break;
 
                 case DocumentType.ActivitySummary:
-                    var activityData = await _documentAgent.ExtractActivityAsync(blobUrl);
+                    var activityData = await documentAgent.ExtractActivityAsync(blobUrl);
                     extractedJson = System.Text.Json.JsonSerializer.Serialize(activityData);
                     confidence = activityData.FieldConfidences.Values.Any()
                         ? activityData.FieldConfidences.Values.Average()
@@ -464,7 +497,7 @@ public class DocumentService : IDocumentService
                     break;
 
                 case DocumentType.EnquiryDocument:
-                    var enquiryData = await _documentAgent.ExtractEnquiryDumpAsync(blobUrl);
+                    var enquiryData = await documentAgent.ExtractEnquiryDumpAsync(blobUrl);
                     extractedJson = System.Text.Json.JsonSerializer.Serialize(enquiryData);
                     confidence = enquiryData.FieldConfidences.Values.Any()
                         ? enquiryData.FieldConfidences.Values.Average()
@@ -488,6 +521,19 @@ public class DocumentService : IDocumentService
                             poEntity.ExtractedDataJson = extractedJson;
                             poEntity.ExtractionConfidence = confidence;
                             poEntity.UpdatedAt = DateTime.UtcNow;
+                            // Also persist typed fields so list queries don't need JSON fallback
+                            try
+                            {
+                                var parsed = System.Text.Json.JsonSerializer.Deserialize<BajajDocumentProcessing.Application.DTOs.Documents.POData>(extractedJson);
+                                if (parsed != null)
+                                {
+                                    poEntity.PONumber = parsed.PONumber;
+                                    poEntity.PODate = parsed.PODate;
+                                    poEntity.VendorName = parsed.VendorName;
+                                    poEntity.TotalAmount = parsed.TotalAmount;
+                                }
+                            }
+                            catch { /* non-critical — typed fields are best-effort */ }
                         }
                         break;
 
@@ -530,6 +576,9 @@ public class DocumentService : IDocumentService
                                             parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount }));
                                         csEntity.ElementWiseQuantityJson = System.Text.Json.JsonSerializer.Serialize(
                                             parsed.CostBreakdowns.Select(b => new { b.Category, b.Quantity, b.Unit }));
+                                        // Full breakdown with all fields (cost type flags included)
+                                        csEntity.CostBreakdownJson = System.Text.Json.JsonSerializer.Serialize(
+                                            parsed.CostBreakdowns.Select(b => new { b.Category, b.ElementName, b.Amount, b.Quantity, b.Unit, b.IsFixedCost, b.IsVariableCost }));
                                     }
 
                                     _logger.LogInformation(
@@ -597,6 +646,42 @@ public class DocumentService : IDocumentService
                             photoEntity.ExtractedMetadataJson = extractedJson;
                             photoEntity.ExtractionConfidence = confidence;
                             photoEntity.UpdatedAt = DateTime.UtcNow;
+
+                            // Map extracted fields to dedicated columns
+                            try
+                            {
+                                var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                                var meta = System.Text.Json.JsonSerializer.Deserialize<BajajDocumentProcessing.Application.DTOs.Documents.PhotoMetadata>(extractedJson, opts);
+                                if (meta != null)
+                                {
+                                    // EXIF / overlay date
+                                    if (meta.Timestamp.HasValue)
+                                        photoEntity.PhotoTimestamp = meta.Timestamp.Value;
+                                    photoEntity.DateVisible = meta.Timestamp.HasValue || !string.IsNullOrEmpty(meta.PhotoDateFromOverlay);
+                                    photoEntity.PhotoDateOverlay = meta.PhotoDateFromOverlay;
+
+                                    // GPS — Lat/Long columns already exist, just populate them
+                                    if (meta.Latitude.HasValue) photoEntity.Latitude = meta.Latitude.Value;
+                                    if (meta.Longitude.HasValue) photoEntity.Longitude = meta.Longitude.Value;
+
+                                    // Device
+                                    if (!string.IsNullOrEmpty(meta.DeviceModel))
+                                        photoEntity.DeviceModel = string.IsNullOrEmpty(meta.DeviceMake)
+                                            ? meta.DeviceModel
+                                            : $"{meta.DeviceMake} {meta.DeviceModel}";
+
+                                    // AI detection
+                                    photoEntity.BlueTshirtPresent = meta.HasBlueTshirtPerson;
+                                    photoEntity.ThreeWheelerPresent = meta.Has3WVehicle;
+                                    photoEntity.IsFlaggedForReview = !meta.HasBlueTshirtPerson || !meta.Has3WVehicle
+                                        || (!meta.Timestamp.HasValue && string.IsNullOrEmpty(meta.PhotoDateFromOverlay))
+                                        || (!meta.Latitude.HasValue || !meta.Longitude.HasValue);
+                                }
+                            }
+                            catch (Exception parseEx)
+                            {
+                                _logger.LogWarning(parseEx, "Could not map PhotoMetadata columns for {DocumentId}", documentId);
+                            }
                         }
                         break;
                 }
@@ -743,5 +828,25 @@ public class DocumentService : IDocumentService
                         { "documentType", new[] { $"Unsupported document type: {documentType}" } }
                     });
         }
+    }
+
+    /// <inheritdoc />
+    public async Task TriggerPhotoExtractionAsync(Guid photoId, string blobUrl)
+    {
+        _logger.LogInformation("Triggering photo extraction for {PhotoId}, BlobUrl: {BlobUrl}", photoId, blobUrl);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ExtractDocumentDataAsync(photoId, blobUrl, DocumentType.TeamPhoto);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background photo extraction failed for {PhotoId}", photoId);
+            }
+        });
+
+        await Task.CompletedTask;
     }
 }

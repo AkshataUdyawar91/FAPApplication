@@ -1,0 +1,69 @@
+User Story #,Title,Implementation Status,Functional Flow,Tasks for Team,Clarification Questions
+1,Document Upload (Invoice + Proof against PO),Needs Rework,"Agency logs in → sees list of POs received from SAP (via Story #20 PO Auto-Dispatch) → selects a PO to raise a FAP claim → system blocks duplicate invoice submission for the same PO → Agency uploads 5 mandatory document types against the selected PO: (1) Invoice, (2) Element-wise Cost Summary, (3) Activity Summary, (4) Photo Proofs (multiple upload), (5) Enquiry Dump. Each document is uploaded into its mapped field (no classification needed). On upload, Document Intelligence extracts fields and displays them inline (read-only). E.g., Invoice upload shows: Invoice Number, Invoice Amount, GSTIN. Photos support batch upload. PO is NOT uploaded — it comes from SAP. Submit button enables when all 5 mandatory types are present. On submit → background validations (Story #3) → scoring → recommendation.","1. [CRITICAL] Build PO list page — show Agency's POs from SAP with selection
+2. [CRITICAL] Add duplicate-PO guard — block re-submission for same PO
+3. [CRITICAL] Remove PO upload — PO comes from SAP
+4. [CRITICAL] Integrate Document Intelligence for real-time extraction on upload
+5. [CRITICAL] Show extracted fields inline (read-only) after each upload: Invoice (Number, Amount, GSTIN), Cost Summary (Total Cost, Element-wise breakdown), etc.
+6. [TASK] Add Enquiry Dump as mandatory document type
+7. [TASK] Enable multi-file upload for Photo Proofs
+8. [TASK] Update Submit logic — enable only when all 5 doc types uploaded
+9. [TASK] Add Photo AI Vision checks (Bajaj 3W vehicle, blue t-shirt)
+10. [VERIFY] Test full flow: PO select → upload 5 docs → extraction inline → submit","1. Min/max photo count per submission?
+2. Should PO details (number, amount, vendor) be pre-filled on upload page from SAP data?
+3. If Document Intelligence fails to extract a field, block upload or show warning?"
+2,Document Data Extraction (No Classification),Needs Rework,"Classification is NOT required — documents are uploaded into their mapped fields already (Invoice → Invoice slot, Cost Summary → Cost Summary slot, etc.). On upload, Azure Document Intelligence reads the document and extracts structured fields. Extracted data is stored in ExtractedDataJson and displayed inline on the upload page (read-only). Fields per type: Invoice (Agency Name/Address, Billing Name/Address, State, Invoice Number, Date, Vendor Code, PO Number, GST#, GST%, HSN/SAC, Amount). Cost Summary (Place of Supply, Element-wise Cost, Days, Activations, Teams, Quantity, Total Cost). Activity Summary (Dealer/Location, Days per location). Photos (Date via EXIF, Lat/Long via EXIF, Blue T-shirt detection, 3W Vehicle detection via AI Vision). Enquiry Dump (State, Date, Dealer Code/Name, District, Pincode, Customer Name/Number, Test Ride).","1. [CRITICAL] Remove document classification logic — not needed
+2. [CRITICAL] Update DocumentAgent to extract-only (no classify step)
+3. [CRITICAL] Show extracted fields inline on Agency upload page (currently only on ASM review)
+4. [TASK] Update extraction prompts for all 5 doc types with exact field lists
+5. [TASK] Add EXIF extraction for Photos (Date, GPS) via MetadataExtractor
+6. [TASK] Add AI Vision analysis for Photos (blue t-shirt, 3W vehicle)
+7. [VERIFY] Test extraction accuracy with real samples per doc type",
+3,Validation (Background after Submit),Needs Rework,"Validations run in background after Agency submits. Two categories: (A) Presence — required fields must exist, (B) Cross-checks — values must match across documents and backend data. INVOICE (14 checks): Presence of Agency Name/Address, Billing Name/Address, State, Invoice#, Date, Vendor Code, PO#, GST#/%, HSN/SAC, Amount. Cross-checks: GST# vs State mapping, HSN/SAC match, Invoice Amount ≤ PO Amount, GST% vs State (default 18%). COST SUMMARY (10): Presence of Place of Supply, Element Cost, Days, Activations, Teams, Quantity. Cross-checks: Total Cost ≤ Invoice Amount, element costs vs state rates, fixed/variable cost limits. ACTIVITY (3): Presence of Dealer/Location. Cross-check: Days vs Cost Summary days. PHOTOS (5): Presence of Date, Lat/Long, Blue T-shirt, 3W Vehicle. Cross-check: Photo count = man-days in Activity; Activity days ≤ Cost Summary days (3-way). ENQUIRY DUMP (9): Presence of State, Date, Dealer Code/Name, District, Pincode, Customer Name/Number, Test Ride. UI shows per-document status: 'Invoice - Validation In Progress' → 'Invoice - Validation Completed' with field-level results.","1. [CRITICAL] Implement full validation matrix (41 validations) in ValidationAgent.cs
+2. [CRITICAL] Build reference data tables: GST-State mapping, HSN/SAC codes, state-wise cost rates
+3. [CRITICAL] Implement 3-way cross-validation: Photos ↔ Activity man-days ↔ Cost Summary days
+4. [TASK] Invoice cross-checks: GST# vs State, HSN/SAC, Amount ≤ PO, GST% vs State
+5. [TASK] Cost Summary cross-checks: Total ≤ Invoice, element costs vs state rates
+6. [TASK] Activity cross-check: Days vs Cost Summary
+7. [TASK] Add validation status UI with activity names per document
+8. [TASK] Seed GST-State mapping and get HSN/SAC list from Vivek
+9. [VERIFY] Test all 41 validations with real samples","1. GST-State full mapping available? (only 3 FAPs shared so far)
+2. HSN/SAC code list — static or dynamic?
+3. State-wise cost rates source — SAP or separate system?
+4. Invoice Amount ≤ PO: taxable amount or total incl. GST?
+5. 3-way photo validation: exact match or tolerance allowed?"
+4,Confidence Score Calculation,Needs Rework — Weights Changed,"After extraction completes → ConfidenceScoreService calculates weighted score. PO is NOT a factor (comes from SAP). New weights: Invoice 30%, Cost Summary 20%, Activity 20%, Photos 30%. Total = 100%. Score range 0-100. If score <70 → flagged for mandatory ASM review. Score displayed on Agency dashboard and ASM review page with color indicators (green >85%, amber 70-85%, red <70%).","1. [CRITICAL] Update weights: Invoice 0.30, CostSummary 0.20, Activity 0.20, Photos 0.30
+2. [CRITICAL] Remove PO from confidence calculation entirely
+3. [TASK] Remove PoConfidence field from scoring logic (keep in DB for backward compat)
+4. [TASK] Update ConfidenceScore entity — add EnquiryDumpConfidence if needed or exclude from scoring
+5. [VERIFY] Test score calculation with new weights
+6. [VERIFY] Test edge case: what happens if a doc type scores 0?",
+5,Approval Recommendation (Short Summary),Needs Rework — Summary Length Changed,"After validation + scoring → RecommendationAgent generates recommendation: APPROVE / REVIEW / REJECT. The recommendation summary must be very short — approximately 2 lines or ~100 characters max. Example: 'All validations passed. Confidence 92%. Recommend approval.' Stored in Recommendation entity. Displayed on ASM review page.","1. [CRITICAL] Enforce ~100 character limit on recommendation evidence text
+2. [TASK] Update RecommendationAgent prompt to generate concise 2-line summaries
+3. [TASK] Update frontend recommendation_card.dart to display compact summary
+4. [VERIFY] Test that generated summaries stay within ~100 chars
+5. [VERIFY] Test all three recommendation types (APPROVE/REVIEW/REJECT) produce short summaries","1. Should the 100-char limit be a hard cutoff or a guideline?
+2. Should the summary include the confidence score number?"
+6,Email Communication (PO PDF + Status Emails),Needs Rework — PO Email Added,"Two email scenarios: (A) When a PO arrives from SAP into the system → system generates a PO PDF document → emails the PO PDF to the Agency as an attachment. Agency can also download the PO PDF from the portal UI. (B) Status emails: validation fail → email Agency with fields needing correction; ASM approves/rejects → email Agency with status update. All emails sent via Azure Communication Services (ACS) with retry (3x exponential backoff).","1. [CRITICAL] Build PO PDF generation service (QuestPDF) — triggered when PO arrives from SAP
+2. [CRITICAL] Email PO PDF as attachment to Agency via ACS
+3. [TASK] Add PO PDF download button on Agency portal (PO list page)
+4. [TASK] Implement status change emails: validation fail, ASM approve, ASM reject, RA approve, RA reject
+5. [TASK] Configure ACS connection and sender email
+6. [VERIFY] Test PO PDF email delivery with attachment
+7. [VERIFY] Test all status email scenarios","1. Sender email address for ACS?
+2. Should emails include deep links to the portal?
+3. PO PDF template — any specific Bajaj format?"
+7,Analytics and Reporting (Simple Quarterly FAP Totals),Needs Rework — Simplified,"User wants simple analytics only. Primary KPI: Total FAP amount — quarterly breakdown. Dashboard shows quarterly FAP totals with basic visualization. No complex campaign breakdowns or state-level ROI needed for now. Excel export of quarterly data. AI narrative optional.","1. [CRITICAL] Simplify analytics to quarterly FAP total amounts
+2. [TASK] Build simple dashboard: quarterly bar/line chart of total FAP amounts
+3. [TASK] Add Excel export for quarterly data
+4. [TASK] Remove or defer complex analytics (state ROI, campaign breakdown) — not needed now
+5. [VERIFY] Test quarterly aggregation with real data","1. Should quarterly totals be broken down by Agency or just overall?
+2. Any other KPIs beyond total FAP amount? (e.g., approval rate, avg processing time)
+3. Should the dashboard show current quarter only or historical quarters too?"
+8,Notification Management (Push for New PO),Needs Rework — Push Notifications Added,"When a new PO arrives in the system (from SAP) → push notification sent to the Agency (not dealer — same role) so they know a new PO is available for invoice submission. Also: in-app notifications for submission status changes (ASM approve/reject, RA approve/reject). Notification bell with unread count in app bar. Mark-as-read on click.","1. [CRITICAL] Implement push notifications (FCM for Android, APNs for iOS) for new PO arrival
+2. [TASK] Trigger push notification to Agency when new PO received from SAP
+3. [TASK] In-app notifications for status changes (approve/reject at each level)
+4. [TASK] Notification bell icon with unread badge in app bar
+5. [TASK] Mark-as-read functionality
+6. [VERIFY] Test push notification delivery on mobile devices
+7. [VERIFY] Test in-app notification for all status change events","1. Should push notifications also fire for status changes (approve/reject) or only new PO?
+2. Should ASM also get push notifications for new submissions?"

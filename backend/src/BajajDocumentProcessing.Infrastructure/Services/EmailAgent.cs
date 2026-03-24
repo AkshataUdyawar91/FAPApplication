@@ -1,13 +1,19 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Polly;
+using Polly.Retry;
+using System.Net;
+using System.Net.Mail;
 using System.Text;
 
 namespace BajajDocumentProcessing.Infrastructure.Services;
 
 /// <summary>
-/// Service for generating and sending scenario-based emails via Azure Communication Services
+/// Sends scenario-based HTML emails via SMTP with Polly retry (3 attempts, 5-min exponential backoff).
+/// All delivery attempts are persisted to EmailDeliveryLogs for audit.
 /// </summary>
 public class EmailAgent : IEmailAgent
 {
@@ -15,10 +21,13 @@ public class EmailAgent : IEmailAgent
     private readonly IConfiguration _configuration;
     private readonly ILogger<EmailAgent> _logger;
     private readonly ICorrelationIdService _correlationIdService;
+    private readonly AsyncRetryPolicy _retryPolicy;
 
-    // Retry configuration
-    private const int MAX_RETRY_ATTEMPTS = 3;
-    private static readonly TimeSpan[] RetryDelays = { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4) };
+    private const string Brand = "FieldIQ";
+    private const string BrandColor = "#003087";
+    private const string AccentColor = "#00A3E0";
+    private const string GreenColor = "#38a169";
+    private const string RedColor = "#e53e3e";
 
     public EmailAgent(
         IApplicationDbContext context,
@@ -30,548 +39,705 @@ public class EmailAgent : IEmailAgent
         _configuration = configuration;
         _logger = logger;
         _correlationIdService = correlationIdService;
+
+        // 3 retries with 5-minute exponential backoff: 5m → 10m → 20m
+        _retryPolicy = Policy
+            .Handle<SmtpException>()
+            .Or<Exception>(ex => ex is not OperationCanceledException)
+            .WaitAndRetryAsync(
+                retryCount: 3,
+                sleepDurationProvider: attempt => TimeSpan.FromMinutes(5 * Math.Pow(2, attempt - 1)),
+                onRetry: (exception, delay, attempt, _) =>
+                    _logger.LogWarning(
+                        exception,
+                        "Email send attempt {Attempt} failed. Retrying in {Delay}. CorrelationId: {CorrelationId}",
+                        attempt, delay, correlationIdService.GetCorrelationId()));
     }
 
-    /// <summary>
-    /// Sends a data failure notification email to the agency user when document validation fails.
-    /// </summary>
-    /// <param name="packageId">The unique identifier of the failed document package.</param>
-    /// <param name="issues">List of validation issues that caused the failure.</param>
-    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
-    /// <returns>An <see cref="EmailResult"/> indicating success or failure, including retry attempt count.</returns>
-    /// <remarks>
-    /// This method:
-    /// - Loads the package and submitting user information
-    /// - Generates an HTML email body listing all validation issues
-    /// - Sends the email with exponential backoff retry logic (up to 3 attempts)
-    /// - Returns detailed result including message ID on success or error message on failure
-    /// </remarks>
-    public async Task<EmailResult> SendDataFailureEmailAsync(
-        Guid packageId,
-        List<ValidationIssue> issues,
-        CancellationToken cancellationToken = default)
+    // ─── Template: Submission Received ──────────────────────────────────────
+
+    /// <inheritdoc/>
+    public async Task<EmailResult> SendSubmissionReceivedEmailAsync(
+        Guid packageId, CancellationToken cancellationToken = default)
     {
-        var correlationId = _correlationIdService.GetCorrelationId();
-        _logger.LogInformation(
-            "Sending data failure email for package {PackageId}. CorrelationId: {CorrelationId}",
-            packageId, correlationId);
+        var package = await _context.DocumentPackages
+            .Include(p => p.SubmittedBy)
+            .Include(p => p.PO)
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        if (package is null) return PackageNotFound();
 
-        try
-        {
-            // Load package with user
-            var package = await _context.DocumentPackages
-                .Include(p => p.SubmittedBy)
-                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        var fapId      = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();
+        var poNumber   = package.PO?.PONumber ?? "—";
+        var invoice    = package.Invoices.FirstOrDefault();
+        var invoiceNum = invoice?.InvoiceNumber ?? "—";
+        var amtDisplay = $"&#8377;{invoice?.TotalAmount.GetValueOrDefault():N2}";
+        var state      = package.ActivityState ?? "—";
+        var submitted  = package.CreatedAt.ToString("dd-MMM-yyyy, hh:mm tt");
 
-            if (package == null || package.SubmittedBy == null)
+        // Fetch assigned Circle Head name for personalised next-steps
+        var circleHeadName = await GetUserNameAsync(package.AssignedCircleHeadUserId, cancellationToken);
+
+        var subject = $"Submission Received — {fapId}";
+
+        var body = Card(
+            subject: subject,
+            recipientName: package.SubmittedBy?.FullName ?? "Agency",
+            intro: "Your claim submission has been received.",
+            detailRows: new[]
             {
-                _logger.LogError("Package {PackageId} or user not found", packageId);
-                return new EmailResult
-                {
-                    Success = false,
-                    ErrorMessage = "Package or user not found",
-                    AttemptsCount = 0
-                };
-            }
-
-            // Generate email content
-            var subject = "Action Required: Document Validation Failed";
-            var body = GenerateDataFailureEmailBody(package.SubmittedBy.FullName, issues);
-
-            // Send email with retry logic
-            return await SendEmailWithRetryAsync(package.SubmittedBy.Email, subject, body, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Error sending data failure email for package {PackageId}. CorrelationId: {CorrelationId}",
-                packageId, correlationId);
-            return new EmailResult
+                ("FAP ID",    fapId,      false),
+                ("PO Number", poNumber,   false),
+                ("Invoice",   invoiceNum, false),
+                ("Amount",    amtDisplay, false),
+                ("State",     state,      false),
+                ("Submitted", submitted,  false),
+            },
+            reasonBox: null,
+            nextSteps: new[]
             {
-                Success = false,
-                ErrorMessage = ex.Message,
-                AttemptsCount = 0
-            };
-        }
+                $"Submission routes to {circleHeadName} for review",
+                "You will be notified on approval or rejection",
+            },
+            buttonLabel: "Track Submission",
+            buttonColor: BrandColor,
+            buttonUrl: $"https://claimsiq.bajaj.com/fap/{fapId}",
+            footerNote: $"You will receive a notification when {circleHeadName} reviews your submission."
+        );
+
+        return await SendAndLogAsync(packageId, "submission_received",
+            package.SubmittedBy?.Email ?? "", subject, body, cancellationToken);
     }
 
-    /// <summary>
-    /// Sends a notification email to the ASM when a document package passes validation and is ready for review.
-    /// </summary>
-    /// <param name="packageId">The unique identifier of the validated document package.</param>
-    /// <param name="asmEmail">The email address of the Area Sales Manager.</param>
-    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
-    /// <returns>An <see cref="EmailResult"/> indicating success or failure, including retry attempt count.</returns>
-    /// <remarks>
-    /// This method:
-    /// - Loads the package, confidence score, and AI recommendation
-    /// - Generates an HTML email body with package details and AI recommendation
-    /// - Sends the email with exponential backoff retry logic (up to 3 attempts)
-    /// - Notifies the ASM to log in and review the submission
-    /// </remarks>
-    public async Task<EmailResult> SendDataPassEmailAsync(
-        Guid packageId,
-        string asmEmail,
-        CancellationToken cancellationToken = default)
+    // ─── Template: Validation Failed ────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public async Task<EmailResult> SendValidationFailedEmailAsync(
+        Guid packageId, List<ValidationIssue> issues, CancellationToken cancellationToken = default)
     {
-        var correlationId = _correlationIdService.GetCorrelationId();
-        _logger.LogInformation(
-            "Sending data pass email for package {PackageId} to ASM {Email}. CorrelationId: {CorrelationId}",
-            packageId, asmEmail, correlationId);
+        var package = await LoadPackageWithUserAsync(packageId, cancellationToken);
+        if (package is null) return PackageNotFound();
 
-        try
-        {
-            // Load package with confidence score and recommendation
-            var package = await _context.DocumentPackages
-                .Include(p => p.SubmittedBy)
-                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        var fapId = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();    
 
-            var confidenceScore = await _context.ConfidenceScores
-                .FirstOrDefaultAsync(cs => cs.PackageId == packageId, cancellationToken);
-
-            var recommendation = await _context.Recommendations
-                .FirstOrDefaultAsync(r => r.PackageId == packageId, cancellationToken);
-
-            if (package == null)
-            {
-                _logger.LogError("Package {PackageId} not found", packageId);
-                return new EmailResult
-                {
-                    Success = false,
-                    ErrorMessage = "Package not found",
-                    AttemptsCount = 0
-                };
-            }
-
-            // Generate email content
-            var subject = "New Document Package Ready for Review";
-            var body = GenerateDataPassEmailBody(
-                package.SubmittedBy?.FullName ?? "Agency",
-                packageId,
-                confidenceScore?.OverallConfidence ?? 0,
-                recommendation?.Type.ToString() ?? "REVIEW");
-
-            // Send email with retry logic
-            return await SendEmailWithRetryAsync(asmEmail, subject, body, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Error sending data pass email for package {PackageId}. CorrelationId: {CorrelationId}",
-                packageId, correlationId);
-            return new EmailResult
-            {
-                Success = false,
-                ErrorMessage = ex.Message,
-                AttemptsCount = 0
-            };
-        }
-    }
-
-    /// <summary>
-    /// Sends an approval notification email to the agency user when their document package is approved.
-    /// </summary>
-    /// <param name="packageId">The unique identifier of the approved document package.</param>
-    /// <param name="agencyEmail">The email address of the agency user.</param>
-    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
-    /// <returns>An <see cref="EmailResult"/> indicating success or failure, including retry attempt count.</returns>
-    /// <remarks>
-    /// This method:
-    /// - Loads the package information
-    /// - Generates a congratulatory HTML email body
-    /// - Sends the email with exponential backoff retry logic (up to 3 attempts)
-    /// - Confirms successful processing of the documents
-    /// </remarks>
-    public async Task<EmailResult> SendApprovedEmailAsync(
-        Guid packageId,
-        string agencyEmail,
-        CancellationToken cancellationToken = default)
-    {
-        var correlationId = _correlationIdService.GetCorrelationId();
-        _logger.LogInformation(
-            "Sending approved email for package {PackageId} to {Email}. CorrelationId: {CorrelationId}",
-            packageId, agencyEmail, correlationId);
-
-        try
-        {
-            // Load package
-            var package = await _context.DocumentPackages
-                .Include(p => p.SubmittedBy)
-                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
-
-            if (package == null)
-            {
-                _logger.LogError("Package {PackageId} not found", packageId);
-                return new EmailResult
-                {
-                    Success = false,
-                    ErrorMessage = "Package not found",
-                    AttemptsCount = 0
-                };
-            }
-
-            // Generate email content
-            var subject = "Document Package Approved";
-            var body = GenerateApprovedEmailBody(package.SubmittedBy?.FullName ?? "Agency", packageId);
-
-            // Send email with retry logic
-            return await SendEmailWithRetryAsync(agencyEmail, subject, body, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Error sending approved email for package {PackageId}. CorrelationId: {CorrelationId}",
-                packageId, correlationId);
-            return new EmailResult
-            {
-                Success = false,
-                ErrorMessage = ex.Message,
-                AttemptsCount = 0
-            };
-        }
-    }
-
-    /// <summary>
-    /// Sends a rejection notification email to the agency user when their document package is rejected.
-    /// </summary>
-    /// <param name="packageId">The unique identifier of the rejected document package.</param>
-    /// <param name="agencyEmail">The email address of the agency user.</param>
-    /// <param name="reason">The reason for rejection provided by the reviewer.</param>
-    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
-    /// <returns>An <see cref="EmailResult"/> indicating success or failure, including retry attempt count.</returns>
-    /// <remarks>
-    /// This method:
-    /// - Loads the package information
-    /// - Generates an HTML email body with the rejection reason
-    /// - Sends the email with exponential backoff retry logic (up to 3 attempts)
-    /// - Instructs the user to review feedback and resubmit corrected documents
-    /// </remarks>
-    public async Task<EmailResult> SendRejectedEmailAsync(
-        Guid packageId,
-        string agencyEmail,
-        string reason,
-        CancellationToken cancellationToken = default)
-    {
-        var correlationId = _correlationIdService.GetCorrelationId();
-        _logger.LogInformation(
-            "Sending rejected email for package {PackageId} to {Email}. CorrelationId: {CorrelationId}",
-            packageId, agencyEmail, correlationId);
-
-        try
-        {
-            // Load package
-            var package = await _context.DocumentPackages
-                .Include(p => p.SubmittedBy)
-                .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
-
-            if (package == null)
-            {
-                _logger.LogError("Package {PackageId} not found", packageId);
-                return new EmailResult
-                {
-                    Success = false,
-                    ErrorMessage = "Package not found",
-                    AttemptsCount = 0
-                };
-            }
-
-            // Generate email content
-            var subject = "Document Package Rejected";
-            var body = GenerateRejectedEmailBody(package.SubmittedBy?.FullName ?? "Agency", packageId, reason);
-
-            // Send email with retry logic
-            return await SendEmailWithRetryAsync(agencyEmail, subject, body, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Error sending rejected email for package {PackageId}. CorrelationId: {CorrelationId}",
-                packageId, correlationId);
-            return new EmailResult
-            {
-                Success = false,
-                ErrorMessage = ex.Message,
-                AttemptsCount = 0
-            };
-        }
-    }
-
-    /// <summary>
-    /// Sends an email with exponential backoff retry logic to handle transient failures.
-    /// </summary>
-    /// <param name="recipientEmail">The recipient's email address.</param>
-    /// <param name="subject">The email subject line.</param>
-    /// <param name="body">The HTML email body content.</param>
-    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
-    /// <returns>An <see cref="EmailResult"/> with success status, message ID (on success), error message (on failure), and attempt count.</returns>
-    /// <remarks>
-    /// Retry strategy:
-    /// - Maximum 3 attempts
-    /// - Exponential backoff delays: 1s, 2s, 4s
-    /// - Logs warnings on retry, errors on final failure
-    /// - Returns detailed result including number of attempts made
-    /// </remarks>
-    private async Task<EmailResult> SendEmailWithRetryAsync(
-        string recipientEmail,
-        string subject,
-        string body,
-        CancellationToken cancellationToken)
-    {
-        int attempts = 0;
-        Exception? lastException = null;
-
-        for (int i = 0; i < MAX_RETRY_ATTEMPTS; i++)
-        {
-            attempts++;
-
-            try
-            {
-                // Simulate email sending (replace with actual ACS implementation)
-                var messageId = await SendEmailViaACSAsync(recipientEmail, subject, body, cancellationToken);
-
-                _logger.LogInformation(
-                    "Email sent successfully to {Email} on attempt {Attempt}. MessageId: {MessageId}",
-                    recipientEmail,
-                    attempts,
-                    messageId);
-
-                return new EmailResult
-                {
-                    Success = true,
-                    MessageId = messageId,
-                    AttemptsCount = attempts
-                };
-            }
-            catch (Exception ex)
-            {
-                lastException = ex;
-                _logger.LogWarning(
-                    ex,
-                    "Email send attempt {Attempt} failed for {Email}",
-                    attempts,
-                    recipientEmail);
-
-                // Wait before retry (except on last attempt)
-                if (i < MAX_RETRY_ATTEMPTS - 1)
-                {
-                    await Task.Delay(RetryDelays[i], cancellationToken);
-                }
-            }
-        }
-
-        // All retries failed
-        _logger.LogError(
-            lastException,
-            "Failed to send email to {Email} after {Attempts} attempts",
-            recipientEmail,
-            attempts);
-
-        return new EmailResult
-        {
-            Success = false,
-            ErrorMessage = lastException?.Message ?? "Unknown error",
-            AttemptsCount = attempts
-        };
-    }
-
-    /// <summary>
-    /// Sends an email via Azure Communication Services.
-    /// </summary>
-    /// <param name="recipientEmail">The recipient's email address.</param>
-    /// <param name="subject">The email subject line.</param>
-    /// <param name="body">The HTML email body content.</param>
-    /// <param name="cancellationToken">Token to cancel the asynchronous operation.</param>
-    /// <returns>A unique message identifier for tracking the email delivery.</returns>
-    /// <remarks>
-    /// <para><strong>NOTE: This is a placeholder implementation.</strong></para>
-    /// <para>
-    /// FUTURE ENHANCEMENT: Azure Communication Services Integration
-    /// This method currently uses a mock implementation for email sending.
-    /// To integrate with Azure Communication Services:
-    /// </para>
-    /// <list type="number">
-    /// <item><description>Add Azure.Communication.Email NuGet package</description></item>
-    /// <item><description>Configure ACS connection string in appsettings.json</description></item>
-    /// <item><description>Replace mock implementation with actual EmailClient SDK calls</description></item>
-    /// <item><description>Handle ACS-specific exceptions and retry policies</description></item>
-    /// </list>
-    /// <para>
-    /// Example implementation:
-    /// <code>
-    /// var emailClient = new EmailClient(connectionString);
-    /// var emailSendOperation = await emailClient.SendAsync(
-    ///     Azure.WaitUntil.Completed,
-    ///     senderAddress: "noreply@bajaj.com",
-    ///     recipientAddress: recipientEmail,
-    ///     subject: subject,
-    ///     htmlContent: body,
-    ///     cancellationToken: cancellationToken);
-    /// return emailSendOperation.Id;
-    /// </code>
-    /// </para>
-    /// </remarks>
-    private async Task<string> SendEmailViaACSAsync(
-        string recipientEmail,
-        string subject,
-        string body,
-        CancellationToken cancellationToken)
-    {
-        // FUTURE ENHANCEMENT: Azure Communication Services Integration
-        // This method currently uses a mock implementation for email sending.
-        // To integrate with Azure Communication Services:
-        // 1. Add Azure.Communication.Email NuGet package
-        // 2. Configure ACS connection string in appsettings.json
-        // 3. Replace mock implementation with actual EmailClient SDK calls
-        // 4. Handle ACS-specific exceptions and retry policies
-        // Example implementation:
-        //   var emailClient = new EmailClient(connectionString);
-        //   var emailSendOperation = await emailClient.SendAsync(
-        //       Azure.WaitUntil.Completed,
-        //       senderAddress: "noreply@bajaj.com",
-        //       recipientAddress: recipientEmail,
-        //       subject: subject,
-        //       htmlContent: body,
-        //       cancellationToken: cancellationToken);
-        //   return emailSendOperation.Id;
-
-        // Simulate async operation
-        await Task.Delay(100, cancellationToken);
-
-        // Generate mock message ID
-        return $"msg_{Guid.NewGuid():N}";
-    }
-
-    /// <summary>
-    /// Generates an HTML email body for data failure notifications.
-    /// </summary>
-    /// <param name="userName">The name of the agency user who submitted the documents.</param>
-    /// <param name="issues">List of validation issues to include in the email.</param>
-    /// <returns>An HTML-formatted email body listing all validation issues with expected vs. actual values.</returns>
-    /// <remarks>
-    /// The email includes:
-    /// - Personalized greeting
-    /// - List of validation issues with field names and descriptions
-    /// - Expected vs. actual values where applicable
-    /// - Instructions to correct and resubmit
-    /// </remarks>
-    private string GenerateDataFailureEmailBody(string userName, List<ValidationIssue> issues)
-    {
-        var body = new StringBuilder();
-        body.AppendLine($"<html><body>");
-        body.AppendLine($"<p>Dear {userName},</p>");
-        body.AppendLine($"<p>Your document submission has failed validation. Please review the following issues and re-upload the corrected documents:</p>");
-        body.AppendLine($"<ul>");
-
+        // Build issue text for the reason box
+        var issueText = new StringBuilder();
         foreach (var issue in issues)
         {
-            body.AppendLine($"<li><strong>{issue.Field}</strong>: {issue.Issue}");
-            if (!string.IsNullOrEmpty(issue.ExpectedValue) && !string.IsNullOrEmpty(issue.ActualValue))
-            {
-                body.AppendLine($"<br/>Expected: {issue.ExpectedValue}, Found: {issue.ActualValue}");
-            }
-            body.AppendLine($"</li>");
+            issueText.Append($"<strong>{issue.Field}:</strong> {issue.Issue}");
+            if (!string.IsNullOrEmpty(issue.ExpectedValue))
+                issueText.Append($" Expected: {issue.ExpectedValue}.");
+            if (!string.IsNullOrEmpty(issue.ActualValue))
+                issueText.Append($" Found: {issue.ActualValue}.");
+            issueText.Append("<br/>");
         }
 
-        body.AppendLine($"</ul>");
-        body.AppendLine($"<p>Please correct these issues and submit your documents again.</p>");
-        body.AppendLine($"<p>Best regards,<br/>Bajaj Document Processing System</p>");
-        body.AppendLine($"</body></html>");
+        var subject = $"Action Required: Validation Failed — {fapId}";
 
-        return body.ToString();
+        var body = Card(
+            subject: subject,
+            recipientName: package.SubmittedBy?.FullName ?? "Agency",
+            intro: "Your document submission could not pass automated validation. Please review the issues below, correct your documents, and resubmit.",
+            detailRows: new[] { ("FAP ID", fapId, false) },
+            reasonBox: ($"Validation Issues", issueText.ToString(), RedColor),
+            nextSteps: null,
+            buttonLabel: "Correct and Resubmit",
+            buttonColor: RedColor,
+            buttonUrl: $"https://claimsiq.bajaj.com/fap/{fapId}",
+            footerNote: "Please resubmit with corrections at your earliest convenience."
+        );
+
+        return await SendAndLogAsync(packageId, "validation_failed",
+            package.SubmittedBy?.Email ?? "", subject, body, cancellationToken);
     }
 
-    /// <summary>
-    /// Generates an HTML email body for data pass notifications to ASM.
-    /// </summary>
-    /// <param name="agencyName">The name of the agency that submitted the documents.</param>
-    /// <param name="packageId">The unique identifier of the document package.</param>
-    /// <param name="confidence">The overall confidence score (0-100).</param>
-    /// <param name="recommendation">The AI recommendation type (APPROVE, REVIEW, or REJECT).</param>
-    /// <returns>An HTML-formatted email body with package details and AI recommendation.</returns>
-    /// <remarks>
-    /// The email includes:
-    /// - Notification that a package passed validation
-    /// - Package ID for reference
-    /// - Confidence score percentage
-    /// - AI recommendation
-    /// - Instructions to log in and review
-    /// </remarks>
-    private string GenerateDataPassEmailBody(string agencyName, Guid packageId, double confidence, string recommendation)
-    {
-        var body = new StringBuilder();
-        body.AppendLine($"<html><body>");
-        body.AppendLine($"<p>Dear ASM,</p>");
-        body.AppendLine($"<p>A new document package from <strong>{agencyName}</strong> has passed validation and is ready for your review.</p>");
-        body.AppendLine($"<p><strong>Package Details:</strong></p>");
-        body.AppendLine($"<ul>");
-        body.AppendLine($"<li>Package ID: {packageId}</li>");
-        body.AppendLine($"<li>Confidence Score: {confidence:F1}%</li>");
-        body.AppendLine($"<li>AI Recommendation: {recommendation}</li>");
-        body.AppendLine($"</ul>");
-        body.AppendLine($"<p>Please log in to the system to review and approve or reject this submission.</p>");
-        body.AppendLine($"<p>Best regards,<br/>Bajaj Document Processing System</p>");
-        body.AppendLine($"</body></html>");
+    // ─── Template: Pending Circle Head ──────────────────────────────────────
 
-        return body.ToString();
+    /// <inheritdoc/>
+    public async Task<EmailResult> SendPendingCircleHeadEmailAsync(
+        Guid packageId, string circleHeadEmail, CancellationToken cancellationToken = default)
+    {
+        var package = await _context.DocumentPackages
+            .Include(p => p.SubmittedBy)
+            .Include(p => p.PO)
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        if (package is null) return PackageNotFound();
+
+        var fapId      = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();
+        var poNumber   = package.PO?.PONumber ?? "—";
+        var amount     = package.Invoices.FirstOrDefault()?.TotalAmount;
+        var amtDisplay = amount.HasValue ? $"&#8377;{amount.Value:N0}" : "—";
+        var agencyName = package.SubmittedBy?.FullName ?? "Agency";
+
+        var confidence = await _context.ConfidenceScores
+            .AsNoTracking()
+            .Where(cs => cs.PackageId == packageId)
+            .Select(cs => cs.OverallConfidence)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var subject = $"New Submission Pending Your Review — {fapId}";
+
+        var body = Card(
+            subject: subject,
+            recipientName: "Circle Head",
+            intro: $"A new claim submission from <strong>{agencyName}</strong> has passed AI validation and is awaiting your review.",
+            detailRows: new[]
+            {
+                ("FAP ID",           fapId,                  false),
+                ("PO Number",        poNumber,               false),
+                ("Amount",           amtDisplay,             false),
+                ("Confidence Score", $"{confidence:F1}%",    false),
+            },
+            reasonBox: null,
+            nextSteps: null,
+            buttonLabel: "Review Submission",
+            buttonColor: BrandColor,
+            buttonUrl: $"https://claimsiq.bajaj.com/fap/{fapId}",
+            footerNote: "Please review and take action at your earliest convenience."
+        );
+
+        return await SendAndLogAsync(packageId, "pending_circle_head",
+            circleHeadEmail, subject, body, cancellationToken);
     }
 
-    /// <summary>
-    /// Generates an HTML email body for approval notifications.
-    /// </summary>
-    /// <param name="userName">The name of the agency user who submitted the documents.</param>
-    /// <param name="packageId">The unique identifier of the approved document package.</param>
-    /// <returns>An HTML-formatted congratulatory email body confirming approval.</returns>
-    /// <remarks>
-    /// The email includes:
-    /// - Congratulatory message
-    /// - Package ID for reference
-    /// - Confirmation that documents are in the system
-    /// - Thank you message
-    /// </remarks>
-    private string GenerateApprovedEmailBody(string userName, Guid packageId)
-    {
-        var body = new StringBuilder();
-        body.AppendLine($"<html><body>");
-        body.AppendLine($"<p>Dear {userName},</p>");
-        body.AppendLine($"<p>Congratulations! Your document submission (Package ID: {packageId}) has been approved.</p>");
-        body.AppendLine($"<p>Your documents have been successfully processed and are now in the system.</p>");
-        body.AppendLine($"<p>Thank you for your submission.</p>");
-        body.AppendLine($"<p>Best regards,<br/>Bajaj Document Processing System</p>");
-        body.AppendLine($"</body></html>");
+    // ─── Template: Circle Head Approved ─────────────────────────────────────
 
-        return body.ToString();
+    /// <inheritdoc/>
+    public async Task<EmailResult> SendCircleHeadApprovedEmailAsync(
+        Guid packageId, CancellationToken cancellationToken = default)
+    {
+        var package = await _context.DocumentPackages
+            .Include(p => p.SubmittedBy)
+            .Include(p => p.PO)
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
+            .Include(p => p.RequestApprovalHistory)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        if (package is null) return PackageNotFound();
+
+        var fapId      = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();
+        var poNumber   = package.PO?.PONumber ?? "—";
+        var amtDisplay = $"&#8377;{package.Invoices.FirstOrDefault()?.TotalAmount.GetValueOrDefault():N2}";
+
+        var approval = package.RequestApprovalHistory
+            .Where(h => h.ApproverRole == Domain.Enums.UserRole.ASM
+                     && h.Action == Domain.Enums.ApprovalAction.Approved)
+            .OrderByDescending(h => h.ActionDate)
+            .FirstOrDefault();
+
+        var approverName = await GetUserNameAsync(approval?.ApproverId, cancellationToken);
+        var approvedOn   = (approval?.ActionDate ?? DateTime.UtcNow).ToString("dd-MMM-yyyy, hh:mm tt");
+        var comments     = approval?.Comments ?? "All documents verified. Forwarding to RA.";
+
+        var subject = $"Claim Approved — {fapId} ({amtDisplay})";
+
+        var body = Card(
+            subject: subject,
+            recipientName: package.SubmittedBy?.FullName ?? "Agency",
+            intro: $"Your claim has been <span style=\"color:{GreenColor};font-weight:bold\">approved</span> by {approverName} and forwarded for final approval.",
+            detailRows: new[]
+            {
+                ("FAP ID",      fapId,        false),
+                ("PO Number",   poNumber,     false),
+                ("Amount",      amtDisplay,   false),
+                ("Approved On", approvedOn,   false),
+                ("Comments",    comments,     false),
+            },
+            reasonBox: null,
+            nextSteps: null,
+            buttonLabel: "View Status",
+            buttonColor: GreenColor,
+            buttonUrl: $"https://claimsiq.bajaj.com/fap/{fapId}",
+            footerNote: "Your claim is now with the Regional Approver. You will be notified on final approval.",
+            bodyNote: "No action needed. The Regional Approver will review next."
+        );
+
+        return await SendAndLogAsync(packageId, "circleHead_approved",
+            package.SubmittedBy?.Email ?? "", subject, body, cancellationToken);
     }
 
-    /// <summary>
-    /// Generates an HTML email body for rejection notifications.
-    /// </summary>
-    /// <param name="userName">The name of the agency user who submitted the documents.</param>
-    /// <param name="packageId">The unique identifier of the rejected document package.</param>
-    /// <param name="reason">The reason for rejection provided by the reviewer.</param>
-    /// <returns>An HTML-formatted email body with rejection reason and instructions to resubmit.</returns>
-    /// <remarks>
-    /// The email includes:
-    /// - Notification of rejection
-    /// - Package ID for reference
-    /// - Detailed reason for rejection
-    /// - Instructions to review feedback, make corrections, and resubmit
-    /// </remarks>
-    private string GenerateRejectedEmailBody(string userName, Guid packageId, string reason)
-    {
-        var body = new StringBuilder();
-        body.AppendLine($"<html><body>");
-        body.AppendLine($"<p>Dear {userName},</p>");
-        body.AppendLine($"<p>Your document submission (Package ID: {packageId}) has been rejected.</p>");
-        body.AppendLine($"<p><strong>Reason for Rejection:</strong></p>");
-        body.AppendLine($"<p>{reason}</p>");
-        body.AppendLine($"<p>Please review the feedback, make the necessary corrections, and submit your documents again.</p>");
-        body.AppendLine($"<p>Best regards,<br/>Bajaj Document Processing System</p>");
-        body.AppendLine($"</body></html>");
+    // ─── Template: Circle Head Rejected ─────────────────────────────────────
 
-        return body.ToString();
+    /// <inheritdoc/>
+    public async Task<EmailResult> SendCircleHeadRejectedEmailAsync(
+        Guid packageId, string reason, CancellationToken cancellationToken = default)
+    {
+        var package = await _context.DocumentPackages
+            .Include(p => p.SubmittedBy)
+            .Include(p => p.PO)
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
+            .Include(p => p.RequestApprovalHistory)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        if (package is null) return PackageNotFound();
+
+        var fapId      = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();
+        var poNumber   = package.PO?.PONumber ?? "—";
+        var amount     = package.Invoices.FirstOrDefault()?.TotalAmount;
+        var amtDisplay = $"&#8377;{amount.GetValueOrDefault():N2}";
+
+        var rejection = package.RequestApprovalHistory
+            .Where(h => h.ApproverRole == Domain.Enums.UserRole.ASM
+                     && h.Action == Domain.Enums.ApprovalAction.Rejected)
+            .OrderByDescending(h => h.ActionDate)
+            .FirstOrDefault();
+
+        var approverName = await GetUserNameAsync(rejection?.ApproverId, cancellationToken);
+        var returnedOn   = (rejection?.ActionDate ?? DateTime.UtcNow).ToString("dd-MMM-yyyy, hh:mm tt");
+
+        var subject = $"Claim Requires Correction — {fapId}";
+
+        var body = Card(
+            subject: subject,
+            recipientName: package.SubmittedBy?.FullName ?? "Agency",
+            intro: $"Your claim has been <span style=\"color:{RedColor};font-weight:bold\">returned for correction</span> by {approverName}. Please review the feedback and resubmit.",
+            detailRows: new[]
+            {
+                ("FAP ID",      fapId,        false),
+                ("PO Number",   poNumber,     false),
+                ("Amount",      amtDisplay,   false),
+                ("Returned On", returnedOn,   false),
+            },
+            reasonBox: ("Reason for return:", reason, RedColor),
+            nextSteps: null,
+            buttonLabel: "Correct and Resubmit",
+            buttonColor: RedColor,
+            buttonUrl: $"https://claimsiq.bajaj.com/fap/{fapId}",
+            footerNote: "Please resubmit with corrections at your earliest convenience.",
+            bodyNote: "Log in to FieldIQ to correct and resubmit your claim."
+        );
+
+        return await SendAndLogAsync(packageId, "circleHead_rejected",
+            package.SubmittedBy?.Email ?? "", subject, body, cancellationToken);
+    }
+
+    // ─── Template: RA Approved ───────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public async Task<EmailResult> SendRaApprovedEmailAsync(
+        Guid packageId, CancellationToken cancellationToken = default)
+    {
+        var package = await _context.DocumentPackages
+            .Include(p => p.SubmittedBy)
+            .Include(p => p.PO)
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
+            .Include(p => p.RequestApprovalHistory)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        if (package is null) return PackageNotFound();
+
+        var fapId      = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();
+        var poNumber   = package.PO?.PONumber ?? "—";
+        var amtDisplay = $"&#8377;{package.Invoices.FirstOrDefault()?.TotalAmount.GetValueOrDefault():N2}";
+
+        var approval = package.RequestApprovalHistory
+            .Where(h => h.ApproverRole == Domain.Enums.UserRole.RA
+                     && h.Action == Domain.Enums.ApprovalAction.Approved)
+            .OrderByDescending(h => h.ActionDate)
+            .FirstOrDefault();
+
+        var approvedOn = (approval?.ActionDate ?? DateTime.UtcNow).ToString("dd-MMM-yyyy, hh:mm tt");
+
+        var subject = $"Final Approval — {fapId} ({amtDisplay})";
+
+        var body = Card(
+            subject: subject,
+            recipientName: package.SubmittedBy?.FullName ?? "Agency",
+            intro: $"Your claim has received <span style=\"color:{GreenColor};font-weight:bold\">final approval</span>. Payment processing will begin shortly.",
+            detailRows: new[]
+            {
+                ("FAP ID",         fapId,        false),
+                ("PO Number",      poNumber,     false),
+                ("Payable Amount", amtDisplay,   true),
+                ("Approved On",    approvedOn,   false),
+            },
+            reasonBox: null,
+            nextSteps: null,
+            buttonLabel: "View Details",
+            buttonColor: GreenColor,
+            buttonUrl: $"https://claimsiq.bajaj.com/fap/{fapId}",
+            footerNote: "Payment will be processed as per the standard payment cycle. Thank you for using FieldIQ.",
+            bodyNote: "No further action required. Payment will be processed as per the standard cycle."
+        );
+
+        return await SendAndLogAsync(packageId, "ra_approved",
+            package.SubmittedBy?.Email ?? "", subject, body, cancellationToken);
+    }
+
+    // ─── Template: RA Rejected ───────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public async Task<EmailResult> SendRaRejectedEmailAsync(
+        Guid packageId, string reason, CancellationToken cancellationToken = default)
+    {
+        var package = await _context.DocumentPackages
+            .Include(p => p.SubmittedBy)
+            .Include(p => p.PO)
+            .Include(p => p.Invoices.Where(i => !i.IsDeleted))
+            .Include(p => p.RequestApprovalHistory)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        if (package is null) return PackageNotFound();
+
+        var fapId      = package.SubmissionNumber ?? packageId.ToString()[..8].ToUpper();
+        var poNumber   = package.PO?.PONumber ?? "—";
+        var amount     = package.Invoices.FirstOrDefault()?.TotalAmount;
+        var amtDisplay = $"&#8377;{amount.GetValueOrDefault():N2}";
+
+        var rejection = package.RequestApprovalHistory
+            .Where(h => h.ApproverRole == Domain.Enums.UserRole.RA
+                     && h.Action == Domain.Enums.ApprovalAction.Rejected)
+            .OrderByDescending(h => h.ActionDate)
+            .FirstOrDefault();
+
+        var approverName = await GetUserNameAsync(rejection?.ApproverId, cancellationToken);
+        var returnedOn   = (rejection?.ActionDate ?? DateTime.UtcNow).ToString("dd-MMM-yyyy, hh:mm tt");
+
+        var subject = $"Claim Returned by Regional Approver — {fapId}";
+
+        var body = Card(
+            subject: subject,
+            recipientName: package.SubmittedBy?.FullName ?? "Agency",
+            intro: $"Your claim has been <span style=\"color:{RedColor};font-weight:bold\">returned for correction</span> by {approverName} (Regional Approver). Please review the feedback below.",
+            detailRows: new[]
+            {
+                ("FAP ID",      fapId,        false),
+                ("PO Number",   poNumber,     false),
+                ("Amount",      amtDisplay,   false),
+                ("Returned On", returnedOn,   false),
+            },
+            reasonBox: ("Reason for return:", reason, RedColor),
+            nextSteps: null,
+            buttonLabel: "Correct and Resubmit",
+            buttonColor: RedColor,
+            buttonUrl: $"https://claimsiq.bajaj.com/fap/{fapId}",
+            footerNote: "Please resubmit with corrections. The claim will go through Circle Head review again after resubmission.",
+            bodyNote: "After correction, your claim will go through the full review cycle again."
+        );
+
+        return await SendAndLogAsync(packageId, "ra_rejected",
+            package.SubmittedBy?.Email ?? "", subject, body, cancellationToken);
+    }
+
+    // ─── SendHtmlEmailAsync (used by NotificationDispatcher for email fallback) ─
+
+    /// <inheritdoc/>
+    public async Task<EmailResult> SendHtmlEmailAsync(
+        string recipientEmail, string subject, string htmlBody,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "Sending HTML email to {Email}, Subject: {Subject}. CorrelationId: {CorrelationId}",
+            recipientEmail, subject, _correlationIdService.GetCorrelationId());
+
+        return await SendAndLogAsync(
+            Guid.Empty, "html_email", recipientEmail, subject, htmlBody, cancellationToken);
+    }
+
+    // ─── Legacy compatibility ────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public Task<EmailResult> SendDataFailureEmailAsync(Guid packageId, List<ValidationIssue> issues, CancellationToken cancellationToken = default)
+        => SendValidationFailedEmailAsync(packageId, issues, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<EmailResult> SendDataPassEmailAsync(Guid packageId, string asmEmail, CancellationToken cancellationToken = default)
+        => SendPendingCircleHeadEmailAsync(packageId, asmEmail, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<EmailResult> SendApprovedEmailAsync(Guid packageId, string agencyEmail, CancellationToken cancellationToken = default)
+        => SendRaApprovedEmailAsync(packageId, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<EmailResult> SendRejectedEmailAsync(Guid packageId, string agencyEmail, string reason, CancellationToken cancellationToken = default)
+        => SendCircleHeadRejectedEmailAsync(packageId, reason, cancellationToken);
+
+    // ─── Core send + log ─────────────────────────────────────────────────────
+
+    private async Task<EmailResult> SendAndLogAsync(
+        Guid packageId, string templateName, string recipientEmails,
+        string subject, string body, CancellationToken cancellationToken)
+    {
+        var correlationId = _correlationIdService.GetCorrelationId();
+        _logger.LogInformation(
+            "Sending email template '{Template}' to {Email} for package {PackageId}. CorrelationId: {CorrelationId}",
+            templateName, recipientEmails, packageId, correlationId);
+
+        if (string.IsNullOrWhiteSpace(recipientEmails))
+        {
+            _logger.LogWarning("No recipient email for package {PackageId}, template {Template}", packageId, templateName);
+            return new EmailResult { Success = false, ErrorMessage = "Recipient email is empty", AttemptsCount = 0 };
+        }
+
+        var attempts = 0;
+        string? messageId = null;
+        string? errorMessage = null;
+        var success = false;
+
+        try
+        {
+            await _retryPolicy.ExecuteAsync(async ct =>
+            {
+                attempts++;
+                messageId = await SendSmtpAsync(recipientEmails, subject, body, ct);
+                success = true;
+            }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            errorMessage = ex.Message;
+            _logger.LogError(ex,
+                "All retry attempts exhausted for template '{Template}' to {Email}. CorrelationId: {CorrelationId}",
+                templateName, recipientEmails, correlationId);
+        }
+
+        try
+        {
+            var log = new EmailDeliveryLog
+            {
+                Id             = Guid.NewGuid(),
+                PackageId      = packageId,
+                TemplateName   = templateName,
+                RecipientEmail = recipientEmails,
+                Subject        = subject,
+                Success        = success,
+                AttemptsCount  = attempts,
+                MessageId      = messageId,
+                ErrorMessage   = errorMessage,
+                SentAt         = DateTime.UtcNow,
+            };
+            _context.EmailDeliveryLogs.Add(log);
+            await _context.SaveChangesAsync(CancellationToken.None);
+        }
+        catch (Exception logEx)
+        {
+            _logger.LogError(logEx, "Failed to persist EmailDeliveryLog for package {PackageId}", packageId);
+        }
+
+        if (success)
+            _logger.LogInformation(
+                "Email '{Template}' delivered to {Email} in {Attempts} attempt(s). MessageId: {MessageId}",
+                templateName, recipientEmails, attempts, messageId);
+
+        return new EmailResult { Success = success, MessageId = messageId, ErrorMessage = errorMessage, AttemptsCount = attempts };
+    }
+
+    private async Task<string> SendSmtpAsync(
+        string recipientEmails, string subject, string body, CancellationToken cancellationToken)
+    {
+        var host        = _configuration["Smtp:Host"] ?? throw new InvalidOperationException("Smtp:Host not configured");
+        var port        = int.Parse(_configuration["Smtp:Port"] ?? "587");
+        var username    = _configuration["Smtp:Username"] ?? "";
+        var password    = _configuration["Smtp:Password"] ?? "";
+        var senderEmail = _configuration["Smtp:SenderEmail"] ?? username;
+        var senderName  = _configuration["Smtp:SenderName"] ?? Brand;
+        var enableSsl   = bool.Parse(_configuration["Smtp:EnableSsl"] ?? "true");
+
+        using var client = new SmtpClient(host, port)
+        {
+            Credentials = new NetworkCredential(username, password),
+            EnableSsl = enableSsl,
+            DeliveryMethod = SmtpDeliveryMethod.Network
+        };
+
+        using var message = new MailMessage
+        {
+            From = new MailAddress(senderEmail, senderName),
+            Subject = subject,
+            Body = body,
+            IsBodyHtml = true
+        };
+
+        foreach (var addr in recipientEmails.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            message.To.Add(addr);
+
+        await client.SendMailAsync(message, cancellationToken);
+        return $"smtp_{Guid.NewGuid():N}";
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    private async Task<Domain.Entities.DocumentPackage?> LoadPackageWithUserAsync(
+        Guid packageId, CancellationToken cancellationToken)
+    {
+        var pkg = await _context.DocumentPackages
+            .Include(p => p.SubmittedBy)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == packageId, cancellationToken);
+        if (pkg is null) _logger.LogError("Package {PackageId} not found when sending email", packageId);
+        return pkg;
+    }
+
+    private async Task<string> GetUserNameAsync(Guid? userId, CancellationToken cancellationToken)
+    {
+        if (!userId.HasValue) return "FieldIQ System";
+        return await _context.Users
+            .AsNoTracking()
+            .Where(u => u.Id == userId.Value)
+            .Select(u => u.FullName)
+            .FirstOrDefaultAsync(cancellationToken) ?? "FieldIQ System";
+    }
+
+    private static EmailResult PackageNotFound() =>
+        new() { Success = false, ErrorMessage = "Package not found", AttemptsCount = 0 };
+
+    /// <summary>
+    /// Builds the white card email HTML matching the screenshot layout:
+    /// - White card on light-grey page background
+    /// - "C FieldIQ  Bajaj Auto" header row with blue bottom border
+    /// - Bold recipient greeting
+    /// - Intro line (may contain inline colored spans)
+    /// - Bordered detail table with blue left-column labels
+    /// - Optional red reason box
+    /// - Optional numbered next-steps list
+    /// - CTA button
+    /// - Italic grey footer note
+    /// </summary>
+    private static string Card(
+        string subject,
+        string recipientName,
+        string intro,
+        IEnumerable<(string Label, string Value, bool Highlight)> detailRows,
+        (string Title, string Body, string Color)? reasonBox,
+        IEnumerable<string>? nextSteps,
+        string buttonLabel,
+        string buttonColor,
+        string buttonUrl,
+        string footerNote,
+        string? bodyNote = null)
+    {
+        // ── detail table ──────────────────────────────────────────────────
+        var rows = new StringBuilder();
+        foreach (var (label, value, highlight) in detailRows)
+        {
+            var valueStyle = highlight
+                ? $"color:{GreenColor};font-weight:bold"
+                : "color:#1a202c";
+            rows.Append($"""
+                <tr>
+                  <td style="padding:10px 14px;color:{BrandColor};font-weight:normal;width:38%;border-bottom:1px solid #e2e8f0;white-space:nowrap">{label}</td>
+                  <td style="padding:10px 14px;{valueStyle};border-bottom:1px solid #e2e8f0">{value}</td>
+                </tr>
+                """);
+        }
+
+        // ── reason box ────────────────────────────────────────────────────
+        var reasonHtml = reasonBox.HasValue
+            ? $"""
+              <div style="background:#fff5f5;border:1px solid #fed7d7;border-radius:6px;padding:14px 16px;margin:20px 0">
+                <p style="margin:0 0 6px;color:{reasonBox.Value.Color};font-weight:bold">{reasonBox.Value.Title}</p>
+                <p style="margin:0;color:#1a202c;line-height:1.6">{reasonBox.Value.Body}</p>
+              </div>
+              """
+            : "";
+
+        // ── next steps ────────────────────────────────────────────────────
+        var stepsHtml = "";
+        if (nextSteps is not null)
+        {
+            var items = new StringBuilder();
+            foreach (var step in nextSteps)
+                items.Append($"<li style=\"margin-bottom:4px\">{step}</li>");
+            stepsHtml = $"""
+                <p style="margin:20px 0 8px;font-weight:bold">What happens next:</p>
+                <ol style="margin:0;padding-left:20px;color:#1a202c;line-height:1.7">{items}</ol>
+                """;
+        }
+
+        // ── body note (e.g. "After correction..." line) ──────────────────
+        var bodyNoteHtml = !string.IsNullOrEmpty(bodyNote)
+            ? $"""<p style="margin:16px 0 0;color:#1a202c;font-size:13px">{bodyNote}</p>"""
+            : "";
+
+        // ── CTA button ────────────────────────────────────────────────────
+        var button = $"""
+            <p style="margin:24px 0 0">
+              <a href="{buttonUrl}"
+                 style="display:inline-block;background:{buttonColor};color:#ffffff;font-weight:bold;
+                        font-size:14px;padding:11px 24px;border-radius:6px;text-decoration:none">
+                {buttonLabel}
+              </a>
+            </p>
+            """;
+
+        // ── assemble ──────────────────────────────────────────────────────
+        return $"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8"/>
+              <meta name="viewport" content="width=device-width,initial-scale=1"/>
+            </head>
+            <body style="margin:0;padding:0;background:#f0f2f5;font-family:Arial,Helvetica,sans-serif">
+              <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f2f5;padding:32px 16px">
+                <tr><td align="center">
+
+                  <!-- White card -->
+                  <table width="100%" cellpadding="0" cellspacing="0"
+                         style="background:#ffffff;border-radius:8px;max-width:560px;
+                                box-shadow:0 1px 4px rgba(0,0,0,.12);overflow:hidden">
+
+                    <!-- Card header: C logo + FieldIQ + Bajaj Auto + blue underline -->
+                    <tr>
+                      <td style="padding:20px 28px 16px;border-bottom:2px solid {BrandColor}">
+                        <table cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td style="background:{BrandColor};border-radius:8px;
+                                       width:38px;height:38px;text-align:center;vertical-align:middle">
+                              <span style="color:#ffffff;font-size:20px;font-weight:bold;line-height:38px;display:block">C</span>
+                            </td>
+                            <td style="padding-left:12px;vertical-align:middle">
+                              <span style="color:{BrandColor};font-size:20px;font-weight:bold;letter-spacing:-0.3px">{Brand}</span>
+                              <span style="color:#a0aec0;font-size:13px;margin-left:10px;font-weight:normal">Bajaj Auto</span>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+
+                    <!-- Card body -->
+                    <tr>
+                      <td style="padding:28px 28px 24px;color:#1a202c;font-size:14px;line-height:1.7">
+
+                        <p style="margin:0 0 14px">
+                          Dear <strong>{recipientName}</strong>,
+                        </p>
+
+                        <p style="margin:0 0 18px">{intro}</p>
+
+                        <!-- Detail table -->
+                        <table width="100%" cellpadding="0" cellspacing="0"
+                               style="border:1px solid #e2e8f0;border-radius:6px;
+                                      border-collapse:collapse;margin-bottom:4px">
+                          <tbody>{rows}</tbody>
+                        </table>
+
+                        {reasonHtml}
+                        {stepsHtml}
+                        {bodyNoteHtml}
+                        {button}
+
+                      </td>
+                    </tr>
+
+                    <!-- Card footer note -->
+                    <tr>
+                      <td style="padding:14px 28px 20px;border-top:1px solid #e2e8f0;
+                                 color:#a0aec0;font-size:11px;font-style:italic">
+                        {footerNote}
+                      </td>
+                    </tr>
+
+                  </table>
+                  <!-- /White card -->
+
+                </td></tr>
+              </table>
+            </body>
+            </html>
+            """;
     }
 }

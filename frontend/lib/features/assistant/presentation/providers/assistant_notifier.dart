@@ -31,6 +31,7 @@ class AssistantState extends Equatable {
   final POItemModel? selectedPO;
   final String? submissionId;
   final String? lastDocumentId;
+  final String? teamPayloadJson; // carries team context across steps
 
   const AssistantState({
     this.messages = const [],
@@ -39,6 +40,7 @@ class AssistantState extends Equatable {
     this.selectedPO,
     this.submissionId,
     this.lastDocumentId,
+    this.teamPayloadJson,
   });
 
   AssistantState copyWith({
@@ -50,6 +52,7 @@ class AssistantState extends Equatable {
     String? submissionId,
     bool clearSubmissionId = false,
     String? lastDocumentId,
+    String? teamPayloadJson,
   }) {
     return AssistantState(
       messages: messages ?? this.messages,
@@ -58,11 +61,12 @@ class AssistantState extends Equatable {
       selectedPO: clearSelectedPO ? null : (selectedPO ?? this.selectedPO),
       submissionId: clearSubmissionId ? null : (submissionId ?? this.submissionId),
       lastDocumentId: lastDocumentId ?? this.lastDocumentId,
+      teamPayloadJson: teamPayloadJson ?? this.teamPayloadJson,
     );
   }
 
   @override
-  List<Object?> get props => [messages, isLoading, error, selectedPO, submissionId, lastDocumentId];
+  List<Object?> get props => [messages, isLoading, error, selectedPO, submissionId, lastDocumentId, teamPayloadJson];
 }
 
 class AssistantNotifier extends StateNotifier<AssistantState> {
@@ -81,7 +85,14 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
   }
 
   Future<void> sendAction(String action, {String? payloadJson}) async {
-    _addUserMessage(action
+    const _actionLabels = <String, String>{
+      'view_requests': '',
+      'pending_approvals': '',
+      'create_request': 'Start a new submission',
+    };
+    final label = _actionLabels[action];
+    if (label != null && label.isNotEmpty) _addUserMessage(label);
+    else if (label == null) _addUserMessage(action
         .replaceAll('_', ' ')
         .split(' ')
         .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase())
@@ -120,6 +131,9 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       _addBotMessage(response);
       if (response.selectedPO != null) {
         state = state.copyWith(selectedPO: response.selectedPO);
+      }
+      if (response.submissionId != null) {
+        state = state.copyWith(submissionId: response.submissionId);
       }
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
@@ -185,8 +199,8 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final docId = uploadResult['documentId']?.toString() ?? '';
       state = state.copyWith(lastDocumentId: docId);
 
-      // Poll until AI extraction completes (max 60s, every 3s)
-      const maxAttempts = 20;
+      // Poll until AI extraction completes (max 120s, every 3s)
+      const maxAttempts = 40;
       for (var i = 0; i < maxAttempts; i++) {
         final status = await _dataSource.getDocumentExtractionStatus(docId);
         if (status == 'extracted') break;
@@ -220,8 +234,8 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final docId = uploadResult['documentId']?.toString() ?? '';
       state = state.copyWith(lastDocumentId: docId);
 
-      // Poll until extraction completes (max 60s, every 3s)
-      const maxAttempts = 20;
+      // Poll until extraction completes (max 120s, every 3s)
+      const maxAttempts = 40;
       for (var i = 0; i < maxAttempts; i++) {
         final status = await _dataSource.getDocumentExtractionStatus(docId);
         if (status == 'extracted') break;
@@ -238,11 +252,21 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     }
   }
 
-  Future<void> continueAfterActivity() async {
+  Future<void> continueAfterActivity({String? payloadJson}) async {
     _addUserMessage('Continue');
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final response = await _dataSource.sendMessage(action: 'continue_after_activity');
+      final sid = state.submissionId;
+      // Prefer the payloadJson passed from the activity summary card (contains costSummaryDocumentId)
+      // so the backend can read the exact cost summary document instead of falling back to stale data
+      String? payload = payloadJson;
+      if (payload == null && sid != null) {
+        payload = jsonEncode({'submissionId': sid});
+      }
+      final response = await _dataSource.sendMessage(
+        action: 'continue_after_activity',
+        payloadJson: payload,
+      );
       _addBotMessage(response);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
@@ -303,7 +327,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final docId = uploadResult['documentId']?.toString() ?? '';
       state = state.copyWith(lastDocumentId: docId);
 
-      const maxAttempts = 20;
+      const maxAttempts = 40;
       for (var i = 0; i < maxAttempts; i++) {
         final status = await _dataSource.getDocumentExtractionStatus(docId);
         if (status == 'extracted') break;
@@ -350,6 +374,336 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       _addBotMessage(response);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  // ── Phase 8: Team Details ──────────────────────────────────────────────
+
+  Future<void> submitTeamCount(String count, String payloadJson) async {
+    _addUserMessage(count);
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(
+        action: 'submit_team_count',
+        message: count,
+        payloadJson: payloadJson,
+      );
+      if (response.payloadJson != null) {
+        state = state.copyWith(teamPayloadJson: response.payloadJson);
+      }
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> submitTeamName(String teamName, String payloadJson) async {
+    _addUserMessage(teamName);
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(
+        action: 'submit_team_name',
+        message: teamName,
+        payloadJson: payloadJson,
+      );
+      if (response.payloadJson != null) {
+        state = state.copyWith(teamPayloadJson: response.payloadJson);
+      }
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> searchDealer(String query, String payloadJson) async {
+    if (query.length < 2) return;
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(
+        action: 'search_dealer',
+        message: query,
+        payloadJson: payloadJson,
+      );
+      _addBotMessage(response, replaceLastBot: true);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> selectDealer(Map<String, dynamic> dealer, String payloadJson) async {
+    _addUserMessage('${dealer['dealerName']}, ${dealer['city']}');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      // Merge dealer into payload
+      final ctx = jsonDecode(payloadJson) as Map<String, dynamic>;
+      ctx['selectedDealer'] = dealer;
+      final newPayload = jsonEncode(ctx);
+      final response = await _dataSource.sendMessage(
+        action: 'select_dealer',
+        payloadJson: newPayload,
+      );
+      if (response.payloadJson != null) {
+        state = state.copyWith(teamPayloadJson: response.payloadJson);
+      }
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> submitTeamDates(DateTime startDate, DateTime endDate, String payloadJson) async {
+    _addUserMessage('${_fmt(startDate)} → ${_fmt(endDate)}');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final ctx = jsonDecode(payloadJson) as Map<String, dynamic>;
+      ctx['startDate'] = startDate.toIso8601String();
+      ctx['endDate'] = endDate.toIso8601String();
+      final newPayload = jsonEncode(ctx);
+      final response = await _dataSource.sendMessage(
+        action: 'submit_team_dates',
+        payloadJson: newPayload,
+      );
+      if (response.payloadJson != null) {
+        state = state.copyWith(teamPayloadJson: response.payloadJson);
+      }
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> confirmTeam(String payloadJson) async {
+    _addUserMessage('Confirm');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(
+        action: 'confirm_team',
+        payloadJson: payloadJson,
+      );
+      if (response.payloadJson != null) {
+        state = state.copyWith(teamPayloadJson: response.payloadJson);
+      }
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  String _fmt(DateTime d) => '${d.day.toString().padLeft(2, '0')}-${_months[d.month - 1]}-${d.year}';
+  static const _months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // ── Phase 9: Photo Proofs Upload ──────────────────────────────────────
+
+  Future<void> uploadTeamPhotos(List<Uint8List> photoBytes, List<String> fileNames, String payloadJson) async {
+    _addUserMessage('Uploading ${photoBytes.length} photo(s)...');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final ctx = jsonDecode(payloadJson) as Map<String, dynamic>;
+      final sid = state.submissionId ?? ctx['submissionId']?.toString() ?? '';
+      final teamNumber = (ctx['currentPhotoTeam'] as num?)?.toInt() ?? 1;
+
+      final photoIds = await _dataSource.uploadTeamPhotos(
+        photoBytes: photoBytes,
+        fileNames: fileNames,
+        submissionId: sid,
+        teamNumber: teamNumber,
+      );
+
+      // Poll until EXIF/AI extraction completes for all photos (max 120s, every 3s)
+      const maxAttempts = 40;
+      for (final photoId in photoIds) {
+        for (var i = 0; i < maxAttempts; i++) {
+          final status = await _dataSource.getDocumentExtractionStatus(photoId);
+          if (status == 'extracted') break;
+          await Future.delayed(const Duration(seconds: 3));
+        }
+      }
+
+      final response = await _dataSource.sendMessage(
+        action: 'photos_uploaded',
+        message: photoIds.join(','),
+        payloadJson: payloadJson,
+      );
+      if (response.payloadJson != null) {
+        state = state.copyWith(teamPayloadJson: response.payloadJson);
+      }
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> doneTeamPhotos(String payloadJson) async {
+    _addUserMessage('Done ✓');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(action: 'done_team_photos', payloadJson: payloadJson);
+      if (response.payloadJson != null) {
+        state = state.copyWith(teamPayloadJson: response.payloadJson);
+      }
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> addMorePhotos(String payloadJson) async {
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(action: 'add_more_photos', payloadJson: payloadJson);
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> replacePhoto(int photoNumber, String newPhotoId, String payloadJson) async {
+    _addUserMessage('Replace photo $photoNumber');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(
+        action: 'replace_photo',
+        message: '$photoNumber,$newPhotoId',
+        payloadJson: payloadJson,
+      );
+      if (response.payloadJson != null) {
+        state = state.copyWith(teamPayloadJson: response.payloadJson);
+      }
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  // ── Phase 10: Enquiry Dump Upload ─────────────────────────────────────
+
+  Future<void> continueAfterTeams(String payloadJson) async {
+    _addUserMessage('Continue');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(
+        action: 'continue_after_teams',
+        payloadJson: payloadJson,
+      );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> uploadEnquiryDump(Uint8List bytes, String fileName) async {
+    _addUserMessage('Uploading enquiry dump: $fileName');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final sid = state.submissionId;
+      if (sid == null) {
+        state = state.copyWith(isLoading: false, error: 'No active submission. Please start over.');
+        return;
+      }
+      final uploadResult = await _dataSource.uploadEnquiryDump(
+        fileBytes: bytes,
+        fileName: fileName,
+        submissionId: sid,
+      );
+      final docId = uploadResult['documentId']?.toString() ?? '';
+      state = state.copyWith(lastDocumentId: docId);
+
+      const maxAttempts = 40;
+      for (var i = 0; i < maxAttempts; i++) {
+        final status = await _dataSource.getDocumentExtractionStatus(docId);
+        if (status == 'extracted') break;
+        await Future.delayed(const Duration(seconds: 3));
+      }
+
+      final response = await _dataSource.sendMessage(
+        action: 'enquiry_dump_uploaded',
+        message: docId,
+      );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> reUploadEnquiryDump() async {
+    _addUserMessage('Re-upload enquiry dump');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final response = await _dataSource.sendMessage(action: 'reupload_enquiry_dump');
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> continueAfterEnquiry() async {
+    _addUserMessage('Continue');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final submissionId = state.submissionId;
+      final payloadJson = submissionId != null
+          ? '{"submissionId":"$submissionId"}'
+          : null;
+      final response = await _dataSource.sendMessage(
+        action: 'continue_after_enquiry',
+        payloadJson: payloadJson,
+      );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> submitFromChat() async {
+    _addUserMessage('Submit');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final submissionId = state.submissionId;
+      final payloadJson = submissionId != null
+          ? '{"submissionId":"$submissionId"}'
+          : null;
+      final response = await _dataSource.sendMessage(
+        action: 'submit_from_chat',
+        payloadJson: payloadJson,
+      );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> saveDraftFromChat() async {
+    _addUserMessage('Save as Draft');
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final sid = state.submissionId;
+      final payload = sid != null ? '{"submissionId":"$sid"}' : null;
+      final response = await _dataSource.sendMessage(
+        action: 'save_draft_from_chat',
+        payloadJson: payload,
+      );
+      _addBotMessage(response);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  /// Uploads a single photo for replacement and returns the photo ID list.
+  Future<List<String>> uploadSinglePhotoForReplace(    Uint8List photoBytes,
+    String fileName,
+    String submissionId,
+    int teamNumber,
+  ) async {
+    try {
+      return await _dataSource.uploadTeamPhotos(
+        photoBytes: [photoBytes],
+        fileNames: [fileName],
+        submissionId: submissionId,
+        teamNumber: teamNumber,
+      );
+    } catch (e) {
+      state = state.copyWith(error: e.toString());
+      return [];
     }
   }
 

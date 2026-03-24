@@ -581,7 +581,7 @@ List<String> generateSubmissionStates() {
     'Scoring',
     'Recommending',
     'PendingApproval',
-    'PendingASMApproval',
+    'PendingCHApproval',
     'PendingHQApproval',
     'Approved',
     'Rejected',

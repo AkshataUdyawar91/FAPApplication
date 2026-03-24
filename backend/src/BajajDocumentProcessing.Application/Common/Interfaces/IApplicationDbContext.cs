@@ -22,9 +22,8 @@ public interface IApplicationDbContext
     DbSet<Conversation> Conversations { get; }
     DbSet<ConversationMessage> ConversationMessages { get; }
     
-    // Agency and ASM management
+    // Agency management
     DbSet<Agency> Agencies { get; }
-    DbSet<Domain.Entities.ASM> ASMs { get; }
 
     // Document entities
     DbSet<PO> POs { get; }
@@ -48,11 +47,24 @@ public interface IApplicationDbContext
     DbSet<StateMapping> StateMappings { get; }
     DbSet<SubmissionSequence> SubmissionSequences { get; }
 
+    // Dealer and state/city master data
+    DbSet<Dealer> Dealers { get; }
+    DbSet<StateCity> StateCities { get; }
+
     // Reference data
     DbSet<StateGstMaster> StateGstMasters { get; }
     DbSet<HsnMaster> HsnMasters { get; }
     DbSet<CostMaster> CostMasters { get; }
     DbSet<CostMasterStateRate> CostMasterStateRates { get; }
+
+    // Teams bot conversations
+    DbSet<TeamsConversation> TeamsConversations { get; }
+    // Audit logs
+    DbSet<PoBalanceLog> POBalanceLogs { get; }
+    DbSet<POSyncLog> POSyncLogs { get; }
+
+    // Email delivery audit
+    DbSet<EmailDeliveryLog> EmailDeliveryLogs { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

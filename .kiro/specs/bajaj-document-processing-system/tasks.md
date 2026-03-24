@@ -1202,3 +1202,414 @@ dev_dependencies:
     - Agency: "Pending with ASM", "Pending with RA", "Rejected by ASM", "Rejected by RA"
     - ASM: "Pending", "Pending with RA", "Rejected", "Rejected by RA"
     - _Requirements: 25.AC11, 25.AC12_
+## Teams Bot — Approval Actions, Proactive Notifications, and SSO (Requirement 23, Component 11)
+
+### Scope Legend
+- **[PILOT]** — Minimal viable slice (~2 hours). Hardcoded ASM reference, hardcoded JWT, no DB store, no queue. Goal: ASM gets adaptive card in Teams → clicks Approve/Reject → calls existing API.
+- **[PRODUCTION]** — Full production implementation. DB-backed conversation store, proactive messaging queue with backpressure, SSO, full integration with WorkflowOrchestrator, comprehensive tests.
+
+---
+
+- [ ] 36. [PILOT] Set up Bot Framework infrastructure and TeamsController
+  - [x] 36.1 [PILOT] Add Bot Framework NuGet packages
+    - Add `Microsoft.Bot.Builder.Integration.AspNet.Core` (4.22.*)
+    - Add `Microsoft.Bot.Builder` (4.22.*)
+    - Add `Microsoft.Bot.Builder.Teams` (4.22.*)
+    - Add `AdaptiveCards` (3.1.*)
+    - Run `dotnet restore`
+    - _Requirements: 23.AC1.1_
+
+  - [x] 36.2 [PILOT] Add Teams Bot configuration to appsettings.json
+    - Add `TeamsBot` section with `MicrosoftAppId`, `MicrosoftAppPassword`, `TenantId` placeholders
+    - Add `PortalBaseUrl` placeholder
+    - _Requirements: 23.AC1.1, 23.AC1.2_
+
+  - [x] 36.3 [PILOT] Create TeamsController with Bot Framework webhook endpoint
+    - Create `Controllers/TeamsController.cs`
+    - Implement `POST /api/teams/messages` endpoint
+    - Inject `IBotFrameworkHttpAdapter` and `IBot`
+    - Forward incoming activities to the bot via `adapter.ProcessAsync`
+    - Add `[AllowAnonymous]` (Bot Framework handles its own auth via App ID/Secret)
+    - _Requirements: 23.AC1.2_
+
+  - [x] 36.4 [PILOT] Create AdapterWithErrorHandler
+    - Create `Infrastructure/Services/Teams/AdapterWithErrorHandler.cs`
+    - Extend `CloudAdapter` (or `BotFrameworkHttpAdapter`)
+    - Override `OnTurnError` to log errors and send a user-friendly error card
+    - Include correlation ID in error logs
+    - _Requirements: 23.AC7.5_
+
+  - [x] 36.5 [PILOT] Register Bot Framework services in DI
+    - Register `AdapterWithErrorHandler` as Singleton `IBotFrameworkHttpAdapter`
+    - Register `TeamsBotService` as Singleton `IBot`
+    - Add Bot Framework configuration binding from `appsettings.json`
+    - _Requirements: 23.AC1.1_
+
+- [ ] 37. [PILOT] Implement TeamsBotService with adaptive card actions
+  - [-] 37.1 [PILOT] Create TeamsBotService extending TeamsActivityHandler
+    - Create `Infrastructure/Services/Teams/TeamsBotService.cs`
+    - Extend `TeamsActivityHandler` (from `Microsoft.Bot.Builder.Teams`)
+    - Inject `IServiceScopeFactory` and `ILogger<TeamsBotService>`
+    - Override `OnMessageActivityAsync` — respond with help text and portal link
+    - Override `OnTeamsMembersAddedAsync` — send welcome message with bot capabilities
+    - _Requirements: 23.AC7.4, 23.AC8.1_
+
+  - [-] 37.2 [PILOT] Create ASM approval adaptive card template
+    - Create `Infrastructure/Services/Teams/AdaptiveCards/ApprovalCardBuilder.cs`
+    - Build adaptive card programmatically using `AdaptiveCards` SDK
+    - Include: FAP Number, Agency Name, PO Number, Amount (₹ formatted), Submitted Date
+    - Include: AI Confidence Score with color (green >85%, amber 70-85%, red <70%)
+    - Include: AI Recommendation (APPROVE/REVIEW/REJECT) with summary
+    - Include: "Approve" button (Action.Submit, style=positive)
+    - Include: "Reject" button (Action.ShowCard with reason input, min 10 chars)
+    - Include: "View in Portal" button (Action.OpenUrl with deep link)
+    - Include `cardVersion: "1.0"` in all action data payloads
+    - _Requirements: 23.AC3.1, 23.AC3.2_
+
+  - [-] 37.3 [PILOT] Implement adaptive card action handler (approve/reject)
+    - Override `OnTeamsCardActionInvokeAsync` in TeamsBotService
+    - Parse action data: `fapId`, `action` (approve/reject), `rejectionReason`, `cardVersion`
+    - Create scope via `IServiceScopeFactory` to resolve scoped services
+    - Validate cardVersion — if unrecognized, return "Card outdated" message with portal link
+    - For "approve": call existing `PATCH /api/submissions/{id}/approve` logic (resolve SubmissionsService from scope)
+    - For "reject": validate rejectionReason (min 10 chars), call existing `PATCH /api/submissions/{id}/reject` logic
+    - Handle `DbUpdateConcurrencyException` — return "This FAP has already been actioned"
+    - On success: return updated card showing "Approved/Rejected by [name] at [timestamp]" with buttons disabled
+    - Log action to audit trail with source="Teams Bot"
+    - _Requirements: 23.AC3.3, 23.AC3.4, 23.AC3.5, 23.AC3.6, 23.AC3.7_
+
+  - [x] 37.4 [PILOT] Create hardcoded pilot configuration for testing
+    - Create `Infrastructure/Services/Teams/PilotTeamsConfig.cs`
+    - Hardcode a single ASM conversation reference (populated after first bot install)
+    - Hardcode a test JWT or bypass auth for pilot card actions (ASM identity from Teams activity)
+    - Add `IsPilotMode` flag in appsettings.json (default: true)
+    - When pilot mode: skip DB lookup for conversation reference, use hardcoded value
+    - _Requirements: Pilot scope_
+
+- [ ] 38. [PILOT] Create Teams app manifest and test end-to-end
+  - [x] 38.1 [PILOT] Create Teams app manifest for sideloading
+    - Create `teams-app/manifest.json` with bot registration
+    - Set `botId` to the Azure Bot Service App ID placeholder
+    - Configure `commandLists` with available bot commands
+    - Add Bajaj branding (icon, name, description)
+    - Create `teams-app/color.png` (192x192) and `teams-app/outline.png` (32x32) icons
+    - Create `teams-app/manifest.zip` packaging script
+    - _Requirements: 23.AC1.3_
+
+  - [x] 38.2 [PILOT] Create a test endpoint to trigger adaptive card send
+    - Create `POST /api/teams/test/send-card/{fapId}` (dev-only, gated by `IsDevelopment()`)
+    - Resolve FAP data from database
+    - Build approval adaptive card using `ApprovalCardBuilder`
+    - Send card to hardcoded ASM conversation reference via `ContinueConversationAsync`
+    - Return 200 with message "Card sent to ASM"
+    - _Requirements: Pilot scope_
+
+  - [x] 38.3 [PILOT] Write unit tests for pilot components
+    - Test `ApprovalCardBuilder` produces valid adaptive card JSON
+    - Test card includes all required fields (FAP#, Agency, Score, Recommendation, buttons)
+    - Test card action handler parses approve action correctly
+    - Test card action handler parses reject action with reason correctly
+    - Test card action handler rejects empty/short rejection reason
+    - Test card action handler handles already-actioned FAP (concurrency)
+    - Test card version validation (outdated card returns error message)
+    - Mock `IServiceScopeFactory` and `SubmissionsService` for isolation
+    - _Requirements: 23.AC3.2, 23.AC3.3, 23.AC3.4, 23.AC3.6_
+
+- [ ] 39. [PILOT] Checkpoint — Verify pilot end-to-end
+  - Sideload Teams app, install bot, capture conversation reference
+  - Trigger test card send via `POST /api/teams/test/send-card/{fapId}`
+  - Verify adaptive card renders in Teams with correct data
+  - Click Approve → verify FAP state changes to Approved in DB
+  - Click Reject with reason → verify FAP state changes to Rejected in DB
+  - Verify card updates to show "Approved/Rejected by [name] at [time]"
+  - Verify audit log entry with source="Teams Bot"
+  - Ensure all unit tests pass: `dotnet test`
+
+---
+
+- [ ] 40. [PRODUCTION] Implement TeamsUserMapping entity and database migration
+  - [ ] 40.1 Create TeamsUserMapping domain entity
+    - Create `Domain/Entities/TeamsUserMapping.cs`
+    - Properties: UserId, ConversationReferenceJson, TeamsEmail, TenantId, IsActive, LastMessageSentAt
+    - Navigation property to User entity
+    - _Requirements: 23.AC8.1, 23.AC8.2_
+
+  - [ ] 40.2 Create EF Core configuration for TeamsUserMapping
+    - Create `Infrastructure/Persistence/Configurations/TeamsUserMappingConfiguration.cs`
+    - Configure table name, key, indexes (UserId unique, TeamsEmail, IsActive+UserId composite)
+    - Configure ConversationReferenceJson as nvarchar(max)
+    - Configure cascade delete from User
+    - _Requirements: 23.AC8.1_
+
+  - [ ] 40.3 Add TeamsUserMapping DbSet and create migration
+    - Add `DbSet<TeamsUserMapping>` to `ApplicationDbContext`
+    - Run `dotnet ef migrations add AddTeamsUserMapping`
+    - Review generated migration for correctness
+    - Apply migration: `dotnet ef database update`
+    - _Requirements: 23.AC8.1_
+
+- [ ] 41. [PRODUCTION] Implement ConversationReferenceStore
+  - [ ] 41.1 Create IConversationReferenceStore interface
+    - Create in `Application/Common/Interfaces/IConversationReferenceStore.cs`
+    - Methods: SaveReferenceAsync, GetReferenceAsync, DeactivateAsync, IsActiveAsync
+    - All methods accept CancellationToken
+    - _Requirements: 23.AC8.2, 23.AC8.4_
+
+  - [ ] 41.2 Implement ConversationReferenceStore (Scoped)
+    - Create `Infrastructure/Services/Teams/ConversationReferenceStore.cs`
+    - Inject `ApplicationDbContext` and `ILogger`
+    - `SaveReferenceAsync`: Upsert — if mapping exists, update ConversationReferenceJson and set IsActive=true; if not, insert new
+    - `GetReferenceAsync`: Query by UserId where IsActive=true, deserialize ConversationReferenceJson
+    - `DeactivateAsync`: Set IsActive=false for the user
+    - `IsActiveAsync`: Check IsActive flag
+    - Use `AsNoTracking()` for read queries
+    - _Requirements: 23.AC8.2, 23.AC8.4, 23.AC8.5_
+
+  - [ ] 41.3 Write unit tests for ConversationReferenceStore
+    - Test SaveReferenceAsync creates new mapping
+    - Test SaveReferenceAsync upserts existing mapping (re-install scenario)
+    - Test GetReferenceAsync returns null for inactive user
+    - Test DeactivateAsync sets IsActive=false
+    - Test IsActiveAsync returns correct status
+    - Use in-memory database for testing
+    - _Requirements: 23.AC8.2, 23.AC8.4_
+
+- [ ] 42. [PRODUCTION] Implement bot install/uninstall lifecycle in TeamsBotService
+  - [ ] 42.1 Handle bot install — save conversation reference
+    - Override `OnTeamsMembersAddedAsync` in TeamsBotService
+    - Match Teams email (from `activity.From`) to portal user via `AuthService.FindUserByEmailAsync`
+    - If match found: call `ConversationReferenceStore.SaveReferenceAsync` with user ID, email, tenant ID, conversation reference
+    - If no match: reply "Your email is not registered in the Bajaj Document Processing portal. Please contact your administrator."
+    - Send welcome message with bot capabilities
+    - _Requirements: 23.AC1.4, 23.AC8.1, 23.AC8.2, 23.AC8.3_
+
+  - [ ] 42.2 Handle bot uninstall — deactivate mapping
+    - Override `OnTeamsMembersRemovedAsync` in TeamsBotService
+    - Call `ConversationReferenceStore.DeactivateAsync` for the removed user
+    - Log uninstall event
+    - _Requirements: 23.AC8.4_
+
+  - [ ] 42.3 Write unit tests for install/uninstall lifecycle
+    - Test install with matching email saves reference
+    - Test install with non-matching email sends error message
+    - Test uninstall deactivates mapping
+    - Mock ConversationReferenceStore and AuthService
+    - _Requirements: 23.AC8.1, 23.AC8.3, 23.AC8.4_
+
+- [ ] 43. [PRODUCTION] Implement ProactiveNotificationService with Channel queue
+  - [ ] 43.1 Create ProactiveMessageChannel wrapper
+    - Create `Infrastructure/Services/Teams/ProactiveMessageChannel.cs`
+    - Wrap `Channel<ProactiveMessage>` (bounded, capacity 1000)
+    - Create `ProactiveMessage` record: UserId, CardOrText, DeepLinkUrl, MessageType
+    - Expose `Writer` and `Reader` properties
+    - _Requirements: 23.AC2.5_
+
+  - [ ] 43.2 Create IProactiveNotificationService interface
+    - Create in `Application/Common/Interfaces/IProactiveNotificationService.cs`
+    - Methods: SendApprovalCardAsync, SendTextNotificationAsync, NotifyAgencyNewPOAsync, NotifyAgencyFAPDecisionAsync
+    - All methods accept CancellationToken
+    - _Requirements: 23.AC2.1, 23.AC4.1_
+
+  - [ ] 43.3 Implement ProactiveNotificationService (Scoped)
+    - Create `Infrastructure/Services/Teams/ProactiveNotificationService.cs`
+    - Inject `ProactiveMessageChannel`, `ApplicationDbContext`, `ILogger`
+    - `SendApprovalCardAsync`: Look up ASM from PO owner, build adaptive card, enqueue to channel
+    - `SendTextNotificationAsync`: Build text message with deep link, enqueue to channel
+    - `NotifyAgencyNewPOAsync`: Build PO arrival message, enqueue
+    - `NotifyAgencyFAPDecisionAsync`: Build approval/rejection message, enqueue
+    - All methods enqueue and return immediately — no direct Teams API calls
+    - _Requirements: 23.AC2.1, 23.AC2.2, 23.AC2.3, 23.AC2.4, 23.AC4.1, 23.AC4.2, 23.AC4.3_
+
+  - [ ] 43.4 Implement ProactiveMessageConsumer BackgroundService
+    - Create `Infrastructure/Services/Teams/ProactiveMessageConsumer.cs`
+    - Extend `BackgroundService`
+    - Inject `ProactiveMessageChannel`, `IServiceScopeFactory`, `IBotFrameworkHttpAdapter`, `IConfiguration`, `ILogger`
+    - Read from channel in a loop
+    - For each message: create scope, resolve `ConversationReferenceStore`, get conversation reference
+    - Call `adapter.ContinueConversationAsync` to send the message/card
+    - Implement rate limiting (configurable, default 4 messages/sec)
+    - Implement retry with exponential backoff (3 attempts: 2s, 4s, 8s)
+    - On 403/404 from Teams API: call `ConversationReferenceStore.DeactivateAsync`, log, skip
+    - Update `LastMessageSentAt` on success
+    - _Requirements: 23.AC2.5, 23.AC7.1, 23.AC7.2, 23.AC7.3_
+
+  - [ ] 43.5 Write unit tests for ProactiveNotificationService
+    - Test SendApprovalCardAsync enqueues correct message
+    - Test SendTextNotificationAsync enqueues with deep link
+    - Test NotifyAgencyNewPOAsync builds correct PO message
+    - Test NotifyAgencyFAPDecisionAsync builds correct decision message
+    - _Requirements: 23.AC2.1, 23.AC4.1_
+
+  - [ ] 43.6 Write unit tests for ProactiveMessageConsumer
+    - Test consumer reads from channel and sends via adapter
+    - Test retry logic on transient failure (3 attempts)
+    - Test deactivation on 403/404 response
+    - Test rate limiting (messages per second)
+    - Mock IBotFrameworkHttpAdapter and ConversationReferenceStore
+    - _Requirements: 23.AC7.1, 23.AC7.2, 23.AC7.3_
+
+- [ ] 44. [PRODUCTION] Integrate proactive notifications with WorkflowOrchestrator
+  - [ ] 44.1 Add Teams notification triggers to WorkflowOrchestrator
+    - After FAP reaches PendingApproval state: call `ProactiveNotificationService.SendApprovalCardAsync`
+    - After validation completes: call `SendTextNotificationAsync` to ASM with validation summary
+    - After scoring completes: call `SendTextNotificationAsync` to ASM with score
+    - Wrap all Teams calls in try/catch — never block FAP workflow on Teams failure
+    - Log Teams notification failures at WARNING level
+    - _Requirements: 23.AC2.1, 23.AC2.3, 23.AC2.4, 23.AC7.2_
+
+  - [ ] 44.2 Add Agency notification triggers
+    - After PO sync from SAP: call `NotifyAgencyNewPOAsync`
+    - After ASM approves: call `NotifyAgencyFAPDecisionAsync` with "Approved"
+    - After ASM rejects: call `NotifyAgencyFAPDecisionAsync` with "Rejected" and reason
+    - After RA/Finance decision: call `NotifyAgencyFAPDecisionAsync` with final status
+    - _Requirements: 23.AC4.1, 23.AC4.2, 23.AC4.3, 23.AC4.4_
+
+  - [ ] 44.3 Write integration tests for notification triggers
+    - Test FAP reaching PendingApproval triggers approval card send
+    - Test validation complete triggers ASM text notification
+    - Test PO sync triggers Agency notification
+    - Test approve/reject triggers Agency notification
+    - Test Teams failure does not block FAP workflow
+    - _Requirements: 23.AC2.1, 23.AC4.1, 23.AC7.2_
+
+- [ ] 45. [PRODUCTION] Implement Teams SSO token exchange
+  - [ ] 45.1 Create ITeamsSSOService interface
+    - Create in `Application/Common/Interfaces/ITeamsSSOService.cs`
+    - Method: `ExchangeTokenAsync(string azureAdToken, CancellationToken ct) → TokenExchangeResult`
+    - Create `TokenExchangeResult` DTO: Success, PortalJwt, ErrorMessage, UserRole, UserId
+    - _Requirements: 23.AC5.2_
+
+  - [ ] 45.2 Implement TeamsSSOService
+    - Create `Infrastructure/Services/Teams/TeamsSSOService.cs`
+    - Inject `IConfiguration`, `AuthService`, `ILogger`
+    - Validate Azure AD token: issuer (`https://login.microsoftonline.com/{tenantId}/v2.0`), audience, signature
+    - Check `tid` claim matches configured `BAJAJ_AZURE_AD_TENANT_ID`
+    - Extract `preferred_username` or `email` claim
+    - Call `AuthService.FindUserByEmailAsync` to match portal user
+    - If match: generate portal JWT with user's role claims, return success
+    - If no match: return failure with "User not found"
+    - If tenant mismatch: return failure with "Invalid tenant", log security event
+    - _Requirements: 23.AC5.2, 23.AC5.6_
+
+  - [ ] 45.3 Add SSO endpoint to AuthController
+    - Add `POST /api/auth/teams-sso` endpoint in `AuthController`
+    - Mark `[AllowAnonymous]` (Azure AD token IS the authentication)
+    - Accept `TeamsSSoRequest { AzureAdToken }` DTO
+    - Call `TeamsSSOService.ExchangeTokenAsync`
+    - Return 200 with `{ portalJwt, role, userId }` on success
+    - Return 401 on invalid token, 403 on tenant mismatch, 404 on user not found
+    - _Requirements: 23.AC5.2, 23.AC5.4_
+
+  - [ ] 45.4 Add Microsoft.Identity.Web NuGet package
+    - Add `Microsoft.Identity.Web` (2.17.*) for Azure AD token validation
+    - Add `AzureAd` configuration section to appsettings.json with placeholders
+    - _Requirements: 23.AC5.2_
+
+  - [ ] 45.5 Write unit tests for TeamsSSOService
+    - Test valid Azure AD token returns portal JWT
+    - Test invalid token returns failure
+    - Test tenant mismatch returns 403
+    - Test user not found returns failure
+    - Test expired token returns failure
+    - Mock token validation and AuthService
+    - _Requirements: 23.AC5.2, 23.AC5.4, 23.AC5.6_
+
+- [ ] 46. [PRODUCTION] Implement Flutter Teams SSO client-side flow
+  - [ ] 46.1 Create Teams SSO service in Flutter
+    - Create `lib/features/auth/data/datasources/teams_sso_datasource.dart`
+    - Detect if running inside Teams context (check `window.parent` or Teams JS SDK availability)
+    - Call `microsoftTeams.authentication.getAuthToken()` via JS interop (Flutter web)
+    - Send Azure AD token to `POST /api/auth/teams-sso`
+    - Store returned portal JWT in `flutter_secure_storage`
+    - _Requirements: 23.AC5.1, 23.AC5.3_
+
+  - [ ] 46.2 Integrate SSO into auth flow
+    - Update `AuthNotifier` to check for Teams context on app startup
+    - If in Teams: attempt SSO silently before showing login page
+    - If SSO succeeds: navigate to deep-linked page via `go_router`
+    - If SSO fails: fall back to standard login with message "Automatic sign-in failed. Please log in manually."
+    - On JWT expiry: silently re-initiate SSO flow
+    - _Requirements: 23.AC5.3, 23.AC5.4, 23.AC5.5_
+
+  - [ ] 46.3 Implement deep link handling from Teams
+    - Configure `go_router` to handle deep link paths (e.g., `/fap/{fapId}/review`)
+    - Parse deep link URL on app startup
+    - After SSO authentication: navigate to the deep-linked route
+    - If unauthorized for the resource: redirect to home with "Access denied" message
+    - _Requirements: 23.AC6.1, 23.AC6.2, 23.AC6.3, 23.AC6.4_
+
+  - [ ] 46.4 Write tests for Teams SSO Flutter integration
+    - Test Teams context detection
+    - Test SSO token exchange success → navigation
+    - Test SSO failure → fallback to login
+    - Test deep link parsing and navigation
+    - Test JWT expiry → silent re-auth
+    - Mock Teams JS SDK and API calls
+    - _Requirements: 23.AC5.1, 23.AC5.3, 23.AC6.1_
+
+- [ ] 47. [PRODUCTION] Implement property-based tests for Teams Bot correctness
+  - [ ] 47.1 Write property test for approve/reject idempotency
+    - **Property: Idempotency** — Approving/rejecting a FAP that has already been actioned produces no state change and returns informational message
+    - Generate random FAP IDs and action sequences (approve, reject, approve-approve, reject-reject)
+    - Verify: second action on same FAP returns "already actioned", state unchanged
+    - Minimum 100 iterations
+    - _Requirements: 23.AC3.6_
+
+  - [ ] 47.2 Write property test for ASM authorization
+    - **Property: Authorization** — Only the ASM who owns the PO can approve/reject via adaptive card
+    - Generate random ASM IDs and FAP assignments
+    - Verify: non-owner ASM receives "Access denied", no state change
+    - Verify: owner ASM can approve/reject successfully
+    - Minimum 100 iterations
+    - _Requirements: 23.AC3.5_
+
+  - [ ] 47.3 Write property test for notification reliability
+    - **Property: Notification Reliability** — Proactive message failures never block FAP processing
+    - Generate random failure scenarios (network error, 403, 404, timeout)
+    - Verify: FAP state transitions complete regardless of notification outcome
+    - Verify: failed notifications are logged but don't throw
+    - Minimum 100 iterations
+    - _Requirements: 23.AC7.2_
+
+  - [ ] 47.4 Write property test for tenant isolation
+    - **Property: Tenant Isolation** — Only tokens from configured Bajaj tenant are accepted
+    - Generate random tenant IDs (some matching, some not)
+    - Verify: matching tenant → success, non-matching → 403
+    - Minimum 100 iterations
+    - _Requirements: 23.AC5.6_
+
+  - [ ] 47.5 Write property test for mapping lifecycle
+    - **Property: Mapping Lifecycle** — Uninstall sets inactive, re-install reactivates, no messages to inactive
+    - Generate random install/uninstall/re-install sequences
+    - Verify: IsActive flag correct after each operation
+    - Verify: GetReferenceAsync returns null for inactive users
+    - Minimum 100 iterations
+    - _Requirements: 23.AC8.4, 23.AC8.5_
+
+- [ ] 48. [PRODUCTION] Update Teams app manifest for production and publish
+  - [ ] 48.1 Update manifest with production bot ID and branding
+    - Update `teams-app/manifest.json` with production Azure Bot Service App ID
+    - Add proper Bajaj branding (name, description, icons)
+    - Configure `validDomains` with production portal URL
+    - Add `webApplicationInfo` for SSO (resource URI = `api://YOUR_BOT_APP_ID`)
+    - _Requirements: 23.AC1.3_
+
+  - [ ] 48.2 Create deployment documentation
+    - Document Azure Bot Service setup steps
+    - Document Azure AD app registration for SSO
+    - Document Teams app publishing to org catalog
+    - Document environment variables and configuration
+    - Document troubleshooting guide for common issues
+    - _Requirements: 23.AC1.1, 23.AC1.3_
+
+- [ ] 49. [PRODUCTION] Final checkpoint — Teams Bot complete
+  - Run all unit tests: `dotnet test`
+  - Run all property-based tests (minimum 100 iterations each)
+  - Verify proactive notifications deliver to ASM and Agency
+  - Verify approve/reject from adaptive card updates FAP state
+  - Verify SSO token exchange works end-to-end
+  - Verify deep links navigate correctly
+  - Verify bot install/uninstall lifecycle
+  - Verify audit trail completeness
+  - Verify error handling for all scenarios in AC7
+  - Ensure all tests pass, ask the user if questions arise.

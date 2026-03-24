@@ -35,7 +35,8 @@ public class AmountConsistencyProperties
             mockHttpClientFactory.Object,
             mockReferenceDataService.Object,
             mockCorrelationIdService.Object,
-            mockPerceptualHashService.Object);
+            mockPerceptualHashService.Object,
+            new Mock<IPoBalanceService>().Object);
     }
 
     /// <summary>

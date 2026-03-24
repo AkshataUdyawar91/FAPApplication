@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.EntityFrameworkCore;
 using BajajDocumentProcessing.Infrastructure;
 using BajajDocumentProcessing.Infrastructure.Persistence;
 using BajajDocumentProcessing.API.Middleware;
@@ -13,7 +14,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
 builder.Services.AddSignalR();
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(opts =>
+    {
+        opts.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        opts.JsonSerializerOptions.DefaultIgnoreCondition =
+            System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -129,18 +136,37 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
+    var seedLogger = services.GetRequiredService<ILogger<Program>>();
     try
     {
         var context = services.GetRequiredService<ApplicationDbContext>();
-        // Drop and recreate to pick up all schema changes (dev only)
-        await context.Database.EnsureDeletedAsync();
-        await context.Database.EnsureCreatedAsync();
+        // Apply any pending migrations (preserves existing data)
+        // If migrations fail (e.g., tables already exist), the app still starts
+        try
+        {
+            await context.Database.MigrateAsync();
+        }
+        catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 2714)
+        {
+            // Error 2714 = "object already exists" — tables exist but __EFMigrationsHistory is out of sync.
+            // Safe to continue; the schema is already in place.
+            seedLogger.LogWarning("Migration skipped: tables already exist (error 2714). Marking migrations as applied.");
+
+            // Mark all pending migrations as applied so this doesn't repeat
+            var pendingMigrations = await context.Database.GetPendingMigrationsAsync();
+            foreach (var migration in pendingMigrations)
+            {
+                await context.Database.ExecuteSqlRawAsync(
+                    "INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion]) VALUES ({0}, {1})",
+                    migration, "8.0.0");
+                seedLogger.LogInformation("Marked migration {Migration} as applied", migration);
+            }
+        }
         await ApplicationDbContextSeed.SeedAsync(context);
     }
     catch (Exception ex)
     {
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred while seeding the database.");
+        seedLogger.LogError(ex, "An error occurred while seeding the database. App will continue starting.");
     }
 }
 
@@ -151,7 +177,11 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// Only redirect to HTTPS in production — breaks Bot Framework Emulator and Flutter web in dev
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseCors("AllowFlutterApp");
 
 // Correlation ID middleware - must be early in pipeline

@@ -5,8 +5,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace BajajDocumentProcessing.Infrastructure.Persistence.Configurations;
 
 /// <summary>
-/// Entity Framework Core configuration for the StateMapping entity.
-/// Maps Indian states/UTs to dealers and CIRCLE HEAD users.
+/// EF Core configuration for StateMapping entity.
 /// </summary>
 public class StateMappingConfiguration : IEntityTypeConfiguration<StateMapping>
 {
@@ -14,41 +13,35 @@ public class StateMappingConfiguration : IEntityTypeConfiguration<StateMapping>
     {
         builder.ToTable("StateMappings");
 
-        builder.HasKey(s => s.Id);
+        builder.HasKey(e => e.Id);
 
-        builder.Property(s => s.State)
+        builder.Property(e => e.State)
             .IsRequired()
             .HasMaxLength(100);
 
-        builder.Property(s => s.DealerCode)
-            .IsRequired()
-            .HasMaxLength(50);
+        builder.Property(e => e.CircleHeadUserId);
 
-        builder.Property(s => s.DealerName)
-            .IsRequired()
-            .HasMaxLength(200);
+        builder.Property(e => e.RAUserId);
 
-        builder.Property(s => s.City)
-            .HasMaxLength(100);
-
-        builder.Property(s => s.CircleHeadUserId);
-
-        builder.Property(s => s.IsActive)
-            .IsRequired()
+        builder.Property(e => e.IsActive)
             .HasDefaultValue(true);
 
-        builder.Property(s => s.IsDeleted)
-            .IsRequired()
+        builder.Property(e => e.IsDeleted)
             .HasDefaultValue(false);
 
-        // Indexes
-        builder.HasIndex(s => s.State)
+        // Index for CircleHead lookup (non-unique: one CH can cover multiple states)
+        builder.HasIndex(e => e.CircleHeadUserId)
+            .HasDatabaseName("IX_StateMappings_CircleHeadUserId");
+
+        builder.HasIndex(e => e.RAUserId)
+            .HasDatabaseName("IX_StateMappings_RAUserId");
+
+        // One mapping per state
+        builder.HasIndex(e => e.State)
+            .IsUnique()
             .HasDatabaseName("IX_StateMappings_State");
 
-        builder.HasIndex(s => s.DealerCode)
-            .HasDatabaseName("IX_StateMappings_DealerCode");
-
-        builder.HasIndex(s => new { s.State, s.IsActive })
+        builder.HasIndex(e => new { e.State, e.IsActive })
             .HasDatabaseName("IX_StateMappings_State_IsActive");
     }
 }

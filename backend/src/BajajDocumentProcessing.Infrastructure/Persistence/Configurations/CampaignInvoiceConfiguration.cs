@@ -45,13 +45,13 @@ public class CampaignInvoiceConfiguration : IEntityTypeConfiguration<CampaignInv
             .IsRequired()
             .HasMaxLength(100);
 
-        // Relationship: CampaignInvoice belongs to Team (no inverse navigation — Teams.Invoices removed)
+        // Relationship: CampaignInvoice belongs to Team
         builder.HasOne(ci => ci.Team)
-            .WithMany()
+            .WithMany(t => t.Invoices)
             .HasForeignKey(ci => ci.CampaignId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Relationship: CampaignInvoice belongs to Package (no inverse navigation — CampaignInvoices removed from DocumentPackage)
+        // Relationship: CampaignInvoice belongs to Package (no navigation property on DocumentPackage)
         builder.HasOne(ci => ci.Package)
             .WithMany()
             .HasForeignKey(ci => ci.PackageId)
