@@ -1,4 +1,6 @@
 using BajajDocumentProcessing.Application.Common.Interfaces;
+using BajajDocumentProcessing.API.Configuration;
+using Microsoft.Extensions.Options;
 using BajajDocumentProcessing.Domain.Enums;
 using BajajDocumentProcessing.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -24,19 +26,25 @@ public class AssistantController : ControllerBase
     private readonly IReferenceDataService _referenceData;
     private readonly ISubmissionNumberService _submissionNumberService;
     private readonly IBackgroundWorkflowQueue _backgroundQueue;
+    private readonly IChatService _chatService;
+    private readonly IOptionsSnapshot<FeaturesConfig> _features;
 
     public AssistantController(
         IApplicationDbContext context,
         ILogger<AssistantController> logger,
         IReferenceDataService referenceData,
         ISubmissionNumberService submissionNumberService,
-        IBackgroundWorkflowQueue backgroundQueue)
+        IBackgroundWorkflowQueue backgroundQueue,
+        IChatService chatService,
+        IOptionsSnapshot<FeaturesConfig> features)
     {
         _context = context;
         _logger = logger;
         _referenceData = referenceData;
         _submissionNumberService = submissionNumberService;
         _backgroundQueue = backgroundQueue;
+        _chatService = chatService;
+        _features = features;
     }
 
     /// <summary>
@@ -48,6 +56,20 @@ public class AssistantController : ControllerBase
         [FromBody] AssistantRequest request,
         CancellationToken ct = default)
     {
+        // AC 13.1: Gate conversational AI for Agency role only (hot-reloaded per request)
+        var requestingRole = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+        _logger.LogInformation("AC13.1 check — Role: {Role}, AgencyConversationalAI: {Flag}", 
+            requestingRole, _features.Value.AgencyConversationalAI);
+        if (requestingRole == "Agency" && !_features.Value.AgencyConversationalAI)
+        {
+            _logger.LogInformation("AgencyConversationalAI feature is disabled. Returning unavailable response.");
+            return Ok(new AssistantResponse
+            {
+                Type = "error",
+                Message = "The conversational assistant is currently unavailable. Please try again later.",
+            });
+        }
+
         var agencyId = await GetAgencyIdAsync(ct);
         var action = request.Action?.ToLowerInvariant();
 
@@ -60,11 +82,15 @@ public class AssistantController : ControllerBase
             "reupload_invoice", "reupload_activity_summary",
             "reupload_cost_summary", "reupload_enquiry_dump",
             "continue_after_cost_summary", "continue_after_teams",
-            "save_draft_from_chat",
+            "save_draft_from_chat", "message", "help",
         };
 
         if (!publicActions.Contains(action ?? "") && agencyId == null)
-            return Forbid();
+            return Ok(new AssistantResponse
+            {
+                Type = "error",
+                Message = "I couldn't verify your identity. Please log in to ClaimsIQ.",
+            });
 
         try
         {
@@ -72,7 +98,9 @@ public class AssistantController : ControllerBase
             {
                 "greet" => BuildGreeting(),
                 "create_request" => BuildCreateRequestPrompt(),
-                "view_requests" => BuildViewRequestsPrompt(),
+                "view_requests" => GetUserIdSync() is { } uid
+                    ? await BuildStatusCardsResponse(uid, "show my pending claims", ct)
+                    : new AssistantResponse { Type = "text", Message = "I couldn't verify your identity. Please log in." },
                 "pending_approvals" => BuildPendingApprovalsPrompt(),
                 "search_po" => await HandleSearchPO(request, agencyId!.Value, ct),
                 "select_po" => await HandleSelectPO(request, agencyId!.Value, ct),
@@ -106,6 +134,8 @@ public class AssistantController : ControllerBase
                 "continue_after_enquiry" => await HandleFinalReview(request, agencyId!.Value, ct),
                 "submit_from_chat" => await HandleSubmitFromChat(request, agencyId!.Value, ct),
                 "save_draft_from_chat" => HandleSaveDraftFromChat(),
+                "message" => await HandleStatusQuery(request, ct),
+                "help" => BuildHelpResponse(),
                 _ => BuildGreeting(),
             };
 
@@ -133,6 +163,22 @@ public class AssistantController : ControllerBase
                 new() { Id = "create_request", Title = "Start a new submission", Subtitle = "I'll guide you step by step", Icon = "add_circle_outline", Action = "create_request" },
                 new() { Id = "view_requests", Title = "Show my pending claims", Subtitle = "Track under review claims", Icon = "list_alt", Action = "view_requests" },
                 new() { Id = "pending_approvals", Title = "Why was my claim returned", Subtitle = "Get correction guidance", Icon = "pending_actions", Action = "pending_approvals" },
+            },
+        };
+    }
+
+    private static AssistantResponse BuildHelpResponse()
+    {
+        return new AssistantResponse
+        {
+            Type = "help",
+            Message = "Here's what I can help you with. Tap a card or copy an example question:",
+            Cards = new List<WorkflowCard>
+            {
+                new() { Id = "help_status",   Title = "Check claim status",     Subtitle = "Try: \"What's the status of my claims?\"",    Icon = "track_changes",      Action = "message" },
+                new() { Id = "help_submit",   Title = "Start a new submission", Subtitle = "Try: \"I want to create a new request\"",      Icon = "add_circle_outline", Action = "create_request" },
+                new() { Id = "help_rejected", Title = "Rejection reasons",      Subtitle = "Try: \"Why was my claim returned?\"",          Icon = "info_outline",       Action = "message" },
+                new() { Id = "help_track",    Title = "Track a request",        Subtitle = "Try: \"Show my pending claims\"",              Icon = "list_alt",           Action = "view_requests" },
             },
         };
     }
@@ -2647,6 +2693,252 @@ public class AssistantController : ControllerBase
         };
     }
 
+    /// <summary>
+    /// Handles free-text natural language queries (e.g. "what's the status of my claims?")
+    /// by delegating to ChatService which has full DB context and GPT-4 response generation.
+    /// </summary>
+    private async Task<AssistantResponse> HandleStatusQuery(AssistantRequest request, CancellationToken ct)
+    {
+        var query = request.Message?.Trim();
+        if (string.IsNullOrEmpty(query))
+        {
+            return new AssistantResponse
+            {
+                Type = "text",
+                Message = "I didn't catch that. Could you rephrase your question?",
+            };
+        }
+
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                          ?? User.FindFirst("sub")?.Value;
+
+        if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+        {
+            return new AssistantResponse
+            {
+                Type = "error",
+                Message = "I couldn't verify your identity. Please log in to ClaimsIQ.",
+            };
+        }
+
+        try
+        {
+            // AC 5.2 / AC 13.2: Detect status-check queries — use LLM or keyword classifier based on flag
+            var isStatusQuery = _features.Value.UseLLMClassifier
+                ? await ClassifyIntentWithLLMAsync(query, ct)
+                : IsStatusCheckQuery(query);
+            if (isStatusQuery)
+            {
+                return await BuildStatusCardsResponse(userId, query, ct);
+            }
+
+            // Non-status queries fall through to GPT chat
+            var chatResponse = await _chatService.ProcessQueryAsync(userId, query, null, ct);
+            return new AssistantResponse
+            {
+                Type = "text",
+                Message = chatResponse.Message,
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "HandleStatusQuery failed for user {UserId}", userId);
+            return new AssistantResponse
+            {
+                Type = "text",
+                Message = "I wasn't able to fetch your data right now. Please try again shortly.",
+            };
+        }
+    }
+
+    /// <summary>
+    /// Returns true when the user's message is asking about submission status.
+    /// </summary>
+    private static bool IsStatusCheckQuery(string query)
+    {
+        var q = query.ToLowerInvariant();
+        return q.Contains("status") || q.Contains("pending") || q.Contains("claim") ||
+               q.Contains("submission") || q.Contains("request") || q.Contains("approved") ||
+               q.Contains("rejected") || q.Contains("show my") || q.Contains("my request") ||
+               q.Contains("my claim") || q.Contains("track") || q.Contains("fap-") || q.Contains("fap ");
+    }
+
+    /// <summary>
+    /// Builds a structured status_cards response for the given user.
+    /// AC 5.2: FAP ID, ₹ Indian notation, status display text, DD-MMM-YYYY date, View deep-link.
+    /// AC 5.4: If a specific FAP ID is mentioned, filter to that submission only.
+    /// </summary>
+    private async Task<AssistantResponse> BuildStatusCardsResponse(Guid userId, string query, CancellationToken ct)
+    {
+        // AC 5.4: Extract specific FAP ID from query if present (e.g. "FAP-ABCD1234", "fap-abcd1234", "fap abcd1234")
+        string? requestedFapId = null;
+        var fapMatch = System.Text.RegularExpressions.Regex.Match(
+            query, @"FAP[\s\-]([A-Fa-f0-9]{8})", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (fapMatch.Success)
+            requestedFapId = $"FAP-{fapMatch.Groups[1].Value.ToUpperInvariant()}";
+
+        var user = await _context.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == userId, ct);
+        var userRole = user?.Role.ToString() ?? "Agency";
+
+        var packagesQuery = _context.DocumentPackages
+            .Include(p => p.Invoices)
+            .AsNoTracking()
+            .AsQueryable();
+
+        // Always scope to the authenticated user's agency
+        if (userRole == "Agency")
+            packagesQuery = packagesQuery.Where(p => p.SubmittedByUserId == userId);
+
+        // AC 5.4: If a specific FAP ID is requested, search across ALL states for that submission.
+        // FAP ID format: "FAP-" + first 8 chars of the GUID (no dashes), uppercased.
+        // We fetch all user-scoped packages and match in-memory since SQL GUID string format varies.
+        if (requestedFapId != null)
+        {
+            // Extract the 8-char hex suffix from "FAP-XXXXXXXX"
+            var fapSuffix = requestedFapId.Length > 4
+                ? requestedFapId.Substring(4).ToUpperInvariant()
+                : string.Empty;
+
+            var allPackages = await packagesQuery
+                .OrderByDescending(p => p.CreatedAt)
+                .ToListAsync(ct);
+
+            var matched = allPackages
+                .Where(p =>
+                {
+                    // GUID string: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    // First segment before the first dash is 8 hex chars
+                    var guidStr = p.Id.ToString().ToUpperInvariant();
+                    var firstSegment = guidStr.Split('-')[0]; // e.g. "CF5DAD70"
+                    return firstSegment == fapSuffix;
+                })
+                .ToList();
+
+            if (matched.Count == 0)
+                return new AssistantResponse
+                {
+                    Type = "text",
+                    Message = $"I couldn't find a submission with ID {requestedFapId} in your account.",
+                };
+
+            var cards = matched.Select(p => BuildStatusCard(p, userRole, null)).ToList();
+            // Resolve PO numbers for matched packages
+            var matchedPoIds = matched.Where(p => p.SelectedPOId.HasValue).Select(p => p.SelectedPOId!.Value).Distinct().ToList();
+            if (matchedPoIds.Any())
+            {
+                var matchedPoNumbers = await _context.POs
+                    .Where(p => matchedPoIds.Contains(p.Id))
+                    .Select(p => new { p.Id, p.PONumber })
+                    .ToDictionaryAsync(p => p.Id, p => p.PONumber, ct);
+                cards = matched.Select(p =>
+                {
+                    string? poNum = p.SelectedPOId.HasValue && matchedPoNumbers.ContainsKey(p.SelectedPOId.Value)
+                        ? matchedPoNumbers[p.SelectedPOId.Value] : null;
+                    return BuildStatusCard(p, userRole, poNum);
+                }).ToList();
+            }
+            return new AssistantResponse
+            {
+                Type = "status_cards",
+                Message = $"Here is the status of {requestedFapId}:",
+                StatusCards = cards,
+            };
+        }
+
+        // AC 5.1: For general status queries, filter to the 5 active statuses
+        packagesQuery = packagesQuery.Where(p =>
+            p.State == Domain.Enums.PackageState.Uploaded ||
+            p.State == Domain.Enums.PackageState.Extracting ||
+            p.State == Domain.Enums.PackageState.Validating ||
+            p.State == Domain.Enums.PackageState.PendingCH ||
+            p.State == Domain.Enums.PackageState.PendingRA);
+
+        var packages = await packagesQuery
+            .OrderByDescending(p => p.CreatedAt)
+            .Take(20)
+            .ToListAsync(ct);
+
+        // AC 5.3: No pending claims message
+        if (packages.Count == 0)
+            return new AssistantResponse { Type = "text", Message = "You have no pending claims right now." };
+
+        // Resolve PO numbers in one query via SelectedPOId
+        var selectedPoIds = packages
+            .Where(p => p.SelectedPOId.HasValue)
+            .Select(p => p.SelectedPOId!.Value)
+            .Distinct()
+            .ToList();
+        var poNumbers = selectedPoIds.Any()
+            ? await _context.POs
+                .Where(p => selectedPoIds.Contains(p.Id))
+                .Select(p => new { p.Id, p.PONumber })
+                .ToDictionaryAsync(p => p.Id, p => p.PONumber, ct)
+            : new Dictionary<Guid, string?>();
+
+        // AC 5.2: Build structured status cards
+        var statusCards = packages.Select(p =>
+        {
+            string? poNumber = p.SelectedPOId.HasValue && poNumbers.ContainsKey(p.SelectedPOId.Value)
+                ? poNumbers[p.SelectedPOId.Value]
+                : null;
+            return BuildStatusCard(p, userRole, poNumber);
+        }).ToList();
+
+        return new AssistantResponse
+        {
+            Type = "status_cards",
+            Message = $"Here are your {statusCards.Count} pending submission(s):",
+            StatusCards = statusCards,
+        };
+    }
+
+    private StatusCard BuildStatusCard(Domain.Entities.DocumentPackage p, string userRole, string? poNumber)
+    {
+        // FAP ID = "FAP-" + first segment of GUID (8 hex chars before first dash)
+        var firstSegment = p.Id.ToString().Split('-')[0].ToUpperInvariant();
+        var fapId = $"FAP-{firstSegment}";
+
+        var statusText = p.State switch
+        {
+            Domain.Enums.PackageState.Uploaded   => "Uploaded",
+            Domain.Enums.PackageState.Extracting => "Extracting",
+            Domain.Enums.PackageState.Validating => "Validating",
+            Domain.Enums.PackageState.PendingCH  => "Pending with CH",
+            Domain.Enums.PackageState.PendingRA  => "Pending with RA",
+            Domain.Enums.PackageState.Approved   => "Approved",
+            Domain.Enums.PackageState.CHRejected => "Rejected by CH",
+            Domain.Enums.PackageState.RARejected => "Rejected by RA",
+            _                                    => p.State.ToString(),
+        };
+
+        var firstInvoice = p.Invoices.FirstOrDefault();
+        string? amount = null;
+        if (firstInvoice?.TotalAmount is { } amt && amt > 0)
+            amount = $"₹{amt:N0}";
+
+        var submittedDate = p.CreatedAt.ToString("dd-MMM-yyyy");
+
+        var deepLink = userRole switch
+        {
+            "ASM" => $"nav://asm-review/{p.Id}",
+            "HQ"  => $"nav://hq-review/{p.Id}",
+            _     => $"nav://agency-detail/{p.Id}",
+        };
+
+        return new StatusCard
+        {
+            FapId = fapId,
+            FullId = p.Id.ToString(),
+            PoNumber = poNumber,
+            InvoiceNumber = p.Invoices.FirstOrDefault()?.InvoiceNumber,
+            Status = statusText,
+            Amount = amount,
+            SubmittedDate = submittedDate,
+            DeepLink = deepLink,
+        };
+    }
+
     private static List<ValidationRuleResult> RunPhotoValidationRules(Domain.Entities.TeamPhotos photo)    {
         var rules = new List<ValidationRuleResult>();
 
@@ -3740,6 +4032,31 @@ public class AssistantController : ControllerBase
         return null;
     }
 
+    /// <summary>
+    /// AC 13.2: LLM-based intent classifier using GPT via ChatService.
+    /// Returns true if the query is asking about submission status.
+    /// Falls back to keyword classification on any failure (non-blocking).
+    /// </summary>
+    private async Task<bool> ClassifyIntentWithLLMAsync(string query, CancellationToken ct)
+    {
+        try
+        {
+            var userId = GetUserIdSync();
+            if (userId == null) return IsStatusCheckQuery(query);
+
+            var prompt =
+                $"Classify the following user message. Reply with exactly one word: STATUS if the user is asking about submission status, tracking, pending claims, or a specific FAP ID. Otherwise reply OTHER.\n\nMessage: {query}";
+
+            var result = await _chatService.ProcessQueryAsync(userId.Value, prompt, null, ct);
+            return result.Message.Trim().StartsWith("STATUS", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LLM intent classification failed — falling back to keyword classifier");
+            return IsStatusCheckQuery(query);
+        }
+    }
+
     private async Task<Guid?> GetAgencyIdAsync(CancellationToken ct)
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
@@ -3907,6 +4224,36 @@ public class AssistantResponse
 
     [JsonPropertyName("fileName")]
     public string? FileName { get; init; }
+
+    [JsonPropertyName("statusCards")]
+    public List<StatusCard>? StatusCards { get; init; }
+}
+
+public class StatusCard
+{
+    [JsonPropertyName("fapId")]
+    public required string FapId { get; init; }
+
+    [JsonPropertyName("fullId")]
+    public required string FullId { get; init; }
+
+    [JsonPropertyName("poNumber")]
+    public string? PoNumber { get; init; }
+
+    [JsonPropertyName("invoiceNumber")]
+    public string? InvoiceNumber { get; init; }
+
+    [JsonPropertyName("status")]
+    public required string Status { get; init; }
+
+    [JsonPropertyName("amount")]
+    public string? Amount { get; init; }
+
+    [JsonPropertyName("submittedDate")]
+    public required string SubmittedDate { get; init; }
+
+    [JsonPropertyName("deepLink")]
+    public required string DeepLink { get; init; }
 }
 
 public class PhotoValidationResult

@@ -72,10 +72,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # Bajaj brand assets (commented out until assets are added)
-  # assets:
-  #   - assets/images/
-  #   - assets/icons/
+  # Bajaj brand assets
+  assets:
+    - assets/test_docs/
 
   # fonts:
   #   - family: Roboto

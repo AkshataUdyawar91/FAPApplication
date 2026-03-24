@@ -5,7 +5,7 @@ class ApiConstants {
   // Production build (deploy.ps1): passes /api so requests are same-origin.
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://localhost:80/api',
+    defaultValue: 'http://localhost:5001/api',
   );
 
   // Auth endpoints

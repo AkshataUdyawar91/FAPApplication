@@ -1,11 +1,11 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
-import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/constants/api_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -14,9 +14,9 @@ import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/router/app_router.dart';
-import '../widgets/campaign_list_section.dart';
+import '../widgets/new_campaign_list_section.dart';
 
-class AgencyUploadPage extends ConsumerStatefulWidget {
+class NewAgencyUploadPage extends ConsumerStatefulWidget {
   final String token;
   final String userName;
   final String?
@@ -24,7 +24,7 @@ class AgencyUploadPage extends ConsumerStatefulWidget {
   /// Optional Dio override — used in tests to inject a mock client.
   final Dio? dio;
 
-  const AgencyUploadPage({
+  const NewAgencyUploadPage({
     super.key,
     required this.token,
     required this.userName,
@@ -33,10 +33,10 @@ class AgencyUploadPage extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<AgencyUploadPage> createState() => _AgencyUploadPageState();
+  ConsumerState<NewAgencyUploadPage> createState() => _AgencyUploadPageState();
 }
 
-class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
+class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
     with SingleTickerProviderStateMixin {
   late final Dio _dio;
 
@@ -67,38 +67,19 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
   List<InvoiceItemData> _invoices = []; // Invoices linked to PO (package level)
   PlatformFile? _costSummaryFile;
   String? _existingCostSummaryFileName;
+  bool _isUploadingCostSummary = false; // Loading state for cost summary upload
   PlatformFile? _activitySummaryFile;
   String? _existingActivitySummaryFileName;
+  bool _isUploadingActivitySummary =
+      false; // Loading state for activity summary upload
   PlatformFile? _enquiryDocFile;
   String? _existingEnquiryDocFileName;
+  bool _isUploadingEnquiryDoc = false; // Loading state for enquiry doc upload
   List<PlatformFile> _additionalDocs = [];
 
   List<CampaignItemData> _campaigns = []; // Teams (independent of invoices)
 
   bool get _isEditMode => widget.submissionId != null;
-
-  // ── Test helpers (used by integration_test_runner.dart) ──
-  /// Exposes invoices list for test injection.
-  List<InvoiceItemData> get testInvoices => _invoices;
-  set testInvoices(List<InvoiceItemData> v) => _invoices = v;
-  /// Exposes cost summary file for test injection.
-  PlatformFile? get testCostSummaryFile => _costSummaryFile;
-  set testCostSummaryFile(PlatformFile? v) => _costSummaryFile = v;
-  /// Exposes activity summary file for test injection.
-  PlatformFile? get testActivitySummaryFile => _activitySummaryFile;
-  set testActivitySummaryFile(PlatformFile? v) => _activitySummaryFile = v;
-  /// Exposes enquiry doc file for test injection.
-  PlatformFile? get testEnquiryDocFile => _enquiryDocFile;
-  set testEnquiryDocFile(PlatformFile? v) => _enquiryDocFile = v;
-  /// Exposes campaigns list for test injection.
-  List<CampaignItemData> get testCampaigns => _campaigns;
-  set testCampaigns(List<CampaignItemData> v) => _campaigns = v;
-  /// Triggers invoice extraction for a given invoice.
-  Future<void> testExtractInvoice(InvoiceItemData inv) =>
-      _uploadAndAutofillInvoice(inv);
-  /// Triggers a UI rebuild.
-  // ignore: invalid_use_of_protected_member
-  void testRebuild() => setState(() {});
 
   static const int _totalSteps = 3;
 
@@ -121,6 +102,9 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
     if (_isEditMode) {
       _currentPackageId = widget.submissionId;
       _loadExistingSubmission();
+    } else if (widget.submissionId != null) {
+      // New submission with draft ID provided
+      _currentPackageId = widget.submissionId;
     }
     _loadPOs();
     _loadIndianStates();
@@ -190,8 +174,8 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
       if (response.statusCode == 200 && mounted) {
         final data = response.data as Map<String, dynamic>;
 
-        // Restore activation state
-        _selectedActivationState = data['activationState']?.toString();
+        // Restore activation state — API returns 'activityState'
+        _selectedActivationState = data['activityState']?.toString();
 
         // Extract PO data from documents
         final documents = data['documents'] as List? ?? [];
@@ -215,31 +199,27 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
           }
         }
 
-        // Extract package-level documents
-        _existingCostSummaryFileName = data['costSummaryFileName']?.toString();
+        // Extract package-level documents — cost/activity/enquiry filenames
+        // come from campaigns[0] in the API response (CampaignDto fields)
+        final campaignsList = data['campaigns'] as List? ?? [];
+        final firstCampaign = campaignsList.isNotEmpty
+            ? campaignsList[0] as Map<String, dynamic>
+            : <String, dynamic>{};
+        _existingCostSummaryFileName =
+            firstCampaign['costSummaryFileName']?.toString();
         _existingActivitySummaryFileName =
-            data['activitySummaryFileName']?.toString();
+            firstCampaign['activitySummaryFileName']?.toString();
         _existingEnquiryDocFileName = data['enquiryDocFileName']?.toString();
 
-        // Extract invoices at package level (linked to PO)
-        final invoicesData = data['invoices'] as List? ?? [];
-        if (invoicesData.isEmpty) {
-          // Fallback: check inside campaigns for legacy data
-          final campaignsForInv = data['campaigns'] as List? ?? [];
-          for (final c in campaignsForInv) {
-            final campInvoices = c['invoices'] as List? ?? [];
-            for (final inv in campInvoices) {
-              _invoices.add(InvoiceItemData(
-                id: inv['id']?.toString() ?? UniqueKey().toString(),
-                invoiceNumber: inv['invoiceNumber']?.toString() ?? '',
-                invoiceDate: _formatDateForField(inv['invoiceDate']),
-                totalAmount: inv['totalAmount']?.toString() ?? '',
-                gstNumber: inv['gstNumber']?.toString() ?? '',
-                existingFileName: inv['fileName']?.toString(),
-              ));
-            }
-          }
-        } else {
+        // Invoices live inside campaigns[0].invoices in the API response
+        // (the backend puts package-level invoices in the first campaign's
+        //  Invoices list for display purposes — see GetSubmission controller).
+        final invoicesData = campaignsList.isNotEmpty
+            ? (campaignsList[0] as Map<String, dynamic>)['invoices'] as List? ??
+                []
+            : <dynamic>[];
+
+        if (invoicesData.isNotEmpty) {
           _invoices = invoicesData.map((inv) {
             return InvoiceItemData(
               id: inv['id']?.toString() ?? UniqueKey().toString(),
@@ -252,22 +232,22 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
           }).toList();
         }
 
-        // Extract teams (independent of invoices)
-        final campaigns = data['campaigns'] as List? ?? [];
-        _campaigns = campaigns.map((c) {
-          final campaignId = c['id']?.toString() ?? UniqueKey().toString();
-          final photos = (c['photos'] as List? ?? []);
+        // Extract teams — use the already-fetched campaignsList
+        _campaigns = campaignsList.map((c) {
+          final cMap = c as Map<String, dynamic>;
+          final campaignId = cMap['id']?.toString() ?? UniqueKey().toString();
+          final photos = (cMap['photos'] as List? ?? []);
           final existingPhotoNames =
               photos.map((p) => p['fileName']?.toString() ?? '').toList();
 
           final campaign = CampaignItemData(
             id: campaignId,
-            campaignName: c['campaignName']?.toString() ?? '',
-            startDate: _formatDateForField(c['startDate']),
-            endDate: _formatDateForField(c['endDate']),
-            workingDays: c['workingDays']?.toString() ?? '',
-            dealershipName: c['dealershipName']?.toString() ?? '',
-            dealershipAddress: c['dealershipAddress']?.toString() ?? '',
+            campaignName: cMap['campaignName']?.toString() ?? '',
+            startDate: _formatDateForField(cMap['startDate']),
+            endDate: _formatDateForField(cMap['endDate']),
+            workingDays: cMap['workingDays']?.toString() ?? '',
+            dealershipName: cMap['dealershipName']?.toString() ?? '',
+            dealershipAddress: cMap['dealershipAddress']?.toString() ?? '',
           );
           campaign.existingPhotoFileNames =
               existingPhotoNames.where((n) => n.isNotEmpty).toList();
@@ -420,8 +400,140 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
     }
   }
 
+  /// Uploads cost summary file immediately and triggers extraction
+  Future<void> _uploadCostSummaryImmediately(PlatformFile file) async {
+    if (file.bytes == null || _currentPackageId == null) return;
+
+    setState(() => _isUploadingCostSummary = true);
+
+    try {
+      debugPrint('Auto-uploading cost summary: ${file.name}');
+
+      // Get any campaign ID (cost summary is package-level but API requires campaignId)
+      // Use empty GUID if no campaigns exist yet
+      String campaignId = '00000000-0000-0000-0000-000000000000';
+
+      for (final campaign in _campaigns) {
+        if (campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_')) {
+          campaignId = campaign.id;
+          break;
+        }
+      }
+
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
+      });
+
+      final response = await _dio.post(
+        '/hierarchical/$_currentPackageId/campaigns/$campaignId/cost-summary',
+        data: formData,
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200) {
+        debugPrint('Cost summary uploaded successfully');
+        // Visual feedback is provided by the tile state change (Uploading... → Uploaded)
+        // No snackbar needed
+      }
+    } catch (e) {
+      debugPrint('Error uploading cost summary: $e');
+      if (mounted) {
+        _showError('Cost summary upload failed: $e');
+        // Clear the file on error so user can retry
+        setState(() => _costSummaryFile = null);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploadingCostSummary = false);
+      }
+    }
+  }
+
+  /// Uploads activity summary file immediately and triggers extraction
+  Future<void> _uploadActivitySummaryImmediately(PlatformFile file) async {
+    if (file.bytes == null || _currentPackageId == null) return;
+
+    setState(() => _isUploadingActivitySummary = true);
+
+    try {
+      debugPrint('Auto-uploading activity summary: ${file.name}');
+
+      // Get any campaign ID (activity summary is package-level but API requires campaignId)
+      // Use empty GUID if no campaigns exist yet
+      String campaignId = '00000000-0000-0000-0000-000000000000';
+
+      for (final campaign in _campaigns) {
+        if (campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_')) {
+          campaignId = campaign.id;
+          break;
+        }
+      }
+
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
+      });
+
+      final response = await _dio.post(
+        '/hierarchical/$_currentPackageId/campaigns/$campaignId/activity-summary',
+        data: formData,
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200) {
+        debugPrint('Activity summary uploaded successfully');
+        // Visual feedback is provided by the tile state change (Uploading... → Uploaded)
+        // No snackbar needed
+      }
+    } catch (e) {
+      debugPrint('Error uploading activity summary: $e');
+      if (mounted) {
+        _showError('Activity summary upload failed: $e');
+        // Clear the file on error so user can retry
+        setState(() => _activitySummaryFile = null);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploadingActivitySummary = false);
+      }
+    }
+  }
+
+  /// Uploads enquiry document immediately when selected.
+  Future<void> _uploadEnquiryDocImmediately(PlatformFile file) async {
+    if (file.bytes == null || _currentPackageId == null) return;
+
+    setState(() => _isUploadingEnquiryDoc = true);
+
+    try {
+      debugPrint('Auto-uploading enquiry doc: ${file.name}');
+
+      final response = await _dio.post(
+        '/hierarchical/$_currentPackageId/enquiry-doc',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(file.bytes!, filename: file.name),
+        }),
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200) {
+        debugPrint('Enquiry doc uploaded successfully');
+      }
+    } catch (e) {
+      debugPrint('Error uploading enquiry doc: $e');
+      if (mounted) {
+        _showError('Enquiry document upload failed: $e');
+        setState(() => _enquiryDocFile = null);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploadingEnquiryDoc = false);
+      }
+    }
+  }
+
   /// Extracts invoice fields from the uploaded file using the extract-only endpoint.
-  /// Does NOT require a packageId — extraction happens on a temp blob and returns immediately.
+  /// Uploads invoice file and auto-fills extracted data.
+  /// If packageId is available, saves to database. Otherwise, just extracts for preview.
   Future<void> _uploadAndAutofillInvoice(InvoiceItemData invoice) async {
     if (invoice.file?.bytes == null) return;
     setState(() {
@@ -430,18 +542,32 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
       invoice.extractionError = null;
     });
     try {
+      final formDataMap = <String, dynamic>{
+        'file': MultipartFile.fromBytes(invoice.file!.bytes!,
+            filename: invoice.file!.name),
+        'documentType': 'Invoice',
+      };
+
+      // Include packageId if available (saves to database)
+      final packageId = _currentPackageId;
+      if (packageId != null && packageId.isNotEmpty) {
+        formDataMap['packageId'] = packageId;
+      }
+
       final extractResponse = await _dio.post(
         '/documents/extract',
-        data: FormData.fromMap({
-          'file': MultipartFile.fromBytes(invoice.file!.bytes!,
-              filename: invoice.file!.name),
-          'documentType': 'Invoice',
-        }),
+        data: FormData.fromMap(formDataMap),
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (!mounted) return;
       if (extractResponse.statusCode == 200) {
         final extractedData = extractResponse.data['extractedData'];
+        final documentId = extractResponse.data['documentId'];
+
+        if (documentId != null) {
+          debugPrint('Invoice saved to database: $documentId');
+        }
+
         if (extractedData != null && extractedData is Map) {
           final data = Map<String, dynamic>.from(extractedData);
           if (data.isNotEmpty) {
@@ -652,6 +778,79 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
     context.go('/home');
   }
 
+  /// Ensures a package and team exist on the server for immediate photo upload.
+  /// Creates the package (if not yet created) and the team, then returns the
+  /// server-assigned campaignId. Returns null on failure.
+  Future<String?> _ensureTeamCreated(CampaignItemData campaign) async {
+    try {
+      // Step 1: ensure we have a packageId
+      if (_currentPackageId == null) {
+        if (_selectedPO != null) {
+          final createResp = await _dio.post(
+            '/submissions',
+            data: {
+              'selectedPoId': _selectedPO!['id']?.toString(),
+              'activityState': _selectedActivationState,
+            },
+            options:
+                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+          if (createResp.statusCode == 200 || createResp.statusCode == 201) {
+            final id = (createResp.data['id'] ?? createResp.data['packageId'])
+                ?.toString();
+            if (id != null && mounted) setState(() => _currentPackageId = id);
+          }
+        } else if (_purchaseOrder?.bytes != null) {
+          final poResp = await _dio.post(
+            '/documents/upload',
+            data: FormData.fromMap({
+              'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!,
+                  filename: _purchaseOrder!.name),
+              'documentType': 'PO',
+              if (_selectedActivationState != null)
+                'activityState': _selectedActivationState,
+            }),
+            options:
+                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+          if (poResp.statusCode == 200) {
+            final id = poResp.data['packageId']?.toString();
+            if (id != null && mounted) setState(() => _currentPackageId = id);
+          }
+        }
+      }
+
+      if (_currentPackageId == null) return null;
+
+      // Step 2: create the team on the server
+      final campaignResp = await _dio.post(
+        '/hierarchical/$_currentPackageId/campaigns',
+        data: {
+          'campaignName': campaign.campaignName,
+          'teamCode': campaign.campaignName,
+          'startDate': campaign.startDate.isNotEmpty
+              ? _parseDate(campaign.startDate)?.toIso8601String()
+              : null,
+          'endDate': campaign.endDate.isNotEmpty
+              ? _parseDate(campaign.endDate)?.toIso8601String()
+              : null,
+          'workingDays': campaign.workingDays.isNotEmpty
+              ? int.tryParse(campaign.workingDays)
+              : null,
+          'dealershipName': campaign.dealershipName,
+          'dealershipAddress': campaign.dealershipAddress,
+          'state': _selectedActivationState,
+        },
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      return campaignResp.data['campaignId']?.toString();
+    } catch (e) {
+      debugPrint('Error ensuring team created: $e');
+      return null;
+    }
+  }
+
   Future<void> _handleSubmit() async {
     if (_purchaseOrder == null &&
         _existingPOFileName == null &&
@@ -700,34 +899,22 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
       _showError('Please upload an Activity Summary');
       return;
     }
-    // Validate minimum photos per team
-    for (int i = 0; i < _campaigns.length; i++) {
-      final campaign = _campaigns[i];
-      final photoCount = campaign.photos.length + (campaign.existingPhotoFileNames?.length ?? 0);
-      if (photoCount < CampaignItemData.minPhotos) {
-        final teamLabel = campaign.dealershipName.isNotEmpty
-            ? campaign.dealershipName
-            : 'Team ${i + 1}';
-        _showError('$teamLabel needs at least ${CampaignItemData.minPhotos} photos ($photoCount uploaded)');
-        return;
-      }
-    }
     setState(() => _isUploading = true);
     try {
       String? packageId = _currentPackageId;
 
       if (!_isEditMode) {
-        // Always create a fresh package for the current user when submitting via dropdown PO.
-        // The PO's linked packageId is a seeded/template package — reusing it would assign
-        // the submission to the wrong user and hide it from the dashboard.
-        if (_selectedPO != null) {
+        // If package was already created during immediate photo upload, reuse it.
+        // Otherwise create a fresh package now.
+        if (packageId == null && _selectedPO != null) {
           final createResp = await _dio.post(
             '/submissions',
             data: {
               'selectedPoId': _selectedPO!['id']?.toString(),
               'activityState': _selectedActivationState,
             },
-            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            options:
+                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
           );
           if (createResp.statusCode == 200 || createResp.statusCode == 201) {
             packageId = (createResp.data['id'] ?? createResp.data['packageId'])
@@ -741,6 +928,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
                 'file': MultipartFile.fromBytes(_purchaseOrder!.bytes!,
                     filename: _purchaseOrder!.name),
                 'documentType': 'PO',
+                'activityState': _selectedActivationState,
               }),
               options: Options(
                   headers: {'Authorization': 'Bearer ${widget.token}'}));
@@ -771,30 +959,18 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
 
       _showSuccess('Uploading documents...');
 
-      // Upload invoices (linked to PO at package level)
-      for (final invoice in _invoices) {
-        if (invoice.file?.bytes != null) {
-          await _dio.post(
-            '/documents/upload',
-            data: FormData.fromMap({
-              'file': MultipartFile.fromBytes(invoice.file!.bytes!,
-                  filename: invoice.file!.name),
-              'documentType': 'Invoice',
-              'packageId': packageId,
-            }),
-            options:
-                Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-          );
-        }
-      }
+      // Invoices are already uploaded via /documents/extract during autofill
+      // No need to upload them again here
+
+      // Cost summary is already uploaded immediately when selected
+      // No need to upload it again here
 
       // Upload teams (independent of invoices)
       for (final campaign in _campaigns) {
         String? campaignId;
 
-        if (_isEditMode &&
-            campaign.id.isNotEmpty &&
-            !campaign.id.startsWith('campaign_')) {
+        // Reuse server-assigned id if team was already created during photo upload
+        if (campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_')) {
           campaignId = campaign.id;
         } else {
           final campaignResponse = await _dio.post(
@@ -802,9 +978,15 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             data: {
               'campaignName': campaign.campaignName,
               'teamCode': campaign.campaignName,
-              'startDate': campaign.startDate.isNotEmpty ? _parseDate(campaign.startDate)?.toIso8601String() : null,
-              'endDate': campaign.endDate.isNotEmpty ? _parseDate(campaign.endDate)?.toIso8601String() : null,
-              'workingDays': campaign.workingDays.isNotEmpty ? int.tryParse(campaign.workingDays) : null,
+              'startDate': campaign.startDate.isNotEmpty
+                  ? _parseDate(campaign.startDate)?.toIso8601String()
+                  : null,
+              'endDate': campaign.endDate.isNotEmpty
+                  ? _parseDate(campaign.endDate)?.toIso8601String()
+                  : null,
+              'workingDays': campaign.workingDays.isNotEmpty
+                  ? int.tryParse(campaign.workingDays)
+                  : null,
               'dealershipName': campaign.dealershipName,
               'dealershipAddress': campaign.dealershipAddress,
               'state': _selectedActivationState,
@@ -819,16 +1001,22 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
           }
         }
 
-        // Upload photos for this team
+        // Upload only photos not already uploaded during immediate upload
         if (campaign.photos.isNotEmpty) {
-          final photoFiles = campaign.photos
-              .where((p) => p.bytes != null)
-              .map((p) => MultipartFile.fromBytes(p.bytes!, filename: p.name))
-              .toList();
-          if (photoFiles.isNotEmpty) {
+          final pendingFiles = <MultipartFile>[];
+          for (int i = 0; i < campaign.photos.length; i++) {
+            if (!campaign.uploadedPhotoIndices.contains(i)) {
+              final p = campaign.photos[i];
+              if (p.bytes != null) {
+                pendingFiles
+                    .add(MultipartFile.fromBytes(p.bytes!, filename: p.name));
+              }
+            }
+          }
+          if (pendingFiles.isNotEmpty) {
             await _dio.post(
               '/hierarchical/$packageId/campaigns/$campaignId/photos',
-              data: FormData.fromMap({'files': photoFiles}),
+              data: FormData.fromMap({'files': pendingFiles}),
               options:
                   Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
             );
@@ -836,68 +1024,14 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
         }
       }
 
-      // Get a campaignId for cost/activity summary upload (API requires it even though they're package-level)
-      String? anyCampaignId;
-      if (_campaigns.isNotEmpty) {
-        final firstCampaign = _campaigns.first;
-        if (firstCampaign.id.isNotEmpty &&
-            !firstCampaign.id.startsWith('campaign_')) {
-          anyCampaignId = firstCampaign.id;
-        } else {
-          // Fetch from server
-          try {
-            final structureResp = await _dio.get(
-              '/hierarchical/$packageId/structure',
-              options:
-                  Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-            );
-            final serverCampaigns =
-                structureResp.data['campaigns'] as List? ?? [];
-            if (serverCampaigns.isNotEmpty) {
-              anyCampaignId = serverCampaigns.first['campaignId']?.toString();
-            }
-          } catch (_) {}
-        }
-      }
+      // Cost summary and activity summary are already uploaded immediately when selected
+      // No need to upload them again here
 
-      // Upload cost summary (package level)
-      if (_costSummaryFile?.bytes != null && anyCampaignId != null) {
-        await _dio.post(
-          '/hierarchical/$packageId/campaigns/$anyCampaignId/cost-summary',
-          data: FormData.fromMap({
-            'file': MultipartFile.fromBytes(_costSummaryFile!.bytes!,
-                filename: _costSummaryFile!.name),
-          }),
-          options:
-              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-        );
-      }
+      // Activity summary is already uploaded immediately when selected
+      // No need to upload it again here
 
-      // Upload activity summary (package level)
-      if (_activitySummaryFile?.bytes != null && anyCampaignId != null) {
-        await _dio.post(
-          '/hierarchical/$packageId/campaigns/$anyCampaignId/activity-summary',
-          data: FormData.fromMap({
-            'file': MultipartFile.fromBytes(_activitySummaryFile!.bytes!,
-                filename: _activitySummaryFile!.name),
-          }),
-          options:
-              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-        );
-      }
-
-      // Upload enquiry document (package level)
-      if (_enquiryDocFile?.bytes != null) {
-        await _dio.post(
-          '/hierarchical/$packageId/enquiry-doc',
-          data: FormData.fromMap({
-            'file': MultipartFile.fromBytes(_enquiryDocFile!.bytes!,
-                filename: _enquiryDocFile!.name),
-          }),
-          options:
-              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-        );
-      }
+      // Enquiry document is already uploaded immediately when selected
+      // No need to upload it again here
 
       // Upload additional documents
       for (final doc in _additionalDocs) {
@@ -915,21 +1049,16 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
         }
       }
 
-      if (_isEditMode) {
-        await _dio.patch(
-          '/submissions/$packageId/resubmit',
-          options:
-              Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-        );
-        _showSuccess('Submission resubmitted successfully!');
-      } else {
-        await _dio.post(
-          '/submissions/$packageId/process-async',
-          data: {'activityState': _selectedActivationState},
-          options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-        );
-        _showSuccess('Submission complete! Processing in background...');
-      }
+      // Always use /submit endpoint for fresh submissions (Draft/Uploaded state)
+      // The /resubmit endpoint is only for packages rejected by CH or RA
+      await _dio.post(
+        '/submissions/$packageId/submit',
+        data: {
+          'activityState': _selectedActivationState,
+        },
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      _showSuccess('Submission complete! Processing in background...');
 
       if (mounted) _navigateToDashboard();
     } catch (e) {
@@ -966,11 +1095,11 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
     return [
       NavItem(
           icon: Icons.dashboard,
-          label: 'Home',
+          label: 'Dashboard',
           onTap: _navigateToDashboard),
       NavItem(
           icon: Icons.upload_file,
-          label: 'New Claim',
+          label: 'Upload',
           isActive: true,
           onTap: () {}),
       NavItem(
@@ -1012,6 +1141,37 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             ),
           ),
           const Spacer(),
+          CircleAvatar(
+            backgroundColor: Colors.white,
+            radius: 18,
+            child: Text(
+              widget.userName.isNotEmpty
+                  ? widget.userName[0].toUpperCase()
+                  : '?',
+              style: const TextStyle(
+                  color: Color(0xFF003087),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(widget.userName,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white)),
+              const SizedBox(height: 2),
+              Text('Agency',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.7))),
+            ],
+          ),
+          const SizedBox(width: 12),
         ],
       ),
     );
@@ -1324,13 +1484,95 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
               'Cost Summary', 'Upload the cost breakdown document.',
               required: true),
           const SizedBox(height: 12),
-          _buildFlatFileRow(
-            file: _costSummaryFile,
-            existingFileName: _existingCostSummaryFileName,
-            onPick: () =>
-                _pickFile((f) => setState(() => _costSummaryFile = f)),
-            onRemove: () => setState(() => _costSummaryFile = null),
-          ),
+          Builder(builder: (context) {
+            // Block cost summary until at least one invoice is fully extracted (success).
+            // Also block if any invoice row is still in-progress or failed.
+            final hasSuccessfulInvoice = _invoices
+                .any((inv) => inv.extractionStatus == ExtractionStatus.success);
+            final invoiceNotReady = !hasSuccessfulInvoice ||
+                _invoices.any((inv) =>
+                    inv.isExtracting ||
+                    (inv.file != null &&
+                        inv.extractionStatus != ExtractionStatus.success));
+
+            final String? blockReason = invoiceNotReady
+                ? (_invoices.any((inv) => inv.isExtracting)
+                    ? 'Please wait — invoice extraction is in progress.'
+                    : !hasSuccessfulInvoice
+                        ? 'Please upload and process an invoice before uploading cost summary.'
+                        : 'Invoice extraction must complete successfully before uploading cost summary.')
+                : null;
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (blockReason != null)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: const Color(0xFFFBBF24), width: 1.5),
+                    ),
+                    child: Row(
+                      children: [
+                        _invoices.any((inv) => inv.isExtracting)
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                      Color(0xFFD97706)),
+                                ),
+                              )
+                            : const Icon(Icons.warning_amber_rounded,
+                                size: 16, color: Color(0xFFD97706)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            blockReason,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFFD97706),
+                                fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                _buildFlatFileRow(
+                  file: _costSummaryFile,
+                  existingFileName: _existingCostSummaryFileName,
+                  isUploading: _isUploadingCostSummary || invoiceNotReady,
+                  onPick: () async {
+                    if (invoiceNotReady) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(blockReason ??
+                              'Please complete invoice upload first.'),
+                          backgroundColor: const Color(0xFFD97706),
+                          duration: const Duration(seconds: 3),
+                        ),
+                      );
+                      return;
+                    }
+                    await _pickFile((f) {
+                      setState(() => _costSummaryFile = f);
+                      if (_currentPackageId != null && f?.bytes != null) {
+                        _uploadCostSummaryImmediately(f!);
+                      }
+                    });
+                  },
+                  onRemove: () => setState(() => _costSummaryFile = null),
+                ),
+              ],
+            );
+          }),
         ],
       ),
     );
@@ -1479,12 +1721,40 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
                   final amount =
                       po['totalAmount']; // ignore: unused_local_variable
                   return InkWell(
-                    onTap: () {
+                    onTap: () async {
                       setState(() {
                         _selectedPO = po;
-                        _currentPackageId = po['packageId']?.toString();
                         _poSearchController.clear();
                       });
+
+                      // Update draft submission with SelectedPOId immediately
+                      if (_currentPackageId != null &&
+                          _currentPackageId!.isNotEmpty) {
+                        try {
+                          final poId = po['id']?.toString();
+                          if (poId != null) {
+                            await _dio.patch(
+                              '/submissions/$_currentPackageId',
+                              data: {'selectedPOId': poId},
+                              options: Options(headers: {
+                                'Authorization': 'Bearer ${widget.token}'
+                              }),
+                            );
+                            debugPrint(
+                                'Updated draft submission with SelectedPOId: $poId');
+                          }
+                        } catch (e) {
+                          debugPrint('Error updating SelectedPOId: $e');
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Failed to link PO: $e'),
+                                backgroundColor: Colors.orange,
+                              ),
+                            );
+                          }
+                        }
+                      }
                     },
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
@@ -1689,12 +1959,27 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
                   final name = state['stateName']?.toString() ?? '';
                   // final gst = state['gstPercentage']?.toString();
                   return InkWell(
-                    onTap: () {
+                    onTap: () async {
                       setState(() {
                         _selectedActivationState = name;
                         _stateSearchController.clear();
                         _filteredStates = [];
                       });
+                      // Persist the selected state to the draft immediately
+                      if (_currentPackageId != null &&
+                          _currentPackageId!.isNotEmpty) {
+                        try {
+                          await _dio.patch(
+                            '/submissions/$_currentPackageId',
+                            data: {'state': name},
+                            options: Options(headers: {
+                              'Authorization': 'Bearer ${widget.token}'
+                            }),
+                          );
+                        } catch (e) {
+                          debugPrint('Error saving activity state: $e');
+                        }
+                      }
                     },
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
@@ -1778,6 +2063,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
     required String? existingFileName,
     required VoidCallback onPick,
     required VoidCallback onRemove,
+    bool isUploading = false,
   }) {
     final displayName = file?.name ?? existingFileName;
     final hasFile = displayName != null;
@@ -1786,34 +2072,61 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF0FDF4),
+          color:
+              isUploading ? const Color(0xFFFEF3C7) : const Color(0xFFF0FDF4),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+          border: Border.all(
+              color: isUploading
+                  ? const Color(0xFFFBBF24)
+                  : const Color(0xFF86EFAC),
+              width: 1.5),
         ),
         child: Row(
           children: [
+            if (isUploading)
+              const Padding(
+                padding: EdgeInsets.only(right: 12),
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(Color(0xFFD97706)),
+                  ),
+                ),
+              ),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(displayName,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: Color(0xFF15803D))),
+                          color: isUploading
+                              ? const Color(0xFFD97706)
+                              : const Color(0xFF15803D))),
                   const SizedBox(height: 2),
-                  const Text('Uploaded',
-                      style: TextStyle(fontSize: 11, color: Color(0xFF16A34A))),
+                  Text(
+                    isUploading ? 'Uploading...' : 'Uploaded',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: isUploading
+                            ? const Color(0xFFD97706)
+                            : const Color(0xFF16A34A)),
+                  ),
                 ],
               ),
             ),
-            TextButton(
-              onPressed: onPick,
-              style: TextButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  padding: const EdgeInsets.symmetric(horizontal: 8)),
-              child: const Text('Replace', style: TextStyle(fontSize: 13)),
-            ),
+            if (!isUploading)
+              TextButton(
+                onPressed: onPick,
+                style: TextButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 8)),
+                child: const Text('Replace', style: TextStyle(fontSize: 13)),
+              ),
           ],
         ),
       );
@@ -2112,38 +2425,32 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             if (isMobile) ...[
               _buildFlatField('Invoice Number', invoice.invoiceNumber,
                   (v) => invoice.invoiceNumber = v,
-                  required: true, controller: invoice.invoiceNumberController,
-                  enabled: !invoice.isExtracting),
+                  required: true, controller: invoice.invoiceNumberController),
               const SizedBox(height: 10),
               _buildFlatDateField('Invoice Date', invoice.invoiceDate,
                   (v) => invoice.invoiceDate = v,
-                  required: true, controller: invoice.invoiceDateController,
-                  enabled: !invoice.isExtracting),
+                  required: true, controller: invoice.invoiceDateController),
               const SizedBox(height: 10),
               _buildFlatField('Invoice Amount', invoice.totalAmount,
                   (v) => invoice.totalAmount = v,
-                  required: true, controller: invoice.totalAmountController,
-                  enabled: !invoice.isExtracting),
+                  required: true, controller: invoice.totalAmountController),
               const SizedBox(height: 10),
               _buildFlatField(
                   'GSTIN', invoice.gstNumber, (v) => invoice.gstNumber = v,
-                  required: true, controller: invoice.gstNumberController,
-                  enabled: !invoice.isExtracting),
+                  required: true, controller: invoice.gstNumberController),
             ] else ...[
               Row(children: [
                 Expanded(
                     child: _buildFlatField('Invoice Number',
                         invoice.invoiceNumber, (v) => invoice.invoiceNumber = v,
                         required: true,
-                        controller: invoice.invoiceNumberController,
-                        enabled: !invoice.isExtracting)),
+                        controller: invoice.invoiceNumberController)),
                 const SizedBox(width: 16),
                 Expanded(
                     child: _buildFlatDateField('Invoice Date',
                         invoice.invoiceDate, (v) => invoice.invoiceDate = v,
                         required: true,
-                        controller: invoice.invoiceDateController,
-                        enabled: !invoice.isExtracting)),
+                        controller: invoice.invoiceDateController)),
               ]),
               const SizedBox(height: 12),
               Row(children: [
@@ -2151,15 +2458,13 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
                     child: _buildFlatField('Invoice Amount',
                         invoice.totalAmount, (v) => invoice.totalAmount = v,
                         required: true,
-                        controller: invoice.totalAmountController,
-                        enabled: !invoice.isExtracting)),
+                        controller: invoice.totalAmountController)),
                 const SizedBox(width: 16),
                 Expanded(
                     child: _buildFlatField('GSTIN', invoice.gstNumber,
                         (v) => invoice.gstNumber = v,
                         required: true,
-                        controller: invoice.gstNumberController,
-                        enabled: !invoice.isExtracting)),
+                        controller: invoice.gstNumberController)),
               ]),
             ],
           ],
@@ -2172,7 +2477,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
   /// When [controller] is provided it is used instead of [initialValue] so
   /// that programmatic updates (e.g. from extraction) are reflected in the UI.
   Widget _buildFlatField(String label, String value, Function(String) onChanged,
-      {bool required = false, TextEditingController? controller, bool enabled = true}) {
+      {bool required = false, TextEditingController? controller}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2192,12 +2497,9 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
         TextFormField(
           controller: controller,
           initialValue: controller == null ? value : null,
-          onChanged: enabled ? (v) => setState(() => onChanged(v)) : null,
-          enabled: enabled,
-          style: TextStyle(fontSize: 14, color: enabled ? null : const Color(0xFF9CA3AF)),
+          onChanged: (v) => setState(() => onChanged(v)),
+          style: const TextStyle(fontSize: 14),
           decoration: InputDecoration(
-            filled: !enabled,
-            fillColor: !enabled ? const Color(0xFFF3F4F6) : null,
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             border: OutlineInputBorder(
@@ -2206,9 +2508,6 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(6),
                 borderSide: const BorderSide(color: AppColors.border)),
-            disabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
-                borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
             focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(6),
                 borderSide:
@@ -2223,7 +2522,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
   /// Flat date field with calendar picker — matches PO date style.
   Widget _buildFlatDateField(
       String label, String value, Function(String) onChanged,
-      {bool required = false, TextEditingController? controller, bool enabled = true}) {
+      {bool required = false, TextEditingController? controller}) {
     // Use the provided controller, or create a temporary one for backward compat
     final ctrl = controller ?? TextEditingController(text: value);
     return Column(
@@ -2244,16 +2543,13 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
         const SizedBox(height: 6),
         TextFormField(
           readOnly: true,
-          enabled: enabled,
           controller: ctrl,
-          style: TextStyle(fontSize: 14, color: enabled ? null : const Color(0xFF9CA3AF)),
+          style: const TextStyle(fontSize: 14),
           decoration: InputDecoration(
             hintText: 'dd-mm-yyyy',
             hintStyle: const TextStyle(color: Color(0xFF9E9E9E), fontSize: 14),
-            filled: !enabled,
-            fillColor: !enabled ? const Color(0xFFF3F4F6) : null,
-            suffixIcon: Icon(Icons.calendar_today,
-                color: enabled ? AppColors.primary : const Color(0xFF9CA3AF), size: 18),
+            suffixIcon: const Icon(Icons.calendar_today,
+                color: AppColors.primary, size: 18),
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             border: OutlineInputBorder(
@@ -2262,16 +2558,13 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(6),
                 borderSide: const BorderSide(color: AppColors.border)),
-            disabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
-                borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
             focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(6),
                 borderSide:
                     const BorderSide(color: AppColors.primary, width: 1.5)),
             isDense: true,
           ),
-          onTap: enabled ? () async {
+          onTap: () async {
             DateTime initial = DateTime.now();
             if (value.isNotEmpty) {
               final parsed = _parseDate(value);
@@ -2296,7 +2589,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
               ctrl.text = formatted;
               setState(() => onChanged(formatted));
             }
-          } : null,
+          },
         ),
       ],
     );
@@ -2318,8 +2611,16 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
           _buildFlatFileRow(
             file: _activitySummaryFile,
             existingFileName: _existingActivitySummaryFileName,
-            onPick: () =>
-                _pickFile((f) => setState(() => _activitySummaryFile = f)),
+            isUploading: _isUploadingActivitySummary,
+            onPick: () async {
+              await _pickFile((f) {
+                setState(() => _activitySummaryFile = f);
+                // Auto-upload activity summary immediately
+                if (_currentPackageId != null && f?.bytes != null) {
+                  _uploadActivitySummaryImmediately(f!);
+                }
+              });
+            },
             onRemove: () => setState(() => _activitySummaryFile = null),
           ),
           const SizedBox(height: 28),
@@ -2332,6 +2633,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
             token: widget.token,
             packageId: _currentPackageId,
             selectedActivationState: _selectedActivationState,
+            onEnsureTeamCreated: _ensureTeamCreated,
           ),
         ],
       ),
@@ -2355,7 +2657,16 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
           _buildFlatFileRow(
             file: _enquiryDocFile,
             existingFileName: _existingEnquiryDocFileName,
-            onPick: () => _pickFile((f) => setState(() => _enquiryDocFile = f)),
+            isUploading: _isUploadingEnquiryDoc,
+            onPick: () async {
+              await _pickFile((f) {
+                setState(() => _enquiryDocFile = f);
+                // Auto-upload enquiry doc immediately
+                if (_currentPackageId != null && f?.bytes != null) {
+                  _uploadEnquiryDocImmediately(f!);
+                }
+              });
+            },
             onRemove: () => setState(() => _enquiryDocFile = null),
           ),
           const SizedBox(height: 28),
@@ -2648,11 +2959,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
                             AlwaysStoppedAnimation<Color>(Colors.white)))
                 : const Icon(Icons.check_circle_rounded, size: 20),
             label: Text(
-                _isUploading
-                    ? 'Submitting...'
-                    : (_isEditMode
-                        ? 'Resubmit for Validation'
-                        : 'Submit for Validation'),
+                _isUploading ? 'Submitting...' : 'Submit for Validation',
                 style: const TextStyle(fontWeight: FontWeight.w700)),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,

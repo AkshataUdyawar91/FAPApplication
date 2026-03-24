@@ -55,6 +55,10 @@ builder.Services.AddSwaggerGen(options =>
 // Add Infrastructure layer
 builder.Services.AddInfrastructure(builder.Configuration);
 
+// Register feature flags (IOptionsSnapshot enables hot-reload per request)
+builder.Services.Configure<BajajDocumentProcessing.API.Configuration.FeaturesConfig>(
+    builder.Configuration.GetSection("Features"));
+
 // Override the no-op notification service with the real SignalR implementation
 builder.Services.AddScoped<ISubmissionNotificationService, SignalRSubmissionNotificationService>();
 

@@ -1317,8 +1317,8 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
 
                     b.HasIndex("PackageId")
                         .IsUnique()
-                        .HasFilter("[PackageId] IS NOT NULL")
-                        .HasDatabaseName("IX_POs_PackageId");
+                        .HasDatabaseName("IX_POs_PackageId")
+                        .HasFilter("[PackageId] IS NOT NULL");
 
                     b.HasIndex("VersionNumber")
                         .HasDatabaseName("IX_POs_VersionNumber");
@@ -2399,8 +2399,7 @@ namespace BajajDocumentProcessing.Infrastructure.Migrations
                     b.HasOne("BajajDocumentProcessing.Domain.Entities.DocumentPackage", "DocumentPackage")
                         .WithOne("PO")
                         .HasForeignKey("BajajDocumentProcessing.Domain.Entities.PO", "PackageId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Cascade);
 
                     b.Navigation("Agency");
 

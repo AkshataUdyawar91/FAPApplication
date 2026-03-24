@@ -74,7 +74,7 @@ class _NewLoginPageState extends State<NewLoginPage> {
         if (e.response?.statusCode == 401) {
           _errorMessage = 'Invalid email or password';
         } else if (e.type == DioExceptionType.connectionError || e.type == DioExceptionType.connectionTimeout) {
-          _errorMessage = 'Cannot connect to server at http://localhost:5000. Is the backend running?';
+          _errorMessage = 'Cannot connect to server. Is the backend running?';
         } else {
           _errorMessage = 'Login failed: ${e.message}';
         }
@@ -122,7 +122,7 @@ class _NewLoginPageState extends State<NewLoginPage> {
                             child: const Center(child: Icon(Icons.description_outlined, size: 32, color: Color(0xFF003087))),
                           ),
                           const SizedBox(height: 16),
-                          const Text('ClaimsIQ', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+                          const Text('FieldIQ', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
                           const SizedBox(height: 4),
                           const Text('Agency Claim Submission Portal', style: TextStyle(fontSize: 14, color: Color(0xFFBFDBFE))),
                         ]),

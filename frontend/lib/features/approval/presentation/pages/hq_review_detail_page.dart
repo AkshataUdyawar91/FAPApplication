@@ -52,6 +52,17 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       },
     ),
   )..interceptors.add(PrettyDioLogger());
+  // Separate Dio for view/download â€” no response body logging (base64 floods console)
+  final _dioSilent = Dio(
+    BaseOptions(
+      baseUrl: ApiConstants.baseUrl,
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+    ),
+  )..interceptors.add(PrettyDioLogger(responseBody: false));
   final _commentsController = TextEditingController();
 
   bool _isLoading = true;
@@ -1061,7 +1072,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     return '';
   }
 
-  /// Gets document ID for Cost Summary — checks documents array with multiple aliases,
+  /// Gets document ID for Cost Summary ï¿½ checks documents array with multiple aliases,
   /// then falls back to campaigns array, then the validation object itself.
   String _getCostSummaryDocumentId() {
     for (final alias in ['CostSummary', 'Cost Summary', 'costsummary', 'cost_summary']) {
@@ -1082,7 +1093,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
         ?? '';
   }
 
-  /// Gets document ID for Activity Summary — checks documents array with multiple aliases,
+  /// Gets document ID for Activity Summary ï¿½ checks documents array with multiple aliases,
   /// then falls back to campaigns array, then the validation object itself.
   String _getActivitySummaryDocumentId() {
     for (final alias in ['ActivitySummary', 'Activity Summary', 'activitysummary', 'activity_summary', 'Activity']) {
@@ -1138,7 +1149,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
 
   Future<void> _viewDocument(String documentId, String filename) async {
     try {
-      final response = await _dio.get(
+      final response = await _dioSilent.get(
         '/documents/$documentId/download',
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
@@ -1174,7 +1185,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       return;
     }
     try {
-      final response = await _dio.get(
+      final response = await _dioSilent.get(
         '/documents/$documentId/download',
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
@@ -1228,7 +1239,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     }
 
     try {
-      final response = await _dio.get(
+      final response = await _dioSilent.get(
         '/documents/$documentId/download',
         options: Options(
           headers: {'Authorization': 'Bearer ${widget.token}'},
@@ -1492,6 +1503,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                 'Enquiry Dump',
                 _getEnquiryFileName(),
                 _enquiryValidation!,
+                documentId: _getDocumentIdByType('EnquiryDocument'),
               ),
               const SizedBox(height: 16),
             ],
@@ -1561,6 +1573,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       passedCount: allRows.where((r) => r['passed'] == true).length,
       totalCount: allRows.length,
       rows: allRows,
+      documentId: docId,
     );
   }
 
@@ -1580,6 +1593,23 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     final fileName = photo['fileName'] ?? 'Unknown';
     final validationDetailsJson = photo['validationDetailsJson'] as String?;
     final failureReason = photo['failureReason'] as String?;
+    final photoDocId = photo['documentId']?.toString() ?? '';
+
+    // Photo validation is aggregate (documentId = packageId). Use first photo's actual ID instead.
+    final packageId = _submission?['id']?.toString() ?? '';
+    String resolvedPhotoDocId = (photoDocId.isNotEmpty && photoDocId != packageId) ? photoDocId : '';
+
+    // Get first photo's real ID from campaigns for View/Download (blob URLs are private Azure storage)
+    if (resolvedPhotoDocId.isEmpty) {
+      final campaigns = _submission?['campaigns'] as List? ?? [];
+      for (final campaign in campaigns) {
+        final photos = (campaign as Map<String, dynamic>)['photos'] as List? ?? [];
+        if (photos.isNotEmpty) {
+          resolvedPhotoDocId = (photos[0] as Map<String, dynamic>)['id']?.toString() ?? '';
+          break;
+        }
+      }
+    }
 
     Map<String, dynamic>? validationDetails;
     List<Map<String, dynamic>> allRows = [];
@@ -1613,6 +1643,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
+      documentId: resolvedPhotoDocId,
     );
   }
 
@@ -1714,7 +1745,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
         'gstStateMatches': ('GST State Match', 'GST state matches', 'GST state mismatch'),
         'hsnSacCodeValid': ('HSN/SAC Code', 'HSN/SAC code is valid', 'HSN/SAC code is invalid'),
         'invoiceAmountValid': ('Invoice Amount', 'Invoice amount is valid', 'Invoice amount is invalid'),
-        // poBalanceValid intentionally excluded — use INV_AMOUNT_VS_PO_BALANCE from proactiveRules instead
+        // poBalanceValid intentionally excluded ï¿½ use INV_AMOUNT_VS_PO_BALANCE from proactiveRules instead
         // to avoid showing a default "Pass" when the balance was never actually checked.
         'gstPercentageValid': ('GST Percentage', 'GST percentage is valid', 'GST percentage is invalid'),
       };
@@ -1837,7 +1868,12 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     required int passedCount,
     required int totalCount,
     required List<Map<String, dynamic>> rows,
+    String? documentId,
+    String? blobUrl,
   }) {
+    final resolvedDocId = (documentId != null && documentId.isNotEmpty) ? documentId : '';
+    final resolvedBlobUrl = blobUrl ?? '';
+
     return Card(
       elevation: 1,
       margin: const EdgeInsets.only(bottom: 16),
@@ -1869,13 +1905,60 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                     ],
                   ),
                 ),
-                if (totalCount > 0)
-                  RichText(
-                    text: TextSpan(children: [
-                      TextSpan(text: '$passedCount/$totalCount ', style: AppTextStyles.bodySmall.copyWith(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 11)),
-                      TextSpan(text: 'Passed', style: AppTextStyles.bodySmall.copyWith(color: const Color(0xFF16A34A), fontWeight: FontWeight.w600, fontSize: 11)),
-                    ]),
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (totalCount > 0)
+                      RichText(
+                        text: TextSpan(children: [
+                          TextSpan(text: '$passedCount/$totalCount ', style: AppTextStyles.bodySmall.copyWith(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 11)),
+                          TextSpan(text: 'Passed', style: AppTextStyles.bodySmall.copyWith(color: const Color(0xFF16A34A), fontWeight: FontWeight.w600, fontSize: 11)),
+                        ]),
+                      ),
+                    if (resolvedDocId.isNotEmpty || resolvedBlobUrl.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        height: 28,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            if (resolvedDocId.isNotEmpty) {
+                              _viewDocument(resolvedDocId, fileName);
+                            } else {
+                              _openBlobUrl(resolvedBlobUrl, fileName);
+                            }
+                          },
+                          icon: const Icon(Icons.visibility, size: 13),
+                          label: const Text('View', style: TextStyle(fontSize: 11)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: const BorderSide(color: AppColors.primary),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        height: 28,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            if (resolvedDocId.isNotEmpty) {
+                              _downloadDocumentDirect(resolvedDocId, fileName);
+                            } else {
+                              _downloadByBlobUrl(resolvedBlobUrl, fileName);
+                            }
+                          },
+                          icon: const Icon(Icons.download, size: 13),
+                          label: const Text('Download', style: TextStyle(fontSize: 11)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ),
@@ -1947,6 +2030,11 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     String? documentId,
     String? blobUrl,
   }) {
+    final resolvedDocId = (documentId != null && documentId.isNotEmpty)
+        ? documentId
+        : validation['documentId']?.toString() ?? validation['id']?.toString() ?? '';
+    final resolvedBlobUrl = blobUrl ?? '';
+
     final validationDetailsJson = validation['validationDetailsJson'] as String?;
     List<Map<String, dynamic>> allRows = [];
 
@@ -1968,6 +2056,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       passedCount: passedCount,
       totalCount: totalCount,
       rows: allRows,
+      documentId: resolvedDocId.isNotEmpty ? resolvedDocId : null,
+      blobUrl: resolvedBlobUrl.isNotEmpty ? resolvedBlobUrl : null,
     );
   }
 

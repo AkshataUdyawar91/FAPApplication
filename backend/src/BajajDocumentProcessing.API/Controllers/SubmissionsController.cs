@@ -181,7 +181,7 @@ public class SubmissionsController : ControllerBase
     [ProducesResponseType(typeof(CreateDraftResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> CreateDraft(
-        [FromBody] CreateDraftRequest request,
+        [FromBody] CreateDraftRequest? request,
         CancellationToken cancellationToken)
     {
         try
@@ -194,20 +194,41 @@ public class SubmissionsController : ControllerBase
 
             var userId = Guid.Parse(userIdClaim);
 
-            // Verify PO exists
-            var po = await _context.POs.FirstOrDefaultAsync(p => p.Id == request.PoId, cancellationToken);
-            if (po == null)
+            // Load the user to resolve their agency — agency users must be linked to an agency
+            var user = await _context.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+            if (user?.AgencyId == null)
             {
-                return BadRequest(new { error = "PO not found" });
+                return BadRequest(new { error = "User is not linked to an agency" });
+            }
+
+            // Use the agency from the request body if provided, otherwise fall back to the user's own agency
+            var agencyId = request?.AgencyId ?? user.AgencyId.Value;
+
+            // If a PO was provided, validate it exists, is not deleted, and belongs to this agency
+            Guid? selectedPoId = null;
+            if (request?.PoId != null)
+            {
+                var po = await _context.POs.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == request.PoId && !p.IsDeleted, cancellationToken);
+                if (po == null)
+                {
+                    return BadRequest(new { error = "PO not found" });
+                }
+                if (po.AgencyId != agencyId)
+                {
+                    return BadRequest(new { error = "PO does not belong to this agency" });
+                }
+                selectedPoId = po.Id;
             }
 
             var package = new Domain.Entities.DocumentPackage
             {
                 Id = Guid.NewGuid(),
                 SubmittedByUserId = userId,
-                AgencyId = request.AgencyId,
+                AgencyId = agencyId,
                 State = PackageState.Draft,
-                SelectedPOId = request.PoId,
+                SelectedPOId = selectedPoId,
                 CurrentStep = 1,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -217,7 +238,7 @@ public class SubmissionsController : ControllerBase
             await _context.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Draft submission {PackageId} created for PO {PoId} by user {UserId}",
-                package.Id, request.PoId, userId);
+                package.Id, selectedPoId, userId);
 
             var response = new CreateDraftResponse
             {
@@ -284,11 +305,32 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = $"Can only update Draft submissions. Current state: {package.State}" });
             }
 
-            package.ActivityState = request.State;
+            // Apply whichever fields were provided
+            if (request.State != null)
+            {
+                package.ActivityState = request.State;
+            }
+
+            if (request.SelectedPOId != null)
+            {
+                var po = await _context.POs.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == request.SelectedPOId && !p.IsDeleted, cancellationToken);
+                if (po == null)
+                {
+                    return BadRequest(new { error = "PO not found" });
+                }
+                if (po.AgencyId != package.AgencyId)
+                {
+                    return BadRequest(new { error = "PO does not belong to this agency" });
+                }
+                package.SelectedPOId = request.SelectedPOId;
+            }
+
             package.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
 
-            _logger.LogInformation("Submission {Id} state updated to {State} by user {UserId}", id, request.State, userId);
+            _logger.LogInformation("Submission {Id} patched (state={State}, poId={PoId}) by user {UserId}",
+                id, request.State, request.SelectedPOId, userId);
 
             return NoContent();
         }
@@ -512,6 +554,7 @@ public class SubmissionsController : ControllerBase
                 }).ToList(),
                 CostSummaryValidation = costSummaryValidation != null ? new ValidationResultDto
                 {
+                    DocumentId = package.CostSummary?.Id,
                     AllValidationsPassed = costSummaryValidation.AllValidationsPassed,
                     FailureReason = costSummaryValidation.FailureReason,
                     SapVerificationPassed = costSummaryValidation.SapVerificationPassed,
@@ -525,6 +568,7 @@ public class SubmissionsController : ControllerBase
                 } : null,
                 ActivityValidation = activityValidation != null ? new ValidationResultDto
                 {
+                    DocumentId = package.ActivitySummary?.Id,
                     AllValidationsPassed = activityValidation.AllValidationsPassed,
                     FailureReason = activityValidation.FailureReason,
                     SapVerificationPassed = activityValidation.SapVerificationPassed,
@@ -538,6 +582,7 @@ public class SubmissionsController : ControllerBase
                 } : null,
                 EnquiryValidation = enquiryValidation != null ? new ValidationResultDto
                 {
+                    DocumentId = package.EnquiryDocument?.Id,
                     AllValidationsPassed = enquiryValidation.AllValidationsPassed,
                     FailureReason = enquiryValidation.FailureReason,
                     SapVerificationPassed = enquiryValidation.SapVerificationPassed,
@@ -1694,7 +1739,10 @@ public class SubmissionsController : ControllerBase
     [HttpPost("{packageId}/submit")]
     [Authorize(Roles = "Agency")]
     [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> SubmitPackage(Guid packageId, CancellationToken cancellationToken)
+    public async Task<IActionResult> SubmitPackage(
+        Guid packageId,
+        [FromBody] SubmitPackageRequest? request,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -1741,8 +1789,17 @@ public class SubmissionsController : ControllerBase
                 return BadRequest(new { error = $"Package is already in {package.State} state. Only Draft or Uploaded packages can be submitted." });
             }
 
+            // Accept activityState from the request body — covers the case where the frontend
+            // selected a state but the PATCH hadn't persisted it yet (race condition safety net).
+            if (!string.IsNullOrWhiteSpace(request?.ActivityState))
+            {
+                package.ActivityState = request.ActivityState.Trim();
+            }
+
             // Verify minimum required documents
-            var hasPO = package.PO != null;
+            // In the draft flow the PO is linked via SelectedPOId (no separate uploaded PO document).
+            // In the legacy flow it is an uploaded PO document on the PO navigation property.
+            var hasPO = package.PO != null || package.SelectedPOId != null;
             var hasInvoice = package.Invoices.Any(i => !i.IsDeleted);
             var hasCostSummary = package.CostSummary != null;
 
@@ -2684,6 +2741,15 @@ public record ResubmitToHQRequest(
     [StringLength(500, MinimumLength = 10, ErrorMessage = "Notes must be between 10 and 500 characters")]
     string Notes
 );
+
+/// <summary>
+/// Optional body for the submit endpoint — allows the frontend to pass activityState
+/// at submit time as a safety net in case the prior PATCH hasn't persisted it yet.
+/// </summary>
+public class SubmitPackageRequest
+{
+    public string? ActivityState { get; set; }
+}
 
 /// <summary>
 /// Request to request document reupload
