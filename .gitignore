@@ -29,11 +29,10 @@ frontend/**/*.mocks.dart
 .DS_Store
 Thumbs.db
 
-# Secrets (only exclude production)
+# Secrets
 **/appsettings.Production.json
 **/appsettings.Development.json
 **/appsettings.Development.TEMPLATE.json
-**/appsettings.json
 **/*.env
 **/*.env.local
 

@@ -1,4 +1,5 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:dio/dio.dart';
@@ -110,7 +111,7 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
   @override
   void initState() {
     super.initState();
-    _dio = widget.dio ?? Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+    _dio = widget.dio ?? Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
       ..interceptors.add(PrettyDioLogger());
     _tabController = TabController(length: _totalSteps, vsync: this)
       ..addListener(() {

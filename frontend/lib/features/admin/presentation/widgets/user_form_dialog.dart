@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:dio/dio.dart';
 import '../../data/models/user_dto.dart';
 
@@ -60,7 +61,7 @@ class _UserFormDialogState extends State<UserFormDialog> {
     setState(() => _isSaving = true);
 
     final dio = Dio(BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {'Authorization': 'Bearer ${widget.token}'},
     ));
 

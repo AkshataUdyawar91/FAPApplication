@@ -1,4 +1,5 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -45,7 +46,7 @@ class ASMReviewDetailPage extends ConsumerStatefulWidget {
 class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   final _dio = Dio(
     BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       // Disable caching
       headers: {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -57,7 +58,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   // Separate Dio for view/download — no response body logging (base64 floods console)
   final _dioSilent = Dio(
     BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',

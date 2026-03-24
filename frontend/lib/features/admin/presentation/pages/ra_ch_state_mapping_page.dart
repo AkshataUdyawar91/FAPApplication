@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:dio/dio.dart';
 
 class RaChStateMappingPage extends StatefulWidget {
@@ -25,7 +26,7 @@ class _RaChStateMappingPageState extends State<RaChStateMappingPage> {
   void initState() {
     super.initState();
     _dio = Dio(BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {'Authorization': 'Bearer ${widget.token}'},
     ));
     _load();
@@ -375,7 +376,7 @@ class _StateMappingFormDialogState
     setState(() => _isLoading = true);
     try {
       final dio = Dio(BaseOptions(
-        baseUrl: 'http://localhost:5000/api',
+        baseUrl: ApiConstants.baseUrl,
         headers: {'Authorization': 'Bearer ${widget.token}'},
       ));
       final results = await Future.wait([
@@ -459,7 +460,7 @@ class _StateMappingFormDialogState
     }
     setState(() => _isSaving = true);
     final dio = Dio(BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {'Authorization': 'Bearer ${widget.token}'},
     ));
     try {

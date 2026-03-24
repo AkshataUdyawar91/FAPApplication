@@ -14,9 +14,9 @@ public class DocumentInfoDto
     public Guid Id { get; set; }
 
     /// <summary>
-    /// Identifier of the parent package
+    /// Identifier of the parent package. Null for SAP master POs not yet linked to a submission.
     /// </summary>
-    public Guid PackageId { get; set; }
+    public Guid? PackageId { get; set; }
 
     /// <summary>
     /// Type of document (PO, Invoice, CostSummary, etc.)

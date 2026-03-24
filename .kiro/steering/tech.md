@@ -83,8 +83,6 @@ dotnet ef migrations add <MigrationName>
 dotnet build --configuration Release
 ```
 taskkill /F /IM dotnet.exe
-taskkill /F /IM dotnet.exe
-
 
 API runs on:
 - HTTPS: https://localhost:7001
