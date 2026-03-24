@@ -295,3 +295,24 @@ return _buildValidationCard(..., documentId: resolvedPhotoDocId);
 - `frontend/lib/features/submission/presentation/pages/agency_submission_detail_page.dart` (T26)
 - `frontend/lib/features/approval/presentation/pages/asm_review_detail_page.dart` (T26)
 - `frontend/lib/features/approval/presentation/pages/hq_review_detail_page.dart` (T26)
+
+
+### 2026-03-24 — Photo Validation Agent: Fix Aggregate Photo Validation Counts (T27)
+
+**Problem**: The "Photo Validations" table on detail pages showed incorrect aggregate counts (e.g. "1/45 photos have date mentioned") even though the database had many more photos with those attributes populated.
+
+**Root Cause**: `ValidatePhotoFieldPresence` in `ValidationAgent.cs` only read from `photo.ExtractedMetadataJson`. It completely ignored:
+1. Dedicated DB columns (`DateVisible`, `BlueTshirtPresent`, `ThreeWheelerPresent`, `PhotoTimestamp`, `Latitude`, `Longitude`) which ARE populated for most photos
+2. The `Caption` column (which contains initial AI extraction JSON)
+3. Photos with `ExtractedMetadataJson = NULL` were counted as zero for all checks
+
+**Solution**: Aligned `ValidatePhotoFieldPresence` with the same pattern already used by `RunPhotoValidationRules` (chatbot in `AssistantController.cs`) and per-photo validation in `BuildPerDocumentResults`: read dedicated columns first, fall back to `ExtractedMetadataJson`, then fall back to `Caption`. Face detection and perceptual hash are still read from JSON metadata since they have no dedicated columns.
+
+| ID | File | Change | How to Remove |
+|----|------|--------|---------------|
+| T27 | `ValidationAgent.cs` | Rewrote the `foreach` loop in `ValidatePhotoFieldPresence` to read dedicated columns first (`DateVisible`, `PhotoTimestamp`, `Latitude`, `Longitude`, `BlueTshirtPresent`, `ThreeWheelerPresent`), then fall back to `ExtractedMetadataJson ?? Caption` for remaining fields (face detection, perceptual hash) and for photos where dedicated columns are null. | Revert the `foreach` loop in `ValidatePhotoFieldPresence` back to only reading `photo.ExtractedMetadataJson` (remove dedicated column reads and `Caption` fallback). |
+
+**File Changed**:
+- `backend/src/BajajDocumentProcessing.Infrastructure/Services/ValidationAgent.cs`
+
+**Note**: Validation counts are persisted in `ValidationResults.ValidationDetailsJson` at validation time. To see corrected counts in the UI, validation must be re-run for the package.

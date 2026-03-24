@@ -1361,43 +1361,59 @@ public class ValidationAgent : IValidationAgent
 
         foreach (var photo in teamPhotos)
         {
-            if (photo.ExtractedMetadataJson != null)
+            // Read from dedicated columns first, fall back to ExtractedMetadataJson then Caption
+            // (same pattern as per-photo validation in BuildPerDocumentResults)
+            bool hasDate = photo.DateVisible ?? photo.PhotoTimestamp.HasValue;
+            bool hasLocation = photo.Latitude.HasValue && photo.Longitude.HasValue;
+            bool hasBlueTshirt = photo.BlueTshirtPresent ?? false;
+            bool hasVehicle = photo.ThreeWheelerPresent ?? false;
+            bool hasFace = false;
+            string? perceptualHash = null;
+
+            // Fallback: parse ExtractedMetadataJson if dedicated columns are null
+            var metadataSource = photo.ExtractedMetadataJson ?? photo.Caption;
+            if (photo.DateVisible == null && photo.BlueTshirtPresent == null && !string.IsNullOrEmpty(metadataSource))
             {
-                var photoMetadata = JsonSerializer.Deserialize<PhotoMetadata>(photo.ExtractedMetadataJson);
-                
-                if (photoMetadata != null)
+                try
                 {
-                    if (photoMetadata.Timestamp.HasValue)
+                    var photoMetadata = JsonSerializer.Deserialize<PhotoMetadata>(metadataSource);
+                    if (photoMetadata != null)
                     {
-                        photosWithDate++;
-                    }
-
-                    if (photoMetadata.Latitude.HasValue && photoMetadata.Longitude.HasValue)
-                    {
-                        photosWithLocation++;
-                    }
-
-                    if (photoMetadata.HasBlueTshirtPerson)
-                    {
-                        photosWithBlueTshirt++;
-                    }
-
-                    if (photoMetadata.HasBajajVehicle)
-                    {
-                        photosWithVehicle++;
-                    }
-
-                    if (photoMetadata.HasHumanFace)
-                    {
-                        photosWithFace++;
-                    }
-
-                    if (!string.IsNullOrEmpty(photoMetadata.PerceptualHash))
-                    {
-                        var fileName = photo.BlobUrl ?? photo.Id.ToString();
-                        photoHashes.Add((fileName, photoMetadata.PerceptualHash));
+                        if (!hasDate && photoMetadata.Timestamp.HasValue) hasDate = true;
+                        if (!hasLocation && photoMetadata.Latitude.HasValue && photoMetadata.Longitude.HasValue) hasLocation = true;
+                        if (!hasBlueTshirt && photoMetadata.HasBlueTshirtPerson) hasBlueTshirt = true;
+                        if (!hasVehicle && photoMetadata.HasBajajVehicle) hasVehicle = true;
+                        if (photoMetadata.HasHumanFace) hasFace = true;
+                        perceptualHash = photoMetadata.PerceptualHash;
                     }
                 }
+                catch { /* skip unparseable metadata */ }
+            }
+            else if (!string.IsNullOrEmpty(metadataSource))
+            {
+                // Dedicated columns are populated — still parse metadata for face detection and perceptual hash
+                try
+                {
+                    var photoMetadata = JsonSerializer.Deserialize<PhotoMetadata>(metadataSource);
+                    if (photoMetadata != null)
+                    {
+                        hasFace = photoMetadata.HasHumanFace;
+                        perceptualHash = photoMetadata.PerceptualHash;
+                    }
+                }
+                catch { /* skip unparseable metadata */ }
+            }
+
+            if (hasDate) photosWithDate++;
+            if (hasLocation) photosWithLocation++;
+            if (hasBlueTshirt) photosWithBlueTshirt++;
+            if (hasVehicle) photosWithVehicle++;
+            if (hasFace) photosWithFace++;
+
+            if (!string.IsNullOrEmpty(perceptualHash))
+            {
+                var fileName = photo.BlobUrl ?? photo.Id.ToString();
+                photoHashes.Add((fileName, perceptualHash));
             }
         }
 

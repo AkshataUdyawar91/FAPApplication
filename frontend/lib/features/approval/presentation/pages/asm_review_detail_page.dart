@@ -1698,8 +1698,8 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         final costDays = crossDocument['costSummaryDays'] ?? 0;
         addRow('No. of Days', photoCountMatch == true,
             photoCountMatch == true
-                ? 'Photo count ($photoCount) matches days in Cost Summary ($costDays)'
-                : 'Photo count ($photoCount) does not match days in Cost Summary ($costDays)');
+                ? 'Photo count ($photoCount) meets required days in Cost Summary ($costDays)'
+                : 'Photo count ($photoCount) is less than days in Cost Summary ($costDays)');
       }
     }
 
