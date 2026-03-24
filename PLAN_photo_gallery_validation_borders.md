@@ -37,9 +37,9 @@ Match each campaign photo to its validation entry by `fileName`:
 
 | Condition | Border |
 |-----------|--------|
-| Matching validation found, `allPassed == true` and `failureReason` empty | 3px green `#16A34A` |
-| Matching validation found, `allPassed == false` OR `failureReason` non-empty | 3px red `#DC2626` |
-| No matching validation entry found (not yet validated) | 3px grey `#9CA3AF` (pending) |
+| Matching validation found, `allPassed == true` and `failureReason` empty | 2px `AppColors.photoBorderPassed` (`#34D399` emerald-400) |
+| Matching validation found, `allPassed == false` OR `failureReason` non-empty | 2px `AppColors.photoBorderFailed` (`#F87171` red-400) |
+| No matching validation entry found (not yet validated) | 2px `AppColors.photoBorderPending` (`#D1D5DB` grey-300) |
 
 ## Display Order (Sorting)
 
@@ -79,12 +79,13 @@ class PhotoThumbnailGallery extends StatefulWidget {
 ```
 
 ### Layout
-- Wrapped in a `Card` with header: `📷 Team Photos ({count})`
+- Wrapped in a `Card` with header: `📷 Team Photos ({count})` plus failed/passed count badges
 - `Wrap(spacing: 8, runSpacing: 8)` — responsive reflow, no fixed grid
-- Each thumbnail: **80×80** (small since there can be 100+)
-- `ClipRRect` with `borderRadius: 8` inside a `Container` with 3px border
+- Each thumbnail: **80×80** with `cacheWidth/cacheHeight: 160` (2x for retina)
+- `ClipRRect` with `borderRadius: 8` inside a `Container` with white background and 2px border
 - Border color per validation status (green / red / grey)
 - Placeholder icon while image loads
+- Eye icon overlay on hover (dark scrim + `Icons.visibility`)
 
 ### Thumbnail Loading Strategy
 - Fetch via existing pattern: `GET /api/documents/{id}/download` → `base64Content`
@@ -94,7 +95,15 @@ class PhotoThumbnailGallery extends StatefulWidget {
 - On error: show `Icons.broken_image` placeholder
 
 ### Tap Behavior
+- On hover: dark overlay with white eye icon (`Icons.visibility`)
 - On tap → calls `onPhotoTap(documentId, fileName)` → parent calls `_viewDocument`
+
+### Validation Matching
+- Builds a `documentId → validation` lookup from `_photoValidations`
+- Separates per-photo validations (documentId = photo ID) from aggregate (documentId = package ID)
+- Each photo checks for its own per-photo validation first, falls back to aggregate
+- If no validation exists at all → grey border (pending/not yet validated)
+- Checks both `allPassed` and `allValidationsPassed` keys for compatibility
 
 ## Integration in Each Page
 
@@ -203,19 +212,20 @@ const SizedBox(height: 80), // existing bottom spacer
 
 | File | Change |
 |------|--------|
-| `frontend/lib/core/widgets/photo_thumbnail_gallery.dart` | **NEW** — shared gallery widget + `PhotoThumbnailItem` model |
+| `frontend/lib/core/theme/app_colors.dart` | Add `photoBorderPassed`, `photoBorderFailed`, `photoBorderPending` |
+| `frontend/lib/core/widgets/photo_thumbnail_gallery.dart` | **NEW** — shared gallery widget + `PhotoThumbnailItem` model + `_HoverThumbnail` |
 | `frontend/lib/features/submission/presentation/pages/agency_submission_detail_page.dart` | Add `_collectPhotosWithValidation()` + gallery in `_buildContent` |
 | `frontend/lib/features/approval/presentation/pages/asm_review_detail_page.dart` | Add `_collectPhotosWithValidation()` + gallery in `_buildContent` |
 | `frontend/lib/features/approval/presentation/pages/hq_review_detail_page.dart` | Add `_collectPhotosWithValidation()` + gallery in `_buildContent` |
 
 ## Performance Considerations
 
-- 80×80 thumbnails — tiny footprint even with 100+ photos
+- 80×80 thumbnails with `cacheWidth/cacheHeight: 160` — decoded at 2x display size, not full resolution
 - `Wrap` handles responsive reflow without `GridView` overhead (no scroll-within-scroll issues)
 - Batch loading (10 at a time) prevents API flooding
-- `Map<String, Uint8List>` cache avoids re-fetching on rebuilds
+- `Map<String, Uint8List>` cache avoids re-fetching on rebuilds; deduplicates by documentId
 - `const` constructors where possible
-- No full-size images loaded — only base64 decoded to small display
+- Hover state isolated in `_HoverThumbnail` widget to avoid rebuilding entire gallery
 
 ---
 

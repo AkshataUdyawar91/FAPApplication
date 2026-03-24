@@ -51,4 +51,9 @@ class AppColors {
   // Shadow Colors
   static const Color shadow = Color(0x1A000000); // 10% black
   static const Color shadowLight = Color(0x0D000000); // 5% black
+
+  // Photo Validation Border Colors
+  static const Color photoBorderPassed = Color(0xFF34D399); // Emerald 400
+  static const Color photoBorderFailed = Color(0xFFF87171); // Red 400
+  static const Color photoBorderPending = Color(0xFFD1D5DB); // Gray 300
 }

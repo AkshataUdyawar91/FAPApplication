@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+
 /// Data model for a single photo thumbnail with validation status.
 class PhotoThumbnailItem {
   final String documentId;
@@ -112,9 +114,9 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
   }
 
   Color _borderColor(PhotoThumbnailItem photo) {
-    if (photo.hasError) return const Color(0xFFDC2626);
-    if (photo.isPending) return const Color(0xFF9CA3AF);
-    return const Color(0xFF16A34A);
+    if (photo.hasError) return AppColors.photoBorderFailed;
+    if (photo.isPending) return AppColors.photoBorderPending;
+    return AppColors.photoBorderPassed;
   }
 
   @override
@@ -211,36 +213,98 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
     final bytes = _imageCache[photo.documentId];
     final isLoading = _loadingIds.contains(photo.documentId);
     final isFailed = _failedIds.contains(photo.documentId);
+    final borderColor = _borderColor(photo);
 
-    return GestureDetector(
+    return _HoverThumbnail(
+      photo: photo,
+      bytes: bytes,
+      isLoading: isLoading,
+      isFailed: isFailed,
+      borderColor: borderColor,
       onTap: () => widget.onPhotoTap?.call(photo.documentId, photo.fileName),
-      child: Tooltip(
-        message: photo.fileName,
-        child: Container(
-          width: 80,
-          height: 80,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: _borderColor(photo),
-              width: 3,
+    );
+  }
+}
+
+class _HoverThumbnail extends StatefulWidget {
+  final PhotoThumbnailItem photo;
+  final Uint8List? bytes;
+  final bool isLoading;
+  final bool isFailed;
+  final Color borderColor;
+  final VoidCallback onTap;
+
+  const _HoverThumbnail({
+    required this.photo,
+    required this.bytes,
+    required this.isLoading,
+    required this.isFailed,
+    required this.borderColor,
+    required this.onTap,
+  });
+
+  @override
+  State<_HoverThumbnail> createState() => _HoverThumbnailState();
+}
+
+class _HoverThumbnailState extends State<_HoverThumbnail> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Tooltip(
+          message: widget.photo.fileName,
+          child: Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: widget.borderColor,
+                width: 2,
+              ),
             ),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(5),
-            child: bytes != null
-                ? Image.memory(
-                    bytes,
-                    fit: BoxFit.cover,
-                    width: 74,
-                    height: 74,
-                    errorBuilder: (_, __, ___) => _placeholder(Icons.broken_image),
-                  )
-                : isLoading
-                    ? _placeholder(Icons.hourglass_empty)
-                    : isFailed
-                        ? _placeholder(Icons.broken_image)
-                        : _placeholder(Icons.image),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Image or placeholder
+                  widget.bytes != null
+                      ? Image.memory(
+                          widget.bytes!,
+                          fit: BoxFit.cover,
+                          cacheWidth: 160,
+                          cacheHeight: 160,
+                          errorBuilder: (_, __, ___) => _placeholder(Icons.broken_image),
+                        )
+                      : widget.isLoading
+                          ? _placeholder(Icons.hourglass_empty)
+                          : widget.isFailed
+                              ? _placeholder(Icons.broken_image)
+                              : _placeholder(Icons.image),
+                  // Eye icon on hover
+                  if (_isHovered)
+                    Container(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      child: const Center(
+                        child: Icon(
+                          Icons.visibility,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

@@ -450,8 +450,8 @@ class _AgencySubmissionDetailPageState
               validation['failureReason']?.toString() ?? '';
           hasError = !allPassed || failureReason.isNotEmpty;
         } else {
-          // No validation data — mark as pending (grey border)
-          isPending = true;
+          // No validation data at all — default to green (no error)
+          isPending = false;
           hasError = false;
         }
 
@@ -2923,7 +2923,7 @@ class _AgencySubmissionDetailPageState
     anchor.click();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Downloading $filename...'), backgroundColor: AppColors.approvedText, duration: const Duration(seconds: 2)),
+        SnackBar(content: Text('Downloading $filename...'), backgroundColor: Color(0xFFFFFF)),
       );
     }
   }
