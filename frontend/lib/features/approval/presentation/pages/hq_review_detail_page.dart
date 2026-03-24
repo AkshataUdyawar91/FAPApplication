@@ -1,4 +1,5 @@
-﻿import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -43,7 +44,7 @@ class HQReviewDetailPage extends ConsumerStatefulWidget {
 class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
   final _dio = Dio(
     BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
@@ -658,7 +659,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
             ),
             const SizedBox(height: 20),
 
-            // Action buttons â€” only for actionable states
+            // Action buttons — only for actionable states
             if (_isSubmissionActionable()) ...[
               Wrap(
                 spacing: 12,
@@ -1060,7 +1061,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     return '';
   }
 
-  /// Gets document ID for Cost Summary — checks documents array with multiple aliases,
+  /// Gets document ID for Cost Summary � checks documents array with multiple aliases,
   /// then falls back to campaigns array, then the validation object itself.
   String _getCostSummaryDocumentId() {
     for (final alias in ['CostSummary', 'Cost Summary', 'costsummary', 'cost_summary']) {
@@ -1081,7 +1082,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
         ?? '';
   }
 
-  /// Gets document ID for Activity Summary — checks documents array with multiple aliases,
+  /// Gets document ID for Activity Summary � checks documents array with multiple aliases,
   /// then falls back to campaigns array, then the validation object itself.
   String _getActivitySummaryDocumentId() {
     for (final alias in ['ActivitySummary', 'Activity Summary', 'activitysummary', 'activity_summary', 'Activity']) {
@@ -1617,7 +1618,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
 
   /// Extracts all validation rows from ValidationDetailsJson into a unified list.
   /// Reads: fieldPresence, crossDocument, amountConsistency, lineItemMatching,
-  /// vendorMatching, completeness, and proactiveRules â€” deduplicating by label.
+  /// vendorMatching, completeness, and proactiveRules — deduplicating by label.
   List<Map<String, dynamic>> _extractAllValidationRows(
       Map<String, dynamic> details) {
     final rows = <Map<String, dynamic>>[];
@@ -1630,7 +1631,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       rows.add({'label': label, 'passed': passed, 'message': message});
     }
 
-    // 1. Proactive rules (richest detail â€” add first so they win dedup)
+    // 1. Proactive rules (richest detail — add first so they win dedup)
     final proactiveRules = (details['proactiveRules'] as List<dynamic>?) ??
         (details['rules'] as List<dynamic>?);
     if (proactiveRules != null) {
@@ -1656,7 +1657,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       }
     }
 
-    // 2. Field presence â€” missing fields
+    // 2. Field presence — missing fields
     final fieldPresence = details['fieldPresence'] as Map<String, dynamic>?;
     if (fieldPresence != null) {
       final missingFields =
@@ -1713,7 +1714,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
         'gstStateMatches': ('GST State Match', 'GST state matches', 'GST state mismatch'),
         'hsnSacCodeValid': ('HSN/SAC Code', 'HSN/SAC code is valid', 'HSN/SAC code is invalid'),
         'invoiceAmountValid': ('Invoice Amount', 'Invoice amount is valid', 'Invoice amount is invalid'),
-        // poBalanceValid intentionally excluded — use INV_AMOUNT_VS_PO_BALANCE from proactiveRules instead
+        // poBalanceValid intentionally excluded � use INV_AMOUNT_VS_PO_BALANCE from proactiveRules instead
         // to avoid showing a default "Pass" when the balance was never actually checked.
         'gstPercentageValid': ('GST Percentage', 'GST percentage is valid', 'GST percentage is invalid'),
       };

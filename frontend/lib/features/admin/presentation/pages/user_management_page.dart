@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:dio/dio.dart';
 import '../widgets/user_form_dialog.dart';
 import '../widgets/user_table.dart';
@@ -29,7 +30,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
   void initState() {
     super.initState();
     _dio = Dio(BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {'Authorization': 'Bearer ${widget.token}'},
     ));
     _loadUsers();

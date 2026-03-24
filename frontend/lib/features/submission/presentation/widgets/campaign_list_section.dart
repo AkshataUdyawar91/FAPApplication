@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../../../core/constants/api_constants.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -158,7 +159,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
     setState(() => _dealerLoading[campaignId] = true);
     try {
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
       final response = await dio.get(
         '/state/dealers',
         queryParameters: {'state': state, 'q': '', 'size': 50},
@@ -426,7 +427,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     if (mounted) setState(() => invoice.isExtracting = true);
 
     try {
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
 
       final uploadResponse = await dio.post(
         '/documents/upload',
@@ -460,7 +461,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   }
 
   Future<void> _pollForInvoiceExtraction(String packageId, String documentId, int campaignIndex, int invoiceIndex) async {
-    final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
+    final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
     const maxAttempts = 25;
 
     for (int attempt = 0; attempt < maxAttempts; attempt++) {

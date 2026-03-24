@@ -1,4 +1,5 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -34,7 +35,7 @@ class AgencyDashboardPage extends ConsumerStatefulWidget {
 }
 
 class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
-  final _dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))
+  final _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
     ..interceptors.add(PrettyDioLogger());
   final _searchController = TextEditingController();
 

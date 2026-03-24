@@ -1,4 +1,5 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
@@ -385,7 +386,7 @@ class CampaignDocumentsSection extends StatelessWidget {
     String filename,
   ) async {
     try {
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'))..interceptors.add(PrettyDioLogger())..interceptors.add(PrettyDioLogger());
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))..interceptors.add(PrettyDioLogger())..interceptors.add(PrettyDioLogger());
       final response = await dio.get(
         downloadUrl,
         options: Options(

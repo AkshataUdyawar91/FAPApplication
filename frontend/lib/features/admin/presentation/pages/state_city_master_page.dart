@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/constants/api_constants.dart';
 import 'package:dio/dio.dart';
 
 class StateCityMasterPage extends StatefulWidget {
@@ -27,7 +28,7 @@ class _StateCityMasterPageState extends State<StateCityMasterPage> {
   void initState() {
     super.initState();
     _dio = Dio(BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {'Authorization': 'Bearer ${widget.token}'},
     ));
     _load();
@@ -371,7 +372,7 @@ class _StateCityFormDialogState extends State<_StateCityFormDialog> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
     final dio = Dio(BaseOptions(
-      baseUrl: 'http://localhost:5000/api',
+      baseUrl: ApiConstants.baseUrl,
       headers: {'Authorization': 'Bearer ${widget.token}'},
     ));
     try {
