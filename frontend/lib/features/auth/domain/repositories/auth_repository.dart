@@ -15,4 +15,10 @@ abstract class AuthRepository {
 
   /// Refresh authentication token
   Future<Either<Failure, void>> refreshToken();
+
+  /// Get Azure AD SSO authorization URL
+  Future<Either<Failure, String>> getSsoAuthorizeUrl(String redirectUri);
+
+  /// Login via Azure AD SSO using authorization code
+  Future<Either<Failure, User>> ssoLogin(String code, String redirectUri);
 }

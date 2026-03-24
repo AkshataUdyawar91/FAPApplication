@@ -62,7 +62,7 @@ Write-Host "`n[Step 3] Building Flutter Web..." -ForegroundColor Yellow
 # API calls use relative /api path — works on same origin (VM internal + external via same IP/domain)
 Push-Location $frontendDir
 try {
-    flutter build web --release
+    flutter build web --release --dart-define=API_BASE_URL=/api
     if ($LASTEXITCODE -ne 0) { throw "Flutter build failed" }
 } finally {
     Pop-Location
