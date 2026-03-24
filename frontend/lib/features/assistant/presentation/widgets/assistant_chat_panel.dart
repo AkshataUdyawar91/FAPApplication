@@ -2595,80 +2595,144 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   }
 
   Widget _statusCardsWidget(List<StatusCardModel> cards) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: cards.map((card) {
-        Color statusColor;
-        Color statusBg;
-        switch (card.status) {
-          case 'Pending with CH':
-          case 'Pending with RA':
-            statusColor = const Color(0xFFB45309);
-            statusBg = const Color(0xFFFEF3C7);
-            break;
-          case 'Extracting':
-          case 'Validating':
-            statusColor = const Color(0xFF1D4ED8);
-            statusBg = const Color(0xFFDBEAFE);
-            break;
-          default:
-            statusColor = const Color(0xFF6B7280);
-            statusBg = const Color(0xFFF3F4F6);
-        }
+    Color statusBg(String status) {
+      switch (status) {
+        case 'Pending with CH':
+        case 'Pending with RA':
+          return const Color(0xFFDBEAFE); // light blue
+        case 'Approved':
+          return const Color(0xFFDCFCE7); // light green
+        case 'Rejected':
+          return const Color(0xFFFEE2E2); // light red
+        default:
+          return const Color(0xFFFEF3C7); // amber — Draft / Processing / Validating
+      }
+    }
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.grey.shade200),
-            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
-          ),
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+    Color statusFg(String status) {
+      switch (status) {
+        case 'Pending with CH':
+        case 'Pending with RA':
+          return const Color(0xFF1D4ED8);
+        case 'Approved':
+          return const Color(0xFF16A34A);
+        case 'Rejected':
+          return const Color(0xFFDC2626);
+        default:
+          return const Color(0xFFD97706); // amber
+      }
+    }
+
+    final token = ref.read(authTokenProvider) ?? '';
+    final userName = ref.read(authNotifierProvider).user?.name ?? '';
+
+    Widget statusCard(StatusCardModel card) {
+      // Extract submissionId from deepLink (e.g. "/submissions/{id}" or just the id)
+      final submissionId = card.deepLink.contains('/')
+          ? card.deepLink.split('/').last
+          : card.deepLink;
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2))],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(card.fapId,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
-                    const SizedBox(height: 4),
-                    Row(children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(color: statusBg, borderRadius: BorderRadius.circular(4)),
-                        child: Text(card.status,
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: statusColor)),
-                      ),
-                      if (card.amount != null) ...[
-                        const SizedBox(width: 8),
-                        Text(card.amount!,
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
-                      ],
-                    ]),
-                    const SizedBox(height: 4),
-                    Text(card.submittedDate,
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-                  ],
-                ),
+              // Row 1: FAP ID + Status pill
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      card.fapId,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: statusBg(card.status),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Text(
+                      card.status,
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: statusFg(card.status)),
+                    ),
+                  ),
+                ],
               ),
-              TextButton(
-                onPressed: () => _openDetailInModal(card.deepLink, fapId: card.fapId),
-                style: TextButton.styleFrom(
-                  backgroundColor: const Color(0xFF003087),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  minimumSize: const Size(60, 36),
+              const SizedBox(height: 10),
+              // Row 2: PO Number + Invoice Number + Amount
+              Row(children: [
+                const Icon(Icons.receipt_long, size: 14, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                if (card.poNumber != null && card.poNumber!.isNotEmpty) ...[
+                  Text('PO: ${card.poNumber!}',
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                  const SizedBox(width: 10),
+                ],
+                if (card.invoiceNumber != null && card.invoiceNumber!.isNotEmpty)
+                  Text('Inv: ${card.invoiceNumber!}',
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                if (card.poNumber == null && card.invoiceNumber == null)
+                  const Text('—', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                if (card.amount != null && card.amount!.isNotEmpty) ...[
+                  const SizedBox(width: 16),
+                  Text(
+                    card.amount!.startsWith('₹') ? card.amount! : '₹${card.amount!}',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                  ),
+                ],
+              ]),
+              const SizedBox(height: 6),
+              // Row 3: Date
+              Row(children: [
+                const Icon(Icons.calendar_today, size: 13, color: Color(0xFF9CA3AF)),
+                const SizedBox(width: 5),
+                Text(card.submittedDate,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+              ]),
+              const SizedBox(height: 14),
+              // View Details button — full stadium shape
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    if (submissionId.isNotEmpty) {
+                      context.pushNamed('submission-detail', extra: {
+                        'submissionId': submissionId,
+                        'token': token,
+                        'userName': userName,
+                        'poNumber': '',
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.open_in_new, size: 15),
+                  label: const Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF003087),
+                    side: const BorderSide(color: Color(0xFF003087), width: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: const StadiumBorder(),
+                  ),
                 ),
-                child: const Text('View', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               ),
             ],
           ),
-        );
-      }).toList(),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: cards.map(statusCard).toList(),
     );
   }
 

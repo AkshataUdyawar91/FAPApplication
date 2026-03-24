@@ -358,6 +358,8 @@ class FinalReviewFieldModel {
 class StatusCardModel {
   final String fapId;
   final String fullId;
+  final String? poNumber;
+  final String? invoiceNumber;
   final String status;
   final String? amount;
   final String submittedDate;
@@ -366,6 +368,8 @@ class StatusCardModel {
   const StatusCardModel({
     required this.fapId,
     required this.fullId,
+    this.poNumber,
+    this.invoiceNumber,
     required this.status,
     this.amount,
     required this.submittedDate,
@@ -376,6 +380,8 @@ class StatusCardModel {
     return StatusCardModel(
       fapId: json['fapId'] as String? ?? '',
       fullId: json['fullId'] as String? ?? '',
+      poNumber: json['poNumber'] as String?,
+      invoiceNumber: json['invoiceNumber'] as String?,
       status: json['status'] as String? ?? '',
       amount: json['amount'] as String?,
       submittedDate: json['submittedDate'] as String? ?? '',
