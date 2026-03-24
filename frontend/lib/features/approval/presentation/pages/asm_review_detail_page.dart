@@ -14,6 +14,7 @@ import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
+import '../../../../core/widgets/photo_thumbnail_gallery.dart';
 import '../../../../core/router/app_router.dart';
 import '../../data/models/invoice_summary_data.dart';
 import '../../data/models/invoice_document_row.dart';
@@ -492,6 +493,10 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                                       ),
                                       const SizedBox(height: 24),
                                       _buildValidationReportSection(),
+
+                                      // Photo Thumbnail Gallery
+                                      ..._buildPhotoGallerySection(),
+
                                       const SizedBox(height: 80),
                                     ],
                                   ),
@@ -1320,6 +1325,105 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         },
       ),
     );
+  }
+
+  /// Collects all photos from campaigns and matches validation status.
+  /// Sorted: failed first, pending next, passed last.
+  List<PhotoThumbnailItem> _collectPhotosWithValidation() {
+    final items = <PhotoThumbnailItem>[];
+    final campaigns = _submission?['campaigns'] as List? ?? [];
+    final packageId = _submission?['id']?.toString() ?? '';
+
+    // Build a lookup: documentId -> validation entry
+    final validationByDocId = <String, Map<String, dynamic>>{};
+    Map<String, dynamic>? aggregateValidation;
+    for (final v in _photoValidations) {
+      final vMap = v as Map<String, dynamic>;
+      final docId = vMap['documentId']?.toString() ?? '';
+      if (docId == packageId) {
+        aggregateValidation = vMap;
+      } else if (docId.isNotEmpty) {
+        validationByDocId[docId] = vMap;
+      }
+    }
+
+    for (final campaign in campaigns) {
+      final photos =
+          (campaign as Map<String, dynamic>)['photos'] as List? ?? [];
+      for (final photo in photos) {
+        final photoMap = photo as Map<String, dynamic>;
+        final fileName = photoMap['fileName']?.toString() ?? '';
+        final docId = photoMap['id']?.toString() ??
+            photoMap['photoId']?.toString() ??
+            '';
+
+        final validation = validationByDocId[docId] ?? aggregateValidation;
+
+        final bool hasError;
+        final bool isPending;
+        if (validation != null) {
+          isPending = false;
+          final allPassed = validation['allPassed'] == true ||
+              validation['allValidationsPassed'] == true;
+          final failureReason =
+              validation['failureReason']?.toString() ?? '';
+          hasError = !allPassed || failureReason.isNotEmpty;
+        } else {
+          isPending = true;
+          hasError = false;
+        }
+
+        if (docId.isNotEmpty) {
+          items.add(PhotoThumbnailItem(
+            documentId: docId,
+            fileName: fileName,
+            hasError: hasError,
+            isPending: isPending,
+          ));
+        }
+      }
+    }
+
+    // ===== TEMPORARY: multiply photos for testing (DELETE AFTER TESTING) =====
+    final originalItems = List<PhotoThumbnailItem>.from(items);
+    items.clear();
+    for (final item in originalItems) {
+      for (int i = 0; i < 33; i++) {
+        items.add(PhotoThumbnailItem(
+          documentId: item.documentId,
+          fileName: '${item.fileName}_copy$i',
+          hasError: item.hasError,
+          isPending: item.isPending,
+        ));
+      }
+    }
+    // ===== END TEMPORARY =====
+
+    // Sort: failed first, then pending, then passed
+    items.sort((a, b) {
+      int priority(PhotoThumbnailItem item) {
+        if (item.hasError) return 0;
+        if (item.isPending) return 1;
+        return 2;
+      }
+      return priority(a).compareTo(priority(b));
+    });
+
+    return items;
+  }
+
+  /// Builds the photo gallery section as a list of widgets for spread.
+  List<Widget> _buildPhotoGallerySection() {
+    final galleryPhotos = _collectPhotosWithValidation();
+    if (galleryPhotos.isEmpty) return [];
+    return [
+      const SizedBox(height: 24),
+      PhotoThumbnailGallery(
+        photos: galleryPhotos,
+        token: widget.token,
+        onPhotoTap: (docId, fileName) => _viewDocument(docId, fileName),
+      ),
+    ];
   }
 
   Widget _buildValidationReportSection() {
