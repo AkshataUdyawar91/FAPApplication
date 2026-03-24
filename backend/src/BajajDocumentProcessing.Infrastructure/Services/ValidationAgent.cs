@@ -1361,43 +1361,59 @@ public class ValidationAgent : IValidationAgent
 
         foreach (var photo in teamPhotos)
         {
-            if (photo.ExtractedMetadataJson != null)
+            // Read from dedicated columns first, fall back to ExtractedMetadataJson then Caption
+            // (same pattern as per-photo validation in BuildPerDocumentResults)
+            bool hasDate = photo.DateVisible ?? photo.PhotoTimestamp.HasValue;
+            bool hasLocation = photo.Latitude.HasValue && photo.Longitude.HasValue;
+            bool hasBlueTshirt = photo.BlueTshirtPresent ?? false;
+            bool hasVehicle = photo.ThreeWheelerPresent ?? false;
+            bool hasFace = false;
+            string? perceptualHash = null;
+
+            // Fallback: parse ExtractedMetadataJson if dedicated columns are null
+            var metadataSource = photo.ExtractedMetadataJson ?? photo.Caption;
+            if (photo.DateVisible == null && photo.BlueTshirtPresent == null && !string.IsNullOrEmpty(metadataSource))
             {
-                var photoMetadata = JsonSerializer.Deserialize<PhotoMetadata>(photo.ExtractedMetadataJson);
-                
-                if (photoMetadata != null)
+                try
                 {
-                    if (photoMetadata.Timestamp.HasValue)
+                    var photoMetadata = JsonSerializer.Deserialize<PhotoMetadata>(metadataSource);
+                    if (photoMetadata != null)
                     {
-                        photosWithDate++;
-                    }
-
-                    if (photoMetadata.Latitude.HasValue && photoMetadata.Longitude.HasValue)
-                    {
-                        photosWithLocation++;
-                    }
-
-                    if (photoMetadata.HasBlueTshirtPerson)
-                    {
-                        photosWithBlueTshirt++;
-                    }
-
-                    if (photoMetadata.HasBajajVehicle)
-                    {
-                        photosWithVehicle++;
-                    }
-
-                    if (photoMetadata.HasHumanFace)
-                    {
-                        photosWithFace++;
-                    }
-
-                    if (!string.IsNullOrEmpty(photoMetadata.PerceptualHash))
-                    {
-                        var fileName = photo.BlobUrl ?? photo.Id.ToString();
-                        photoHashes.Add((fileName, photoMetadata.PerceptualHash));
+                        if (!hasDate && photoMetadata.Timestamp.HasValue) hasDate = true;
+                        if (!hasLocation && photoMetadata.Latitude.HasValue && photoMetadata.Longitude.HasValue) hasLocation = true;
+                        if (!hasBlueTshirt && photoMetadata.HasBlueTshirtPerson) hasBlueTshirt = true;
+                        if (!hasVehicle && photoMetadata.HasBajajVehicle) hasVehicle = true;
+                        if (photoMetadata.HasHumanFace) hasFace = true;
+                        perceptualHash = photoMetadata.PerceptualHash;
                     }
                 }
+                catch { /* skip unparseable metadata */ }
+            }
+            else if (!string.IsNullOrEmpty(metadataSource))
+            {
+                // Dedicated columns are populated — still parse metadata for face detection and perceptual hash
+                try
+                {
+                    var photoMetadata = JsonSerializer.Deserialize<PhotoMetadata>(metadataSource);
+                    if (photoMetadata != null)
+                    {
+                        hasFace = photoMetadata.HasHumanFace;
+                        perceptualHash = photoMetadata.PerceptualHash;
+                    }
+                }
+                catch { /* skip unparseable metadata */ }
+            }
+
+            if (hasDate) photosWithDate++;
+            if (hasLocation) photosWithLocation++;
+            if (hasBlueTshirt) photosWithBlueTshirt++;
+            if (hasVehicle) photosWithVehicle++;
+            if (hasFace) photosWithFace++;
+
+            if (!string.IsNullOrEmpty(perceptualHash))
+            {
+                var fileName = photo.BlobUrl ?? photo.Id.ToString();
+                photoHashes.Add((fileName, perceptualHash));
             }
         }
 
@@ -2066,7 +2082,7 @@ public class ValidationAgent : IValidationAgent
                 SerializeRules(eqRules)));
         }
 
-        // TeamPhotos: field presence + cross-document (use package ID as the "document" since photos are a collection)
+        // TeamPhotos: aggregate entry (package-level) for backward compatibility
         if (result.PhotoFieldPresence != null || result.PhotoCrossDocument != null)
         {
             var passed = (result.PhotoFieldPresence?.AllFieldsPresent ?? true)
@@ -2091,6 +2107,77 @@ public class ValidationAgent : IValidationAgent
                 issues.Count > 0 ? string.Join("; ", issues) : null,
                 JsonSerializer.Serialize(details, jsonOptions),
                 SerializeRules(phRules)));
+        }
+
+        // TeamPhotos: per-photo validation entries (one per photo with DocumentId = photo.Id)
+        // Uses same rule codes and data sources as chatbot's RunPhotoValidationRules
+        var allTeamPhotos = package.Teams.SelectMany(t => t.Photos).Where(p => !p.IsDeleted).ToList();
+        foreach (var photo in allTeamPhotos)
+        {
+            // Read from dedicated columns first, fall back to ExtractedMetadataJson (same as chatbot)
+            bool dateVisible = photo.DateVisible ?? photo.PhotoTimestamp.HasValue;
+            string? dateVal = photo.PhotoTimestamp?.ToString("dd-MMM-yyyy HH:mm") ?? photo.PhotoDateOverlay;
+
+            bool gpsVisible = photo.Latitude.HasValue && photo.Longitude.HasValue;
+            string? gpsVal = gpsVisible ? $"{photo.Latitude:F4}, {photo.Longitude:F4}" : null;
+
+            bool blueTshirt = photo.BlueTshirtPresent ?? false;
+            bool threeWheeler = photo.ThreeWheelerPresent ?? false;
+
+            // Fallback: parse ExtractedMetadataJson if dedicated columns are null
+            if (photo.DateVisible == null && photo.BlueTshirtPresent == null && !string.IsNullOrEmpty(photo.ExtractedMetadataJson))
+            {
+                try
+                {
+                    var metadata = JsonSerializer.Deserialize<PhotoMetadata>(photo.ExtractedMetadataJson);
+                    if (metadata != null)
+                    {
+                        if (!dateVisible && metadata.Timestamp.HasValue)
+                        { dateVisible = true; dateVal = metadata.Timestamp.Value.ToString("dd-MMM-yyyy HH:mm"); }
+                        if (!dateVisible && !string.IsNullOrEmpty(metadata.PhotoDateFromOverlay))
+                        { dateVisible = true; dateVal = metadata.PhotoDateFromOverlay; }
+                        if (!gpsVisible && metadata.Latitude.HasValue && metadata.Longitude.HasValue)
+                        { gpsVisible = true; gpsVal = $"{metadata.Latitude:F4}, {metadata.Longitude:F4}"; }
+                        if (!blueTshirt) blueTshirt = metadata.HasBlueTshirtPerson;
+                        if (!threeWheeler) threeWheeler = metadata.HasBajajVehicle || metadata.Has3WVehicle;
+                    }
+                }
+                catch { /* skip malformed metadata */ }
+            }
+
+            // Required rules: all 4 must pass (matches chatbot RunPhotoValidationRules)
+            var photoPassed = dateVisible && gpsVisible && blueTshirt && threeWheeler;
+
+            var photoIssues = new List<string>();
+            if (!dateVisible) photoIssues.Add("Date not visible in photo");
+            if (!gpsVisible) photoIssues.Add("GPS coordinates not detected");
+            if (!blueTshirt) photoIssues.Add("Person with blue T-shirt not detected");
+            if (!threeWheeler) photoIssues.Add("3-wheel vehicle not detected");
+
+            var photoRules = new List<object>
+            {
+                new { ruleCode = "PHOTO_DATE_VISIBLE", type = "Required", passed = dateVisible, isWarning = false, label = "Date", extractedValue = dateVal, message = dateVisible ? null : "Date not visible in photo" },
+                new { ruleCode = "PHOTO_GPS_VISIBLE", type = "Required", passed = gpsVisible, isWarning = false, label = "GPS", extractedValue = gpsVal, message = gpsVisible ? null : "GPS coordinates not detected" },
+                new { ruleCode = "PHOTO_BLUE_TSHIRT", type = "Required", passed = blueTshirt, isWarning = false, label = "Blue T-shirt", extractedValue = blueTshirt ? "Present ✓" : null, message = blueTshirt ? null : "Person with blue T-shirt not detected" },
+                new { ruleCode = "PHOTO_3W_VEHICLE", type = "Required", passed = threeWheeler, isWarning = false, label = "3W Vehicle", extractedValue = threeWheeler ? "Present ✓" : null, message = threeWheeler ? null : "3-wheel vehicle not detected" },
+            };
+
+            var photoDetails = new
+            {
+                fileName = photo.FileName,
+                dateVisible,
+                gpsVisible,
+                blueTshirt,
+                threeWheeler,
+                latitude = photo.Latitude,
+                longitude = photo.Longitude,
+                timestamp = photo.PhotoTimestamp,
+            };
+
+            items.Add((DocumentType.TeamPhoto, photo.Id, photoPassed,
+                photoIssues.Count > 0 ? string.Join("; ", photoIssues) : null,
+                JsonSerializer.Serialize(photoDetails, jsonOptions),
+                SerializeRules(photoRules)));
         }
 
         return items;

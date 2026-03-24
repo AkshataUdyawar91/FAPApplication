@@ -97,11 +97,13 @@ public class AssistantController : ControllerBase
             var response = action switch
             {
                 "greet" => BuildGreeting(),
-                "create_request" => BuildCreateRequestPrompt(),
+                "create_request" => await BuildPOListPrompt(agencyId!.Value, ct),
                 "view_requests" => GetUserIdSync() is { } uid
                     ? await BuildStatusCardsResponse(uid, "show my pending claims", ct)
                     : new AssistantResponse { Type = "text", Message = "I couldn't verify your identity. Please log in." },
-                "pending_approvals" => BuildPendingApprovalsPrompt(),
+                "pending_approvals" => GetUserIdSync() is { } rejUid
+                    ? await BuildRejectedClaimsResponse(rejUid, ct)
+                    : new AssistantResponse { Type = "text", Message = "I couldn't verify your identity. Please log in." },
                 "search_po" => await HandleSearchPO(request, agencyId!.Value, ct),
                 "select_po" => await HandleSelectPO(request, agencyId!.Value, ct),
                 "select_state" => await HandleSelectState(request, agencyId!.Value, ct),
@@ -167,6 +169,36 @@ public class AssistantController : ControllerBase
         };
     }
 
+    private async Task<AssistantResponse> BuildPOListPrompt(Guid agencyId, CancellationToken ct)
+    {
+        var pos = await _context.POs
+            .Where(p => p.AgencyId == agencyId
+                        && !p.IsDeleted
+                        && (p.POStatus == "Open" || p.POStatus == "PartiallyConsumed" || p.POStatus == null))
+            .OrderByDescending(p => p.PODate)
+            .Take(50)
+            .Select(p => new POItem
+            {
+                Id = p.Id.ToString(),
+                PONumber = p.PONumber ?? "",
+                PODate = p.PODate ?? DateTime.MinValue,
+                VendorName = p.VendorName ?? "",
+                TotalAmount = p.TotalAmount ?? 0,
+                RemainingBalance = p.RemainingBalance,
+                POStatus = p.POStatus ?? "Open",
+            })
+            .ToListAsync(ct);
+
+        return new AssistantResponse
+        {
+            Type = "po_list",
+            Message = pos.Count > 0
+                ? "Select a PO to start your submission:"
+                : "No open POs found for your account. Please contact your administrator.",
+            POItems = pos,
+        };
+    }
+
     private static AssistantResponse BuildHelpResponse()
     {
         return new AssistantResponse
@@ -203,12 +235,57 @@ public class AssistantController : ControllerBase
         };
     }
 
-    private static AssistantResponse BuildPendingApprovalsPrompt()
+    private async Task<AssistantResponse> BuildRejectedClaimsResponse(Guid userId, CancellationToken ct)
     {
+        var packages = await _context.DocumentPackages
+            .Include(p => p.Invoices)
+            .Include(p => p.RequestApprovalHistory)
+                .ThenInclude(h => h.Approver)
+            .AsNoTracking()
+            .Where(p => p.SubmittedByUserId == userId &&
+                        (p.State == Domain.Enums.PackageState.CHRejected ||
+                         p.State == Domain.Enums.PackageState.RARejected))
+            .OrderByDescending(p => p.UpdatedAt ?? p.CreatedAt)
+            .Take(20)
+            .ToListAsync(ct);
+
+        if (packages.Count == 0)
+            return new AssistantResponse
+            {
+                Type = "text",
+                Message = "Good news — none of your claims have been returned. All submissions are either pending or approved.",
+            };
+
+        // Resolve PO numbers
+        var poIds = packages.Where(p => p.SelectedPOId.HasValue).Select(p => p.SelectedPOId!.Value).Distinct().ToList();
+        var poNumbers = poIds.Any()
+            ? await _context.POs
+                .Where(p => poIds.Contains(p.Id))
+                .Select(p => new { p.Id, p.PONumber })
+                .ToDictionaryAsync(p => p.Id, p => p.PONumber, ct)
+            : new Dictionary<Guid, string?>();
+
+        var cards = packages.Select(p =>
+        {
+            string? poNum = p.SelectedPOId.HasValue && poNumbers.ContainsKey(p.SelectedPOId.Value)
+                ? poNumbers[p.SelectedPOId.Value] : null;
+
+            // Get the latest rejection history entry
+            var rejection = p.RequestApprovalHistory
+                .Where(h => h.Action == Domain.Enums.ApprovalAction.Rejected)
+                .OrderByDescending(h => h.ActionDate)
+                .FirstOrDefault();
+
+            return BuildStatusCard(p, "Agency", poNum,
+                reviewerName: rejection?.Approver?.FullName,
+                rejectionReason: rejection?.Comments);
+        }).ToList();
+
         return new AssistantResponse
         {
-            Type = "text",
-            Message = "This feature is coming soon. You'll see items pending your review here.",
+            Type = "status_cards",
+            Message = $"Here are your returned claims:",
+            StatusCards = cards,
         };
     }
 
@@ -263,14 +340,14 @@ public class AssistantController : ControllerBase
     {
         if (string.IsNullOrEmpty(request.PayloadJson))
         {
-            return BuildCreateRequestPrompt();
+            return await BuildPOListPrompt(agencyId, ct);
         }
 
         var payload = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(request.PayloadJson);
         if (!payload.TryGetProperty("poId", out var poIdProp) ||
             !Guid.TryParse(poIdProp.GetString(), out var poId))
         {
-            return BuildCreateRequestPrompt();
+            return await BuildPOListPrompt(agencyId, ct);
         }
 
         var po = await _context.POs
@@ -2174,10 +2251,29 @@ public class AssistantController : ControllerBase
 
             foreach (var team in teams)
             {
-                var photoCount = await _context.TeamPhotos.CountAsync(p => p.TeamId == team.Id && !p.IsDeleted, ct);
-                var passedPhotos = await _context.TeamPhotos
-                    .Where(p => p.TeamId == team.Id && !p.IsDeleted && !p.IsFlaggedForReview)
-                    .CountAsync(ct);
+                var photos = await _context.TeamPhotos
+                    .Where(p => p.TeamId == team.Id && !p.IsDeleted)
+                    .ToListAsync(ct);
+
+                int photoCount = photos.Count;
+                int passedPhotos = 0;
+                int photosWithDate = 0;
+                int photosWithGps = 0;
+                int photosWithBlueTshirt = 0;
+                int photosWithVehicle = 0;
+                var failedPhotoIds = new List<string>();
+
+                foreach (var photo in photos)
+                {
+                    var rules = RunPhotoValidationRules(photo);
+                    bool allPassed = rules.All(r => r.Passed);
+                    if (allPassed) passedPhotos++;
+                    else failedPhotoIds.Add(photo.Id.ToString());
+                    if (rules.FirstOrDefault(r => r.RuleCode == "PHOTO_DATE_VISIBLE")?.Passed == true) photosWithDate++;
+                    if (rules.FirstOrDefault(r => r.RuleCode == "PHOTO_GPS_VISIBLE")?.Passed == true) photosWithGps++;
+                    if (rules.FirstOrDefault(r => r.RuleCode == "PHOTO_BLUE_TSHIRT")?.Passed == true) photosWithBlueTshirt++;
+                    if (rules.FirstOrDefault(r => r.RuleCode == "PHOTO_3W_VEHICLE")?.Passed == true) photosWithVehicle++;
+                }
 
                 teamSummaries.Add(new TeamSummaryItem
                 {
@@ -2191,6 +2287,11 @@ public class AssistantController : ControllerBase
                     WorkingDays = team.WorkingDays ?? 0,
                     PhotoCount = photoCount,
                     PhotosPassed = passedPhotos,
+                    PhotosWithDate = photosWithDate,
+                    PhotosWithGps = photosWithGps,
+                    PhotosWithBlueTshirt = photosWithBlueTshirt,
+                    PhotosWithVehicle = photosWithVehicle,
+                    FailedPhotoIds = failedPhotoIds,
                 });
             }
         }
@@ -2676,10 +2777,20 @@ public class AssistantController : ControllerBase
         // Queue workflow via background processor (proper scoped execution, avoids disposed context issues)
         await _backgroundQueue.QueueWorkflowAsync(package.Id);
 
+        var poNumber = "—";
+        if (package.SelectedPOId.HasValue)
+        {
+            poNumber = await _context.POs
+                .Where(po => po.Id == package.SelectedPOId.Value && !po.IsDeleted)
+                .Select(po => po.PONumber)
+                .FirstOrDefaultAsync(ct) ?? "—";
+        }
+        var invoiceNumber = package.Invoices.FirstOrDefault()?.InvoiceNumber ?? "—";
+
         return new AssistantResponse
         {
             Type = "submit_success",
-            Message = "Your submission has been submitted successfully!",
+            Message = $"Your submission with PO - {poNumber} and Invoice - {invoiceNumber} has been submitted.",
             SubmissionId = submissionId,
         };
     }
@@ -2888,16 +2999,19 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "status_cards",
-            Message = $"Here are your {statusCards.Count} pending submission(s):",
+            Message = $"Here are your pending claims:",
             StatusCards = statusCards,
         };
     }
 
-    private StatusCard BuildStatusCard(Domain.Entities.DocumentPackage p, string userRole, string? poNumber)
+    private StatusCard BuildStatusCard(Domain.Entities.DocumentPackage p, string userRole, string? poNumber,
+        string? reviewerName = null, string? rejectionReason = null)
     {
-        // FAP ID = "FAP-" + first segment of GUID (8 hex chars before first dash)
+        // Use SubmissionNumber if available, otherwise fall back to GUID-derived FAP ID
         var firstSegment = p.Id.ToString().Split('-')[0].ToUpperInvariant();
-        var fapId = $"FAP-{firstSegment}";
+        var fapId = !string.IsNullOrEmpty(p.SubmissionNumber)
+            ? p.SubmissionNumber
+            : $"FAP-{firstSegment}";
 
         var statusText = p.State switch
         {
@@ -2936,6 +3050,8 @@ public class AssistantController : ControllerBase
             Amount = amount,
             SubmittedDate = submittedDate,
             DeepLink = deepLink,
+            ReviewerName = reviewerName,
+            RejectionReason = rejectionReason,
         };
     }
 
@@ -4254,6 +4370,12 @@ public class StatusCard
 
     [JsonPropertyName("deepLink")]
     public required string DeepLink { get; init; }
+
+    [JsonPropertyName("reviewerName")]
+    public string? ReviewerName { get; init; }
+
+    [JsonPropertyName("rejectionReason")]
+    public string? RejectionReason { get; init; }
 }
 
 public class PhotoValidationResult
@@ -4305,6 +4427,21 @@ public class TeamSummaryItem
 
     [JsonPropertyName("photosPassed")]
     public int PhotosPassed { get; init; }
+
+    [JsonPropertyName("photosWithDate")]
+    public int PhotosWithDate { get; init; }
+
+    [JsonPropertyName("photosWithGps")]
+    public int PhotosWithGps { get; init; }
+
+    [JsonPropertyName("photosWithBlueTshirt")]
+    public int PhotosWithBlueTshirt { get; init; }
+
+    [JsonPropertyName("photosWithVehicle")]
+    public int PhotosWithVehicle { get; init; }
+
+    [JsonPropertyName("failedPhotoIds")]
+    public List<string> FailedPhotoIds { get; init; } = [];
 }
 
 public class WorkflowCard

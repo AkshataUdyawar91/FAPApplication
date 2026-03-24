@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 class AssistantBubble extends StatelessWidget {
   final String message;
   final Widget? child;
+  final bool isActive; // when false, bubble is greyed out and non-interactive
+  final bool greyChild; // when false, child is NOT greyed even if isActive=false
 
   const AssistantBubble({
     super.key,
     required this.message,
     this.child,
+    this.isActive = true,
+    this.greyChild = true,
   });
 
   @override
@@ -18,9 +22,9 @@ class AssistantBubble extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const CircleAvatar(
+          CircleAvatar(
             radius: 16,
-            backgroundColor: Color(0xFF003087),
+            backgroundColor: isActive ? const Color(0xFF003087) : Colors.grey.shade400,
             child: Icon(Icons.smart_toy, size: 18, color: Colors.white),
           ),
           const SizedBox(width: 8),
@@ -31,7 +35,7 @@ class AssistantBubble extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
+                    color: isActive ? Colors.grey.shade100 : Colors.grey.shade200,
                     borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(4),
                       topRight: Radius.circular(16),
@@ -41,13 +45,17 @@ class AssistantBubble extends StatelessWidget {
                   ),
                   child: Text(
                     message,
-                    style: const TextStyle(fontSize: 14, color: Colors.black87),
+                    style: TextStyle(fontSize: 15, color: isActive ? Colors.black87 : Colors.grey.shade500),
                   ),
                 ),
                 if (child != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
-                    child: child!,
+                    child: (isActive || !greyChild)
+                        ? child!
+                        : IgnorePointer(
+                            child: Opacity(opacity: 0.4, child: child!),
+                          ),
                   ),
               ],
             ),

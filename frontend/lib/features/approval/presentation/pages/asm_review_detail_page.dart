@@ -15,6 +15,7 @@ import '../../../../core/widgets/app_drawer.dart';
 import '../../../../core/widgets/chat_side_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
+import '../../../../core/widgets/photo_thumbnail_gallery.dart';
 import '../../../../core/router/app_router.dart';
 import '../../data/models/invoice_summary_data.dart';
 import '../../data/models/invoice_document_row.dart';
@@ -493,6 +494,10 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                                       ),
                                       const SizedBox(height: 24),
                                       _buildValidationReportSection(),
+
+                                      // Photo Thumbnail Gallery
+                                      ..._buildPhotoGallerySection(),
+
                                       const SizedBox(height: 80),
                                     ],
                                   ),
@@ -1323,6 +1328,127 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     );
   }
 
+  /// Checks if a validation entry has any warning rules that did not pass.
+  bool _hasWarningRules(Map<String, dynamic> validation) {
+    try {
+      final detailsJson = validation['validationDetailsJson']?.toString() ?? '';
+      if (detailsJson.isEmpty) return false;
+      final details = json.decode(detailsJson);
+      final rules = (details is Map ? details['proactiveRules'] : null) as List? ?? [];
+      for (final rule in rules) {
+        final ruleMap = rule as Map<String, dynamic>;
+        if (ruleMap['isWarning'] == true && ruleMap['passed'] != true) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Collects all photos from campaigns and matches validation status.
+  /// Sorted: failed first, warning next, pending next, passed last.
+  List<PhotoThumbnailItem> _collectPhotosWithValidation() {
+    final items = <PhotoThumbnailItem>[];
+    final campaigns = _submission?['campaigns'] as List? ?? [];
+    final packageId = _submission?['id']?.toString() ?? '';
+    final state = _submission?['state']?.toString().toLowerCase() ?? '';
+
+    final isProcessing = state == 'draft' || state == 'uploaded' ||
+        state == 'extracting' || state == 'validating';
+
+    final validationByDocId = <String, Map<String, dynamic>>{};
+    Map<String, dynamic>? aggregateValidation;
+    for (final v in _photoValidations) {
+      final vMap = v as Map<String, dynamic>;
+      final docId = vMap['documentId']?.toString() ?? '';
+      if (docId == packageId) {
+        aggregateValidation = vMap;
+      } else if (docId.isNotEmpty) {
+        validationByDocId[docId] = vMap;
+      }
+    }
+
+    for (final campaign in campaigns) {
+      final photos =
+          (campaign as Map<String, dynamic>)['photos'] as List? ?? [];
+      for (final photo in photos) {
+        final photoMap = photo as Map<String, dynamic>;
+        final fileName = photoMap['fileName']?.toString() ?? '';
+        final docId = photoMap['id']?.toString() ??
+            photoMap['photoId']?.toString() ??
+            '';
+
+        final bool hasError;
+        final bool hasWarning;
+        final bool isPending;
+
+        if (isProcessing) {
+          isPending = true;
+          hasError = false;
+          hasWarning = false;
+        } else {
+          final validation = validationByDocId[docId];
+          if (validation != null) {
+            isPending = false;
+            final allPassed = validation['allPassed'] == true ||
+                validation['allValidationsPassed'] == true;
+            final failureReason =
+                validation['failureReason']?.toString() ?? '';
+            hasError = !allPassed || failureReason.isNotEmpty;
+            hasWarning = !hasError && _hasWarningRules(validation);
+          } else if (aggregateValidation != null) {
+            // No per-photo validation — don't inherit aggregate allPassed
+            // (it includes cross-document checks like "No. of Days" unrelated to individual photo quality)
+            isPending = false;
+            hasError = false;
+            hasWarning = false;
+          } else {
+            isPending = true;
+            hasError = false;
+            hasWarning = false;
+          }
+        }
+
+        if (docId.isNotEmpty) {
+          items.add(PhotoThumbnailItem(
+            documentId: docId,
+            fileName: fileName,
+            hasError: hasError,
+            hasWarning: hasWarning,
+            isPending: isPending,
+          ));
+        }
+      }
+    }
+
+    // Sort: failed first, then warning, then pending, then passed
+    items.sort((a, b) {
+      int priority(PhotoThumbnailItem item) {
+        if (item.hasError) return 0;
+        if (item.hasWarning) return 1;
+        if (item.isPending) return 2;
+        return 3;
+      }
+      return priority(a).compareTo(priority(b));
+    });
+
+    return items;
+  }
+
+  /// Builds the photo gallery section as a list of widgets for spread.
+  List<Widget> _buildPhotoGallerySection() {
+    final galleryPhotos = _collectPhotosWithValidation();
+    if (galleryPhotos.isEmpty) return [];
+    return [
+      const SizedBox(height: 24),
+      PhotoThumbnailGallery(
+        photos: galleryPhotos,
+        token: widget.token,
+        onPhotoTap: (docId, fileName) => _viewDocument(docId, fileName),
+      ),
+    ];
+  }
+
   Widget _buildValidationReportSection() {
     return Card(
       elevation: 2,
@@ -1377,12 +1503,6 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               const SizedBox(height: 24),
             ],
 
-            // Photo Validations
-            if (_photoValidations.isNotEmpty) ...[
-              _buildPhotoValidationsSection(_photoValidations),
-              const SizedBox(height: 24),
-            ],
-
             // Enquiry Validation
             if (_enquiryValidation.isNotEmpty) ...[
               _buildSingleValidationCard(
@@ -1391,6 +1511,12 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                 validation: _enquiryValidation,
                 documentId: _getDocumentIdByType('EnquiryDocument'),
               ),
+              const SizedBox(height: 24),
+            ],
+
+            // Photo Validations (at bottom)
+            if (_photoValidations.isNotEmpty) ...[
+              _buildPhotoValidationsSection(_photoValidations),
               const SizedBox(height: 24),
             ],
 
@@ -1473,10 +1599,18 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   }
 
   Widget _buildPhotoValidationsSection(List<dynamic> photoValidations) {
+    // Only show the aggregate validation (documentId == packageId), skip per-photo entries
+    final packageId = _submission?['id']?.toString() ?? '';
+    final aggregateEntries = photoValidations.where((photo) {
+      final photoData = photo as Map<String, dynamic>;
+      final docId = photoData['documentId']?.toString() ?? '';
+      return docId == packageId || docId.isEmpty;
+    }).toList();
+    final entriesToShow = aggregateEntries.isNotEmpty ? aggregateEntries : (photoValidations.isNotEmpty ? [photoValidations.first] : []);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ...photoValidations.map((photo) {
+        ...entriesToShow.map((photo) {
           final photoData = photo as Map<String, dynamic>;
           return _buildPhotoValidationCard(photoData);
         }),
@@ -1514,7 +1648,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         validationDetails =
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
         if (validationDetails != null) {
-          allRows = _extractAllValidationRows(validationDetails);
+          allRows = _extractPhotoValidationRows(validationDetails);
         }
       } catch (e) {
         debugPrint('Error parsing photo validation details: $e');
@@ -1529,17 +1663,65 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       }
     }
 
-    final passedCount = allRows.where((r) => r['passed'] == true).length;
-    final totalCount = allRows.length;
-
     return _buildValidationCard(
       title: 'Photo Validations',
       fileName: fileName,
-      passedCount: passedCount,
-      totalCount: totalCount,
+      passedCount: 0,
+      totalCount: 0,
       rows: allRows,
-      documentId: resolvedPhotoDocId,
     );
+  }
+
+  /// Extracts photo-specific validation rows with descriptive labels and natural language messages.
+  List<Map<String, dynamic>> _extractPhotoValidationRows(Map<String, dynamic> details) {
+    final rows = <Map<String, dynamic>>[];
+
+    void addRow(String label, bool passed, String message) {
+      rows.add({'label': label, 'passed': passed, 'message': message});
+    }
+
+    final fieldPresence = details['fieldPresence'] as Map<String, dynamic>?;
+    final crossDocument = details['crossDocument'] as Map<String, dynamic>?;
+    final totalPhotos = fieldPresence?['totalPhotos'];
+
+    // Photo Count
+    if (totalPhotos != null && totalPhotos > 0) {
+      addRow('Photo Count', true, '$totalPhotos photos uploaded');
+
+      final photosWithDate = fieldPresence?['photosWithDate'] ?? 0;
+      addRow('Date on Photos', photosWithDate == totalPhotos,
+          '$photosWithDate/$totalPhotos photos have date mentioned');
+
+      final photosWithLocation = fieldPresence?['photosWithLocation'] ?? 0;
+      addRow('GPS Coordinates', photosWithLocation == totalPhotos,
+          '$photosWithLocation/$totalPhotos photos have coordinates present');
+    }
+
+    // No. of Days — uses crossDocument photoCount vs costSummaryDays
+    if (crossDocument != null) {
+      final photoCountMatch = crossDocument['photoCountMatchesManDays'];
+      if (photoCountMatch != null) {
+        final photoCount = crossDocument['photoCount'] ?? totalPhotos ?? 0;
+        final costDays = crossDocument['costSummaryDays'] ?? 0;
+        addRow('No. of Days', photoCountMatch == true,
+            photoCountMatch == true
+                ? 'Photo count ($photoCount) meets required days in Cost Summary ($costDays)'
+                : 'Photo count ($photoCount) is less than days in Cost Summary ($costDays)');
+      }
+    }
+
+    // Blue T-shirt & Branded 3W
+    if (totalPhotos != null && totalPhotos > 0) {
+      final photosWithBlueTshirt = fieldPresence?['photosWithBlueTshirt'] ?? 0;
+      addRow('Promoter wearing Blue T-shirt', photosWithBlueTshirt > 0,
+          '$photosWithBlueTshirt/$totalPhotos photos have promoters wear blue T-shirt');
+
+      final photosWithVehicle = fieldPresence?['photosWithVehicle'] ?? 0;
+      addRow('Branded 3 Wheeler', photosWithVehicle > 0,
+          '$photosWithVehicle/$totalPhotos photos have Branded 3W');
+    }
+
+    return rows;
   }
 
   /// Extracts all validation rows from ValidationDetailsJson into a unified list.
@@ -1607,15 +1789,15 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           final photosWithFace = fieldPresence['photosWithFace'] ?? 0;
 
           addRow('Date in Photos', photosWithDate == totalPhotos,
-              'Present in $photosWithDate/$totalPhotos photos');
+              'Present in ${(photosWithDate * 100 / totalPhotos).toStringAsFixed(1)}% photos');
           addRow('Location in Photos', photosWithLocation == totalPhotos,
-              'Present in $photosWithLocation/$totalPhotos photos');
+              'Present in ${(photosWithLocation * 100 / totalPhotos).toStringAsFixed(1)}% photos');
           addRow('Blue T-shirt Detection', photosWithBlueTshirt > 0,
-              'Detected in $photosWithBlueTshirt/$totalPhotos photos');
+              'Detected in ${(photosWithBlueTshirt * 100 / totalPhotos).toStringAsFixed(1)}% photos');
           addRow('Bajaj Vehicle Detection', photosWithVehicle > 0,
-              'Detected in $photosWithVehicle/$totalPhotos photos');
+              'Detected in ${(photosWithVehicle * 100 / totalPhotos).toStringAsFixed(1)}% photos');
           addRow('Face Detection', photosWithFace > 0,
-              'Detected in $photosWithFace/$totalPhotos photos');
+              'Detected in ${(photosWithFace * 100 / totalPhotos).toStringAsFixed(1)}% photos');
         }
       } else {
         // Enquiry: per-field record counts
@@ -1860,7 +2042,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                       RichText(
                         text: TextSpan(children: [
                           TextSpan(
-                            text: '$passedCount/$totalCount ',
+                            text: '${totalCount > 0 ? (passedCount * 100 ~/ totalCount) : 0}% ',
                             style: AppTextStyles.bodySmall.copyWith(
                                 color: AppColors.textPrimary,
                                 fontWeight: FontWeight.w600,
@@ -1945,7 +2127,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
             children: [
               Expanded(
                 flex: 3,
-                child: Text('WHAT WAS CHECKED',
+                child: Text('What was checked',
                     style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,
@@ -1953,7 +2135,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               ),
               SizedBox(
                 width: 80,
-                child: Text('RESULT',
+                child: Text('Result',
                     style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,
@@ -1963,7 +2145,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               const SizedBox(width: 12),
               Expanded(
                 flex: 3,
-                child: Text('WHAT WAS FOUND',
+                child: Text('What was found',
                     style: AppTextStyles.bodySmall.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,
