@@ -32,6 +32,9 @@ class AssistantState extends Equatable {
   final String? submissionId;
   final String? lastDocumentId;
   final String? teamPayloadJson; // carries team context across steps
+  // Submission flow tracking: 0 = not in flow, 1-5 = current step
+  final bool isSubmissionFlow;
+  final int currentStep; // 1=Invoice, 2=CostSummary, 3=ActivitySummary, 4=Teams&Photos, 5=EnquiryDump
 
   const AssistantState({
     this.messages = const [],
@@ -41,6 +44,8 @@ class AssistantState extends Equatable {
     this.submissionId,
     this.lastDocumentId,
     this.teamPayloadJson,
+    this.isSubmissionFlow = false,
+    this.currentStep = 0,
   });
 
   AssistantState copyWith({
@@ -53,6 +58,8 @@ class AssistantState extends Equatable {
     bool clearSubmissionId = false,
     String? lastDocumentId,
     String? teamPayloadJson,
+    bool? isSubmissionFlow,
+    int? currentStep,
   }) {
     return AssistantState(
       messages: messages ?? this.messages,
@@ -62,11 +69,13 @@ class AssistantState extends Equatable {
       submissionId: clearSubmissionId ? null : (submissionId ?? this.submissionId),
       lastDocumentId: lastDocumentId ?? this.lastDocumentId,
       teamPayloadJson: teamPayloadJson ?? this.teamPayloadJson,
+      isSubmissionFlow: isSubmissionFlow ?? this.isSubmissionFlow,
+      currentStep: currentStep ?? this.currentStep,
     );
   }
 
   @override
-  List<Object?> get props => [messages, isLoading, error, selectedPO, submissionId, lastDocumentId, teamPayloadJson];
+  List<Object?> get props => [messages, isLoading, error, selectedPO, submissionId, lastDocumentId, teamPayloadJson, isSubmissionFlow, currentStep];
 }
 
 class AssistantNotifier extends StateNotifier<AssistantState> {
@@ -75,7 +84,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
   AssistantNotifier(this._dataSource) : super(const AssistantState());
 
   Future<void> greet() async {
-    state = state.copyWith(isLoading: true, error: null);
+    state = state.copyWith(isLoading: true, error: null, isSubmissionFlow: false, currentStep: 0);
     try {
       final response = await _dataSource.sendMessage(action: 'greet');
       _addBotMessage(response);
@@ -85,19 +94,27 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
   }
 
   Future<void> sendAction(String action, {String? payloadJson}) async {
-    const _actionLabels = <String, String>{
+    const actionLabels = <String, String>{
       'view_requests': '',
       'pending_approvals': '',
       'create_request': 'Start a new submission',
     };
-    final label = _actionLabels[action];
-    if (label != null && label.isNotEmpty) _addUserMessage(label);
-    else if (label == null) _addUserMessage(action
-        .replaceAll('_', ' ')
-        .split(' ')
-        .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase())
-        .join(' '));
-    state = state.copyWith(isLoading: true, error: null);
+    final label = actionLabels[action];
+    if (label != null && label.isNotEmpty) {
+      _addUserMessage(label);
+    } else if (label == null) {
+      _addUserMessage(action
+          .replaceAll('_', ' ')
+          .split(' ')
+          .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1).toLowerCase())
+          .join(' '));
+    }
+    // Enter submission flow when user starts a new request
+    if (action == 'create_request') {
+      state = state.copyWith(isLoading: true, error: null, isSubmissionFlow: true, currentStep: 0);
+    } else {
+      state = state.copyWith(isLoading: true, error: null);
+    }
     try {
       final response = await _dataSource.sendMessage(action: action, payloadJson: payloadJson);
       _addBotMessage(response);
@@ -737,7 +754,50 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
     } else {
       messages = [...state.messages, msg];
     }
-    state = state.copyWith(messages: messages, isLoading: false);
+
+    // Derive current step from response type
+    int newStep = state.currentStep;
+    if (state.isSubmissionFlow) {
+      switch (response.type) {
+        case 'invoice_upload':
+        case 'invoice_validation':
+        case 'reupload_invoice':
+          newStep = 1;
+          break;
+        case 'cost_summary_upload':
+        case 'cost_summary_validation':
+        case 'reupload_cost_summary':
+          newStep = 2;
+          break;
+        case 'activity_summary_upload':
+        case 'activity_summary_validation':
+        case 'reupload_activity_summary':
+          newStep = 3;
+          break;
+        case 'team_count_input':
+        case 'team_name_input':
+        case 'dealer_search':
+        case 'dealer_search_results':
+        case 'dealer_list':
+        case 'team_dates':
+        case 'team_confirm':
+        case 'photo_upload':
+        case 'photo_review':
+          newStep = 4;
+          break;
+        case 'enquiry_dump_upload':
+        case 'reupload_enquiry_dump':
+        case 'enquiry_dump_validation':
+          newStep = 5;
+          break;
+        case 'final_review':
+        case 'submit_success':
+          newStep = 6;
+          break;
+      }
+    }
+
+    state = state.copyWith(messages: messages, isLoading: false, currentStep: newStep);
   }
 
   void clearError() {

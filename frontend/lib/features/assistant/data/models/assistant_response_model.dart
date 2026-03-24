@@ -280,6 +280,11 @@ class TeamSummaryItemModel {
   final int workingDays;
   final int photoCount;
   final int photosPassed;
+  final int photosWithDate;
+  final int photosWithGps;
+  final int photosWithBlueTshirt;
+  final int photosWithVehicle;
+  final List<String> failedPhotoIds;
 
   const TeamSummaryItemModel({
     required this.teamNumber,
@@ -292,6 +297,11 @@ class TeamSummaryItemModel {
     required this.workingDays,
     required this.photoCount,
     required this.photosPassed,
+    this.photosWithDate = 0,
+    this.photosWithGps = 0,
+    this.photosWithBlueTshirt = 0,
+    this.photosWithVehicle = 0,
+    this.failedPhotoIds = const [],
   });
 
   factory TeamSummaryItemModel.fromJson(Map<String, dynamic> json) {
@@ -306,6 +316,14 @@ class TeamSummaryItemModel {
       workingDays: json['workingDays'] as int? ?? 0,
       photoCount: json['photoCount'] as int? ?? 0,
       photosPassed: json['photosPassed'] as int? ?? 0,
+      photosWithDate: json['photosWithDate'] as int? ?? 0,
+      photosWithGps: json['photosWithGps'] as int? ?? 0,
+      photosWithBlueTshirt: json['photosWithBlueTshirt'] as int? ?? 0,
+      photosWithVehicle: json['photosWithVehicle'] as int? ?? 0,
+      failedPhotoIds: (json['failedPhotoIds'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          [],
     );
   }
 }

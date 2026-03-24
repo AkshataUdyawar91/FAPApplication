@@ -25,8 +25,15 @@ import '../../../auth/presentation/providers/auth_providers.dart';
 /// Mirrors ChatScreen logic but renders as a Column (no Scaffold).
 class AssistantChatPanel extends ConsumerStatefulWidget {
   final VoidCallback onClose;
+  final VoidCallback? onNewRequest;
+  final bool isFullWidth;
 
-  const AssistantChatPanel({super.key, required this.onClose});
+  const AssistantChatPanel({
+    super.key,
+    required this.onClose,
+    this.onNewRequest,
+    this.isFullWidth = false,
+  });
 
   @override
   ConsumerState<AssistantChatPanel> createState() => _AssistantChatPanelState();
@@ -370,7 +377,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     if (docId.isEmpty) return;
     try {
       final dio = ref.read(dioProvider);
-      final resp = await dio.get('/api/documents/$docId/download');
+      final resp = await dio.get('/documents/$docId/download');
       final data = resp.data as Map<String, dynamic>;
       final base64Content = data['base64Content'] as String? ?? '';
       final contentType = data['contentType'] as String? ?? '';
@@ -438,7 +445,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     if (docId.isEmpty) return;
     try {
       final dio = ref.read(dioProvider);
-      final resp = await dio.get('/api/documents/$docId/download');
+      final resp = await dio.get('/documents/$docId/download');
       final data = resp.data as Map<String, dynamic>;
       final base64Content = data['base64Content'] as String? ?? '';
       final contentType = data['contentType'] as String? ?? 'application/octet-stream';
@@ -472,6 +479,135 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         );
       }
     }
+  }
+
+  Widget _buildStepTracker(int currentStep) {
+    const steps = [
+      (label: 'Invoice', icon: Icons.receipt_long),
+      (label: 'Cost Summary', icon: Icons.attach_money),
+      (label: 'Activity Summary', icon: Icons.bar_chart),
+      (label: 'Team & Photos', icon: Icons.group),
+      (label: 'Enquiry Dump', icon: Icons.inbox),
+    ];
+    return Container(
+      color: const Color(0xFFF8FAFF),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Progress fraction
+          Row(
+            children: [
+              const Text('Progress', style: TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+              const Spacer(),
+              Text(
+                currentStep > 0 ? '$currentStep / ${steps.length}' : '0 / ${steps.length}',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF003087)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Progress bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: currentStep > 0 ? currentStep / steps.length : 0,
+              backgroundColor: const Color(0xFFE5E7EB),
+              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF003087)),
+              minHeight: 5,
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Step chips — use LayoutBuilder so they fill width and center properly
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const chipGap = 8.0;
+              final chipWidth = (constraints.maxWidth - chipGap * (steps.length - 1)) / steps.length;
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(steps.length, (i) {
+                  final stepNum = i + 1;
+                  final isDone = currentStep > stepNum;
+                  final isActive = currentStep == stepNum;
+                  return Padding(
+                    padding: EdgeInsets.only(right: i < steps.length - 1 ? chipGap : 0),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          width: chipWidth,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isDone
+                                  ? const Color(0xFF10B981)
+                                  : isActive
+                                      ? const Color(0xFF003087)
+                                      : const Color(0xFFD1D5DB),
+                              width: isDone || isActive ? 2 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                steps[i].icon,
+                                size: 20,
+                                color: isDone
+                                    ? const Color(0xFF059669)
+                                    : isActive
+                                        ? const Color(0xFF003087)
+                                        : const Color(0xFF9CA3AF),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                steps[i].label,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                                  color: isDone
+                                      ? const Color(0xFF059669)
+                                      : isActive
+                                          ? const Color(0xFF003087)
+                                          : const Color(0xFF9CA3AF),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Green tick badge at top-right when step is done
+                        if (isDone)
+                          Positioned(
+                            top: -5,
+                            right: -5,
+                            child: Container(
+                              width: 16,
+                              height: 16,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF10B981),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.check,
+                                size: 11,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                }),
+              );
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _bottomInput(AssistantState state) {
@@ -516,7 +652,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF003087),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             ),
             child: const Text('Next', style: TextStyle(color: Colors.white)),
           ),
@@ -549,7 +685,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF003087),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             ),
             child: const Text('Next', style: TextStyle(color: Colors.white)),
           ),
@@ -605,11 +741,11 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           onPressed: onTap,
           style: OutlinedButton.styleFrom(
             alignment: Alignment.centerLeft,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             side: BorderSide(color: Colors.grey.shade300),
           ),
-          child: Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+          child: Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF003087))),
         ),
       ),
     );
@@ -617,11 +753,12 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
 
   Widget _botMsg(AssistantMessage msg, {bool isLast = false}) {
     final r = msg.response;
-    if (r == null) return AssistantBubble(message: msg.content);
+    if (r == null) return AssistantBubble(message: msg.content, isActive: isLast);
     switch (r.type) {
       case 'greeting':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: r.cards != null
               ? Column(
                   children: r.cards!
@@ -636,10 +773,60 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 )
               : null,
         );
+      case 'po_list':
+        return AssistantBubble(
+          message: msg.content,
+          isActive: isLast,
+          child: r.poItems != null && r.poItems!.isNotEmpty
+              ? Container(
+                  constraints: const BoxConstraints(maxHeight: 320),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: r.poItems!.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFE5E7EB)),
+                      itemBuilder: (context, i) {
+                        final po = r.poItems![i];
+                        return InkWell(
+                          onTap: isLast
+                              ? () => ref.read(assistantNotifierProvider.notifier).selectPO(po)
+                              : null,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    po.poNumber,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF003087),
+                                    ),
+                                  ),
+                                ),
+                                if (isLast)
+                                  const Icon(Icons.chevron_right, size: 18, color: Color(0xFF9CA3AF)),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                )
+              : null,
+        );
       case 'po_search':
       case 'po_search_results':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: r.poItems != null && r.poItems!.isNotEmpty
               ? POSearchList(
                   items: r.poItems!,
@@ -651,70 +838,67 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               : null,
         );
       case 'state_selection':
-        // STATE SELECTION UI HIDDEN — backend auto-selects Maharashtra
-        // To re-enable, remove this return and uncomment the block below
-        return AssistantBubble(message: msg.content);
-        // return AssistantBubble(
-        //   message: msg.content,
-        //   child: r.cards != null
-        //       ? Column(
-        //           crossAxisAlignment: CrossAxisAlignment.start,
-        //           children: [
-        //             const Padding(
-        //               padding: EdgeInsets.only(bottom: 8),
-        //               child: Text('Select State', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-        //             ),
-        //             ...r.cards!.map((c) {
-        //               if (c.action == 'list_states') {
-        //                 return Padding(
-        //                   padding: const EdgeInsets.only(bottom: 4),
-        //                   child: SizedBox(
-        //                     width: double.infinity,
-        //                     child: OutlinedButton.icon(
-        //                       onPressed: () => ref.read(assistantNotifierProvider.notifier).listAllStates(),
-        //                       icon: const Icon(Icons.search, size: 18, color: Color(0xFF003087)),
-        //                       label: Text(c.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
-        //                       style: OutlinedButton.styleFrom(
-        //                         alignment: Alignment.centerLeft,
-        //                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        //                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        //                         side: BorderSide(color: Colors.grey.shade300),
-        //                       ),
-        //                     ),
-        //                   ),
-        //                 );
-        //               }
-        //               return _stateButton(c.title, () => ref.read(assistantNotifierProvider.notifier).selectState(c.title));
-        //             }),
-        //           ],
-        //         )
-        //       : null,
-        // );
+        return AssistantBubble(
+          message: msg.content,
+          isActive: isLast,
+          child: r.cards != null
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text('Select State', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+                    ),
+                    ...r.cards!.map((c) {
+                      if (c.action == 'list_states') {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () => ref.read(assistantNotifierProvider.notifier).listAllStates(),
+                              icon: const Icon(Icons.search, size: 18, color: Color(0xFF003087)),
+                              label: Text(c.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF003087))),
+                              style: OutlinedButton.styleFrom(
+                                alignment: Alignment.centerLeft,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                side: BorderSide(color: Colors.grey.shade300),
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                      return _stateButton(c.title, () => ref.read(assistantNotifierProvider.notifier).selectState(c.title));
+                    }),
+                  ],
+                )
+              : null,
+        );
       case 'state_search_results':
-        // STATE SEARCH UI HIDDEN — backend auto-selects Maharashtra
-        // To re-enable, remove this return and uncomment the block below
-        return AssistantBubble(message: msg.content);
-        // return AssistantBubble(
-        //   message: msg.content,
-        //   child: r.states != null && r.states!.isNotEmpty
-        //       ? Column(
-        //           crossAxisAlignment: CrossAxisAlignment.start,
-        //           children: [
-        //             const Padding(
-        //               padding: EdgeInsets.only(bottom: 8),
-        //               child: Text('States', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-        //             ),
-        //             ...r.states!.map((s) => _stateButton(s, () {
-        //                   _stateSearchCtrl.clear();
-        //                   ref.read(assistantNotifierProvider.notifier).selectState(s);
-        //                 })),
-        //           ],
-        //         )
-        //       : null,
-        // );
+        return AssistantBubble(
+          message: msg.content,
+          isActive: isLast,
+          child: r.states != null && r.states!.isNotEmpty
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text('States', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
+                    ),
+                    ...r.states!.map((s) => _stateButton(s, () {
+                          _stateSearchCtrl.clear();
+                          ref.read(assistantNotifierProvider.notifier).selectState(s);
+                        })),
+                  ],
+                )
+              : null,
+        );
       case 'state_confirmed':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: const Row(children: [
             Icon(Icons.check_circle, color: Colors.green, size: 20),
             SizedBox(width: 6),
@@ -724,6 +908,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       case 'invoice_upload':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -731,29 +916,27 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 padding: EdgeInsets.only(bottom: 8),
                 child: Text('Upload Invoice', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
               ),
-              Row(children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _pickInvoiceFile,
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      side: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    child: const Text('Upload from device', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                ElevatedButton(
+                  onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _pickInvoiceFile,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF003087),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
+                  child: const Text('Upload from device', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _captureInvoiceFromCamera,
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      side: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    child: const Text('Use Camera', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                ElevatedButton(
+                  onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : _captureInvoiceFromCamera,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF003087),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
+                  child: const Text('Use Camera', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
                 ),
               ]),
               if (ref.watch(assistantNotifierProvider).isLoading && isLast)
@@ -768,6 +951,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       case 'invoice_upload_success':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: const Row(children: [
             Icon(Icons.check_circle, color: Colors.green, size: 20),
             SizedBox(width: 6),
@@ -775,10 +959,11 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ]),
         );
       case 'invoice_validation':
-        return AssistantBubble(message: msg.content, child: _invoiceValidationCard(r));
+        return AssistantBubble(message: msg.content, isActive: isLast, greyChild: false, child: _invoiceValidationCard(r, isLast));
       case 'cost_summary_upload':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -799,10 +984,11 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         );
       case 'cost_summary_validation':
-        return AssistantBubble(message: msg.content, child: _costSummaryValidationCard(r));
+        return AssistantBubble(message: msg.content, isActive: isLast, greyChild: false, child: _costSummaryValidationCard(r, isLast));
       case 'activity_summary_upload':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -823,10 +1009,11 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         );
       case 'activity_summary_validation':
-        return AssistantBubble(message: msg.content, child: _activitySummaryValidationCard(r));
+        return AssistantBubble(message: msg.content, isActive: isLast, greyChild: false, child: _activitySummaryValidationCard(r, isLast));
       case 'upload_po':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: FileUploadCard(
             label: 'Upload Purchase Order',
             allowedFormats: r.allowedFormats ?? ['PDF', 'Word', 'JPG', 'PNG'],
@@ -837,6 +1024,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       case 'upload_success':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: const Row(children: [
             Icon(Icons.check_circle, color: Colors.green, size: 20),
             SizedBox(width: 6),
@@ -846,6 +1034,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       case 'error':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: const Row(children: [
             Icon(Icons.error_outline, color: Colors.red, size: 20),
             SizedBox(width: 6),
@@ -855,15 +1044,17 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       case 'team_name_input':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: r.teamContext != null
               ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
               : null,
         );
       case 'team_count_input':
-        return AssistantBubble(message: msg.content);
+        return AssistantBubble(message: msg.content, isActive: isLast);
       case 'dealer_search':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: r.teamContext != null
               ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
               : null,
@@ -872,6 +1063,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       case 'dealer_search_results':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: r.dealers != null && r.dealers!.isNotEmpty
               ? _dealerList(r.dealers!, r.payloadJson ?? '')
               : null,
@@ -879,16 +1071,19 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       case 'date_picker_start':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: _datePickerButton('Pick Start & End Date', payloadJson: r.payloadJson ?? ''),
         );
       case 'team_dates_confirm':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: _teamDatesConfirmButtons(r.payloadJson ?? ''),
         );
       case 'photo_upload':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -897,35 +1092,31 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams),
                 ),
-              Row(children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: ref.watch(assistantNotifierProvider).isLoading
-                        ? null
-                        : () => _pickMultiplePhotoFiles(r.payloadJson ?? _currentTeamPayload),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF003087),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: const Text('Choose from gallery', style: TextStyle(fontSize: 13)),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                ElevatedButton(
+                  onPressed: ref.watch(assistantNotifierProvider).isLoading
+                      ? null
+                      : () => _pickMultiplePhotoFiles(r.payloadJson ?? _currentTeamPayload),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF003087),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
+                  child: const Text('Choose from gallery', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: ref.watch(assistantNotifierProvider).isLoading
-                        ? null
-                        : () => _captureTeamPhotoFromCamera(r.payloadJson ?? _currentTeamPayload),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF003087),
-                      side: const BorderSide(color: Color(0xFF003087)),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: const Text('Use Camera', style: TextStyle(fontSize: 13)),
+                ElevatedButton(
+                  onPressed: ref.watch(assistantNotifierProvider).isLoading
+                      ? null
+                      : () => _captureTeamPhotoFromCamera(r.payloadJson ?? _currentTeamPayload),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF003087),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
+                  child: const Text('Use Camera', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
               ]),
               if (ref.watch(assistantNotifierProvider).isLoading && isLast)
@@ -940,22 +1131,26 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         );
       case 'photo_validation_results':
         return AssistantBubble(
-          message: msg.content,
+          message: msg.content.split('\n').first,
+          isActive: isLast,
           child: _photoValidationCard(r, isLast),
         );
       case 'photo_replace_prompt':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: _photoReplaceInput(r.payloadJson ?? _currentTeamPayload),
         );
       case 'team_summary':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: _teamSummaryCard(r),
         );
       case 'enquiry_dump_upload':
         return AssistantBubble(
           message: msg.content,
+          isActive: isLast,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -976,19 +1171,39 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         );
       case 'enquiry_dump_validation':
-        return AssistantBubble(message: msg.content, child: _enquiryValidationCard(r));
+        return AssistantBubble(
+          message: msg.content,
+          isActive: isLast,
+          child: isLast
+              ? Center(
+                  child: ElevatedButton.icon(
+                    onPressed: ref.watch(assistantNotifierProvider).isLoading
+                        ? null
+                        : () => ref.read(assistantNotifierProvider.notifier).continueAfterEnquiry(),
+                    icon: const Icon(Icons.arrow_forward, size: 14),
+                    label: const Text('Continue →', style: TextStyle(fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF003087),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                )
+              : null,
+        );
       case 'final_review':
-        return AssistantBubble(message: msg.content, child: _finalReviewCard(r, isLast));
+        return AssistantBubble(message: msg.content, isActive: isLast, child: _finalReviewCard(r, isLast));
       case 'submit_success':
-        return AssistantBubble(message: msg.content);
+        return AssistantBubble(message: msg.content, isActive: isLast);
       case 'draft_saved':
-        return AssistantBubble(message: msg.content);
+        return AssistantBubble(message: msg.content, isActive: isLast);
       case 'pending_claims':
-        return AssistantBubble(message: msg.content, child: _pendingClaimsCard(r));
+        return AssistantBubble(message: msg.content, isActive: isLast, child: _pendingClaimsCard(r));
       case 'rejection_history':
-        return AssistantBubble(message: msg.content, child: _rejectionHistoryCard(r));
+        return AssistantBubble(message: msg.content, isActive: isLast, child: _rejectionHistoryCard(r));
       default:
-        return AssistantBubble(message: msg.content);
+        return AssistantBubble(message: msg.content, isActive: isLast);
     }
   }
 
@@ -1095,9 +1310,8 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               ]),
               const SizedBox(height: 10),
               // View Details button
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
+              Center(
+                child: ElevatedButton.icon(
                   onPressed: () {
                     context.pushNamed('submission-detail', extra: {
                       'submissionId': claim.submissionId,
@@ -1107,11 +1321,11 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                     });
                   },
                   icon: const Icon(Icons.open_in_new, size: 14),
-                  label: const Text('View Details', style: TextStyle(fontSize: 13)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF003087),
-                    side: const BorderSide(color: Color(0xFF003087)),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  label: const Text('View Details', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF003087),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
@@ -1248,13 +1462,13 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               },
               style: OutlinedButton.styleFrom(
                 alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 side: BorderSide(color: Colors.grey.shade300),
               ),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(dealer.dealerName,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF003087))),
                 Text('${dealer.city}, ${dealer.state} · ${dealer.dealerCode}',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
               ]),
@@ -1267,8 +1481,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
 
   Widget _datePickerButton(String label, {required String payloadJson}) {
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
-    return SizedBox(
-      width: double.infinity,
+    return Center(
       child: ElevatedButton.icon(
         onPressed: isLoading
             ? null
@@ -1292,11 +1505,11 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 ref.read(assistantNotifierProvider.notifier).submitTeamDates(start, end, payloadJson);
               },
         icon: const Icon(Icons.calendar_today, size: 16),
-        label: Text(label),
+        label: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF003087),
           foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
@@ -1305,51 +1518,47 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
 
   Widget _teamDatesConfirmButtons(String payloadJson) {
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
-    return Row(children: [
-      Expanded(
-        child: OutlinedButton(
-          onPressed: isLoading
-              ? null
-              : () async {
-                  final start = await showDatePicker(
-                    context: context,
-                    initialDate: DateTime.now(),
-                    firstDate: DateTime(2024),
-                    lastDate: DateTime(2027),
-                    helpText: 'Select start date',
-                  );
-                  if (start == null || !mounted) return;
-                  final end = await showDatePicker(
-                    context: context,
-                    initialDate: start.add(const Duration(days: 1)),
-                    firstDate: start,
-                    lastDate: DateTime(2027),
-                    helpText: 'Select end date',
-                  );
-                  if (end == null || !mounted) return;
-                  ref.read(assistantNotifierProvider.notifier).submitTeamDates(start, end, payloadJson);
-                },
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.red.shade700,
-            side: BorderSide(color: Colors.red.shade300),
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-          child: const Text('Re-pick dates'),
+    return Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+      ElevatedButton(
+        onPressed: isLoading
+            ? null
+            : () async {
+                final start = await showDatePicker(
+                  context: context,
+                  initialDate: DateTime.now(),
+                  firstDate: DateTime(2024),
+                  lastDate: DateTime(2027),
+                  helpText: 'Select start date',
+                );
+                if (start == null || !mounted) return;
+                final end = await showDatePicker(
+                  context: context,
+                  initialDate: start.add(const Duration(days: 1)),
+                  firstDate: start,
+                  lastDate: DateTime(2027),
+                  helpText: 'Select end date',
+                );
+                if (end == null || !mounted) return;
+                ref.read(assistantNotifierProvider.notifier).submitTeamDates(start, end, payloadJson);
+              },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.red.shade700,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
+        child: const Text('Re-pick dates', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
       const SizedBox(width: 8),
-      Expanded(
-        child: ElevatedButton(
-          onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).confirmTeam(payloadJson),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF003087),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-          child: const Text('Confirm ✓'),
+      ElevatedButton(
+        onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).confirmTeam(payloadJson),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF003087),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
+        child: const Text('Confirm ✓', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
     ]);
   }
@@ -1357,24 +1566,23 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   Widget _uploadButton(String label, IconData icon, VoidCallback onTap) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: SizedBox(
-        width: double.infinity,
-        child: OutlinedButton.icon(
+      child: Center(
+        child: ElevatedButton.icon(
           onPressed: ref.watch(assistantNotifierProvider).isLoading ? null : onTap,
-          icon: Icon(icon, size: 18, color: const Color(0xFF003087)),
-          label: Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
-          style: OutlinedButton.styleFrom(
-            alignment: Alignment.centerLeft,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          icon: Icon(icon, size: 18, color: Colors.white),
+          label: Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF003087),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            side: BorderSide(color: Colors.grey.shade300),
           ),
         ),
       ),
     );
   }
 
-  Widget _invoiceValidationCard(AssistantResponseModel r) {
+  Widget _invoiceValidationCard(AssistantResponseModel r, bool isLast) {
     final rules = r.validationRules ?? [];
     final passed = r.passedCount ?? 0;
     final total = rules.length;
@@ -1420,15 +1628,12 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               // Column headers
               Container(
                 color: const Color(0xFFF9FAFB),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                 child: Row(children: const [
-                  SizedBox(width: 28, child: Text('#', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  SizedBox(width: 68, child: Text('Result', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  Expanded(flex: 3, child: Padding(
-                    padding: EdgeInsets.only(left: 10),
-                    child: Text('Evidence', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
-                  )),
+                  Expanded(flex: 1, child: Text('#', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 2, child: Text('Result', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 3, child: Text('Evidence', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
                 ]),
               ),
               const Divider(height: 1, color: Color(0xFFE5E7EB)),
@@ -1448,24 +1653,24 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    SizedBox(width: 28, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
+                    Expanded(flex: 1, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
                     Expanded(flex: 4, child: Text(rule.label, style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
-                    SizedBox(
-                      width: 68,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
-                        child: Text(resultLabel,
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                    Expanded(
+                      flex: 2,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
+                          child: Text(resultLabel,
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                        ),
                       ),
                     ),
                     Expanded(
                       flex: 3,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 10),
-                        child: Text(foundText,
-                            style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
-                      ),
+                      child: Text(foundText,
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
                     ),
                   ]),
                 );
@@ -1474,83 +1679,48 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
-        // View & Download buttons for invoice
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
-                _viewDocument(docId);
-              },
-              icon: const Icon(Icons.visibility, size: 16),
-              label: const Text('View'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        IgnorePointer(
+          ignoring: !isLast,
+          child: Opacity(
+            opacity: isLast ? 1.0 : 0.4,
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              ElevatedButton.icon(
+                onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).reUploadInvoice(),
+                icon: const Icon(Icons.upload_file, size: 16),
+                label: const Text('Re-upload invoice', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade700,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
-                _downloadDocument(docId, 'invoice');
-              },
-              icon: const Icon(Icons.download, size: 16),
-              label: const Text('Download'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
+                icon: const Icon(Icons.arrow_forward, size: 14),
+                label: Text(hasIssues ? 'Continue with warnings' : 'Continue',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF003087),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
-            ),
+            ]),
           ),
-        ]),
-        const SizedBox(height: 8),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).reUploadInvoice(),
-              icon: const Icon(Icons.upload_file, size: 16),
-              label: const Text('Re-upload invoice'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.red.shade700,
-                side: BorderSide(color: Colors.red.shade300),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
-              icon: const Icon(Icons.arrow_forward, size: 14),
-              label: Text(hasIssues ? 'Continue with warnings' : 'Continue',
-                  style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF003087),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-        ]),
+        ),
       ],
     );
   }
 
 
   Widget _photoValidationCard(AssistantResponseModel r, bool isLast) {
-    final photos = r.photoResults ?? [];
+    // final photos = r.photoResults ?? []; // hidden — table not shown
     final isLoading = ref.watch(assistantNotifierProvider).isLoading;
     final payloadJson = r.payloadJson ?? _currentTeamPayload;
-    final teamLabel = r.teamContext?.teamName ?? 'Team ${r.teamContext?.currentTeam ?? 1}';
+    // final teamLabel = r.teamContext?.teamName ?? 'Team ${r.teamContext?.currentTeam ?? 1}'; // hidden
     final teamName = r.teamContext != null ? 'Team ${r.teamContext!.currentTeam}' : 'this team';
 
     return Column(
@@ -1561,100 +1731,96 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
             padding: const EdgeInsets.only(bottom: 6),
             child: _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams),
           ),
-        // Team name header
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Text(
-            teamLabel,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
-          ),
-        ),
-        if (photos.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text('No photo results available.',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-          )
-        else
-          _photoTable(photos),
+        // // Team name header — hidden per UI requirement
+        // Padding(
+        //   padding: const EdgeInsets.only(bottom: 8),
+        //   child: Text(
+        //     teamLabel,
+        //     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
+        //   ),
+        // ),
+        // if (photos.isEmpty)
+        //   Padding(
+        //     padding: const EdgeInsets.symmetric(vertical: 8),
+        //     child: Text('No photo results available.',
+        //         style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+        //   )
+        // else
+        //   _photoTable(photos),
         if (isLoading && isLast)
           const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
         const SizedBox(height: 12),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: isLoading
-                  ? null
-                  : () async {
-                      final numCtrl = TextEditingController();
-                      final num = await showDialog<int>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text('Replace Photo'),
-                          content: TextField(
-                            controller: numCtrl,
-                            keyboardType: TextInputType.number,
-                            autofocus: true,
-                            decoration: const InputDecoration(
-                              hintText: 'Enter photo number (e.g. 1, 2, 3...)',
-                            ),
-                          ),
-                          actions: [
-                            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                            ElevatedButton(
-                              onPressed: () {
-                                final n = int.tryParse(numCtrl.text.trim());
-                                if (n != null) Navigator.pop(ctx, n);
-                              },
-                              child: const Text('Next'),
-                            ),
-                          ],
-                        ),
-                      );
-                      if (num == null || !mounted) return;
-                      _pickSinglePhotoForReplace(num, payloadJson);
-                    },
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.orange.shade700,
-                side: BorderSide(color: Colors.orange.shade300),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              child: const Text('Replace a photo',
-                  style: TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          // Replace a photo — hidden per UI requirement
+          // ElevatedButton(
+          //   onPressed: isLoading
+          //       ? null
+          //       : () async {
+          //           final numCtrl = TextEditingController();
+          //           final num = await showDialog<int>(
+          //             context: context,
+          //             builder: (ctx) => AlertDialog(
+          //               title: const Text('Replace Photo'),
+          //               content: TextField(
+          //                 controller: numCtrl,
+          //                 keyboardType: TextInputType.number,
+          //                 autofocus: true,
+          //                 decoration: const InputDecoration(
+          //                   hintText: 'Enter photo number (e.g. 1, 2, 3...)',
+          //                 ),
+          //               ),
+          //               actions: [
+          //                 TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          //                 ElevatedButton(
+          //                   onPressed: () {
+          //                     final n = int.tryParse(numCtrl.text.trim());
+          //                     if (n != null) Navigator.pop(ctx, n);
+          //                   },
+          //                   child: const Text('Next'),
+          //                 ),
+          //               ],
+          //             ),
+          //           );
+          //           if (num == null || !mounted) return;
+          //           _pickSinglePhotoForReplace(num, payloadJson);
+          //         },
+          //   style: ElevatedButton.styleFrom(
+          //     backgroundColor: Colors.orange.shade700,
+          //     foregroundColor: Colors.white,
+          //     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          //     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          //   ),
+          //   child: const Text('Replace a photo',
+          //       style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
+          // ),
+          // const SizedBox(width: 6),
+          // Add more photos — hidden per UI requirement
+          // ElevatedButton(
+          //   onPressed: isLoading
+          //       ? null
+          //       : () => ref.read(assistantNotifierProvider.notifier).addMorePhotos(payloadJson),
+          //   style: ElevatedButton.styleFrom(
+          //     backgroundColor: const Color(0xFF003087),
+          //     foregroundColor: Colors.white,
+          //     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          //     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          //   ),
+          //   child: const Text('Add more photos',
+          //       style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
+          // ),
+          // const SizedBox(width: 6),
+          ElevatedButton(
+            onPressed: isLoading
+                ? null
+                : () => ref.read(assistantNotifierProvider.notifier).doneTeamPhotos(payloadJson),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade600,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: OutlinedButton(
-              onPressed: isLoading
-                  ? null
-                  : () => ref.read(assistantNotifierProvider.notifier).addMorePhotos(payloadJson),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              child: const Text('Add more photos',
-                  style: TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: ElevatedButton(
-              onPressed: isLoading
-                  ? null
-                  : () => ref.read(assistantNotifierProvider.notifier).doneTeamPhotos(payloadJson),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green.shade600,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              child: Text('Done $teamName',
-                  style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
-            ),
+            child: Text('Done $teamName',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
           ),
         ]),
       ],
@@ -1699,8 +1865,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         2: FlexColumnWidth(),
         3: FlexColumnWidth(),
         4: FlexColumnWidth(),
-        5: FixedColumnWidth(40),
-        6: FixedColumnWidth(40),
+        5: FixedColumnWidth(56),
       },
       children: [
         TableRow(
@@ -1712,7 +1877,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
             _tableCell('Blue\nT-shirt', headerStyle),
             _tableCell('3W\nVehicle', headerStyle),
             _tableCell('View', headerStyle),
-            _tableCell('Save', headerStyle),
           ],
         ),
         ...photos.map((photo) => TableRow(
@@ -1724,21 +1888,90 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
             _tableBadgeCell(_badge(_rulePassed(photo, 'blue'))),
             _tableBadgeCell(_badge(_rulePassed(photo, 'vehicle'))),
             _tableBadgeCell(
-              InkWell(
-                onTap: photo.photoId.isNotEmpty ? () => _viewDocument(photo.photoId) : null,
-                child: Icon(Icons.visibility, size: 18, color: photo.photoId.isNotEmpty ? const Color(0xFF003087) : Colors.grey.shade400),
-              ),
-            ),
-            _tableBadgeCell(
-              InkWell(
-                onTap: photo.photoId.isNotEmpty ? () => _downloadDocument(photo.photoId, photo.fileName) : null,
-                child: Icon(Icons.download, size: 18, color: photo.photoId.isNotEmpty ? const Color(0xFF003087) : Colors.grey.shade400),
-              ),
+              photo.photoId.isNotEmpty
+                  ? InkWell(
+                      onTap: () => _showPhotoPopup(photo.photoId, photo.fileName),
+                      child: const Text(
+                        'View',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF003087),
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    )
+                  : const Text('—', textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF))),
             ),
           ],
         )),
       ],
     );
+  }
+
+  /// Fetch photo bytes and show in a fullscreen popup with X to close.
+  Future<void> _showPhotoPopup(String photoId, String fileName) async {
+    if (photoId.isEmpty) return;
+    try {
+      final dio = ref.read(dioProvider);
+      final resp = await dio.get('/hierarchical/photos/$photoId/download');
+      final data = resp.data as Map<String, dynamic>;
+      final base64Content = data['base64Content'] as String? ?? '';
+      if (base64Content.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Photo not available')),
+          );
+        }
+        return;
+      }
+      final bytes = base64Decode(base64Content);
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierColor: Colors.black87,
+        builder: (ctx) => Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(16),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: InteractiveViewer(
+                  constrained: true,
+                  child: Image.memory(bytes, fit: BoxFit.contain),
+                ),
+              ),
+              Positioned(
+                top: -12,
+                right: -12,
+                child: GestureDetector(
+                  onTap: () => Navigator.pop(ctx),
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.close, size: 18, color: Color(0xFF111827)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load photo: $e')),
+        );
+      }
+    }
   }
 
   Widget _tableBadgeCell(Widget badge) {
@@ -1801,27 +2034,164 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           child: Text('All Teams Summary',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF003087))),
         ),
+        if (summaries.isNotEmpty) _buildAggregatedPhotoSummaryTable(summaries),
+        if (summaries.isNotEmpty) _buildFailedPhotosGrid(summaries),
+        const SizedBox(height: 12),
         ...summaries.map((team) => _teamSummaryRow(team)),
         if (summaries.isEmpty)
           Text('No team data available.', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
         const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
+        Center(
           child: ElevatedButton.icon(
             onPressed: isLoading
                 ? null
                 : () => ref.read(assistantNotifierProvider.notifier).continueAfterTeams(payloadJson),
             icon: const Icon(Icons.arrow_forward, size: 14),
-            label: const Text('Continue →'),
+            label: const Text('Continue →', style: TextStyle(fontWeight: FontWeight.bold)),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF003087),
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildAggregatedPhotoSummaryTable(List<TeamSummaryItemModel> summaries) {
+    final totalPhotos = summaries.fold(0, (sum, t) => sum + t.photoCount);
+    final totalDays = summaries.fold(0, (sum, t) => sum + t.workingDays);
+    final totalWithDate = summaries.fold(0, (sum, t) => sum + t.photosWithDate);
+    final totalWithGps = summaries.fold(0, (sum, t) => sum + t.photosWithGps);
+    final totalWithBlueTshirt = summaries.fold(0, (sum, t) => sum + t.photosWithBlueTshirt);
+    final totalWithVehicle = summaries.fold(0, (sum, t) => sum + t.photosWithVehicle);
+
+    // (sno, label, passed, evidence)
+    final rows = [
+      ('1', 'Photo Count',               true,                                    '$totalPhotos photos uploaded'),
+      ('2', 'Date on Photos',            totalWithDate == totalPhotos,            '$totalWithDate/$totalPhotos photos have date mentioned'),
+      ('3', 'GPS Coordinates',           totalWithGps == totalPhotos,             '$totalWithGps/$totalPhotos photos have coordinates present'),
+      ('4', 'No. of Days',               true,                                    '$totalDays days'),
+      ('5', 'Promoter wearing Blue T-shirt', totalWithBlueTshirt == totalPhotos,  '$totalWithBlueTshirt/$totalPhotos photos have promoters wear blue T-shirt'),
+      ('6', 'Branded 3 Wheeler',         totalWithVehicle == totalPhotos,         '$totalWithVehicle/$totalPhotos photos have Branded 3 Wheeler'),
+    ];
+
+    Widget passBadge(bool passed) => Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: passed ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          passed ? 'PASS' : 'FAIL',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+          ),
+        ),
+      ),
+    );
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFFF9FAFB),
+              borderRadius: BorderRadius.only(topLeft: Radius.circular(10), topRight: Radius.circular(10)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            child: Row(children: const [
+              Expanded(flex: 1, child: Text('S.No',       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+              Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+              Expanded(flex: 2, child: Text('Result',     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+              Expanded(flex: 4, child: Text('Evidence',   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+            ]),
+          ),
+          const Divider(height: 1, color: Color(0xFFE5E7EB)),
+          ...rows.asMap().entries.map((entry) {
+            final i = entry.key;
+            final (sno, label, passed, evidence) = entry.value;
+            return Container(
+              decoration: BoxDecoration(
+                color: i.isEven ? Colors.white : const Color(0xFFFAFAFA),
+                border: i < rows.length - 1
+                    ? const Border(bottom: BorderSide(color: Color(0xFFE5E7EB), width: 0.5))
+                    : null,
+                borderRadius: i == rows.length - 1
+                    ? const BorderRadius.only(bottomLeft: Radius.circular(10), bottomRight: Radius.circular(10))
+                    : null,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                Expanded(flex: 1, child: Text(sno,      style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
+                Expanded(flex: 4, child: Text(label,    style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
+                Expanded(flex: 2, child: passBadge(passed)),
+                Expanded(flex: 4, child: Text(evidence, style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
+              ]),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFailedPhotosGrid(List<TeamSummaryItemModel> summaries) {
+    final allFailedIds = summaries
+        .expand((t) => t.failedPhotoIds)
+        .toList();
+
+    if (allFailedIds.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Failed Photos',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: allFailedIds.map((photoId) => _failedPhotoThumb(photoId)).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _failedPhotoThumb(String photoId) {
+    return GestureDetector(
+      onTap: () => _showPhotoPopup(photoId, ''),
+      child: Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFDC2626), width: 2),
+          color: Colors.grey.shade100,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: _PhotoThumbLoader(photoId: photoId, dio: ref.read(dioProvider)),
+        ),
+      ),
     );
   }
 
@@ -1862,7 +2232,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     );
   }
 
-  Widget _costSummaryValidationCard(AssistantResponseModel r) {
+  Widget _costSummaryValidationCard(AssistantResponseModel r, bool isLast) {
     final rules = r.validationRules ?? [];
     final passed = r.passedCount ?? 0;
     final total = rules.length;
@@ -1901,15 +2271,12 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               ),
               Container(
                 color: const Color(0xFFF9FAFB),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                 child: Row(children: const [
-                  SizedBox(width: 28, child: Text('#', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  SizedBox(width: 68, child: Text('Result', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  Expanded(flex: 3, child: Padding(
-                    padding: EdgeInsets.only(left: 10),
-                    child: Text('Evidence', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
-                  )),
+                  Expanded(flex: 1, child: Text('#', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 2, child: Text('Result', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 3, child: Text('Evidence', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
                 ]),
               ),
               const Divider(height: 1, color: Color(0xFFE5E7EB)),
@@ -1928,24 +2295,24 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    SizedBox(width: 28, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
+                    Expanded(flex: 1, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
                     Expanded(flex: 4, child: Text(rule.label, style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
-                    SizedBox(
-                      width: 68,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
-                        child: Text(resultLabel,
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                    Expanded(
+                      flex: 2,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
+                          child: Text(resultLabel,
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                        ),
                       ),
                     ),
                     Expanded(
                       flex: 3,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 10),
-                        child: Text(foundText,
-                            style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
-                      ),
+                      child: Text(foundText,
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
                     ),
                   ]),
                 );
@@ -1954,78 +2321,43 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
-        // View & Download buttons for cost summary
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
-                _viewDocument(docId);
-              },
-              icon: const Icon(Icons.visibility, size: 16),
-              label: const Text('View'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        IgnorePointer(
+          ignoring: !isLast,
+          child: Opacity(
+            opacity: isLast ? 1.0 : 0.4,
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              ElevatedButton.icon(
+                onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).reUploadCostSummary(),
+                icon: const Icon(Icons.upload_file, size: 16),
+                label: const Text('Re-upload', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade700,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
-                _downloadDocument(docId, 'cost_summary');
-              },
-              icon: const Icon(Icons.download, size: 16),
-              label: const Text('Download'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterCostSummary(),
+                icon: const Icon(Icons.arrow_forward, size: 14),
+                label: Text(hasIssues ? 'Continue with warnings' : 'Continue →',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF003087),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
-            ),
+            ]),
           ),
-        ]),
-        const SizedBox(height: 8),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).reUploadCostSummary(),
-              icon: const Icon(Icons.upload_file, size: 16),
-              label: const Text('Re-upload'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.red.shade700,
-                side: BorderSide(color: Colors.red.shade300),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterCostSummary(),
-              icon: const Icon(Icons.arrow_forward, size: 14),
-              label: Text(hasIssues ? 'Continue with warnings' : 'Continue →',
-                  style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF003087),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-        ]),
+        ),
       ],
     );
   }
 
-  Widget _activitySummaryValidationCard(AssistantResponseModel r) {
+  Widget _activitySummaryValidationCard(AssistantResponseModel r, bool isLast) {
     final rules = r.validationRules ?? [];
     final passed = r.passedCount ?? 0;
     final total = rules.length;
@@ -2064,15 +2396,12 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               ),
               Container(
                 color: const Color(0xFFF9FAFB),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                 child: Row(children: const [
-                  SizedBox(width: 28, child: Text('#', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  SizedBox(width: 68, child: Text('Result', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  Expanded(flex: 3, child: Padding(
-                    padding: EdgeInsets.only(left: 10),
-                    child: Text('Evidence', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
-                  )),
+                  Expanded(flex: 1, child: Text('#', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 2, child: Text('Result', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 3, child: Text('Evidence', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
                 ]),
               ),
               const Divider(height: 1, color: Color(0xFFE5E7EB)),
@@ -2091,24 +2420,24 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    SizedBox(width: 28, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
+                    Expanded(flex: 1, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
                     Expanded(flex: 4, child: Text(rule.label, style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
-                    SizedBox(
-                      width: 68,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
-                        child: Text(resultLabel,
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                    Expanded(
+                      flex: 2,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
+                          child: Text(resultLabel,
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                        ),
                       ),
                     ),
                     Expanded(
                       flex: 3,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 10),
-                        child: Text(foundText,
-                            style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
-                      ),
+                      child: Text(foundText,
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
                     ),
                   ]),
                 );
@@ -2117,73 +2446,38 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
-        // View & Download buttons for activity summary
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
-                _viewDocument(docId);
-              },
-              icon: const Icon(Icons.visibility, size: 16),
-              label: const Text('View'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        IgnorePointer(
+          ignoring: !isLast,
+          child: Opacity(
+            opacity: isLast ? 1.0 : 0.4,
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              ElevatedButton.icon(
+                onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).reUploadActivitySummary(),
+                icon: const Icon(Icons.upload_file, size: 16),
+                label: const Text('Re-upload', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade700,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
-                _downloadDocument(docId, 'activity_summary');
-              },
-              icon: const Icon(Icons.download, size: 16),
-              label: const Text('Download'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(payloadJson: r.payloadJson),
+                icon: const Icon(Icons.arrow_forward, size: 14),
+                label: Text(hasIssues ? 'Continue with warnings' : 'Continue →',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF003087),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
-            ),
+            ]),
           ),
-        ]),
-        const SizedBox(height: 8),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).reUploadActivitySummary(),
-              icon: const Icon(Icons.upload_file, size: 16),
-              label: const Text('Re-upload'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.red.shade700,
-                side: BorderSide(color: Colors.red.shade300),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterActivity(payloadJson: r.payloadJson),
-              icon: const Icon(Icons.arrow_forward, size: 14),
-              label: Text(hasIssues ? 'Continue with warnings' : 'Continue →',
-                  style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF003087),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-        ]),
+        ),
       ],
     );
   }
@@ -2225,15 +2519,12 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
               ),
               Container(
                 color: const Color(0xFFF9FAFB),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                 child: Row(children: const [
-                  SizedBox(width: 28, child: Text('#', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  SizedBox(width: 68, child: Text('Result', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280)))),
-                  Expanded(flex: 3, child: Padding(
-                    padding: EdgeInsets.only(left: 10),
-                    child: Text('Evidence', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
-                  )),
+                  Expanded(flex: 1, child: Text('#', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 4, child: Text('Validation', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 2, child: Text('Result', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
+                  Expanded(flex: 3, child: Text('Evidence', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87))),
                 ]),
               ),
               const Divider(height: 1, color: Color(0xFFE5E7EB)),
@@ -2252,24 +2543,24 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    SizedBox(width: 28, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
+                    Expanded(flex: 1, child: Text('${i + 1}', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)))),
                     Expanded(flex: 4, child: Text(rule.label, style: const TextStyle(fontSize: 13, color: Color(0xFF111827)))),
-                    SizedBox(
-                      width: 68,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
-                        child: Text(resultLabel,
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                    Expanded(
+                      flex: 2,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(color: resultBg, borderRadius: BorderRadius.circular(4)),
+                          child: Text(resultLabel,
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: resultColor)),
+                        ),
                       ),
                     ),
                     Expanded(
                       flex: 3,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 10),
-                        child: Text(foundText,
-                            style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
-                      ),
+                      child: Text(foundText,
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF111827))),
                     ),
                   ]),
                 );
@@ -2278,74 +2569,33 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
         ),
         const SizedBox(height: 12),
-        // View & Download buttons for enquiry dump
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
-                _viewDocument(docId);
-              },
-              icon: const Icon(Icons.visibility, size: 16),
-              label: const Text('View'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          ElevatedButton.icon(
+            onPressed: isLoading
+                ? null
+                : () => ref.read(assistantNotifierProvider.notifier).reUploadEnquiryDump(),
+            icon: const Icon(Icons.upload_file, size: 16),
+            label: const Text('Re-upload', style: TextStyle(fontWeight: FontWeight.bold)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
           ),
           const SizedBox(width: 8),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                final docId = ref.read(assistantNotifierProvider).lastDocumentId ?? '';
-                _downloadDocument(docId, 'enquiry_dump');
-              },
-              icon: const Icon(Icons.download, size: 16),
-              label: const Text('Download'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 8),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: isLoading
-                  ? null
-                  : () => ref.read(assistantNotifierProvider.notifier).reUploadEnquiryDump(),
-              icon: const Icon(Icons.upload_file, size: 16),
-              label: const Text('Re-upload'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.red.shade700,
-                side: BorderSide(color: Colors.red.shade300),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: isLoading
-                  ? null
-                  : () => ref.read(assistantNotifierProvider.notifier).continueAfterEnquiry(),
-              icon: const Icon(Icons.arrow_forward, size: 14),
-              label: Text(hasIssues ? 'Continue with warings' : 'Continue →',
-                  style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF003087),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
+          ElevatedButton.icon(
+            onPressed: isLoading
+                ? null
+                : () => ref.read(assistantNotifierProvider.notifier).continueAfterEnquiry(),
+            icon: const Icon(Icons.arrow_forward, size: 14),
+            label: Text(hasIssues ? 'Continue with warnings' : 'Continue →',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF003087),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
           ),
         ]),
@@ -2362,35 +2612,31 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         ...sections.map((section) => _reviewSection(section)),
         if (isLast) ...[
           const SizedBox(height: 16),
-          Row(children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: isLoading
-                    ? null
-                    : () => ref.read(assistantNotifierProvider.notifier).saveDraftFromChat(),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF003087),
-                  side: const BorderSide(color: Color(0xFF003087)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-                child: const Text('Save as Draft'),
-              ),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          ElevatedButton(
+            onPressed: isLoading
+                ? null
+                : () => ref.read(assistantNotifierProvider.notifier).saveDraftFromChat(),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF003087),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton(
-                onPressed: isLoading
-                    ? null
-                    : () => ref.read(assistantNotifierProvider.notifier).submitFromChat(),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF003087),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-                child: const Text('Submit'),
+            child: const Text('Save as Draft', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: 10),
+          ElevatedButton(
+            onPressed: isLoading
+                ? null
+                  : () => ref.read(assistantNotifierProvider.notifier).submitFromChat(),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green.shade600,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
+              child: const Text('Submit', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ]),
         ],
@@ -2478,10 +2724,10 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       String newMode;
       if (t == 'po_search' || t == 'po_search_results') {
         newMode = 'po';
+      } else if (t == 'po_list') {
+        newMode = 'none'; // scrollable list — no search bar needed
       } else if (t == 'state_selection' || t == 'state_search_results') {
-        // STATE SELECTION HIDDEN — auto-selects Maharashtra
-        // newMode = 'state';
-        newMode = 'none';
+        newMode = 'state';
       } else if (t == 'dealer_search' || t == 'dealer_search_results') {
         newMode = 'dealer';
       } else if (t == 'dealer_list') {
@@ -2500,17 +2746,21 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     });
 
     return Container(
-      width: 520,
+      width: widget.isFullWidth ? double.infinity : 520,
       decoration: BoxDecoration(
         color: Colors.white,
-        border: const Border(left: BorderSide(color: Color(0xFFE5E7EB))),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 12,
-            offset: const Offset(-3, 0),
-          ),
-        ],
+        border: widget.isFullWidth
+            ? null
+            : const Border(left: BorderSide(color: Color(0xFFE5E7EB))),
+        boxShadow: widget.isFullWidth
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 12,
+                  offset: const Offset(-3, 0),
+                ),
+              ],
       ),
       child: Column(
         children: [
@@ -2546,14 +2796,11 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                     ref.read(assistantNotifierProvider.notifier).greet();
                   },
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  tooltip: 'Close',
-                  onPressed: widget.onClose,
-                ),
               ],
             ),
           ),
+          // Step tracker — only visible during submission flow
+          if (state.isSubmissionFlow) _buildStepTracker(state.currentStep),
           // Error banner
           if (state.error != null)
             MaterialBanner(
@@ -2576,9 +2823,20 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                     itemCount: state.messages.length,
                     itemBuilder: (context, index) {
                       final msg = state.messages[index];
-                      if (!msg.isBot) return UserBubble(message: msg.content);
+                      if (!msg.isBot) {
+                        // User bubble is active only if no bot message follows it
+                        final hasLaterBot = state.messages.sublist(index + 1).any((m) => m.isBot);
+                        return UserBubble(
+                          key: ValueKey('${msg.id}_$hasLaterBot'),
+                          message: msg.content,
+                          isActive: !hasLaterBot,
+                        );
+                      }
                       final isLastBot = !state.messages.sublist(index + 1).any((m) => m.isBot);
-                      return _botMsg(msg, isLast: isLastBot);
+                      return KeyedSubtree(
+                        key: ValueKey('${msg.id}_$isLastBot'),
+                        child: _botMsg(msg, isLast: isLastBot),
+                      );
                     },
                   ),
           ),
@@ -2587,5 +2845,53 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         ],
       ),
     );
+  }
+}
+
+/// Loads a photo thumbnail asynchronously using the download endpoint.
+class _PhotoThumbLoader extends StatefulWidget {
+  final String photoId;
+  final dynamic dio;
+  const _PhotoThumbLoader({required this.photoId, required this.dio});
+
+  @override
+  State<_PhotoThumbLoader> createState() => _PhotoThumbLoaderState();
+}
+
+class _PhotoThumbLoaderState extends State<_PhotoThumbLoader> {
+  Uint8List? _bytes;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final resp = await widget.dio.get('/hierarchical/photos/${widget.photoId}/download');
+      final data = resp.data as Map<String, dynamic>;
+      final b64 = data['base64Content'] as String? ?? '';
+      if (b64.isNotEmpty && mounted) {
+        setState(() {
+          _bytes = base64Decode(b64);
+          _loading = false;
+        });
+        return;
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)));
+    }
+    if (_bytes == null) {
+      return const Center(child: Icon(Icons.broken_image, size: 28, color: Color(0xFF9CA3AF)));
+    }
+    return Image.memory(_bytes!, fit: BoxFit.cover);
   }
 }

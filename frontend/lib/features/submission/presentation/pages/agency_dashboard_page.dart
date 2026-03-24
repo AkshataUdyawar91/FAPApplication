@@ -44,6 +44,10 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
   bool _isChatbotOpen = true;
+  // 'chatbot' = show assistant, 'requests' = show requests table
+  String _mainView = 'chatbot';
+  // when true, requests view shows only pending claims (no header/stats)
+  bool _pendingClaimsMode = false;
 
   // Pagination state
   int _currentPage = 1;
@@ -279,8 +283,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                   iconTheme: const IconThemeData(color: Colors.white),
                   actions: [
                     IconButton(
-                        icon:
-                            const Icon(Icons.add_comment, color: Colors.white),
+                        icon: const Icon(Icons.add_comment, color: Colors.white),
                         onPressed: _navigateToChatbot),
                   ],
                 )
@@ -309,18 +312,24 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                         onToggleCollapse: () => setState(
                             () => _isSidebarCollapsed = !_isSidebarCollapsed),
                       ),
+                    // Main content area — chatbot or requests table
                     Expanded(
-                      child: Column(
-                        children: [
-                          if (!isMobile) _buildHeader(device),
-                          Expanded(
-                            child: _isLoading
-                                ? const Center(
-                                    child: CircularProgressIndicator())
-                                : _buildContent(device),
-                          ),
-                        ],
-                      ),
+                      child: _mainView == 'chatbot'
+                          ? AssistantChatPanel(
+                              onClose: () => setState(() => _mainView = 'requests'),
+                              onNewRequest: _navigateToUpload,
+                              isFullWidth: true,
+                            )
+                          : Column(
+                              children: [
+                                if (!isMobile && !_pendingClaimsMode) _buildHeader(device),
+                                Expanded(
+                                  child: _isLoading
+                                      ? const Center(child: CircularProgressIndicator())
+                                      : _buildContent(device),
+                                ),
+                              ],
+                            ),
                     ),
                     if (_isChatOpen && !isMobile)
                       ChatSidePanel(
@@ -328,10 +337,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                         userName: widget.userName,
                         deviceType: device,
                         onClose: () => setState(() => _isChatOpen = false),
-                      ),
-                    if (_isChatbotOpen && !isMobile)
-                      AssistantChatPanel(
-                        onClose: () => setState(() => _isChatbotOpen = false),
                       ),
                   ],
                 ),
@@ -353,14 +358,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                     ),
                   ),
                 )
-              : (_isChatOpen || _isChatbotOpen)
-                  ? null
-                  : FloatingActionButton(
-                      onPressed: _navigateToChatbot,
-                      backgroundColor: AppColors.primary,
-                      tooltip: 'Open Assistant',
-                      child: const Icon(Icons.smart_toy, color: Colors.white),
-                    ),
+              : null,
           floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         );
       },
@@ -374,42 +372,11 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   //   });
   // }
 
-  void _navigateToUpload() async {
-    // Show loading indicator
-    if (!mounted) return;
-
-    // Create draft submission first
-    try {
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:5000/api'));
-      final response = await dio.post(
-        '/submissions/draft',
-        data: {}, // Empty body - will use authenticated user's agency
-        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-      );
-
-      if (response.statusCode == 201 && mounted) {
-        final submissionId = response.data['submissionId'];
-        debugPrint('Draft submission created: $submissionId');
-
-        // Navigate to upload page with submissionId
-        context.pushNamed('agency-upload', extra: {
-          'token': widget.token,
-          'userName': widget.userName,
-          'submissionId': submissionId,
-        });
-      }
-    } catch (e) {
-      debugPrint('Error creating draft submission: $e');
-      // Show error message
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to create submission: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+  void _navigateToUpload() {
+    context.pushNamed('agency-upload', extra: {
+      'token': widget.token,
+      'userName': widget.userName,
+    });
   }
 
   void _navigateToChatbot() {
@@ -423,9 +390,20 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(
-          icon: Icons.dashboard, label: 'Home', isActive: true, onTap: () {}),
+          icon: Icons.smart_toy,
+          label: 'Assistant',
+          isActive: _mainView == 'chatbot',
+          onTap: () => setState(() => _mainView = 'chatbot')),
       NavItem(
-          icon: Icons.upload_file,
+          icon: Icons.list_alt,
+          label: 'My Requests',
+          isActive: _mainView == 'requests',
+          onTap: () => setState(() {
+            _mainView = 'requests';
+            _pendingClaimsMode = false;
+          })),
+      NavItem(
+          icon: Icons.add,
           label: 'New Claim',
           onTap: _navigateToUpload),
       NavItem(
@@ -473,6 +451,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   // ─── HEADER (tablet/desktop) ──────────────────────────────────────────
   Widget _buildHeader(DeviceType device) {
     return Container(
+      width: double.infinity,
       padding: EdgeInsets.symmetric(
         horizontal: device == DeviceType.desktop ? 24 : 16,
         vertical: 16,
@@ -481,25 +460,13 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         color: AppColors.cardBackground,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('My Requests', style: AppTextStyles.h2),
-                const SizedBox(height: 4),
-                Text('View and track all your reimbursement requests',
-                    style: AppTextStyles.bodySmall),
-              ],
-            ),
-          ),
-          // Toggle chatbot panel button
-          ElevatedButton.icon(
-            onPressed: _navigateToUpload,
-            icon: const Icon(Icons.add, size: 20),
-            label: const Text('New Request'),
-          ),
+          Text('My Requests', style: AppTextStyles.h2),
+          const SizedBox(height: 4),
+          Text('View and track all your reimbursement requests',
+              style: AppTextStyles.bodySmall),
         ],
       ),
     );
@@ -509,6 +476,59 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   Widget _buildContent(DeviceType device) {
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
         mobile: 12, tablet: 16, desktop: 24);
+
+    // Pending claims mode: no stats, pre-filtered to pending, with a simple header
+    if (_pendingClaimsMode) {
+      // Force filter to pending states
+      final pendingStates = {'uploaded', 'extracting', 'pending_with_asm', 'pending_with_ra'};
+      if (!pendingStates.contains(_statusFilter)) {
+        // reset to 'all' so _filteredRequests shows everything, then we filter below
+      }
+      final pendingRequests = _requests.where((req) {
+        final state = req['state']?.toString().toLowerCase() ?? '';
+        return [
+          'uploaded', 'draft', 'extracting', 'validating', 'validated',
+          'scoring', 'recommending', 'pendingapproval', 'pendingchapproval',
+          'pendingch', 'asmapproved', 'pendinghqapproval', 'pendingra',
+        ].contains(state);
+      }).toList();
+
+      return RefreshIndicator(
+        onRefresh: () => _loadRequests(page: 1),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.all(hPad),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 8),
+              Text('Pending Claims', style: AppTextStyles.h2),
+              const SizedBox(height: 4),
+              Text('Your claims currently under review',
+                  style: AppTextStyles.bodySmall),
+              const SizedBox(height: 16),
+              if (pendingRequests.isEmpty)
+                _buildEmptyState()
+              else
+                Column(
+                  children: [
+                    _buildTable(pendingRequests),
+                    PaginationBar(
+                      currentPage: _currentPage,
+                      totalPages: _totalPages,
+                      totalItems: pendingRequests.length,
+                      pageSize: _pageSize,
+                      onPageChanged: (page) => _loadRequests(page: page),
+                    ),
+                  ],
+                ),
+              const SizedBox(height: 80),
+            ],
+          ),
+        ),
+      );
+    }
+
     return RefreshIndicator(
       onRefresh: () => _loadRequests(page: 1),
       child: SingleChildScrollView(

@@ -1135,8 +1135,17 @@ public class HierarchicalSubmissionController : ControllerBase
                 .AsNoTracking()
                 .FirstOrDefaultAsync(p => p.Id == photoId, cancellationToken);
 
-            if (photo == null || string.IsNullOrEmpty(photo.BlobUrl))
-                return NotFound(new { message = "Photo not found" });
+            if (photo == null)
+            {
+                _logger.LogWarning("Photo {PhotoId} not found in TeamPhotos table", photoId);
+                return NotFound(new { message = $"Photo {photoId} not found" });
+            }
+
+            if (string.IsNullOrEmpty(photo.BlobUrl))
+            {
+                _logger.LogWarning("Photo {PhotoId} has empty BlobUrl", photoId);
+                return NotFound(new { message = $"Photo {photoId} has no file stored" });
+            }
 
             var fileBytes = await _fileStorage.GetFileBytesAsync(photo.BlobUrl);
             var base64Content = Convert.ToBase64String(fileBytes);

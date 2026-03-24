@@ -70,7 +70,7 @@ public class AssistantController : ControllerBase
             var response = action switch
             {
                 "greet" => BuildGreeting(),
-                "create_request" => BuildCreateRequestPrompt(),
+                "create_request" => await BuildPOListPrompt(agencyId!.Value, ct),
                 "view_requests" => await HandleViewRequests(agencyId ?? Guid.Empty, ct),
                 "pending_approvals" => await HandlePendingApprovals(agencyId ?? Guid.Empty, ct),
                 "search_po" => await HandleSearchPO(request, agencyId!.Value, ct),
@@ -133,6 +133,36 @@ public class AssistantController : ControllerBase
                 new() { Id = "view_requests", Title = "Show my pending claims", Subtitle = "Track under review claims", Icon = "list_alt", Action = "view_requests" },
                 new() { Id = "pending_approvals", Title = "Why was my claim returned", Subtitle = "Get correction guidance", Icon = "pending_actions", Action = "pending_approvals" },
             },
+        };
+    }
+
+    private async Task<AssistantResponse> BuildPOListPrompt(Guid agencyId, CancellationToken ct)
+    {
+        var pos = await _context.POs
+            .Where(p => p.AgencyId == agencyId
+                        && !p.IsDeleted
+                        && (p.POStatus == "Open" || p.POStatus == "PartiallyConsumed" || p.POStatus == null))
+            .OrderByDescending(p => p.PODate)
+            .Take(50)
+            .Select(p => new POItem
+            {
+                Id = p.Id.ToString(),
+                PONumber = p.PONumber ?? "",
+                PODate = p.PODate ?? DateTime.MinValue,
+                VendorName = p.VendorName ?? "",
+                TotalAmount = p.TotalAmount ?? 0,
+                RemainingBalance = p.RemainingBalance,
+                POStatus = p.POStatus ?? "Open",
+            })
+            .ToListAsync(ct);
+
+        return new AssistantResponse
+        {
+            Type = "po_list",
+            Message = pos.Count > 0
+                ? "Select a PO to start your submission:"
+                : "No open POs found for your account. Please contact your administrator.",
+            POItems = pos,
         };
     }
 
@@ -344,14 +374,14 @@ public class AssistantController : ControllerBase
     {
         if (string.IsNullOrEmpty(request.PayloadJson))
         {
-            return BuildCreateRequestPrompt();
+            return await BuildPOListPrompt(agencyId, ct);
         }
 
         var payload = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(request.PayloadJson);
         if (!payload.TryGetProperty("poId", out var poIdProp) ||
             !Guid.TryParse(poIdProp.GetString(), out var poId))
         {
-            return BuildCreateRequestPrompt();
+            return await BuildPOListPrompt(agencyId, ct);
         }
 
         var po = await _context.POs
@@ -366,18 +396,8 @@ public class AssistantController : ControllerBase
             };
         }
 
-        // PO selected — auto-select Maharashtra (state selection UI hidden for now)
-        // To re-enable state selection, replace the block below with:
-        // var stateResponse = await BuildStateSelectionPrompt(agencyId, po.PONumber ?? poId.ToString(), ct);
-        // and return the stateResponse with SelectedPO attached.
-
-        var autoStateRequest = new AssistantRequest
-        {
-            Action = "select_state",
-            Message = "Maharashtra",
-            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { poId = po.Id.ToString() }),
-        };
-        var stateResponse = await HandleSelectState(autoStateRequest, agencyId, ct);
+        // PO selected — show state selection prompt
+        var stateResponse = await BuildStateSelectionPrompt(agencyId, po.PONumber ?? poId.ToString(), ct);
 
         var selectedPoItem = new POItem
         {
@@ -390,7 +410,7 @@ public class AssistantController : ControllerBase
             POStatus = po.POStatus ?? "Unknown",
         };
 
-        // Reconstruct response with SelectedPO attached (init-only properties)
+        // Attach SelectedPO to the state selection response
         return new AssistantResponse
         {
             Type = stateResponse.Type,
@@ -539,7 +559,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "invoice_upload",
-            Message = "Please upload the invoice document.",
+            Message = $"State set to {validState}. Please upload the invoice document.",
             AllowedFormats = new List<string> { "PDF", "JPG", "PNG" },
             SubmissionId = submissionId,
             Cards = new List<WorkflowCard>
@@ -2271,10 +2291,29 @@ public class AssistantController : ControllerBase
 
             foreach (var team in teams)
             {
-                var photoCount = await _context.TeamPhotos.CountAsync(p => p.TeamId == team.Id && !p.IsDeleted, ct);
-                var passedPhotos = await _context.TeamPhotos
-                    .Where(p => p.TeamId == team.Id && !p.IsDeleted && !p.IsFlaggedForReview)
-                    .CountAsync(ct);
+                var photos = await _context.TeamPhotos
+                    .Where(p => p.TeamId == team.Id && !p.IsDeleted)
+                    .ToListAsync(ct);
+
+                int photoCount = photos.Count;
+                int passedPhotos = 0;
+                int photosWithDate = 0;
+                int photosWithGps = 0;
+                int photosWithBlueTshirt = 0;
+                int photosWithVehicle = 0;
+                var failedPhotoIds = new List<string>();
+
+                foreach (var photo in photos)
+                {
+                    var rules = RunPhotoValidationRules(photo);
+                    bool allPassed = rules.All(r => r.Passed);
+                    if (allPassed) passedPhotos++;
+                    else failedPhotoIds.Add(photo.Id.ToString());
+                    if (rules.FirstOrDefault(r => r.RuleCode == "PHOTO_DATE_VISIBLE")?.Passed == true) photosWithDate++;
+                    if (rules.FirstOrDefault(r => r.RuleCode == "PHOTO_GPS_VISIBLE")?.Passed == true) photosWithGps++;
+                    if (rules.FirstOrDefault(r => r.RuleCode == "PHOTO_BLUE_TSHIRT")?.Passed == true) photosWithBlueTshirt++;
+                    if (rules.FirstOrDefault(r => r.RuleCode == "PHOTO_3W_VEHICLE")?.Passed == true) photosWithVehicle++;
+                }
 
                 teamSummaries.Add(new TeamSummaryItem
                 {
@@ -2288,6 +2327,11 @@ public class AssistantController : ControllerBase
                     WorkingDays = team.WorkingDays ?? 0,
                     PhotoCount = photoCount,
                     PhotosPassed = passedPhotos,
+                    PhotosWithDate = photosWithDate,
+                    PhotosWithGps = photosWithGps,
+                    PhotosWithBlueTshirt = photosWithBlueTshirt,
+                    PhotosWithVehicle = photosWithVehicle,
+                    FailedPhotoIds = failedPhotoIds,
                 });
             }
         }
@@ -2384,7 +2428,7 @@ public class AssistantController : ControllerBase
         int passCount = rules.Count(r => r.Passed);
         int failCount = rules.Count(r => !r.Passed);
 
-        string botMessage = $"FieldIQ Enquiry Dump processed:\n• {totalRecords} enquiry records found\n• {missingPhone} records with missing Customer Phone";
+        string botMessage = "FieldIQ Enquiry Dump processed.";
 
         // Persist to ValidationResults
         try
@@ -2776,10 +2820,20 @@ public class AssistantController : ControllerBase
         // Queue workflow via background processor (proper scoped execution, avoids disposed context issues)
         await _backgroundQueue.QueueWorkflowAsync(package.Id);
 
+        var poNumber = "—";
+        if (package.SelectedPOId.HasValue)
+        {
+            poNumber = await _context.POs
+                .Where(po => po.Id == package.SelectedPOId.Value && !po.IsDeleted)
+                .Select(po => po.PONumber)
+                .FirstOrDefaultAsync(ct) ?? "—";
+        }
+        var invoiceNumber = package.Invoices.FirstOrDefault()?.InvoiceNumber ?? "—";
+
         return new AssistantResponse
         {
             Type = "submit_success",
-            Message = "Your submission has been submitted successfully!",
+            Message = $"Your submission with PO - {poNumber} and Invoice - {invoiceNumber} has been submitted.",
             SubmissionId = submissionId,
         };
     }
@@ -4133,6 +4187,21 @@ public class TeamSummaryItem
 
     [JsonPropertyName("photosPassed")]
     public int PhotosPassed { get; init; }
+
+    [JsonPropertyName("photosWithDate")]
+    public int PhotosWithDate { get; init; }
+
+    [JsonPropertyName("photosWithGps")]
+    public int PhotosWithGps { get; init; }
+
+    [JsonPropertyName("photosWithBlueTshirt")]
+    public int PhotosWithBlueTshirt { get; init; }
+
+    [JsonPropertyName("photosWithVehicle")]
+    public int PhotosWithVehicle { get; init; }
+
+    [JsonPropertyName("failedPhotoIds")]
+    public List<string> FailedPhotoIds { get; init; } = [];
 }
 
 public class WorkflowCard
