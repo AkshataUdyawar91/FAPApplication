@@ -904,6 +904,12 @@ public class SubmissionsController : ControllerBase
             }
 
             // Order by creation date descending
+            // Exclude Draft packages — they are incomplete and not yet submitted
+            query = query.Where(p => p.State != PackageState.Draft);
+            // Exclude orphan packages created by PO extraction that were never submitted
+            // (no SubmissionNumber means process-async was never triggered)
+            query = query.Where(p => p.SubmissionNumber != null || p.State >= PackageState.Extracting);
+
             query = query.OrderByDescending(p => p.CreatedAt);
 
             // Pagination

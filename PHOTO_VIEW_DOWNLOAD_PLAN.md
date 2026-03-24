@@ -219,3 +219,23 @@ if (resolvedPhotoDocId.isEmpty) {
 }
 return _buildValidationCard(..., documentId: resolvedPhotoDocId);
 ```
+
+### 2026-03-24 — Double Entry Fix: Orphan Package from PO Extraction (T20–T21)
+
+**Problem**: When creating a new request, the "Recent Requests" list showed two entries — the real submission (e.g. FAP-2026-00063 in "Extracting" state with data) and an orphan entry (e.g. FAP-FCB916E4 in "Pending" state with no PO, no invoice, no data).
+
+**Root Cause**: `_uploadAndExtractPO()` in `agency_upload_page.dart` called `POST /documents/upload` without a `packageId` to extract PO fields during the create flow. `DocumentService.UploadDocumentAsync` creates a new `DocumentPackage` in `Uploaded` state when no `packageId` is provided. Then at submit time, the code correctly created a **second** fresh package via `POST /submissions`. The first orphan package was never submitted but still appeared in the list because `ListSubmissions` had no filter for incomplete packages.
+
+**Solution (two-part fix)**:
+
+| ID | File | Change | How to Remove |
+|----|------|--------|---------------|
+| T20 | `agency_upload_page.dart` | Changed `_uploadAndExtractPO()` to use `/documents/extract` (extract-only, temp blob, no DB entity) instead of `/documents/upload`. Removed `_pollForPOExtraction()` method (no longer needed — extract endpoint returns immediately). | Revert `_uploadAndExtractPO()` to call `/documents/upload` and restore `_pollForPOExtraction()` method. |
+| T21 | `SubmissionsController.cs` (`ListSubmissions`) | Added two filters: exclude `Draft` state packages, and exclude orphan `Uploaded` packages that have no `SubmissionNumber` and haven't progressed past `Uploaded` state. Filter: `p.State != PackageState.Draft` and `p.SubmissionNumber != null \|\| p.State >= PackageState.Extracting`. | Remove the two `query = query.Where(...)` lines above the `OrderByDescending` call (find by comments about Draft and orphan packages). |
+
+**Files Changed**:
+- `frontend/lib/features/submission/presentation/pages/agency_upload_page.dart` (T20)
+- `backend/src/BajajDocumentProcessing.API/Controllers/SubmissionsController.cs` (T21)
+
+**Additional fix in same session** (related navigation bug):
+- `agency_submission_detail_page.dart`: `_navigateToUpload()` (the "New Claim" drawer nav item) was passing `widget.submissionId` to the upload page, putting it in edit mode and pre-loading existing invoice data. Fixed by removing `submissionId` from the navigation extras so new requests start with a clean form. `_enterEditMode()` still correctly passes `submissionId` for the edit/resubmit flow.
