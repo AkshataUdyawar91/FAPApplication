@@ -863,12 +863,17 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
   }
 
   void _navigateToDetail(dynamic id) async {
+    final doc = _documents.firstWhere(
+      (d) => d['id'] == id,
+      orElse: () => {},
+    );
     final result = await context.pushNamed(
       'hq-review-detail',
       extra: {
         'submissionId': id,
         'token': widget.token,
         'userName': widget.userName,
+        'poNumber': doc['poNumber']?.toString(),
       },
     );
     if (mounted && (result == true || result == null)) _loadDocuments();
