@@ -993,7 +993,259 @@ public class NotificationDataService : INotificationDataService
     {
         var groups = new List<ValidationCheckGroup>();
 
-        // === Section order: Invoice → Cost Summary → Activity Summary → Enquiry Dump → Photos ===
+        // === Section order: Invoice → Cost Summary → Activity Summary → Photos → Enquiry Dump ===
+
+        // Invoice: use the same 12 specific checks as the conversational chatbot.
+        // Check both direct Invoices and CampaignInvoices (via Teams) since seed data
+        // uses CampaignInvoices linked through Teams, not direct Invoices.
+        var directInvoices = package.Invoices.Where(i => !i.IsDeleted).ToList();
+        var campaignInvoices = package.Teams
+            .SelectMany(t => t.Invoices)
+            .Where(i => !i.IsDeleted)
+            .ToList();
+
+        // Use direct invoices if available, otherwise fall back to campaign invoices
+        string? invNumber = directInvoices.FirstOrDefault()?.InvoiceNumber
+            ?? campaignInvoices.FirstOrDefault()?.InvoiceNumber;
+        DateTime? invDate = directInvoices.FirstOrDefault()?.InvoiceDate
+            ?? campaignInvoices.FirstOrDefault()?.InvoiceDate;
+        decimal? invAmount = directInvoices.FirstOrDefault()?.TotalAmount
+            ?? campaignInvoices.FirstOrDefault()?.TotalAmount;
+        string? invGst = directInvoices.FirstOrDefault()?.GSTNumber
+            ?? campaignInvoices.FirstOrDefault()?.GSTNumber;
+        string? invExtractedJson = directInvoices.FirstOrDefault()?.ExtractedDataJson
+            ?? campaignInvoices.FirstOrDefault()?.ExtractedDataJson;
+        int invoiceCount = directInvoices.Count > 0 ? directInvoices.Count : campaignInvoices.Count;
+        bool hasInvoice = invoiceCount > 0;
+
+        if (hasInvoice)
+        {
+            var invoiceLabel = invoiceCount > 1 ? $"Invoices ({invoiceCount})" : "Invoice";
+            var po = package.PO;
+
+            // Parse ExtractedDataJson once for field lookups
+            JsonElement? extractedJson = null;
+            if (!string.IsNullOrEmpty(invExtractedJson))
+            {
+                try { extractedJson = JsonDocument.Parse(invExtractedJson).RootElement; }
+                catch { /* malformed JSON */ }
+            }
+
+            // 1. Invoice Number
+            var invNumPresent = !string.IsNullOrWhiteSpace(invNumber);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = invNumPresent ? "Pass" : "Fail",
+                Details = "Invoice Number",
+                Evidence = invNumPresent ? invNumber! : "Invoice number not detected"
+            });
+
+            // 2. Invoice Date
+            var datePresent = invDate.HasValue && invDate.Value != default;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = datePresent ? "Pass" : "Fail",
+                Details = "Invoice Date",
+                Evidence = datePresent ? invDate!.Value.ToString("dd-MMM-yyyy") : "Invoice date not detected"
+            });
+
+            // 3. Invoice Amount
+            var amountPresent = invAmount.HasValue && invAmount.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = amountPresent ? "Pass" : "Fail",
+                Details = "Invoice Amount",
+                Evidence = amountPresent ? $"₹{invAmount!.Value:N0}" : "Invoice amount not detected"
+            });
+
+            // 4. GST Number (15-char alphanumeric)
+            var gstPresent = !string.IsNullOrWhiteSpace(invGst) && invGst.Length == 15;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = gstPresent ? "Pass" : "Fail",
+                Details = "GST Number",
+                Evidence = gstPresent
+                    ? invGst!
+                    : (string.IsNullOrWhiteSpace(invGst) ? "Not detected" : "Invalid format (must be 15 chars)")
+            });
+
+            // 5. GST %
+            decimal? gstPercent = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("GSTPercentage", out var gp) ||
+                    extractedJson.Value.TryGetProperty("gstPercentage", out gp) ||
+                    extractedJson.Value.TryGetProperty("gstPercent", out gp))
+                {
+                    try { gstPercent = gp.GetDecimal(); } catch { /* not a number */ }
+                }
+            }
+            var gstPercentPresent = gstPercent.HasValue && gstPercent.Value > 0;
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = gstPercentPresent ? "Pass" : "Fail",
+                Details = "GST %",
+                Evidence = gstPercentPresent ? $"{gstPercent!.Value}%" : "GST percentage not detected"
+            });
+
+            // 6. HSN/SAC Code
+            string? hsnSac = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("HSNSACCode", out var hp) ||
+                    extractedJson.Value.TryGetProperty("hsnSacCode", out hp) ||
+                    extractedJson.Value.TryGetProperty("hsnCode", out hp) ||
+                    extractedJson.Value.TryGetProperty("sacCode", out hp))
+                {
+                    hsnSac = hp.GetString();
+                }
+            }
+            var hsnPresent = !string.IsNullOrWhiteSpace(hsnSac);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = hsnPresent ? "Pass" : "Fail",
+                Details = "HSN/SAC Code",
+                Evidence = hsnPresent ? hsnSac! : "HSN/SAC code not detected"
+            });
+
+            // 7. Agency Name & Address (Supplier)
+            string? agencyName = null, agencyAddress = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("AgencyName", out var an) || extractedJson.Value.TryGetProperty("agencyName", out an)) agencyName = an.GetString();
+                if (extractedJson.Value.TryGetProperty("AgencyAddress", out var aa) || extractedJson.Value.TryGetProperty("agencyAddress", out aa)) agencyAddress = aa.GetString();
+            }
+            var agencyOk = !string.IsNullOrWhiteSpace(agencyName) && !string.IsNullOrWhiteSpace(agencyAddress);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = agencyOk ? "Pass" : "Fail",
+                Details = "Agency Name & Address",
+                Evidence = agencyOk
+                    ? $"{agencyName}, {agencyAddress}"
+                    : (string.IsNullOrWhiteSpace(agencyName) ? "Supplier name not detected" : "Supplier address not detected")
+            });
+
+            // 8. Billing Name & Address (Recipient)
+            string? billingName = null, billingAddress = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("BillingName", out var bn) || extractedJson.Value.TryGetProperty("billingName", out bn)) billingName = bn.GetString();
+                if (extractedJson.Value.TryGetProperty("BillingAddress", out var ba) || extractedJson.Value.TryGetProperty("billingAddress", out ba)) billingAddress = ba.GetString();
+            }
+            var billingOk = !string.IsNullOrWhiteSpace(billingName) && !string.IsNullOrWhiteSpace(billingAddress);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = billingOk ? "Pass" : "Fail",
+                Details = "Billing Name & Address",
+                Evidence = billingOk
+                    ? $"{billingName}, {billingAddress}"
+                    : (string.IsNullOrWhiteSpace(billingName) ? "Recipient name not detected" : "Recipient address not detected")
+            });
+
+            // 9. Supplier State
+            string? supplierState = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("StateName", out var sn) || extractedJson.Value.TryGetProperty("stateName", out sn)) supplierState = sn.GetString();
+                if (string.IsNullOrWhiteSpace(supplierState) && (extractedJson.Value.TryGetProperty("StateCode", out var sc) || extractedJson.Value.TryGetProperty("stateCode", out sc))) supplierState = sc.GetString();
+            }
+            var stateOk = !string.IsNullOrWhiteSpace(supplierState);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = stateOk ? "Pass" : "Fail",
+                Details = "Supplier State",
+                Evidence = stateOk ? supplierState! : "Supplier state not detected"
+            });
+
+            // 10. Vendor Code
+            string? vendorCode = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("VendorCode", out var vc) ||
+                    extractedJson.Value.TryGetProperty("vendorCode", out vc))
+                {
+                    vendorCode = vc.GetString();
+                }
+            }
+            var vendorCodePresent = !string.IsNullOrWhiteSpace(vendorCode);
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = vendorCodePresent ? "Pass" : "Fail",
+                Details = "Vendor Code",
+                Evidence = vendorCodePresent ? vendorCode! : "Vendor code not detected"
+            });
+
+            // 11. PO Number (cross-check against PO)
+            string? extractedPoNumber = null;
+            if (extractedJson.HasValue)
+            {
+                if (extractedJson.Value.TryGetProperty("PONumber", out var pn) ||
+                    extractedJson.Value.TryGetProperty("poNumber", out pn))
+                {
+                    extractedPoNumber = pn.GetString();
+                }
+            }
+            bool poMatch;
+            string poEvidence;
+            if (po == null)
+            {
+                poMatch = false;
+                poEvidence = "PO master data not found";
+            }
+            else if (string.IsNullOrWhiteSpace(extractedPoNumber))
+            {
+                poMatch = false;
+                poEvidence = "PO number not extracted from invoice";
+            }
+            else
+            {
+                poMatch = extractedPoNumber.Equals(po.PONumber, StringComparison.OrdinalIgnoreCase);
+                poEvidence = poMatch
+                    ? $"{extractedPoNumber} matches selected PO"
+                    : $"{extractedPoNumber} does NOT match selected PO {po.PONumber}";
+            }
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = poMatch ? "Pass" : "Fail",
+                Details = "PO Number",
+                Evidence = poEvidence
+            });
+
+            // 12. Amount vs PO Balance
+            bool amountOk;
+            string balanceEvidence;
+            if (po == null || !invAmount.HasValue)
+            {
+                amountOk = po == null ? false : true;
+                balanceEvidence = po == null ? "PO balance not available" : "Invoice amount not detected";
+            }
+            else
+            {
+                var balance = po.RemainingBalance ?? po.TotalAmount ?? 0;
+                amountOk = invAmount.Value <= balance;
+                balanceEvidence = amountOk
+                    ? $"₹{invAmount.Value:N0} within PO balance (₹{balance:N0})"
+                    : $"₹{invAmount.Value:N0} exceeds PO balance (₹{balance:N0})";
+            }
+            groups.Add(new ValidationCheckGroup
+            {
+                GroupName = invoiceLabel,
+                Status = amountOk ? "Pass" : "Fail",
+                Details = "Amount vs PO Balance",
+                Evidence = balanceEvidence
+            });
+        }
 
         // Cost Summary: use the same validation as the conversational chatbot (8 checks)
         var costSummary = package.CostSummary;
@@ -1254,375 +1506,13 @@ public class NotificationDataService : INotificationDataService
             }
         }
 
-        // Invoice: use the same 12 specific checks as the conversational chatbot.
-        // Check both direct Invoices and CampaignInvoices (via Teams) since seed data
-        // uses CampaignInvoices linked through Teams, not direct Invoices.
-        var directInvoices = package.Invoices.Where(i => !i.IsDeleted).ToList();
-        var campaignInvoices = package.Teams
-            .SelectMany(t => t.Invoices)
-            .Where(i => !i.IsDeleted)
-            .ToList();
-
-        // Use direct invoices if available, otherwise fall back to campaign invoices
-        string? invNumber = directInvoices.FirstOrDefault()?.InvoiceNumber
-            ?? campaignInvoices.FirstOrDefault()?.InvoiceNumber;
-        DateTime? invDate = directInvoices.FirstOrDefault()?.InvoiceDate
-            ?? campaignInvoices.FirstOrDefault()?.InvoiceDate;
-        decimal? invAmount = directInvoices.FirstOrDefault()?.TotalAmount
-            ?? campaignInvoices.FirstOrDefault()?.TotalAmount;
-        string? invGst = directInvoices.FirstOrDefault()?.GSTNumber
-            ?? campaignInvoices.FirstOrDefault()?.GSTNumber;
-        string? invExtractedJson = directInvoices.FirstOrDefault()?.ExtractedDataJson
-            ?? campaignInvoices.FirstOrDefault()?.ExtractedDataJson;
-        int invoiceCount = directInvoices.Count > 0 ? directInvoices.Count : campaignInvoices.Count;
-        bool hasInvoice = invoiceCount > 0;
-
-        if (hasInvoice)
-        {
-            var invoiceLabel = invoiceCount > 1 ? $"Invoices ({invoiceCount})" : "Invoice";
-            var po = package.PO;
-
-            // Parse ExtractedDataJson once for field lookups
-            JsonElement? extractedJson = null;
-            if (!string.IsNullOrEmpty(invExtractedJson))
-            {
-                try { extractedJson = JsonDocument.Parse(invExtractedJson).RootElement; }
-                catch { /* malformed JSON */ }
-            }
-
-            // 1. Invoice Number
-            var invNumPresent = !string.IsNullOrWhiteSpace(invNumber);
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = invNumPresent ? "Pass" : "Fail",
-                Details = "Invoice Number",
-                Evidence = invNumPresent ? invNumber! : "Invoice number not detected"
-            });
-
-            // 2. Invoice Date
-            var datePresent = invDate.HasValue && invDate.Value != default;
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = datePresent ? "Pass" : "Fail",
-                Details = "Invoice Date",
-                Evidence = datePresent ? invDate!.Value.ToString("dd-MMM-yyyy") : "Invoice date not detected"
-            });
-
-            // 3. Invoice Amount
-            var amountPresent = invAmount.HasValue && invAmount.Value > 0;
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = amountPresent ? "Pass" : "Fail",
-                Details = "Invoice Amount",
-                Evidence = amountPresent ? $"₹{invAmount!.Value:N0}" : "Invoice amount not detected"
-            });
-
-            // 4. GST Number (15-char alphanumeric)
-            var gstPresent = !string.IsNullOrWhiteSpace(invGst) && invGst.Length == 15;
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = gstPresent ? "Pass" : "Fail",
-                Details = "GST Number",
-                Evidence = gstPresent
-                    ? invGst!
-                    : (string.IsNullOrWhiteSpace(invGst) ? "Not detected" : "Invalid format (must be 15 chars)")
-            });
-
-            // 5. GST %
-            decimal? gstPercent = null;
-            if (extractedJson.HasValue)
-            {
-                if (extractedJson.Value.TryGetProperty("GSTPercentage", out var gp) ||
-                    extractedJson.Value.TryGetProperty("gstPercentage", out gp) ||
-                    extractedJson.Value.TryGetProperty("gstPercent", out gp))
-                {
-                    try { gstPercent = gp.GetDecimal(); } catch { /* not a number */ }
-                }
-            }
-            var gstPercentPresent = gstPercent.HasValue && gstPercent.Value > 0;
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = gstPercentPresent ? "Pass" : "Fail",
-                Details = "GST %",
-                Evidence = gstPercentPresent ? $"{gstPercent!.Value}%" : "GST percentage not detected"
-            });
-
-            // 6. HSN/SAC Code
-            string? hsnSac = null;
-            if (extractedJson.HasValue)
-            {
-                if (extractedJson.Value.TryGetProperty("HSNSACCode", out var hp) ||
-                    extractedJson.Value.TryGetProperty("hsnSacCode", out hp) ||
-                    extractedJson.Value.TryGetProperty("hsnCode", out hp) ||
-                    extractedJson.Value.TryGetProperty("sacCode", out hp))
-                {
-                    hsnSac = hp.GetString();
-                }
-            }
-            var hsnPresent = !string.IsNullOrWhiteSpace(hsnSac);
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = hsnPresent ? "Pass" : "Fail",
-                Details = "HSN/SAC Code",
-                Evidence = hsnPresent ? hsnSac! : "HSN/SAC code not detected"
-            });
-
-            // 7. Agency Name & Address (Supplier)
-            string? agencyName = null, agencyAddress = null;
-            if (extractedJson.HasValue)
-            {
-                if (extractedJson.Value.TryGetProperty("AgencyName", out var an) || extractedJson.Value.TryGetProperty("agencyName", out an)) agencyName = an.GetString();
-                if (extractedJson.Value.TryGetProperty("AgencyAddress", out var aa) || extractedJson.Value.TryGetProperty("agencyAddress", out aa)) agencyAddress = aa.GetString();
-            }
-            var agencyOk = !string.IsNullOrWhiteSpace(agencyName) && !string.IsNullOrWhiteSpace(agencyAddress);
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = agencyOk ? "Pass" : "Fail",
-                Details = "Agency Name & Address",
-                Evidence = agencyOk
-                    ? $"{agencyName}, {agencyAddress}"
-                    : (string.IsNullOrWhiteSpace(agencyName) ? "Supplier name not detected" : "Supplier address not detected")
-            });
-
-            // 8. Billing Name & Address (Recipient)
-            string? billingName = null, billingAddress = null;
-            if (extractedJson.HasValue)
-            {
-                if (extractedJson.Value.TryGetProperty("BillingName", out var bn) || extractedJson.Value.TryGetProperty("billingName", out bn)) billingName = bn.GetString();
-                if (extractedJson.Value.TryGetProperty("BillingAddress", out var ba) || extractedJson.Value.TryGetProperty("billingAddress", out ba)) billingAddress = ba.GetString();
-            }
-            var billingOk = !string.IsNullOrWhiteSpace(billingName) && !string.IsNullOrWhiteSpace(billingAddress);
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = billingOk ? "Pass" : "Fail",
-                Details = "Billing Name & Address",
-                Evidence = billingOk
-                    ? $"{billingName}, {billingAddress}"
-                    : (string.IsNullOrWhiteSpace(billingName) ? "Recipient name not detected" : "Recipient address not detected")
-            });
-
-            // 9. Supplier State
-            string? supplierState = null;
-            if (extractedJson.HasValue)
-            {
-                if (extractedJson.Value.TryGetProperty("StateName", out var sn) || extractedJson.Value.TryGetProperty("stateName", out sn)) supplierState = sn.GetString();
-                if (string.IsNullOrWhiteSpace(supplierState) && (extractedJson.Value.TryGetProperty("StateCode", out var sc) || extractedJson.Value.TryGetProperty("stateCode", out sc))) supplierState = sc.GetString();
-            }
-            var stateOk = !string.IsNullOrWhiteSpace(supplierState);
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = stateOk ? "Pass" : "Fail",
-                Details = "Supplier State",
-                Evidence = stateOk ? supplierState! : "Supplier state not detected"
-            });
-
-            // 10. Vendor Code
-            string? vendorCode = null;
-            if (extractedJson.HasValue)
-            {
-                if (extractedJson.Value.TryGetProperty("VendorCode", out var vc) ||
-                    extractedJson.Value.TryGetProperty("vendorCode", out vc))
-                {
-                    vendorCode = vc.GetString();
-                }
-            }
-            var vendorCodePresent = !string.IsNullOrWhiteSpace(vendorCode);
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = vendorCodePresent ? "Pass" : "Fail",
-                Details = "Vendor Code",
-                Evidence = vendorCodePresent ? vendorCode! : "Vendor code not detected"
-            });
-
-            // 11. PO Number (cross-check against PO)
-            string? extractedPoNumber = null;
-            if (extractedJson.HasValue)
-            {
-                if (extractedJson.Value.TryGetProperty("PONumber", out var pn) ||
-                    extractedJson.Value.TryGetProperty("poNumber", out pn))
-                {
-                    extractedPoNumber = pn.GetString();
-                }
-            }
-            bool poMatch;
-            string poEvidence;
-            if (po == null)
-            {
-                poMatch = false;
-                poEvidence = "PO master data not found";
-            }
-            else if (string.IsNullOrWhiteSpace(extractedPoNumber))
-            {
-                poMatch = false;
-                poEvidence = "PO number not extracted from invoice";
-            }
-            else
-            {
-                poMatch = extractedPoNumber.Equals(po.PONumber, StringComparison.OrdinalIgnoreCase);
-                poEvidence = poMatch
-                    ? $"{extractedPoNumber} matches selected PO"
-                    : $"{extractedPoNumber} does NOT match selected PO {po.PONumber}";
-            }
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = poMatch ? "Pass" : "Fail",
-                Details = "PO Number",
-                Evidence = poEvidence
-            });
-
-            // 12. Amount vs PO Balance
-            bool amountOk;
-            string balanceEvidence;
-            if (po == null || !invAmount.HasValue)
-            {
-                amountOk = po == null ? false : true;
-                balanceEvidence = po == null ? "PO balance not available" : "Invoice amount not detected";
-            }
-            else
-            {
-                var balance = po.RemainingBalance ?? po.TotalAmount ?? 0;
-                amountOk = invAmount.Value <= balance;
-                balanceEvidence = amountOk
-                    ? $"₹{invAmount.Value:N0} within PO balance (₹{balance:N0})"
-                    : $"₹{invAmount.Value:N0} exceeds PO balance (₹{balance:N0})";
-            }
-            groups.Add(new ValidationCheckGroup
-            {
-                GroupName = invoiceLabel,
-                Status = amountOk ? "Pass" : "Fail",
-                Details = "Amount vs PO Balance",
-                Evidence = balanceEvidence
-            });
-        }
-
         if (groups.Count == 0)
         {
             return BuildCheckGroups(allResults.FirstOrDefault());
         }
 
-        // Enquiry Dump validation section — read from RuleResultsJson first,
-        // fall back to ValidationDetailsJson (same source the portal uses) for consistency.
-        var enquiry = package.EnquiryDocument;
-        if (enquiry != null && !enquiry.IsDeleted)
-        {
-            var enquiryVr = allResults.FirstOrDefault(vr =>
-                vr.DocumentId == enquiry.Id ||
-                vr.DocumentType == Domain.Enums.DocumentType.EnquiryDocument);
-
-            bool builtFromRules = false;
-
-            // Primary: RuleResultsJson (structured rule results with extracted values)
-            if (enquiryVr?.RuleResultsJson != null)
-            {
-                try
-                {
-                    var rules = JsonSerializer.Deserialize<List<EnquiryRuleResult>>(
-                        enquiryVr.RuleResultsJson,
-                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                    if (rules != null && rules.Count > 0)
-                    {
-                        var orderedCodes = new[]
-                        {
-                            "EQ_STATE", "EQ_DATE", "EQ_DEALER_CODE", "EQ_DEALER_NAME",
-                            "EQ_DISTRICT", "EQ_PINCODE", "EQ_CUSTOMER_NAME",
-                            "EQ_CUSTOMER_PHONE", "EQ_TEST_RIDE"
-                        };
-
-                        foreach (var code in orderedCodes)
-                        {
-                            var rule = rules.FirstOrDefault(r =>
-                                r.RuleCode?.Equals(code, StringComparison.OrdinalIgnoreCase) == true);
-                            if (rule == null) continue;
-
-                            groups.Add(new ValidationCheckGroup
-                            {
-                                GroupName = "Enquiry Dump",
-                                Status = rule.Passed ? "Pass" : "Fail",
-                                Details = rule.Label ?? code,
-                                Evidence = rule.ExtractedValue
-                                    ?? (rule.Passed ? "Present" : rule.Message ?? "Not detected")
-                            });
-                        }
-
-                        builtFromRules = groups.Any(g => g.GroupName == "Enquiry Dump");
-                    }
-                }
-                catch { /* malformed JSON — fall through to ValidationDetailsJson */ }
-            }
-
-            // Fallback: ValidationDetailsJson → EnquiryDumpFieldPresence.MissingFields
-            // (same data source the portal's BuildEnquiryDumpChecks uses)
-            if (!builtFromRules && !string.IsNullOrWhiteSpace(enquiryVr?.ValidationDetailsJson))
-            {
-                try
-                {
-                    using var detailsDoc = JsonDocument.Parse(enquiryVr.ValidationDetailsJson);
-                    var root = detailsDoc.RootElement;
-
-                    if (root.ValueKind == JsonValueKind.Object &&
-                        root.TryGetProperty("EnquiryDumpFieldPresence", out var section) &&
-                        section.ValueKind == JsonValueKind.Object &&
-                        section.TryGetProperty("MissingFields", out var missingArray) &&
-                        missingArray.ValueKind == JsonValueKind.Array)
-                    {
-                        var missingFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        foreach (var item in missingArray.EnumerateArray())
-                        {
-                            var val = item.GetString();
-                            if (!string.IsNullOrEmpty(val)) missingFields.Add(val);
-                        }
-
-                        var fields = new[]
-                        {
-                            "State", "Date", "Dealer Code", "Dealer Name",
-                            "District", "Pincode", "Customer Name",
-                            "Customer Number", "Test Ride"
-                        };
-
-                        foreach (var field in fields)
-                        {
-                            var isMissing = missingFields.Any(mf => mf.StartsWith(field, StringComparison.OrdinalIgnoreCase));
-                            groups.Add(new ValidationCheckGroup
-                            {
-                                GroupName = "Enquiry Dump",
-                                Status = isMissing ? "Fail" : "Pass",
-                                Details = field,
-                                Evidence = isMissing ? "Missing" : "Present"
-                            });
-                        }
-
-                        builtFromRules = true;
-                    }
-                }
-                catch { /* malformed ValidationDetailsJson */ }
-            }
-
-            // Final fallback if neither JSON source produced results
-            if (!builtFromRules && !groups.Any(g => g.GroupName == "Enquiry Dump"))
-            {
-                groups.Add(new ValidationCheckGroup
-                {
-                    GroupName = "Enquiry Dump",
-                    Status = "Fail",
-                    Details = "Validation",
-                    Evidence = "No validation results found"
-                });
-            }
-        }
-
         // Photos validation section — one row per rule per photo, grouped by team
+        var enquiry = package.EnquiryDocument;
         var teams = package.Teams.Where(t => !t.IsDeleted).ToList();
         if (teams.Any())
         {
@@ -1735,6 +1625,116 @@ public class NotificationDataService : INotificationDataService
                             : $"Only {photos.Count} photo(s) — minimum 3 required"
                     });
                 }
+            }
+        }
+
+        // Enquiry Dump validation section — read from RuleResultsJson first,
+        // fall back to ValidationDetailsJson (same source the portal uses) for consistency.
+        if (enquiry != null && !enquiry.IsDeleted)
+        {
+            var enquiryVr = allResults.FirstOrDefault(vr =>
+                vr.DocumentId == enquiry.Id ||
+                vr.DocumentType == Domain.Enums.DocumentType.EnquiryDocument);
+
+            bool builtFromRules = false;
+
+            // Primary: RuleResultsJson (structured rule results with extracted values)
+            if (enquiryVr?.RuleResultsJson != null)
+            {
+                try
+                {
+                    var rules = JsonSerializer.Deserialize<List<EnquiryRuleResult>>(
+                        enquiryVr.RuleResultsJson,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                    if (rules != null && rules.Count > 0)
+                    {
+                        var orderedCodes = new[]
+                        {
+                            "EQ_STATE", "EQ_DATE", "EQ_DEALER_CODE", "EQ_DEALER_NAME",
+                            "EQ_DISTRICT", "EQ_PINCODE", "EQ_CUSTOMER_NAME",
+                            "EQ_CUSTOMER_PHONE", "EQ_TEST_RIDE"
+                        };
+
+                        foreach (var code in orderedCodes)
+                        {
+                            var rule = rules.FirstOrDefault(r =>
+                                r.RuleCode?.Equals(code, StringComparison.OrdinalIgnoreCase) == true);
+                            if (rule == null) continue;
+
+                            groups.Add(new ValidationCheckGroup
+                            {
+                                GroupName = "Enquiry Dump",
+                                Status = rule.Passed ? "Pass" : "Fail",
+                                Details = rule.Label ?? code,
+                                Evidence = rule.ExtractedValue
+                                    ?? (rule.Passed ? "Present" : rule.Message ?? "Not detected")
+                            });
+                        }
+
+                        builtFromRules = groups.Any(g => g.GroupName == "Enquiry Dump");
+                    }
+                }
+                catch { /* malformed JSON — fall through to ValidationDetailsJson */ }
+            }
+
+            // Fallback: ValidationDetailsJson → EnquiryDumpFieldPresence.MissingFields
+            // (same data source the portal's BuildEnquiryDumpChecks uses)
+            if (!builtFromRules && !string.IsNullOrWhiteSpace(enquiryVr?.ValidationDetailsJson))
+            {
+                try
+                {
+                    using var detailsDoc = JsonDocument.Parse(enquiryVr.ValidationDetailsJson);
+                    var root = detailsDoc.RootElement;
+
+                    if (root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("EnquiryDumpFieldPresence", out var section) &&
+                        section.ValueKind == JsonValueKind.Object &&
+                        section.TryGetProperty("MissingFields", out var missingArray) &&
+                        missingArray.ValueKind == JsonValueKind.Array)
+                    {
+                        var missingFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var item in missingArray.EnumerateArray())
+                        {
+                            var val = item.GetString();
+                            if (!string.IsNullOrEmpty(val)) missingFields.Add(val);
+                        }
+
+                        var fields = new[]
+                        {
+                            "State", "Date", "Dealer Code", "Dealer Name",
+                            "District", "Pincode", "Customer Name",
+                            "Customer Number", "Test Ride"
+                        };
+
+                        foreach (var field in fields)
+                        {
+                            var isMissing = missingFields.Any(mf => mf.StartsWith(field, StringComparison.OrdinalIgnoreCase));
+                            groups.Add(new ValidationCheckGroup
+                            {
+                                GroupName = "Enquiry Dump",
+                                Status = isMissing ? "Fail" : "Pass",
+                                Details = field,
+                                Evidence = isMissing ? "Missing" : "Present"
+                            });
+                        }
+
+                        builtFromRules = true;
+                    }
+                }
+                catch { /* malformed ValidationDetailsJson */ }
+            }
+
+            // Final fallback if neither JSON source produced results
+            if (!builtFromRules && !groups.Any(g => g.GroupName == "Enquiry Dump"))
+            {
+                groups.Add(new ValidationCheckGroup
+                {
+                    GroupName = "Enquiry Dump",
+                    Status = "Fail",
+                    Details = "Validation",
+                    Evidence = "No validation results found"
+                });
             }
         }
 
