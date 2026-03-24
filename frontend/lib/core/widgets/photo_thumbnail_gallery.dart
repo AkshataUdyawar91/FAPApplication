@@ -197,8 +197,8 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
 
             // Photo grid using Wrap
             Wrap(
-              spacing: 8,
-              runSpacing: 8,
+              spacing: 14,
+              runSpacing: 14,
               children: widget.photos.map((photo) {
                 return _buildThumbnail(photo);
               }).toList(),

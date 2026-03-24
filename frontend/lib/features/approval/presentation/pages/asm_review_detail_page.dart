@@ -1384,21 +1384,6 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       }
     }
 
-    // ===== TEMPORARY: multiply photos for testing (DELETE AFTER TESTING) =====
-    final originalItems = List<PhotoThumbnailItem>.from(items);
-    items.clear();
-    for (final item in originalItems) {
-      for (int i = 0; i < 33; i++) {
-        items.add(PhotoThumbnailItem(
-          documentId: item.documentId,
-          fileName: '${item.fileName}_copy$i',
-          hasError: item.hasError,
-          isPending: item.isPending,
-        ));
-      }
-    }
-    // ===== END TEMPORARY =====
-
     // Sort: failed first, then pending, then passed
     items.sort((a, b) {
       int priority(PhotoThumbnailItem item) {
