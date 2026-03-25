@@ -194,11 +194,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final submissionId = args?['submissionId']?.toString() ?? '';
           final token = args?['token']?.toString() ?? '';
           final userName = args?['userName']?.toString() ?? '';
+          final poNumber = args?['poNumber']?.toString();
 
           return ASMReviewDetailPage(
             submissionId: submissionId,
             token: token,
             userName: userName,
+            poNumber: poNumber,
           );
         },
       ),
@@ -210,11 +212,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final submissionId = args?['submissionId']?.toString() ?? '';
           final token = args?['token']?.toString() ?? '';
           final userName = args?['userName']?.toString() ?? '';
+          final poNumber = args?['poNumber']?.toString();
 
           return HQReviewDetailPage(
             submissionId: submissionId,
             token: token,
             userName: userName,
+            poNumber: poNumber,
           );
         },
       ),
