@@ -1518,6 +1518,18 @@ class _CampaignListSectionState extends State<CampaignListSection> {
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: Color(0xFF374151))),
+        if (totalCount < 3)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+              'Min 3 photos required',
+              style: TextStyle(
+                fontSize: 12,
+                color: Color(0xFFDC2626),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
         const SizedBox(height: 10),
         Wrap(
           spacing: 8,
