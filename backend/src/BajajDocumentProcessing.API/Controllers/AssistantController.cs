@@ -2768,6 +2768,7 @@ public class AssistantController : ControllerBase
         // Do NOT set state to PendingCH here — let WorkflowOrchestrator handle state transition,
         // CH assignment, Teams notification, email, and SignalR push.
         package.CurrentStep = 10;
+        package.State = Domain.Enums.PackageState.Uploaded; // Immediately visible in list; orchestrator will advance to PendingCH
         package.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
 

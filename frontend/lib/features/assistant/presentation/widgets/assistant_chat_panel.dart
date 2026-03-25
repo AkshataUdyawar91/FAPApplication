@@ -28,12 +28,14 @@ import '../../../submission/presentation/pages/agency_submission_detail_page.dar
 class AssistantChatPanel extends ConsumerStatefulWidget {
   final VoidCallback onClose;
   final VoidCallback? onNewRequest;
+  final VoidCallback? onSubmissionComplete;
   final bool isFullWidth;
 
   const AssistantChatPanel({
     super.key,
     required this.onClose,
     this.onNewRequest,
+    this.onSubmissionComplete,
     this.isFullWidth = false,
   });
 
@@ -1217,6 +1219,11 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       case 'final_review':
         return AssistantBubble(message: msg.content, isActive: isLast, child: _finalReviewCard(r, isLast));
       case 'submit_success':
+        if (isLast) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            widget.onSubmissionComplete?.call();
+          });
+        }
         return AssistantBubble(message: msg.content, isActive: isLast);
       case 'draft_saved':
         return AssistantBubble(message: msg.content, isActive: isLast);

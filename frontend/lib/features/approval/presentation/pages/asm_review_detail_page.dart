@@ -1732,6 +1732,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                 fileName: _getEnquiryFileName(),
                 validation: _enquiryValidation,
                 documentId: _getDocumentIdByType('EnquiryDocument'),
+                hideRowsAndBadge: true,
               ),
               const SizedBox(height: 24),
             ],
@@ -2602,6 +2603,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     required Map<String, dynamic> validation,
     String? documentId,
     String? blobUrl,
+    bool hideRowsAndBadge = false,
   }) {
     final resolvedDocId = (documentId != null && documentId.isNotEmpty)
         ? documentId
@@ -2615,7 +2617,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
     List<Map<String, dynamic>> allRows = [];
 
-    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+    if (!hideRowsAndBadge && validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
       try {
         final validationDetails =
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
@@ -2625,15 +2627,15 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       }
     }
 
-    final passedCount = allRows.where((r) => r['passed'] == true).length;
-    final totalCount = allRows.length;
+    final passedCount = hideRowsAndBadge ? 0 : allRows.where((r) => r['passed'] == true).length;
+    final totalCount = hideRowsAndBadge ? 0 : allRows.length;
 
     return _buildValidationCard(
       title: title,
       fileName: fileName ?? '',
       passedCount: passedCount,
       totalCount: totalCount,
-      rows: allRows,
+      rows: hideRowsAndBadge ? [] : allRows,
       documentId: resolvedDocId.isNotEmpty ? resolvedDocId : null,
       blobUrl: resolvedBlobUrl.isNotEmpty ? resolvedBlobUrl : null,
     );

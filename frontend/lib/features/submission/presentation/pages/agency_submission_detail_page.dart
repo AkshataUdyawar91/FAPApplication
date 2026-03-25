@@ -598,6 +598,7 @@ class _AgencySubmissionDetailPageState
                 fileName: _getEnquiryFileName(),
                 validation: _enquiryValidation,
                 documentId: _getDocumentIdByType('EnquiryDocument'),
+                hideRowsAndBadge: true,
               ),
               const SizedBox(height: 24),
             ],
@@ -876,8 +877,8 @@ class _AgencySubmissionDetailPageState
     required Map<String, dynamic> validation,
     String? documentId,
     String? blobUrl,
+    bool hideRowsAndBadge = false,
   }) {
-    // Resolve: prefer documentId, then validation map, then blobUrl is handled separately
     final resolvedDocId = (documentId != null && documentId.isNotEmpty)
         ? documentId
         : validation['documentId']?.toString() ?? validation['id']?.toString() ?? '';
@@ -888,7 +889,7 @@ class _AgencySubmissionDetailPageState
 
     List<Map<String, dynamic>> allRows = [];
 
-    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+    if (!hideRowsAndBadge && validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
       try {
         final validationDetails =
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
@@ -898,15 +899,15 @@ class _AgencySubmissionDetailPageState
       }
     }
 
-    final passedCount = allRows.where((r) => r['passed'] == true).length;
-    final totalCount = allRows.length;
+    final passedCount = hideRowsAndBadge ? 0 : allRows.where((r) => r['passed'] == true).length;
+    final totalCount = hideRowsAndBadge ? 0 : allRows.length;
 
     return _buildValidationCardWidget(
       title: title,
       fileName: fileName ?? '',
       passedCount: passedCount,
       totalCount: totalCount,
-      rows: allRows,
+      rows: hideRowsAndBadge ? [] : allRows,
       resolvedDocId: resolvedDocId,
       resolvedBlobUrl: resolvedBlobUrl,
     );
