@@ -145,20 +145,27 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                const Icon(Icons.photo_library,
-                    color: Color(0xFF3B82F6), size: 24),
-                const SizedBox(width: 12),
-                Text(
-                  'Team Photos (${widget.photos.length})',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.photo_library,
+                        color: Color(0xFF3B82F6), size: 24),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Team Photos (${widget.photos.length})',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                  ],
                 ),
-                const Spacer(),
                 if (errorCount > 0)
                   Container(
                     padding:
@@ -176,7 +183,6 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
                       ),
                     ),
                   ),
-                const SizedBox(width: 8),
                 if (warningCount > 0)
                   Container(
                     padding:
@@ -194,7 +200,6 @@ class _PhotoThumbnailGalleryState extends State<PhotoThumbnailGallery> {
                       ),
                     ),
                   ),
-                const SizedBox(width: 8),
                 if (passedCount > 0)
                   Container(
                     padding:

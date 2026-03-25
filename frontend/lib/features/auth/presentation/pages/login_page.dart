@@ -231,29 +231,35 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Row(
-                                    children: [
-                                      SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: Checkbox(
-                                          value: _rememberMe,
-                                          onChanged: authState.isLoading
-                                              ? null
-                                              : (value) {
-                                                  setState(() {
-                                                    _rememberMe =
-                                                        value ?? false;
-                                                  });
-                                                },
+                                  Flexible(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: Checkbox(
+                                            value: _rememberMe,
+                                            onChanged: authState.isLoading
+                                                ? null
+                                                : (value) {
+                                                    setState(() {
+                                                      _rememberMe =
+                                                          value ?? false;
+                                                    });
+                                                  },
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      const Text(
-                                        'Remember me',
-                                        style: TextStyle(fontSize: 14),
-                                      ),
-                                    ],
+                                        const SizedBox(width: 8),
+                                        const Flexible(
+                                          child: Text(
+                                            'Remember me',
+                                            style: TextStyle(fontSize: 14),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                   TextButton(
                                     onPressed: authState.isLoading
