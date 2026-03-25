@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
@@ -15,39 +16,82 @@ class AiAnalysisSection extends StatelessWidget {
     required this.submission,
   });
 
+  /// Computes overall pass percentage across all validation documents.
+  /// Reads proactiveRules from invoiceValidations, costSummaryValidation,
+  /// activityValidation, enquiryValidation, photoValidations.
+  double _computePassPercent(Map<String, dynamic> submission) {
+    int total = 0;
+    int passed = 0;
+
+    void countRules(String? json) {
+      if (json == null || json.isEmpty) return;
+      try {
+        final details = jsonDecode(json) as Map<String, dynamic>;
+        final rules = (details['proactiveRules'] as List<dynamic>?) ??
+            (details['rules'] as List<dynamic>?);
+        if (rules == null) return;
+        for (final r in rules) {
+          if (r is! Map<String, dynamic>) continue;
+          total++;
+          if ((r['Passed'] ?? r['passed']) == true) passed++;
+        }
+      } catch (_) {}
+    }
+
+    // Invoice validations
+    final invoiceValidations =
+        submission['invoiceValidations'] as List<dynamic>? ?? [];
+    for (final inv in invoiceValidations) {
+      countRules((inv as Map<String, dynamic>)['validationDetailsJson'] as String?);
+    }
+
+    // Cost summary
+    final cs = submission['costSummaryValidation'] as Map<String, dynamic>?;
+    if (cs != null) countRules(cs['validationDetailsJson'] as String?);
+
+    // Activity
+    final act = submission['activityValidation'] as Map<String, dynamic>?;
+    if (act != null) countRules(act['validationDetailsJson'] as String?);
+
+    // Enquiry
+    final enq = submission['enquiryValidation'] as Map<String, dynamic>?;
+    if (enq != null) countRules(enq['validationDetailsJson'] as String?);
+
+    // Photo validations
+    final photoValidations =
+        submission['photoValidations'] as List<dynamic>? ?? [];
+    for (final ph in photoValidations) {
+      countRules((ph as Map<String, dynamic>)['validationDetailsJson'] as String?);
+    }
+
+    if (total == 0) return 100.0; // no data → don't penalise
+    return (passed / total) * 100.0;
+  }
+
   @override
   Widget build(BuildContext context) {
     final confidenceScore = submission['confidenceScore'];
     final recommendation = submission['recommendation'];
-    final validationResult = submission['validationResult'];
 
     // Don't render if no AI data at all
     if (confidenceScore == null && recommendation == null) {
       return const SizedBox.shrink();
     }
 
-    final overallConfidence = confidenceScore?['overallConfidence'] ?? 0.0;
-    final confidencePercent =
-        ((overallConfidence is num ? overallConfidence.toDouble() : 0.0) * 100)
-            .toInt();
-
-    final recommendationType =
-        recommendation?['type']?.toString().toUpperCase() ?? 'REVIEW';
-    final evidence = recommendation?['evidence']?.toString() ?? '';
-    final allPassed =
-        validationResult?['allValidationsPassed'] == true;
-    final failureReason =
-        validationResult?['failureReason']?.toString() ?? '';
+    // Compute pass % from actual validation rules
+    final passPercent = _computePassPercent(submission);
+    final isPositive = passPercent >= 95.0;
+    final passPercentInt = passPercent.toInt();
 
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.primary.withOpacity(0.2)),
+        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.2)),
       ),
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
-        initiallyExpanded: false, // Collapsed by default
+        initiallyExpanded: false,
         tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
         childrenPadding:
             const EdgeInsets.only(left: 20, right: 20, bottom: 20),
@@ -64,17 +108,63 @@ class AiAnalysisSection extends StatelessWidget {
         children: [
           const Divider(height: 1),
           const SizedBox(height: 16),
-          _buildContent(
-            confidencePercent: confidencePercent,
-            confidenceScore: confidenceScore,
-            recommendationType: recommendationType,
-            evidence: evidence,
-            allPassed: allPassed,
-            failureReason: failureReason,
-            validationResult: validationResult,
+          _buildRecommendationCard(isPositive, passPercentInt),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: Text(
+              isPositive
+                  ? 'All key validations have passed ($passPercentInt% pass rate). The submitted documents meet the required criteria and are recommended for approval.'
+                  : 'Validation checks show a $passPercentInt% pass rate, which is below the required 95% threshold. Please review the failed validations before approving.',
+              textAlign: TextAlign.left,
+              style: TextStyle(
+                fontSize: 15,
+                color: Colors.grey[800],
+                height: 1.5,
+              ),
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildRecommendationCard(bool isPositive, int passPercent) {
+    final iconColor = isPositive ? const Color(0xFF10B981) : const Color(0xFFEF4444);
+    final textColor = isPositive ? const Color(0xFF065F46) : const Color(0xFF991B1B);
+    final icon = isPositive ? Icons.check_circle_rounded : Icons.cancel_rounded;
+    final title = isPositive ? 'Recommended for Approval' : 'Recommended for Rejection';
+
+    return Row(
+      children: [
+        Icon(icon, color: iconColor, size: 28),
+        const SizedBox(width: 12),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: textColor,
+          ),
+        ),
+        const Spacer(),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: iconColor.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: iconColor.withValues(alpha: 0.4)),
+          ),
+          child: Text(
+            '$passPercent% passed',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: iconColor,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -99,127 +189,6 @@ class AiAnalysisSection extends StatelessWidget {
           fontWeight: FontWeight.w700,
         ),
       ),
-    );
-  }
-
-  Widget _buildContent({
-    required int confidencePercent,
-    required dynamic confidenceScore,
-    required String recommendationType,
-    required String evidence,
-    required bool allPassed,
-    required String failureReason,
-    required dynamic validationResult,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Main Recommendation Card - prominent and clear
-        _buildRecommendationCard(recommendationType, confidencePercent, allPassed),
-        const SizedBox(height: 20),
-
-        // Compact validation status per document type
-        _buildCompactStatus(validationResult, allPassed, failureReason),
-      ],
-    );
-  }
-
-  /// Builds a concise natural-language summary from validation results and failureReason
-  Widget _buildCompactStatus(dynamic validationResult, bool allPassed, String failureReason) {
-    final summary = allPassed
-        ? 'All validations passed. PO, Invoice, Cost Summary, Activity and Photo documents have been verified successfully.'
-        : _buildNaturalSummary(validationResult, failureReason);
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Text(
-        summary,
-        style: TextStyle(
-          fontSize: 16,
-          color: Colors.grey[800],
-          height: 1.5,
-        ),
-      ),
-    );
-  }
-
-  String _buildNaturalSummary(dynamic validationResult, String failureReason) {
-    if (failureReason.isEmpty) {
-      return 'The submitted documents have been reviewed but could not be fully validated. Please check the remarks for details.';
-    }
-
-    final reasons = failureReason
-        .split(';')
-        .map((r) => r.trim())
-        .where((r) => r.isNotEmpty)
-        .toList();
-
-    // Identify which document areas have issues
-    final areas = <String>{};
-    for (final r in reasons) {
-      final lower = r.toLowerCase();
-      if (lower.contains('po') || lower.contains('sap')) areas.add('PO');
-      if (lower.contains('invoice') || lower.contains('gst') || lower.contains('hsn') || lower.contains('vendor')) areas.add('Invoice');
-      if (lower.contains('cost')) areas.add('Cost Summary');
-      if (lower.contains('photo') || lower.contains('image')) areas.add('Photos');
-      if (lower.contains('activity')) areas.add('Activity Summary');
-      if (lower.contains('missing required')) areas.add('required fields');
-    }
-
-    if (areas.isEmpty) {
-      return 'The submitted documents have not passed validation. Please review the remarks column for specific details.';
-    }
-
-    final areaList = areas.toList();
-    String areaText;
-    if (areaList.length == 1) {
-      areaText = areaList[0];
-    } else {
-      areaText = '${areaList.sublist(0, areaList.length - 1).join(", ")} and ${areaList.last}';
-    }
-
-    return 'The submitted documents have failed validation with ${reasons.length} issue${reasons.length > 1 ? "s" : ""} found across $areaText. Please review the remarks for details.';
-  }
-
-  /// Prominent recommendation card with clear action guidance
-  Widget _buildRecommendationCard(String type, int confidence, bool allPassed) {
-    final normalizedType = type.toLowerCase();
-    
-    Color iconColor;
-    Color textColor;
-    IconData icon;
-    String title;
-
-    if (normalizedType == 'approve') {
-      iconColor = const Color(0xFF10B981);
-      textColor = const Color(0xFF065F46);
-      icon = Icons.check_circle_rounded;
-      title = 'Recommended for Approval';
-    } else if (normalizedType == 'reject') {
-      iconColor = const Color(0xFFEF4444);
-      textColor = const Color(0xFF991B1B);
-      icon = Icons.cancel_rounded;
-      title = 'Recommended for Rejection';
-    } else {
-      iconColor = const Color(0xFFF59E0B);
-      textColor = const Color(0xFF92400E);
-      icon = Icons.visibility_rounded;
-      title = 'Manual Review Recommended';
-    }
-
-    return Row(
-      children: [
-        Icon(icon, color: iconColor, size: 28),
-        const SizedBox(width: 12),
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: textColor,
-          ),
-        ),
-      ],
     );
   }
 
