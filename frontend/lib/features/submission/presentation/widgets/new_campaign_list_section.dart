@@ -167,6 +167,39 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     _cityOptions.remove(campaignId);
   }
 
+  /// Migrates all map keys from [oldId] to [newId] when a campaign's id changes
+  /// (e.g. after server-side creation). This preserves dealer selection state,
+  /// city options, and text controllers so the UI doesn't lose user input.
+  void _migrateCampaignKeys(String oldId, String newId) {
+    if (oldId == newId) return;
+
+    // Migrate dealer-related maps
+    if (_dealerResults.containsKey(oldId)) {
+      _dealerResults[newId] = _dealerResults.remove(oldId)!;
+    }
+    if (_dealerLoading.containsKey(oldId)) {
+      _dealerLoading[newId] = _dealerLoading.remove(oldId)!;
+    }
+    if (_dealerSelected.containsKey(oldId)) {
+      _dealerSelected[newId] = _dealerSelected.remove(oldId)!;
+    }
+    if (_uniqueDealerNames.containsKey(oldId)) {
+      _uniqueDealerNames[newId] = _uniqueDealerNames.remove(oldId)!;
+    }
+    if (_cityOptions.containsKey(oldId)) {
+      _cityOptions[newId] = _cityOptions.remove(oldId)!;
+    }
+
+    // Migrate text controllers
+    final oldPrefix = '${oldId}_';
+    final keysToMigrate =
+        _controllers.keys.where((k) => k.startsWith(oldPrefix)).toList();
+    for (final key in keysToMigrate) {
+      final suffix = key.substring(oldPrefix.length);
+      _controllers['${newId}_$suffix'] = _controllers.remove(key)!;
+    }
+  }
+
   Future<void> _loadDealersForState(String campaignId) async {
     final state = widget.selectedActivationState;
     if (state == null || state.isEmpty || widget.token == null) return;
@@ -330,8 +363,13 @@ class _CampaignListSectionState extends State<CampaignListSection> {
         return;
       }
       // Persist the server-assigned id back into the campaign
+      // Migrate map keys so dealer selection state is preserved under the new id
       if (mounted) {
-        setState(() => campaign.id = campaignId!);
+        final oldId = campaign.id;
+        setState(() {
+          campaign.id = campaignId!;
+          _migrateCampaignKeys(oldId, campaignId!);
+        });
         widget.onCampaignsChanged(_campaigns);
       }
     }
