@@ -68,13 +68,16 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
   PlatformFile? _costSummaryFile;
   String? _existingCostSummaryFileName;
   bool _isUploadingCostSummary = false; // Loading state for cost summary upload
+  bool _costSummarySavedToDb = false; // true once saved to backend
   PlatformFile? _activitySummaryFile;
   String? _existingActivitySummaryFileName;
   bool _isUploadingActivitySummary =
       false; // Loading state for activity summary upload
+  bool _activitySummarySavedToDb = false; // true once saved to backend
   PlatformFile? _enquiryDocFile;
   String? _existingEnquiryDocFileName;
   bool _isUploadingEnquiryDoc = false; // Loading state for enquiry doc upload
+  bool _enquiryDocSavedToDb = false; // true once saved to backend
   List<PlatformFile> _additionalDocs = [];
 
   List<CampaignItemData> _campaigns = []; // Teams (independent of invoices)
@@ -211,6 +214,11 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
             firstCampaign['activitySummaryFileName']?.toString();
         _existingEnquiryDocFileName = data['enquiryDocFileName']?.toString();
 
+        // Mark as saved so fallback uploads are skipped in edit mode
+        if (_existingCostSummaryFileName != null) _costSummarySavedToDb = true;
+        if (_existingActivitySummaryFileName != null) _activitySummarySavedToDb = true;
+        if (_existingEnquiryDocFileName != null) _enquiryDocSavedToDb = true;
+
         // Invoices live inside campaigns[0].invoices in the API response
         // (the backend puts package-level invoices in the first campaign's
         //  Invoices list for display purposes — see GetSubmission controller).
@@ -228,6 +236,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
               totalAmount: inv['totalAmount']?.toString() ?? '',
               gstNumber: inv['gstNumber']?.toString() ?? '',
               existingFileName: inv['fileName']?.toString(),
+              savedToDb: true, // already in DB
             );
           }).toList();
         }
@@ -432,6 +441,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
 
       if (response.statusCode == 200) {
         debugPrint('Cost summary uploaded successfully');
+        setState(() => _costSummarySavedToDb = true);
         // Visual feedback is provided by the tile state change (Uploading... → Uploaded)
         // No snackbar needed
       }
@@ -481,6 +491,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
 
       if (response.statusCode == 200) {
         debugPrint('Activity summary uploaded successfully');
+        setState(() => _activitySummarySavedToDb = true);
         // Visual feedback is provided by the tile state change (Uploading... → Uploaded)
         // No snackbar needed
       }
@@ -517,6 +528,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
 
       if (response.statusCode == 200) {
         debugPrint('Enquiry doc uploaded successfully');
+        setState(() => _enquiryDocSavedToDb = true);
       }
     } catch (e) {
       debugPrint('Error uploading enquiry doc: $e');
@@ -566,6 +578,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
 
         if (documentId != null) {
           debugPrint('Invoice saved to database: $documentId');
+          setState(() => invoice.savedToDb = true);
         }
 
         if (extractedData != null && extractedData is Map) {
@@ -959,11 +972,25 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
 
       _showSuccess('Uploading documents...');
 
-      // Invoices are already uploaded via /documents/extract during autofill
-      // No need to upload them again here
-
-      // Cost summary is already uploaded immediately when selected
-      // No need to upload it again here
+      // Fallback: upload invoices that weren't saved to DB yet (packageId was null at pick time)
+      for (final inv in _invoices) {
+        if (inv.file?.bytes != null && !inv.savedToDb) {
+          try {
+            final extractResp = await _dio.post(
+              '/documents/extract',
+              data: FormData.fromMap({
+                'file': MultipartFile.fromBytes(inv.file!.bytes!, filename: inv.file!.name),
+                'documentType': 'Invoice',
+                'packageId': packageId,
+              }),
+              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+            );
+            debugPrint('Invoice fallback upload: ${extractResp.statusCode}');
+          } catch (e) {
+            debugPrint('Invoice fallback upload failed: $e');
+          }
+        }
+      }
 
       // Upload teams (independent of invoices)
       for (final campaign in _campaigns) {
@@ -1024,14 +1051,67 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
         }
       }
 
-      // Cost summary and activity summary are already uploaded immediately when selected
-      // No need to upload them again here
+      // Fallback uploads — in case immediate upload was skipped (e.g. packageId was null at pick time)
+      if (_costSummaryFile?.bytes != null && !_costSummarySavedToDb) {
+        try {
+          // Get first valid campaignId (same logic as _uploadCostSummaryImmediately)
+          String costCampaignId = '00000000-0000-0000-0000-000000000000';
+          for (final campaign in _campaigns) {
+            if (campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_')) {
+              costCampaignId = campaign.id;
+              break;
+            }
+          }
+          await _dio.post(
+            '/hierarchical/$packageId/campaigns/$costCampaignId/cost-summary',
+            data: FormData.fromMap({
+              'file': MultipartFile.fromBytes(_costSummaryFile!.bytes!, filename: _costSummaryFile!.name),
+            }),
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+          debugPrint('Cost summary fallback upload succeeded');
+        } catch (e) {
+          debugPrint('Cost summary fallback upload failed: $e');
+        }
+      }
 
-      // Activity summary is already uploaded immediately when selected
-      // No need to upload it again here
+      if (_activitySummaryFile?.bytes != null && !_activitySummarySavedToDb) {
+        try {
+          // Get first valid campaignId (same logic as _uploadActivitySummaryImmediately)
+          String actCampaignId = '00000000-0000-0000-0000-000000000000';
+          for (final campaign in _campaigns) {
+            if (campaign.id.isNotEmpty && !campaign.id.startsWith('campaign_')) {
+              actCampaignId = campaign.id;
+              break;
+            }
+          }
+          await _dio.post(
+            '/hierarchical/$packageId/campaigns/$actCampaignId/activity-summary',
+            data: FormData.fromMap({
+              'file': MultipartFile.fromBytes(_activitySummaryFile!.bytes!, filename: _activitySummaryFile!.name),
+            }),
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+          debugPrint('Activity summary fallback upload succeeded');
+        } catch (e) {
+          debugPrint('Activity summary fallback upload failed: $e');
+        }
+      }
 
-      // Enquiry document is already uploaded immediately when selected
-      // No need to upload it again here
+      if (_enquiryDocFile?.bytes != null && !_enquiryDocSavedToDb) {
+        try {
+          await _dio.post(
+            '/hierarchical/$packageId/enquiry-doc',
+            data: FormData.fromMap({
+              'file': MultipartFile.fromBytes(_enquiryDocFile!.bytes!, filename: _enquiryDocFile!.name),
+            }),
+            options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+          );
+          debugPrint('Enquiry doc fallback upload succeeded');
+        } catch (e) {
+          debugPrint('Enquiry doc fallback upload failed: $e');
+        }
+      }
 
       // Upload additional documents
       for (final doc in _additionalDocs) {
@@ -1062,7 +1142,14 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
 
       if (mounted) _navigateToDashboard();
     } catch (e) {
-      _showError('Failed to submit: $e');
+      String msg = 'Failed to submit: $e';
+      if (e is DioException && e.response?.data != null) {
+        final data = e.response!.data;
+        if (data is Map) {
+          msg = data['error']?.toString() ?? data['message']?.toString() ?? msg;
+        }
+      }
+      _showError(msg);
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }
@@ -1094,12 +1181,16 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(
-          icon: Icons.dashboard,
-          label: 'Dashboard',
+          icon: Icons.smart_toy,
+          label: 'Assistant',
           onTap: _navigateToDashboard),
       NavItem(
-          icon: Icons.upload_file,
-          label: 'Upload',
+          icon: Icons.list_alt,
+          label: 'My Requests',
+          onTap: _navigateToDashboard),
+      NavItem(
+          icon: Icons.add,
+          label: 'New Claim',
           isActive: true,
           onTap: () {}),
       NavItem(
@@ -2665,6 +2756,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
                 if (_currentPackageId != null && f?.bytes != null) {
                   _uploadEnquiryDocImmediately(f!);
                 }
+                // If packageId not yet available, file is held in memory and uploaded on submit
               });
             },
             onRemove: () => setState(() => _enquiryDocFile = null),

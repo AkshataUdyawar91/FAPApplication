@@ -17,7 +17,6 @@ import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/pagination_bar.dart';
-import '../../../../core/network/dio_client.dart';
 
 class AgencyDashboardPage extends ConsumerStatefulWidget {
   final String token;
@@ -45,6 +44,10 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   bool _isChatOpen = false;
   bool _isSidebarCollapsed = true;
   bool _isChatbotOpen = true;
+  // 'chatbot' = show assistant, 'requests' = show requests table
+  String _mainView = 'chatbot';
+  // when true, requests view shows only pending claims (no header/stats)
+  bool _pendingClaimsMode = false;
 
   // Pagination state
   int _currentPage = 1;
@@ -259,7 +262,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     };
   }
 
-  String _calculateTotalAmount() => '6,60,000';
 
   // ─── BUILD ───────────────────────────────────────────────────────────
   @override
@@ -280,8 +282,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                   iconTheme: const IconThemeData(color: Colors.white),
                   actions: [
                     IconButton(
-                        icon:
-                            const Icon(Icons.add_comment, color: Colors.white),
+                        icon: const Icon(Icons.add_comment, color: Colors.white),
                         onPressed: _navigateToChatbot),
                   ],
                 )
@@ -310,18 +311,24 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                         onToggleCollapse: () => setState(
                             () => _isSidebarCollapsed = !_isSidebarCollapsed),
                       ),
+                    // Main content area — chatbot or requests table
                     Expanded(
-                      child: Column(
-                        children: [
-                          if (!isMobile) _buildHeader(device),
-                          Expanded(
-                            child: _isLoading
-                                ? const Center(
-                                    child: CircularProgressIndicator())
-                                : _buildContent(device),
-                          ),
-                        ],
-                      ),
+                      child: _mainView == 'chatbot'
+                          ? AssistantChatPanel(
+                              onClose: () => setState(() => _mainView = 'requests'),
+                              onNewRequest: _navigateToUpload,
+                              isFullWidth: true,
+                            )
+                          : Column(
+                              children: [
+                                if (!isMobile && !_pendingClaimsMode) _buildHeader(device),
+                                Expanded(
+                                  child: _isLoading
+                                      ? const Center(child: CircularProgressIndicator())
+                                      : _buildContent(device),
+                                ),
+                              ],
+                            ),
                     ),
                     if (_isChatOpen && !isMobile)
                       ChatSidePanel(
@@ -329,10 +336,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                         userName: widget.userName,
                         deviceType: device,
                         onClose: () => setState(() => _isChatOpen = false),
-                      ),
-                    if (_isChatbotOpen && !isMobile)
-                      AssistantChatPanel(
-                        onClose: () => setState(() => _isChatbotOpen = false),
                       ),
                   ],
                 ),
@@ -354,29 +357,14 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                     ),
                   ),
                 )
-              : (_isChatOpen || _isChatbotOpen)
-                  ? null
-                  : FloatingActionButton(
-                      onPressed: _navigateToChatbot,
-                      backgroundColor: AppColors.primary,
-                      tooltip: 'Open Assistant',
-                      child: const Icon(Icons.smart_toy, color: Colors.white),
-                    ),
+              : null,
           floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         );
       },
     );
   }
 
-  // void _navigateToUpload() {
-  //   context.pushNamed('agency-upload', extra: {
-  //     'token': widget.token,
-  //     'userName': widget.userName,
-  //   });
-  // }
-
   void _navigateToUpload() async {
-    // Show loading indicator
     if (!mounted) return;
 
     // Create draft submission first
@@ -384,7 +372,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       final dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
       final response = await dio.post(
         '/submissions/draft',
-        data: {}, // Empty body - will use authenticated user's agency
+        data: {},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
 
@@ -392,7 +380,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         final submissionId = response.data['submissionId'];
         debugPrint('Draft submission created: $submissionId');
 
-        // Navigate to upload page with submissionId
         context.pushNamed('agency-upload', extra: {
           'token': widget.token,
           'userName': widget.userName,
@@ -401,7 +388,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       }
     } catch (e) {
       debugPrint('Error creating draft submission: $e');
-      // Show error message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -424,9 +410,20 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(
-          icon: Icons.dashboard, label: 'Home', isActive: true, onTap: () {}),
+          icon: Icons.smart_toy,
+          label: 'Assistant',
+          isActive: _mainView == 'chatbot',
+          onTap: () => setState(() => _mainView = 'chatbot')),
       NavItem(
-          icon: Icons.upload_file,
+          icon: Icons.list_alt,
+          label: 'My Requests',
+          isActive: _mainView == 'requests',
+          onTap: () => setState(() {
+            _mainView = 'requests';
+            _pendingClaimsMode = false;
+          })),
+      NavItem(
+          icon: Icons.add,
           label: 'New Claim',
           onTap: _navigateToUpload),
       NavItem(
@@ -474,6 +471,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   // ─── HEADER (tablet/desktop) ──────────────────────────────────────────
   Widget _buildHeader(DeviceType device) {
     return Container(
+      width: double.infinity,
       padding: EdgeInsets.symmetric(
         horizontal: device == DeviceType.desktop ? 24 : 16,
         vertical: 16,
@@ -482,25 +480,13 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         color: AppColors.cardBackground,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('My Requests', style: AppTextStyles.h2),
-                const SizedBox(height: 4),
-                Text('View and track all your reimbursement requests',
-                    style: AppTextStyles.bodySmall),
-              ],
-            ),
-          ),
-          // Toggle chatbot panel button
-          ElevatedButton.icon(
-            onPressed: _navigateToUpload,
-            icon: const Icon(Icons.add, size: 20),
-            label: const Text('New Request'),
-          ),
+          Text('My Requests', style: AppTextStyles.h2),
+          const SizedBox(height: 4),
+          Text('View and track all your reimbursement requests',
+              style: AppTextStyles.bodySmall),
         ],
       ),
     );
@@ -510,6 +496,59 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   Widget _buildContent(DeviceType device) {
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
         mobile: 12, tablet: 16, desktop: 24);
+
+    // Pending claims mode: no stats, pre-filtered to pending, with a simple header
+    if (_pendingClaimsMode) {
+      // Force filter to pending states
+      final pendingStates = {'uploaded', 'extracting', 'pending_with_asm', 'pending_with_ra'};
+      if (!pendingStates.contains(_statusFilter)) {
+        // reset to 'all' so _filteredRequests shows everything, then we filter below
+      }
+      final pendingRequests = _requests.where((req) {
+        final state = req['state']?.toString().toLowerCase() ?? '';
+        return [
+          'uploaded', 'draft', 'extracting', 'validating', 'validated',
+          'scoring', 'recommending', 'pendingapproval', 'pendingchapproval',
+          'pendingch', 'asmapproved', 'pendinghqapproval', 'pendingra',
+        ].contains(state);
+      }).toList();
+
+      return RefreshIndicator(
+        onRefresh: () => _loadRequests(page: 1),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.all(hPad),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 8),
+              Text('Pending Claims', style: AppTextStyles.h2),
+              const SizedBox(height: 4),
+              Text('Your claims currently under review',
+                  style: AppTextStyles.bodySmall),
+              const SizedBox(height: 16),
+              if (pendingRequests.isEmpty)
+                _buildEmptyState()
+              else
+                Column(
+                  children: [
+                    _buildTable(pendingRequests),
+                    PaginationBar(
+                      currentPage: _currentPage,
+                      totalPages: _totalPages,
+                      totalItems: pendingRequests.length,
+                      pageSize: _pageSize,
+                      onPageChanged: (page) => _loadRequests(page: page),
+                    ),
+                  ],
+                ),
+              const SizedBox(height: 80),
+            ],
+          ),
+        ),
+      );
+    }
+
     return RefreshIndicator(
       onRefresh: () => _loadRequests(page: 1),
       child: SingleChildScrollView(
@@ -1159,33 +1198,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     );
   }
 
-  String _formatAmount(double amount) {
-    if (amount >= 100000) return '${(amount / 100000).toStringAsFixed(2)} L';
-    if (amount >= 1000) return '${(amount / 1000).toStringAsFixed(1)}K';
-    return amount.toStringAsFixed(0);
-  }
-
-  String _getStatusLabel(String status) {
-    switch (status) {
-      case 'approved':
-        return 'Approved';
-      case 'rejected':
-        return 'Rejected';
-      case 'rejected_by_asm':
-        return 'Rejected by CH';
-      case 'rejected_by_hq':
-        return 'Rejected by HQ/RA';
-      case 'pending_asm':
-        return 'Pending CH Approval';
-      case 'pending_hq':
-        return 'Pending HQ/RA Approval';
-      case 'under_review':
-        return 'Under Review';
-      default:
-        return 'Pending';
-    }
-  }
-
   String _formatDate(dynamic date) {
     if (date == null) return 'N/A';
     try {
@@ -1199,7 +1211,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase();
 
-    // Map backend states to UI states (simplified flow)
     if (['uploaded', 'extracting', 'validating'].contains(state))
       return 'pending';
     if (['validated', 'recommending'].contains(state)) return 'pending';
@@ -1217,246 +1228,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     if (state == 'processingfailed') return 'processing_failed';
 
     return 'pending';
-  }
-
-  void _showSubmissionDetails(Map<String, dynamic> request) {
-    final fapNumber =
-        'FAP-${request['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
-    final status = _normalizeStatus(request['state']?.toString() ?? 'pending');
-    final poNumber =
-        request['poNumber']?.toString() ?? request['poNo']?.toString() ?? 'N/A';
-    final invoiceNumber = request['invoiceNumber']?.toString() ??
-        request['invoiceNo']?.toString() ??
-        'N/A';
-    final poAmount = request['poAmount'];
-    final invoiceAmount = request['invoiceAmount'];
-    final asmReviewNotes = request['asmReviewNotes'];
-    final hqReviewNotes = request['hqReviewNotes'];
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Submission Details'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildDetailRow('FAP Number', fapNumber),
-              _buildDetailRow('Status', _getStatusLabel(status)),
-              _buildDetailRow(
-                  'Submitted Date', _formatDate(request['createdAt'])),
-              _buildDetailRow(
-                  'Last Updated', _formatDate(request['updatedAt'])),
-              _buildDetailRow('PO Number', poNumber),
-              _buildDetailRow('Invoice Number', invoiceNumber),
-              if (poAmount != null)
-                _buildDetailRow('PO Amount',
-                    '₹${_formatAmount(double.parse(poAmount.toString()))}'),
-              if (invoiceAmount != null)
-                _buildDetailRow('Invoice Amount',
-                    '₹${_formatAmount(double.parse(invoiceAmount.toString()))}'),
-              _buildDetailRow(
-                  'Documents', '${request['documentCount'] ?? 0} files'),
-
-              // Show CH rejection notes if rejected by CH
-              if (status == 'rejected_by_asm' &&
-                  asmReviewNotes != null &&
-                  asmReviewNotes.toString().isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFEF4444)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.cancel,
-                              color: Color(0xFFDC2626), size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Rejected by CH',
-                            style: AppTextStyles.bodyMedium.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: const Color(0xFFB91C1C),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Reason:',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF991B1B),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        asmReviewNotes.toString(),
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: const Color(0xFF7F1D1D),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-
-              // Show HQ/RA rejection notes if rejected by HQ/RA
-              if (status == 'rejected_by_hq' &&
-                  hqReviewNotes != null &&
-                  hqReviewNotes.toString().isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFEF4444)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.cancel,
-                              color: Color(0xFFDC2626), size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Rejected by HQ/RA',
-                            style: AppTextStyles.bodyMedium.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: const Color(0xFFB91C1C),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Reason:',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF991B1B),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        hqReviewNotes.toString(),
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: const Color(0xFF7F1D1D),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          // Show Resubmit button if rejected by CH
-          if (status == 'rejected_by_asm')
-            ElevatedButton.icon(
-              onPressed: () {
-                Navigator.pop(context);
-                _resubmitPackage(request['id']);
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Resubmit for Review'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _resubmitPackage(dynamic packageId) async {
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Resubmit Package'),
-        content: const Text(
-          'This will resubmit the package for ASM review. The AI will reprocess all documents. Continue?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-            ),
-            child: const Text('Resubmit'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    try {
-      final response = await _dio.patch(
-        '/submissions/$packageId/resubmit',
-        options: Options(
-          headers: {'Authorization': 'Bearer ${widget.token}'},
-        ),
-      );
-
-      if (response.statusCode == 200 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'Package resubmitted successfully! AI processing started.'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        // Reload requests
-        await _loadRequests();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to resubmit package: ${e.toString()}'),
-            backgroundColor: AppColors.rejectedText,
-          ),
-        );
-      }
-    }
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-              width: 130,
-              child: Text(label,
-                  style: AppTextStyles.bodySmall
-                      .copyWith(fontWeight: FontWeight.w600))),
-          Expanded(child: Text(value, style: AppTextStyles.bodyMedium)),
-        ],
-      ),
-    );
   }
 }
 

@@ -28,15 +28,20 @@ class WorkflowActionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      elevation: 1,
+      elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        side: const BorderSide(color: Color(0xFFDBEAFE)),
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
-        child: Padding(
+        child: Container(
+          decoration: BoxDecoration(
+            border: const Border(left: BorderSide(color: Color(0xFF003087), width: 4)),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
@@ -61,9 +66,9 @@ class WorkflowActionCard extends StatelessWidget {
                     Text(
                       card.title,
                       style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black87,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF003087),
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -77,9 +82,10 @@ class WorkflowActionCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right, color: Colors.grey.shade400),
+              const Icon(Icons.chevron_right, color: Color(0xFF003087)),
             ],
           ),
+        ),
         ),
       ),
     );

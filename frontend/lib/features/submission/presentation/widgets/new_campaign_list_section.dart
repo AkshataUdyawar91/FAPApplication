@@ -25,6 +25,7 @@ class InvoiceItemData {
   ExtractionStatus extractionStatus;
   String? extractionError;
   String? existingFileName;
+  bool savedToDb; // true once the invoice has been persisted to the backend
 
   // Controllers so programmatic updates (extraction) reflect in the UI
   late final TextEditingController invoiceNumberController;
@@ -43,6 +44,7 @@ class InvoiceItemData {
     this.extractionStatus = ExtractionStatus.none,
     this.extractionError,
     this.existingFileName,
+    this.savedToDb = false,
   }) {
     invoiceNumberController = TextEditingController(text: invoiceNumber);
     invoiceDateController = TextEditingController(text: invoiceDate);
