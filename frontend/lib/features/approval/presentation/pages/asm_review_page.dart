@@ -70,8 +70,9 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
         state == 'asmrejected' ||
         state == 'chrejected' ||
         state == 'rejectedbych') return 'rejected';
-    if (state == 'rejectedbyhq' || state == 'rejectedbyra' || state == 'rarejected')
-      return 'rejected-by-ra';
+    if (state == 'rejectedbyhq' ||
+        state == 'rejectedbyra' ||
+        state == 'rarejected') return 'rejected-by-ra';
     if (state == 'validationfailed' || state == 'reuploadrequested')
       return 'rejected';
     if (state == 'uploaded') return 'uploaded';
@@ -713,7 +714,8 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
 
   Widget _buildMobileDocumentCard(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber = doc['submissionNumber']?.toString() ?? 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
+    final fapNumber = doc['submissionNumber']?.toString() ??
+        'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
     final invoiceAmount = doc['invoiceAmount'];
@@ -728,7 +730,8 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
           side: const BorderSide(color: AppColors.border)),
       margin: const EdgeInsets.only(bottom: 12),
       child: InkWell(
-        onTap: () => _navigateToDetail(doc['id']),
+        onTap: () =>
+            _navigateToDetail(doc['id'], poNumber: doc['poNumber']?.toString()),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -754,7 +757,8 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: () => _navigateToDetail(doc['id']),
+                      onPressed: () => _navigateToDetail(doc['id'],
+                          poNumber: doc['poNumber']?.toString()),
                       icon: const Icon(Icons.visibility_outlined, size: 18),
                       label: const Text('View Details'),
                       style: ElevatedButton.styleFrom(
@@ -788,13 +792,14 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
     );
   }
 
-  void _navigateToDetail(dynamic id) async {
+  void _navigateToDetail(dynamic id, {String? poNumber}) async {
     final result = await context.pushNamed(
       'asm-review-detail',
       extra: {
         'submissionId': id,
         'token': widget.token,
         'userName': widget.userName,
+        'poNumber': poNumber,
       },
     );
     if (result == true || result == null) _loadDocuments();
@@ -881,7 +886,8 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
 
   DataRow _buildDocumentDataRow(Map<String, dynamic> doc) {
     final status = _normalizeStatus(doc['state']?.toString() ?? '');
-    final fapNumber = doc['submissionNumber']?.toString() ?? 'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
+    final fapNumber = doc['submissionNumber']?.toString() ??
+        'FAP-${doc['id']?.toString().substring(0, 8).toUpperCase() ?? 'UNKNOWN'}';
     final poNumber = doc['poNumber']?.toString() ?? '-';
     final invoiceNumber = doc['invoiceNumber']?.toString() ?? '-';
     final invoiceAmount = doc['invoiceAmount'];
@@ -907,7 +913,8 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
               IconButton(
                 icon: const Icon(Icons.visibility_outlined, size: 20),
                 color: AppColors.primary,
-                onPressed: () => _navigateToDetail(doc['id']),
+                onPressed: () => _navigateToDetail(doc['id'],
+                    poNumber: doc['poNumber']?.toString()),
                 tooltip: 'View Details',
               ),
             ],

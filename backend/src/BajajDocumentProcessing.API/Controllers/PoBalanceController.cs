@@ -12,7 +12,7 @@ namespace BajajDocumentProcessing.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/po-balance")]
-[Authorize(Roles = "ASM,HQ")]
+[Authorize(Roles = "ASM,HQ,RA")]
 public class PoBalanceController : ControllerBase
 {
     private readonly IPoBalanceService _poBalanceService;
