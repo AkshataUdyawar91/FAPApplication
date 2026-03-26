@@ -594,160 +594,325 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       ),
       child: Padding(
         padding: const EdgeInsets.all(20),
-        child: Column(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isMobile = constraints.maxWidth < 500;
+
+            if (isMobile) {
+              return _buildMobileHeader(
+                invoiceNumber: invoiceNumber,
+                agencyName: agencyName,
+                reqNumber: reqNumber,
+                submittedDate: submittedDate,
+              );
+            }
+
+            return _buildDesktopHeader(
+              invoiceNumber: invoiceNumber,
+              agencyName: agencyName,
+              reqNumber: reqNumber,
+              submittedDate: submittedDate,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileHeader({
+    required String invoiceNumber,
+    required String agencyName,
+    required String reqNumber,
+    required dynamic submittedDate,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Back button + title
+        Row(
+          children: [
+            IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back),
+              tooltip: 'Back to review list',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                invoiceNumber.isNotEmpty && agencyName.isNotEmpty
+                    ? '$invoiceNumber - $agencyName'
+                    : invoiceNumber.isNotEmpty
+                        ? invoiceNumber
+                        : agencyName.isNotEmpty
+                            ? agencyName
+                            : 'Submission Details',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        // Metadata
+        Padding(
+          padding: const EdgeInsets.only(left: 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                reqNumber,
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 2),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.calendar_today, size: 12, color: Colors.grey[600]),
+                  const SizedBox(width: 4),
+                  Text(
+                    _formatDisplayDate(submittedDate),
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // PO Balance — full width
+        _buildPoBalanceSection(),
+        // Action buttons
+        if (_isSubmissionActionable()) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              OutlinedButton(
+                onPressed: _isProcessing ? null : _showRejectDialog,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFEF4444),
+                  side: const BorderSide(color: Color(0xFFEF4444)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                ),
+                child: const Text('Reject'),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _isProcessing ? null : _approveSubmission,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                  ),
+                  child: _isProcessing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'Approve Request',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 12),
+          const Text(
+            'Comments (Optional)',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _commentsController,
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: 'Add your review comments here...',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              filled: true,
+              fillColor: Colors.grey[50],
+              contentPadding: const EdgeInsets.all(12),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildDesktopHeader({
+    required String invoiceNumber,
+    required String agencyName,
+    required String reqNumber,
+    required dynamic submittedDate,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Left column: back button + title + action buttons
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            // Left column: back button + title + action buttons
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Back button and title row
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Back button and title row
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          IconButton(
-                            onPressed: () => Navigator.pop(context),
-                            icon: const Icon(Icons.arrow_back),
-                            tooltip: 'Back to review list',
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: 'Back to review list',
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              invoiceNumber.isNotEmpty &&
+                                      agencyName.isNotEmpty
+                                  ? '$invoiceNumber - $agencyName'
+                                  : invoiceNumber.isNotEmpty
+                                      ? invoiceNumber
+                                      : agencyName.isNotEmpty
+                                          ? agencyName
+                                          : 'Submission Details',
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 16,
+                              runSpacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 Text(
-                                  invoiceNumber.isNotEmpty &&
-                                          agencyName.isNotEmpty
-                                      ? '$invoiceNumber - $agencyName'
-                                      : invoiceNumber.isNotEmpty
-                                          ? invoiceNumber
-                                          : agencyName.isNotEmpty
-                                              ? agencyName
-                                              : 'Submission Details',
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
+                                  reqNumber,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[600],
                                   ),
                                 ),
-                                const SizedBox(height: 4),
-                                Wrap(
-                                  spacing: 16,
-                                  runSpacing: 4,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
+                                    Icon(Icons.calendar_today,
+                                        size: 14, color: Colors.grey[600]),
+                                    const SizedBox(width: 4),
                                     Text(
-                                      reqNumber,
+                                      _formatDisplayDate(submittedDate),
                                       style: TextStyle(
                                         fontSize: 14,
                                         color: Colors.grey[600],
                                       ),
                                     ),
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(Icons.calendar_today,
-                                            size: 14, color: Colors.grey[600]),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          _formatDisplayDate(submittedDate),
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            color: Colors.grey[600],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
                                   ],
                                 ),
                               ],
                             ),
-                          ),
-                        ],
-                      ),
-                      // Action buttons — only for actionable states
-                      if (_isSubmissionActionable()) ...[
-                        const SizedBox(height: 20),
-                        Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
-                          children: [
-                            OutlinedButton(
-                              onPressed:
-                                  _isProcessing ? null : _showRejectDialog,
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: const Color(0xFFEF4444),
-                                side:
-                                    const BorderSide(color: Color(0xFFEF4444)),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 20, vertical: 12),
-                              ),
-                              child: const Text('Reject'),
-                            ),
-                            ElevatedButton(
-                              onPressed:
-                                  _isProcessing ? null : _approveSubmission,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF10B981),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 20, vertical: 12),
-                              ),
-                              child: _isProcessing
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Text('Approve Request'),
-                            ),
                           ],
                         ),
-                      ],
+                      ),
                     ],
                   ),
-                ),
-                const SizedBox(width: 24),
-                // Right column: PO Balance
-                _buildPoBalanceSection(),
-              ],
+                  // Action buttons — only for actionable states
+                  if (_isSubmissionActionable()) ...[
+                    const SizedBox(height: 20),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        OutlinedButton(
+                          onPressed:
+                              _isProcessing ? null : _showRejectDialog,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFEF4444),
+                            side:
+                                const BorderSide(color: Color(0xFFEF4444)),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 12),
+                          ),
+                          child: const Text('Reject'),
+                        ),
+                        ElevatedButton(
+                          onPressed:
+                              _isProcessing ? null : _approveSubmission,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF10B981),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 12),
+                          ),
+                          child: _isProcessing
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text('Approve Request'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
             ),
-            // Comments — full width below both columns
-            if (_isSubmissionActionable()) ...[
-              const SizedBox(height: 20),
-              const Divider(),
-              const SizedBox(height: 16),
-              const Text(
-                'Comments (Optional)',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _commentsController,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  hintText: 'Add your review comments here...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  filled: true,
-                  fillColor: Colors.grey[50],
-                  contentPadding: const EdgeInsets.all(12),
-                ),
-              ),
-            ],
+            const SizedBox(width: 24),
+            // Right column: PO Balance
+            _buildPoBalanceSection(),
           ],
         ),
-      ),
+        // Comments — full width below both columns
+        if (_isSubmissionActionable()) ...[
+          const SizedBox(height: 20),
+          const Divider(),
+          const SizedBox(height: 16),
+          const Text(
+            'Comments (Optional)',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _commentsController,
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: 'Add your review comments here...',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              filled: true,
+              fillColor: Colors.grey[50],
+              contentPadding: const EdgeInsets.all(12),
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -2301,25 +2466,27 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               color: Color.fromARGB(255, 240, 237, 237),
               borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title,
-                          style: AppTextStyles.bodyMedium
-                              .copyWith(fontWeight: FontWeight.w600)),
-                      if (fileName.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(fileName,
-                            style: AppTextStyles.bodySmall
-                                .copyWith(color: AppColors.textSecondary)),
-                      ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isMobile = constraints.maxWidth < 400;
+
+                final titleWidget = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: AppTextStyles.bodyMedium
+                            .copyWith(fontWeight: FontWeight.w600)),
+                    if (fileName.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(fileName,
+                          style: AppTextStyles.bodySmall
+                              .copyWith(color: AppColors.textSecondary),
+                          overflow: TextOverflow.ellipsis),
                     ],
-                  ),
-                ),
-                Row(
+                  ],
+                );
+
+                final actionsWidget = Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (totalCount > 0)
@@ -2387,8 +2554,26 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                       ),
                     ],
                   ],
-                ),
-              ],
+                );
+
+                if (isMobile) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      titleWidget,
+                      const SizedBox(height: 8),
+                      actionsWidget,
+                    ],
+                  );
+                }
+
+                return Row(
+                  children: [
+                    Expanded(child: titleWidget),
+                    actionsWidget,
+                  ],
+                );
+              },
             ),
           ),
           // Table
@@ -2627,6 +2812,11 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       }
     }
 
+    // For Cost Summary, show only the 8 key validation rows
+    if (!hideRowsAndBadge && title.toLowerCase().contains('cost summary')) {
+      allRows = _filterCostSummaryRows(allRows);
+    }
+
     final passedCount = hideRowsAndBadge ? 0 : allRows.where((r) => r['passed'] == true).length;
     final totalCount = hideRowsAndBadge ? 0 : allRows.length;
 
@@ -2639,5 +2829,44 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       documentId: resolvedDocId.isNotEmpty ? resolvedDocId : null,
       blobUrl: resolvedBlobUrl.isNotEmpty ? resolvedBlobUrl : null,
     );
+  }
+
+  /// Filters cost summary validation rows to only the 8 key checks
+  /// and renames labels to match the required display names.
+  List<Map<String, dynamic>> _filterCostSummaryRows(
+      List<Map<String, dynamic>> rows) {
+    const labelMapping = {
+      'place of supply': 'State/Place of Supply',
+      'state/place of supply': 'State/Place of Supply',
+      'element-wise cost': 'Element wise Cost',
+      'element wise cost': 'Element wise Cost',
+      'no. of days': 'No of Days',
+      'no of days': 'No of Days',
+      'element-wise quantity': 'Element wise Quantity',
+      'element wise quantity': 'Element wise Quantity',
+      'total cost validation': 'Total Cost',
+      'total cost': 'Total Cost',
+      'element costs validation': 'Element Cost limit as per State Rate',
+      'element cost vs rates': 'Element Cost limit as per State Rate',
+      'fixed costs validation': 'Fixed Cost Limit as per State Rate',
+      'variable costs validation': 'Variable cost limit as per State Rate',
+    };
+
+    final result = <Map<String, dynamic>>[];
+    final seenDisplayLabels = <String>{};
+
+    for (final row in rows) {
+      final label = (row['label'] as String? ?? '').toLowerCase();
+      final displayLabel = labelMapping[label];
+      if (displayLabel != null && !seenDisplayLabels.contains(displayLabel)) {
+        seenDisplayLabels.add(displayLabel);
+        result.add({
+          'label': displayLabel,
+          'passed': row['passed'],
+          'message': row['message'],
+        });
+      }
+    }
+    return result;
   }
 }

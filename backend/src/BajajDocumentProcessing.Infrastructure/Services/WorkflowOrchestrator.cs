@@ -514,12 +514,17 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                             {
                                 try
                                 {
-                                    var metadata = await _documentAgent.ExtractPhotoMetadataAsync(photo.BlobUrl, cancellationToken);
-                                    // Store metadata in Caption field as JSON for now
-                                    if (string.IsNullOrEmpty(photo.Caption))
+                                    // Skip if already extracted during chatbot flow
+                                    if (!string.IsNullOrEmpty(photo.Caption) || 
+                                        !string.IsNullOrEmpty(photo.ExtractedMetadataJson) ||
+                                        photo.BlueTshirtPresent.HasValue)
                                     {
-                                        photo.Caption = System.Text.Json.JsonSerializer.Serialize(metadata);
+                                        _logger.LogInformation("Photo {FileName} already extracted (chatbot flow), skipping", photo.FileName);
+                                        return;
                                     }
+
+                                    var metadata = await _documentAgent.ExtractPhotoMetadataAsync(photo.BlobUrl, cancellationToken);
+                                    photo.Caption = System.Text.Json.JsonSerializer.Serialize(metadata);
                                     photo.UpdatedAt = DateTime.UtcNow;
                                     _logger.LogInformation("Photo {FileName} extraction completed", photo.FileName);
                                 }

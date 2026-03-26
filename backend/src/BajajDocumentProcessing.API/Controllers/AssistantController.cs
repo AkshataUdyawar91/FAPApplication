@@ -28,6 +28,7 @@ public class AssistantController : ControllerBase
     private readonly IBackgroundWorkflowQueue _backgroundQueue;
     private readonly IChatService _chatService;
     private readonly IOptionsSnapshot<FeaturesConfig> _features;
+    private readonly ICircleHeadAssignmentService _circleHeadAssignmentService;
 
     public AssistantController(
         IApplicationDbContext context,
@@ -36,7 +37,8 @@ public class AssistantController : ControllerBase
         ISubmissionNumberService submissionNumberService,
         IBackgroundWorkflowQueue backgroundQueue,
         IChatService chatService,
-        IOptionsSnapshot<FeaturesConfig> features)
+        IOptionsSnapshot<FeaturesConfig> features,
+        ICircleHeadAssignmentService circleHeadAssignmentService)
     {
         _context = context;
         _logger = logger;
@@ -45,6 +47,7 @@ public class AssistantController : ControllerBase
         _backgroundQueue = backgroundQueue;
         _chatService = chatService;
         _features = features;
+        _circleHeadAssignmentService = circleHeadAssignmentService;
     }
 
     /// <summary>
@@ -159,7 +162,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "greeting",
-            Message = "Hey! I'm your ClaimsIQ assistant. I can help you submit claims and track approvals.",
+            Message = "Hey! I'm your FieldIQ assistant. I can help you submit claims and track approvals.",
             Cards = new List<WorkflowCard>
             {
                 new() { Id = "create_request", Title = "Start a new submission", Subtitle = "I'll guide you step by step", Icon = "add_circle_outline", Action = "create_request" },
@@ -1092,8 +1095,10 @@ public class AssistantController : ControllerBase
         int warnCount = rules.Count(r => r.IsWarning);
 
         string botMessage = failCount == 0 && warnCount == 0
-            ? $"Activity Summary analysed. All {rules.Count} checks passed!"
-            : $"Activity Summary analysed. {passCount} of {rules.Count} checks passed.{(failCount > 0 ? $" {failCount} failed." : "")} Review below and continue or re-upload.";
+            ? "Activity Summary analysed. Working days match with Cost Summary."
+            : failCount > 0
+                ? $"Activity Summary analysed. Working days do not match Cost Summary. Review below and continue or re-upload."
+                : "Activity Summary analysed. Could not compare working days — please verify manually.";
 
         // Persist to ValidationResults table
         try
@@ -1197,87 +1202,10 @@ public class AssistantController : ControllerBase
     {
         var rules = new List<ValidationRuleResult>();
 
-        // Parse extracted JSON once
-        string? dealerName = actSummary.DealerName;
-        string? location = null;
+        // Only one validation: working days in Activity Summary must match days in Cost Summary
+        int? actWorkingDays = actSummary.TotalWorkingDays;
 
-        if (!string.IsNullOrEmpty(actSummary.ExtractedDataJson))
-        {
-            try
-            {
-                var json = JsonSerializer.Deserialize<JsonElement>(actSummary.ExtractedDataJson);
-                if (string.IsNullOrWhiteSpace(dealerName))
-                {
-                    if (json.TryGetProperty("DealerName", out var dn) || json.TryGetProperty("dealerName", out dn))
-                        dealerName = dn.GetString();
-                }
-                if (json.TryGetProperty("Rows", out var rows) || json.TryGetProperty("rows", out rows))
-                {
-                    if (rows.ValueKind == JsonValueKind.Array && rows.GetArrayLength() > 0)
-                    {
-                        var first = rows[0];
-                        if (string.IsNullOrWhiteSpace(dealerName))
-                        {
-                            if (first.TryGetProperty("DealerName", out var rdn) || first.TryGetProperty("dealerName", out rdn))
-                                dealerName = rdn.GetString();
-                        }
-                        if (first.TryGetProperty("Location", out var loc) || first.TryGetProperty("location", out loc))
-                            location = loc.GetString();
-                    }
-                }
-            }
-            catch { }
-        }
-
-        // AS_DEALER_LOCATION_PRESENT — dealer name AND location must both be present
-        bool dealerPresent = !string.IsNullOrWhiteSpace(dealerName);
-        bool locationPresent = !string.IsNullOrWhiteSpace(location);
-        bool dealerLocationPassed = dealerPresent && locationPresent;
-
-        string extractedDisplay = dealerPresent || locationPresent
-            ? string.Join(", ", new[] { dealerName, location }.Where(s => !string.IsNullOrWhiteSpace(s)))
-            : null!;
-
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "AS_DEALER_LOCATION_PRESENT",
-            Type = "Required",
-            Passed = dealerLocationPassed,
-            IsWarning = false,
-            Label = "Dealer & Location Details",
-            ExtractedValue = string.IsNullOrWhiteSpace(extractedDisplay) ? null : extractedDisplay,
-            Message = dealerLocationPassed ? null
-                : !dealerPresent && !locationPresent ? "Dealer name and location not detected"
-                : !dealerPresent ? "Dealer name not detected"
-                : "Location not detected",
-        });
-
-        // Info rows — always pass, show extracted values
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "AS_TOTAL_DAYS",
-            Type = "Info",
-            Passed = true,
-            IsWarning = false,
-            Label = "Total No. of Days",
-            ExtractedValue = actSummary.TotalDays.HasValue ? actSummary.TotalDays.ToString() : "Not extracted",
-            Message = null,
-        });
-
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "AS_TOTAL_WORKING_DAYS",
-            Type = "Info",
-            Passed = true,
-            IsWarning = false,
-            Label = "Total No. of Working Days",
-            ExtractedValue = actSummary.TotalWorkingDays.HasValue ? actSummary.TotalWorkingDays.ToString() : "Not extracted",
-            Message = null,
-        });
-
-        // AS_DAYS_MATCH_COST_SUMMARY: TotalDays must match CostSummary.NumberOfDays
-        int? actDays = actSummary.TotalDays;
-        if (actDays == null || costSummaryDays == null)
+        if (actWorkingDays == null || costSummaryDays == null)
         {
             rules.Add(new ValidationRuleResult
             {
@@ -1285,25 +1213,25 @@ public class AssistantController : ControllerBase
                 Type = "Required",
                 Passed = false,
                 IsWarning = true,
-                Label = "Days Match with Cost Summary",
-                ExtractedValue = actDays.HasValue ? actDays.ToString() : null,
-                Message = actDays == null
-                    ? "Activity Summary days not extracted — cannot compare with Cost Summary"
+                Label = "No. of Working Days vs Cost Summary Days",
+                ExtractedValue = actWorkingDays.HasValue ? actWorkingDays.ToString() : null,
+                Message = actWorkingDays == null
+                    ? "Activity Summary working days not extracted — cannot compare with Cost Summary"
                     : "Cost Summary days not available — cannot compare",
             });
         }
         else
         {
-            bool match = actDays.Value == costSummaryDays.Value;
+            bool match = actWorkingDays.Value == costSummaryDays.Value;
             rules.Add(new ValidationRuleResult
             {
                 RuleCode = "AS_DAYS_MATCH_COST_SUMMARY",
                 Type = "Required",
                 Passed = match,
                 IsWarning = false,
-                Label = "Days Match with Cost Summary",
-                ExtractedValue = $"Activity: {actDays.Value} days | Cost Summary: {costSummaryDays.Value} days",
-                Message = match ? null : $"Activity Summary days ({actDays.Value}) does not match Cost Summary days ({costSummaryDays.Value})",
+                Label = "No. of Working Days vs Cost Summary Days",
+                ExtractedValue = $"Activity Working Days: {actWorkingDays.Value} | Cost Summary Days: {costSummaryDays.Value}",
+                Message = match ? null : $"No. of working days in Activity Summary ({actWorkingDays.Value}) does not match No. of days in Cost Summary ({costSummaryDays.Value})",
             });
         }
 
@@ -2765,10 +2693,18 @@ public class AssistantController : ControllerBase
         var submissionNumber = await _submissionNumberService.GenerateAsync(ct);
         package.SubmissionNumber = submissionNumber;
 
-        // Do NOT set state to PendingCH here — let WorkflowOrchestrator handle state transition,
-        // CH assignment, Teams notification, email, and SignalR push.
+        // Assign Circle Head immediately (same as web portal) — don't rely on orchestrator safety net
+        // so CH is set even if extraction hangs.
+        if (!string.IsNullOrEmpty(package.ActivityState))
+        {
+            var circleHeadUserId = await _circleHeadAssignmentService.AssignAsync(package.ActivityState, ct);
+            package.AssignedCircleHeadUserId = circleHeadUserId;
+            _logger.LogInformation("Assigned CircleHead {UserId} for chatbot package {PackageId} (state: {State})",
+                circleHeadUserId, package.Id, package.ActivityState);
+        }
+
         package.CurrentStep = 10;
-        package.State = Domain.Enums.PackageState.Uploaded; // Immediately visible in list; orchestrator will advance to PendingCH
+        package.State = Domain.Enums.PackageState.Uploaded;
         package.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
 

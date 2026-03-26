@@ -1303,8 +1303,8 @@ public class ValidationAgent : IValidationAgent
 
         var result = new ActivityCrossDocumentResult { AllChecksPass = true };
 
-        // Calculate total days from activity rows
-        var activityTotalDays = activityData.Rows?.Sum(r => r.Day) ?? 0;
+        // Calculate working days from activity rows
+        var activityTotalDays = activityData.Rows?.Sum(r => r.WorkingDay) ?? 0;
 
         var costSummaryDays = costSummaryData.NumberOfDays ?? 0;
 
@@ -1314,7 +1314,7 @@ public class ValidationAgent : IValidationAgent
         if (!result.NumberOfDaysMatches)
         {
             result.AllChecksPass = false;
-            result.Issues.Add($"Number of days mismatch: Activity Summary has {activityTotalDays} days, Cost Summary has {costSummaryDays} days");
+            result.Issues.Add($"No. of working days in Activity Summary ({activityTotalDays}) does not match No. of days in Cost Summary ({costSummaryDays})");
         }
 
         _logger.LogInformation(
@@ -2021,28 +2021,22 @@ public class ValidationAgent : IValidationAgent
                 SerializeRules(csRules)));
         }
 
-        // ActivitySummary: field presence + cross-document
+        // ActivitySummary: only days-match cross-document validation
         if (package.ActivitySummary != null)
         {
-            var passed = (result.ActivityFieldPresence?.AllFieldsPresent ?? true)
-                         && (result.ActivityCrossDocument?.AllChecksPass ?? true);
+            var passed = result.ActivityCrossDocument?.AllChecksPass ?? true;
             var issues = new List<string>();
-            if (result.ActivityFieldPresence != null && !result.ActivityFieldPresence.AllFieldsPresent)
-                issues.AddRange(result.ActivityFieldPresence.MissingFields);
             if (result.ActivityCrossDocument != null && !result.ActivityCrossDocument.AllChecksPass)
                 issues.AddRange(result.ActivityCrossDocument.Issues);
 
-            var details = new { fieldPresence = result.ActivityFieldPresence, crossDocument = result.ActivityCrossDocument };
+            var details = new { crossDocument = result.ActivityCrossDocument };
             var act = package.ActivitySummary;
-            var actDays = act.TotalDays ?? 0;
+            var actWorkingDays = act.TotalWorkingDays ?? 0;
             var csDays = package.CostSummary?.NumberOfDays ?? 0;
-            var daysMatch = actDays == csDays;
+            var daysMatch = actWorkingDays == csDays;
             var actRules = new List<object>
             {
-                new { ruleCode = "AS_DEALER_LOCATION_PRESENT", type = "Required", passed = result.ActivityFieldPresence?.AllFieldsPresent ?? true, isWarning = false, label = "Dealer & Location Details", extractedValue = act.DealerName, message = (string?)null },
-                new { ruleCode = "AS_TOTAL_DAYS", type = "Info", passed = true, isWarning = false, label = "Total No. of Days", extractedValue = act.TotalDays?.ToString(), message = (string?)null },
-                new { ruleCode = "AS_TOTAL_WORKING_DAYS", type = "Info", passed = true, isWarning = false, label = "Total No. of Working Days", extractedValue = act.TotalWorkingDays?.ToString(), message = (string?)null },
-                new { ruleCode = "AS_DAYS_MATCH_COST_SUMMARY", type = "Required", passed = daysMatch, isWarning = false, label = "Days Match with Cost Summary", extractedValue = $"Activity: {actDays} days | Cost Summary: {csDays} days", message = daysMatch ? null : $"Activity Summary days ({actDays}) does not match Cost Summary days ({csDays})" }
+                new { ruleCode = "AS_DAYS_MATCH_COST_SUMMARY", type = "Required", passed = daysMatch, isWarning = false, label = "No. of Working Days vs Cost Summary Days", extractedValue = $"Activity Working Days: {actWorkingDays} | Cost Summary Days: {csDays}", message = daysMatch ? null : $"No. of working days in Activity Summary ({actWorkingDays}) does not match No. of days in Cost Summary ({csDays})" }
             };
             items.Add((DocumentType.ActivitySummary, package.ActivitySummary.Id, passed,
                 issues.Count > 0 ? string.Join("; ", issues) : null,

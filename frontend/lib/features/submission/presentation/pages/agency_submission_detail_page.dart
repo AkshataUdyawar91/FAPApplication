@@ -899,6 +899,11 @@ class _AgencySubmissionDetailPageState
       }
     }
 
+    // For Cost Summary, show only the 8 key validation rows
+    if (!hideRowsAndBadge && title.toLowerCase().contains('cost summary')) {
+      allRows = _filterCostSummaryRows(allRows);
+    }
+
     final passedCount = hideRowsAndBadge ? 0 : allRows.where((r) => r['passed'] == true).length;
     final totalCount = hideRowsAndBadge ? 0 : allRows.length;
 
@@ -911,6 +916,55 @@ class _AgencySubmissionDetailPageState
       resolvedDocId: resolvedDocId,
       resolvedBlobUrl: resolvedBlobUrl,
     );
+  }
+
+  /// Filters cost summary validation rows to only the 8 key checks
+  /// and renames labels to match the required display names.
+  List<Map<String, dynamic>> _filterCostSummaryRows(
+      List<Map<String, dynamic>> rows) {
+    // Map from lowercase source label → desired display label.
+    // Only these 8 rows should appear in the cost summary card.
+    const labelMapping = {
+      // Row 1: State/Place of Supply
+      'place of supply': 'State/Place of Supply',
+      'state/place of supply': 'State/Place of Supply',
+      // Row 2: Element wise Cost
+      'element-wise cost': 'Element wise Cost',
+      'element wise cost': 'Element wise Cost',
+      // Row 3: No of Days
+      'no. of days': 'No of Days',
+      'no of days': 'No of Days',
+      // Row 4: Element wise Quantity
+      'element-wise quantity': 'Element wise Quantity',
+      'element wise quantity': 'Element wise Quantity',
+      // Row 5: Total Cost
+      'total cost validation': 'Total Cost',
+      'total cost': 'Total Cost',
+      // Row 6: Element Cost limit as per State Rate
+      'element costs validation': 'Element Cost limit as per State Rate',
+      'element cost vs rates': 'Element Cost limit as per State Rate',
+      // Row 7: Fixed Cost Limit as per State Rate
+      'fixed costs validation': 'Fixed Cost Limit as per State Rate',
+      // Row 8: Variable cost limit as per State Rate
+      'variable costs validation': 'Variable cost limit as per State Rate',
+    };
+
+    final result = <Map<String, dynamic>>[];
+    final seenDisplayLabels = <String>{};
+
+    for (final row in rows) {
+      final label = (row['label'] as String? ?? '').toLowerCase();
+      final displayLabel = labelMapping[label];
+      if (displayLabel != null && !seenDisplayLabels.contains(displayLabel)) {
+        seenDisplayLabels.add(displayLabel);
+        result.add({
+          'label': displayLabel,
+          'passed': row['passed'],
+          'message': row['message'],
+        });
+      }
+    }
+    return result;
   }  /// Extracts all validation rows from ValidationDetailsJson.
   /// Reads: proactiveRules, fieldPresence, crossDocument, amountConsistency,
   /// lineItemMatching, vendorMatching, completeness — deduplicating by label.
@@ -1698,16 +1752,18 @@ class _AgencySubmissionDetailPageState
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(
-          icon: Icons.dashboard,
-          label: 'Home',
+          icon: Icons.smart_toy,
+          label: 'Assistant',
           onTap: () => Navigator.pop(context)),
       NavItem(
-          icon: Icons.upload_file, label: 'New Claim', onTap: _navigateToUpload),
-      NavItem(
-          icon: Icons.visibility,
-          label: 'View Request',
+          icon: Icons.list_alt,
+          label: 'My Requests',
           isActive: true,
-          onTap: () {}),
+          onTap: () => Navigator.pop(context)),
+      NavItem(
+          icon: Icons.add,
+          label: 'New Claim',
+          onTap: _navigateToUpload),
       NavItem(
         icon: Icons.notifications,
         label: 'Notifications',

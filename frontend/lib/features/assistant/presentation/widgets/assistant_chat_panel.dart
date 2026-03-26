@@ -1069,9 +1069,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         return AssistantBubble(
           message: msg.content,
           isActive: isLast,
-          child: r.teamContext != null
-              ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
-              : null,
         );
       case 'team_count_input':
         return AssistantBubble(message: msg.content, isActive: isLast);
@@ -1079,9 +1076,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         return AssistantBubble(
           message: msg.content,
           isActive: isLast,
-          child: r.teamContext != null
-              ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
-              : null,
         );
       case 'dealer_list':
       case 'dealer_search_results':
@@ -1111,11 +1105,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (r.teamContext != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams),
-                ),
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 ElevatedButton(
                   onPressed: ref.watch(assistantNotifierProvider).isLoading
@@ -1511,22 +1500,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         : Column(children: items.map(card).toList());
   }
 
-  Widget _teamProgressIndicator(int current, int total) {    return Row(children: [
-      Text('Team $current of $total',
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-      const SizedBox(width: 8),
-      Expanded(
-        child: LinearProgressIndicator(
-          value: current / total,
-          backgroundColor: Colors.grey.shade200,
-          color: const Color(0xFF003087),
-          minHeight: 4,
-          borderRadius: BorderRadius.circular(2),
-        ),
-      ),
-    ]);
-  }
-
   Widget _dealerList(List<DealerItemModel> dealers, String payloadJson) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1810,11 +1783,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (r.teamContext != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams),
-          ),
         // // Team name header — hidden per UI requirement
         // Padding(
         //   padding: const EdgeInsets.only(bottom: 8),
@@ -3093,13 +3061,16 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           Container(
             height: 60,
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            color: const Color(0xFF003087),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(bottom: BorderSide(color: Color(0xFF003087), width: 2)),
+            ),
             child: Row(
               children: [
                 const CircleAvatar(
-                  backgroundColor: Colors.white,
+                  backgroundColor: Color(0xFF003087),
                   radius: 18,
-                  child: Icon(Icons.smart_toy, color: Color(0xFF003087), size: 20),
+                  child: Icon(Icons.smart_toy, color: Colors.white, size: 20),
                 ),
                 const SizedBox(width: 12),
                 const Expanded(
@@ -3108,13 +3079,13 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('FieldIQ Assistant',
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
-                      Text('Online', style: TextStyle(fontSize: 12, color: Color(0xFF90CAF9))),
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF003087))),
+                      Text('Online', style: TextStyle(fontSize: 12, color: Color(0xFF003087))),
                     ],
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  icon: const Icon(Icons.refresh, color: Color(0xFF003087)),
                   tooltip: 'New conversation',
                   onPressed: () {
                     ref.read(assistantNotifierProvider.notifier).reset();
