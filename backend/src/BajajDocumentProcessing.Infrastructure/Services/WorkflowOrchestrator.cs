@@ -366,8 +366,10 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                             if (activityData.Rows != null && activityData.Rows.Count > 0)
                             {
                                 package.ActivitySummary.DealerName = activityData.Rows[0].DealerName;
-                                package.ActivitySummary.TotalDays = activityData.Rows.Sum(r => r.Day);
-                                package.ActivitySummary.TotalWorkingDays = activityData.Rows.Sum(r => r.WorkingDay);
+                                package.ActivitySummary.TotalDays = activityData.TotalDays ?? activityData.Rows.Sum(r => r.Day);
+                                var workingDaySum = activityData.Rows.Sum(r => r.WorkingDay);
+                                package.ActivitySummary.TotalWorkingDays = activityData.TotalDays 
+                                    ?? (workingDaySum > 0 ? workingDaySum : activityData.Rows.Sum(r => r.Day));
                                 var locations = activityData.Rows
                                     .Where(r => !string.IsNullOrWhiteSpace(r.Location))
                                     .Select(r => r.Location)

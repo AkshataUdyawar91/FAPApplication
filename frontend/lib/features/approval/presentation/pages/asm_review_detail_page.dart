@@ -2083,16 +2083,16 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           '$photosWithLocation/$totalPhotos Photos have coordinates present');
     }
 
-    // No. of Days — uses crossDocument photoCount vs costSummaryDays
+    // No. of Days — uses unique photo dates vs activity summary days
     if (crossDocument != null) {
-      final photoCountMatch = crossDocument['photoCountMatchesManDays'];
-      if (photoCountMatch != null) {
-        final photoCount = crossDocument['photoCount'] ?? totalPhotos ?? 0;
-        final costDays = crossDocument['costSummaryDays'] ?? 0;
-        addRow('No. of days', photoCountMatch == true,
-            photoCountMatch == true
-                ? 'Photo count ($photoCount) meets required days in cost summary ($costDays)'
-                : 'Photo count ($photoCount) is less than days in cost summary ($costDays)');
+      final daysMatch = crossDocument['numberOfDaysMatches'] ?? crossDocument['photoCountMatchesManDays'];
+      if (daysMatch != null) {
+        final uniquePhotoDays = crossDocument['uniquePhotoDays'] ?? crossDocument['photoCount'] ?? totalPhotos ?? 0;
+        final activityDays = crossDocument['activitySummaryDays'] ?? crossDocument['costSummaryDays'] ?? 0;
+        addRow('No. of days', daysMatch == true,
+            daysMatch == true
+                ? 'Unique photo days ($uniquePhotoDays) matches Activity Summary days ($activityDays)'
+                : 'Unique photo days ($uniquePhotoDays) does not match Activity Summary days ($activityDays)');
       }
     }
 

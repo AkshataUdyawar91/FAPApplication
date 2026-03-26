@@ -1251,7 +1251,7 @@ public class AssistantController : ControllerBase
             return new AssistantResponse
             {
                 Type = "team_count_input",
-                Message = "Activity Summary accepted. Could not determine team count from Cost Summary. How many teams were there?",
+                Message = "Activity Summary accepted. How many teams were there?",
                 PayloadJson = askPayload,
                 SubmissionId = submissionId,
             };
@@ -2123,6 +2123,56 @@ public class AssistantController : ControllerBase
                     if (rules.FirstOrDefault(r => r.RuleCode == "PHOTO_3W_VEHICLE")?.Passed == true) photosWithVehicle++;
                 }
 
+                // Compute unique photo days from actual photo dates (EXIF or overlay)
+                var uniqueDates = new HashSet<DateOnly>();
+                foreach (var photo in photos)
+                {
+                    DateOnly? photoDate = null;
+                    if (photo.PhotoTimestamp.HasValue)
+                        photoDate = DateOnly.FromDateTime(photo.PhotoTimestamp.Value);
+                    else if (!string.IsNullOrEmpty(photo.PhotoDateOverlay) && DateTime.TryParse(photo.PhotoDateOverlay, out var ovDt))
+                        photoDate = DateOnly.FromDateTime(ovDt);
+                    else if (!string.IsNullOrEmpty(photo.ExtractedMetadataJson))
+                    {
+                        try
+                        {
+                            var json = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(
+                                photo.ExtractedMetadataJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (json.TryGetProperty("timestamp", out var ts) && ts.ValueKind != System.Text.Json.JsonValueKind.Null
+                                && DateTime.TryParse(ts.GetString(), out var tsDt))
+                                photoDate = DateOnly.FromDateTime(tsDt);
+                            if (!photoDate.HasValue && json.TryGetProperty("photoDateFromOverlay", out var ov)
+                                && ov.ValueKind != System.Text.Json.JsonValueKind.Null && DateTime.TryParse(ov.GetString(), out var ovDt2))
+                                photoDate = DateOnly.FromDateTime(ovDt2);
+                        }
+                        catch { }
+                    }
+                    if (photoDate.HasValue) uniqueDates.Add(photoDate.Value);
+                }
+
+                // Get activity summary days
+                int activitySummaryDays = 0;
+                if (submissionId.HasValue)
+                {
+                    var actSummary = await _context.ActivitySummaries
+                        .Where(a => a.PackageId == submissionId.Value && !a.IsDeleted)
+                        .Select(a => new { a.TotalWorkingDays, a.ExtractedDataJson })
+                        .FirstOrDefaultAsync(ct);
+                    if (actSummary != null)
+                    {
+                        activitySummaryDays = actSummary.TotalWorkingDays ?? 0;
+                        if (activitySummaryDays == 0 && !string.IsNullOrEmpty(actSummary.ExtractedDataJson))
+                        {
+                            try
+                            {
+                                var actData = System.Text.Json.JsonSerializer.Deserialize<Application.DTOs.Documents.ActivityData>(actSummary.ExtractedDataJson);
+                                activitySummaryDays = actData?.Rows?.Sum(r => r.WorkingDay) ?? actData?.TotalDays ?? 0;
+                            }
+                            catch { }
+                        }
+                    }
+                }
+
                 teamSummaries.Add(new TeamSummaryItem
                 {
                     TeamNumber = team.TeamNumber ?? 0,
@@ -2139,6 +2189,8 @@ public class AssistantController : ControllerBase
                     PhotosWithGps = photosWithGps,
                     PhotosWithBlueTshirt = photosWithBlueTshirt,
                     PhotosWithVehicle = photosWithVehicle,
+                    UniquePhotoDays = uniqueDates.Count,
+                    ActivitySummaryDays = activitySummaryDays,
                     FailedPhotoIds = failedPhotoIds,
                 });
             }
@@ -4289,6 +4341,12 @@ public class TeamSummaryItem
 
     [JsonPropertyName("photosWithVehicle")]
     public int PhotosWithVehicle { get; init; }
+
+    [JsonPropertyName("uniquePhotoDays")]
+    public int UniquePhotoDays { get; init; }
+
+    [JsonPropertyName("activitySummaryDays")]
+    public int ActivitySummaryDays { get; init; }
 
     [JsonPropertyName("failedPhotoIds")]
     public List<string> FailedPhotoIds { get; init; } = [];

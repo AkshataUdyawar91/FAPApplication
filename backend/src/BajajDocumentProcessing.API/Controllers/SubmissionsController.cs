@@ -2440,7 +2440,7 @@ public class SubmissionsController : ControllerBase
 
             case DocumentType.TeamPhoto:
                 sectionName = "PhotoCrossDocument";
-                boolProps = new[] { "PhotoCountMatchesManDays", "ManDaysWithinCostSummaryDays" };
+                boolProps = new[] { "PhotoCountMatchesManDays", "ManDaysWithinCostSummaryDays", "NumberOfDaysMatches" };
                 break;
 
             default:
@@ -2624,7 +2624,7 @@ public class SubmissionsController : ControllerBase
         {
             var sec = SafeGetSection(json, "PhotoCrossDocument");
             var issues = SafeGetStringList(json, "PhotoCrossDocument", "Issues");
-            AddCrossCheck(checks, docType, fileName, "Photo count matches man-days", SafeGetBoolProp(sec, "PhotoCountMatchesManDays"), issues, "Photo count");
+            AddCrossCheck(checks, docType, fileName, "No. of Days (Photo dates vs Activity Summary)", SafeGetBoolProp(sec, "NumberOfDaysMatches") ?? SafeGetBoolProp(sec, "PhotoCountMatchesManDays"), issues, "No. of Days");
         }
     }
 

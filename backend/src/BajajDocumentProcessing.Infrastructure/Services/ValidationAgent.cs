@@ -393,7 +393,7 @@ public class ValidationAgent : IValidationAgent
             if (totalPhotoCount > 0)
             {
                 result.PhotoCrossDocument = ValidatePhotoCrossDocument(
-                    totalPhotoCount,
+                    allTeamPhotos,
                     activityData,
                     costSummaryData);
                 
@@ -1485,44 +1485,112 @@ public class ValidationAgent : IValidationAgent
 
     /// <summary>
     /// Validates photo cross-document consistency with activity and cost summary data.
-    /// Performs 3-way validation: photo count vs man-days vs cost summary days.
+    /// Extracts dates from photos, deduplicates to unique days, and compares against Activity Summary days.
     /// </summary>
-    /// <param name="photoCount">Number of photos in the package</param>
+    /// <param name="photos">List of team photos in the package</param>
     /// <param name="activityData">Activity summary data (optional)</param>
     /// <param name="costSummaryData">Cost summary data (optional)</param>
     /// <returns>A PhotoCrossDocumentResult containing validation status and any issues</returns>
     private PhotoCrossDocumentResult ValidatePhotoCrossDocument(
-        int photoCount,
+        List<Domain.Entities.TeamPhotos> photos,
         ActivityData? activityData,
         CostSummaryData? costSummaryData)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
         _logger.LogInformation(
             "Starting photo cross-document validation. PhotoCount: {PhotoCount}. CorrelationId: {CorrelationId}",
-            photoCount, correlationId);
+            photos.Count, correlationId);
 
         var result = new PhotoCrossDocumentResult 
         { 
             AllChecksPass = true,
-            PhotoCount = photoCount
+            PhotoCount = photos.Count
         };
 
-        // Get cost summary days
+        // Extract unique days from photo dates (EXIF timestamp or overlay date)
+        var uniqueDates = new HashSet<DateOnly>();
+        foreach (var photo in photos)
+        {
+            DateOnly? photoDate = null;
+
+            // Priority 1: EXIF timestamp from dedicated column
+            if (photo.PhotoTimestamp.HasValue)
+            {
+                photoDate = DateOnly.FromDateTime(photo.PhotoTimestamp.Value);
+            }
+            // Priority 2: Overlay date text
+            else if (!string.IsNullOrEmpty(photo.PhotoDateOverlay) && DateTime.TryParse(photo.PhotoDateOverlay, out var overlayDt))
+            {
+                photoDate = DateOnly.FromDateTime(overlayDt);
+            }
+            // Priority 3: Parse from ExtractedMetadataJson
+            else if (!string.IsNullOrEmpty(photo.ExtractedMetadataJson))
+            {
+                try
+                {
+                    var json = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(
+                        photo.ExtractedMetadataJson,
+                        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                    if (json.TryGetProperty("timestamp", out var ts) && ts.ValueKind != System.Text.Json.JsonValueKind.Null)
+                    {
+                        if (DateTime.TryParse(ts.GetString(), out var tsDt))
+                            photoDate = DateOnly.FromDateTime(tsDt);
+                    }
+                    if (!photoDate.HasValue && json.TryGetProperty("photoDateFromOverlay", out var ov) && ov.ValueKind != System.Text.Json.JsonValueKind.Null)
+                    {
+                        if (DateTime.TryParse(ov.GetString(), out var ovDt))
+                            photoDate = DateOnly.FromDateTime(ovDt);
+                    }
+                }
+                catch
+                {
+                    // Metadata parse failure — skip this photo's date
+                }
+            }
+
+            if (photoDate.HasValue)
+            {
+                uniqueDates.Add(photoDate.Value);
+            }
+        }
+
+        int uniquePhotoDays = uniqueDates.Count;
+        result.UniquePhotoDays = uniquePhotoDays;
+
+        // Get Activity Summary days (Activation Days / Billed Days / Working Days — all equivalent)
+        int activitySummaryDays = activityData?.Rows?.Sum(r => r.WorkingDay) ?? activityData?.TotalDays ?? 0;
+        result.ActivitySummaryDays = activitySummaryDays;
+
+        // Also keep cost summary days for backward compatibility
         int costSummaryDays = costSummaryData?.NumberOfDays ?? 0;
         result.CostSummaryDays = costSummaryDays;
 
-        // CHANGE: Per spec, photo count should match Cost Summary days (not Activity man-days)
-        // Validation: Number of photos should match number of days in Cost Summary
-        result.PhotoCountMatchesManDays = photoCount == costSummaryDays;
-        if (!result.PhotoCountMatchesManDays && costSummaryDays > 0)
+        // No. of Days validation: unique photo days must match Activity Summary days
+        result.NumberOfDaysMatches = uniquePhotoDays == activitySummaryDays;
+        // Keep legacy property in sync
+        result.PhotoCountMatchesManDays = result.NumberOfDaysMatches;
+
+        if (!result.NumberOfDaysMatches && activitySummaryDays > 0)
         {
             result.AllChecksPass = false;
-            result.Issues.Add($"Photo count ({photoCount}) does not match days in Cost Summary ({costSummaryDays})");
+            result.Issues.Add($"Photos cover {uniquePhotoDays} unique day(s) but Activity Summary states {activitySummaryDays} day(s)");
+        }
+        else if (!result.NumberOfDaysMatches && activitySummaryDays == 0 && costSummaryDays > 0)
+        {
+            // Fallback: if Activity Summary days not available, compare against Cost Summary days
+            result.NumberOfDaysMatches = uniquePhotoDays == costSummaryDays;
+            result.PhotoCountMatchesManDays = result.NumberOfDaysMatches;
+            if (!result.NumberOfDaysMatches)
+            {
+                result.AllChecksPass = false;
+                result.Issues.Add($"Photos cover {uniquePhotoDays} unique day(s) but Cost Summary states {costSummaryDays} day(s)");
+            }
         }
 
         _logger.LogInformation(
-            "Photo cross-document validation completed. AllChecksPass: {AllChecksPass}, PhotoCount: {PhotoCount}, CostSummaryDays: {CostSummaryDays}. CorrelationId: {CorrelationId}",
-            result.AllChecksPass, photoCount, costSummaryDays, correlationId);
+            "Photo cross-document validation completed. AllChecksPass: {AllChecksPass}, PhotoCount: {PhotoCount}, UniquePhotoDays: {UniquePhotoDays}, ActivitySummaryDays: {ActivitySummaryDays}. CorrelationId: {CorrelationId}",
+            result.AllChecksPass, photos.Count, uniquePhotoDays, activitySummaryDays, correlationId);
 
         return result;
     }
@@ -2095,7 +2163,8 @@ public class ValidationAgent : IValidationAgent
                 new { ruleCode = "PHOTO_DATE_VISIBLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("date") || f.Contains("Date")) ?? false), isWarning = false, label = "Date", extractedValue = (string?)null, message = (string?)null },
                 new { ruleCode = "PHOTO_GPS_VISIBLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("GPS") || f.Contains("location")) ?? false), isWarning = false, label = "GPS", extractedValue = (string?)null, message = (string?)null },
                 new { ruleCode = "PHOTO_BLUE_TSHIRT", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("t-shirt") || f.Contains("tshirt") || f.Contains("Blue")) ?? false), isWarning = false, label = "Blue T-shirt", extractedValue = (string?)null, message = (string?)null },
-                new { ruleCode = "PHOTO_3W_VEHICLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("vehicle") || f.Contains("Vehicle") || f.Contains("3W")) ?? false), isWarning = false, label = "3W Vehicle", extractedValue = (string?)null, message = (string?)null }
+                new { ruleCode = "PHOTO_3W_VEHICLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("vehicle") || f.Contains("Vehicle") || f.Contains("3W")) ?? false), isWarning = false, label = "3W Vehicle", extractedValue = (string?)null, message = (string?)null },
+                new { ruleCode = "PHOTO_NO_OF_DAYS", type = "Required", passed = result.PhotoCrossDocument?.NumberOfDaysMatches ?? true, isWarning = false, label = "No. of Days", extractedValue = result.PhotoCrossDocument != null ? $"Unique Photo Days: {result.PhotoCrossDocument.UniquePhotoDays} | Activity Summary Days: {result.PhotoCrossDocument.ActivitySummaryDays}" : null, message = result.PhotoCrossDocument != null && !result.PhotoCrossDocument.NumberOfDaysMatches ? string.Join("; ", result.PhotoCrossDocument.Issues) : null }
             };
             items.Add((DocumentType.TeamPhoto, package.Id, passed,
                 issues.Count > 0 ? string.Join("; ", issues) : null,

@@ -2114,18 +2114,21 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
 
   Widget _buildAggregatedPhotoSummaryTable(List<TeamSummaryItemModel> summaries) {
     final totalPhotos = summaries.fold(0, (sum, t) => sum + t.photoCount);
-    final totalDays = summaries.fold(0, (sum, t) => sum + t.workingDays);
+    final totalUniquePhotoDays = summaries.fold(0, (sum, t) => sum + t.uniquePhotoDays);
+    final totalActivityDays = summaries.isNotEmpty ? summaries.first.activitySummaryDays : 0;
     final totalWithDate = summaries.fold(0, (sum, t) => sum + t.photosWithDate);
     final totalWithGps = summaries.fold(0, (sum, t) => sum + t.photosWithGps);
     final totalWithBlueTshirt = summaries.fold(0, (sum, t) => sum + t.photosWithBlueTshirt);
     final totalWithVehicle = summaries.fold(0, (sum, t) => sum + t.photosWithVehicle);
+
+    final daysMatch = totalUniquePhotoDays == totalActivityDays;
 
     // (sno, label, passed, evidence)
     final rows = [
       ('1', 'Photo Count',               true,                                    '$totalPhotos photos uploaded'),
       ('2', 'Date on Photos',            totalWithDate == totalPhotos,            '$totalWithDate/$totalPhotos photos have date mentioned'),
       ('3', 'GPS Coordinates',           totalWithGps == totalPhotos,             '$totalWithGps/$totalPhotos photos have coordinates present'),
-      ('4', 'No. of Days',               true,                                    '$totalDays days'),
+      ('4', 'No. of Days',               daysMatch,                               'Unique photo days: $totalUniquePhotoDays | Activity Summary days: $totalActivityDays'),
       ('5', 'Promoter wearing Blue T-shirt', totalWithBlueTshirt == totalPhotos,  '$totalWithBlueTshirt/$totalPhotos photos have promoters wear blue T-shirt'),
       ('6', 'Branded 3 Wheeler',         totalWithVehicle == totalPhotos,         '$totalWithVehicle/$totalPhotos photos have Branded 3 Wheeler'),
     ];

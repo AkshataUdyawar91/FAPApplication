@@ -576,8 +576,10 @@ public class HierarchicalSubmissionController : ControllerBase
                         if (parsed?.Rows != null && parsed.Rows.Count > 0)
                         {
                             entity.DealerName = parsed.Rows[0].DealerName;
-                            entity.TotalDays = parsed.Rows.Sum(r => r.Day);
-                            entity.TotalWorkingDays = parsed.Rows.Sum(r => r.WorkingDay);
+                            entity.TotalDays = parsed.TotalDays ?? parsed.Rows.Sum(r => r.Day);
+                            var wdSum = parsed.Rows.Sum(r => r.WorkingDay);
+                            entity.TotalWorkingDays = parsed.TotalDays 
+                                ?? (wdSum > 0 ? wdSum : parsed.Rows.Sum(r => r.Day));
                             // Build a brief activity description from extracted locations
                             var locations = parsed.Rows
                                 .Where(r => !string.IsNullOrWhiteSpace(r.Location))
