@@ -8,6 +8,7 @@ class ValidationRuleResult extends Equatable {
   final String ruleCode;
   final String type;
   final bool passed;
+  final String? label;
   final String? extractedValue;
   final String? expectedValue;
   final String? message;
@@ -17,6 +18,7 @@ class ValidationRuleResult extends Equatable {
     required this.ruleCode,
     required this.type,
     required this.passed,
+    this.label,
     this.extractedValue,
     this.expectedValue,
     this.message,
@@ -28,6 +30,7 @@ class ValidationRuleResult extends Equatable {
         ruleCode,
         type,
         passed,
+        label,
         extractedValue,
         expectedValue,
         message,

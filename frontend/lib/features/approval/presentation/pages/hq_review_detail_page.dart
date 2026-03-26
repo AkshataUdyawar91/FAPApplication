@@ -2469,10 +2469,10 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       'EQ_TEST_RIDE': 'Test Ride',
       // Photo rule codes
       'PHOTO_COUNT': 'Photo Count',
-      'PHOTO_DATE_VISIBLE': 'Date',
-      'PHOTO_GPS_VISIBLE': 'GPS',
-      'PHOTO_BLUE_TSHIRT': 'Blue T-shirt',
-      'PHOTO_3W_VEHICLE': '3W Vehicle',
+      'PHOTO_DATE_VISIBLE': 'Date on Photos',
+      'PHOTO_GPS_VISIBLE': 'GPS Coordinates',
+      'PHOTO_BLUE_TSHIRT': 'Promoter wearning Blue T-shirt',
+      'PHOTO_3W_VEHICLE': 'Branded 3 wheeler',
     };
     return labelMap[ruleCode] ??
         ruleCode

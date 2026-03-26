@@ -126,7 +126,7 @@ class ValidationCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _humanReadableRule(rule.ruleCode),
+                  rule.label ?? _humanReadableRule(rule.ruleCode),
                   style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                 ),
                 if (rule.message != null)

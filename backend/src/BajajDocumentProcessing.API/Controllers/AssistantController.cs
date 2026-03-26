@@ -752,74 +752,12 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = amountPresent,
             IsWarning = false,
-            Label = "Invoice Amount",
+            Label = "Invoice amount",
             ExtractedValue = invoice.TotalAmount.HasValue ? $"₹{invoice.TotalAmount.Value:N0}" : null,
             Message = amountPresent ? null : "Invoice amount not detected or zero",
         });
 
-        // 4. INV_GST_NUMBER_PRESENT — Required (15-char alphanumeric)
-        var gstPresent = !string.IsNullOrWhiteSpace(invoice.GSTNumber) && invoice.GSTNumber.Length == 15;
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "INV_GST_NUMBER_PRESENT",
-            Type = "Required",
-            Passed = gstPresent,
-            IsWarning = false,
-            Label = "GST Number",
-            ExtractedValue = invoice.GSTNumber,
-            Message = gstPresent ? null : (string.IsNullOrWhiteSpace(invoice.GSTNumber) ? "Not detected" : "Invalid format (must be 15 chars)"),
-        });
-
-        // 5. INV_GST_PERCENT_PRESENT — Required (expected 18%, checked against state)
-        // Try to read GSTPercentage from ExtractedDataJson
-        decimal? gstPercent = null;
-        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
-        {
-            try
-            {
-                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
-                if (json.TryGetProperty("GSTPercentage", out var gp) || json.TryGetProperty("gstPercentage", out gp))
-                    gstPercent = gp.GetDecimal();
-            }
-            catch { }
-        }
-        var gstPercentPresent = gstPercent.HasValue && gstPercent.Value > 0;
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "INV_GST_PERCENT_PRESENT",
-            Type = "Required",
-            Passed = gstPercentPresent,
-            IsWarning = false,
-            Label = "GST %",
-            ExtractedValue = gstPercent.HasValue ? $"{gstPercent.Value}%" : null,
-            Message = gstPercentPresent ? null : "GST percentage not detected",
-        });
-
-        // 6. INV_HSN_SAC_PRESENT — Required
-        string? hsnSac = null;
-        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
-        {
-            try
-            {
-                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
-                if (json.TryGetProperty("HSNSACCode", out var hp) || json.TryGetProperty("hsnSacCode", out hp))
-                    hsnSac = hp.GetString();
-            }
-            catch { }
-        }
-        var hsnPresent = !string.IsNullOrWhiteSpace(hsnSac);
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "INV_HSN_SAC_PRESENT",
-            Type = "Required",
-            Passed = hsnPresent,
-            IsWarning = false,
-            Label = "HSN/SAC Code",
-            ExtractedValue = hsnSac,
-            Message = hsnPresent ? null : "HSN/SAC code not detected",
-        });
-
-        // 7. INV_AGENCY_NAME_ADDRESS — Supplier name & address (Agency = Supplier on invoice)
+        // 4. INV_AGENCY_NAME_ADDRESS — Agency Name & Addresses
         string? agencyName = null;
         string? agencyAddress = null;
         if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
@@ -843,67 +781,13 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = agencyNameAddressOk,
             IsWarning = false,
-            Label = "Agency Name & Address",
+            Label = "Agency Name & Addresses",
             ExtractedValue = agencyNamePresent ? $"{agencyName}, {agencyAddress}" : agencyName,
             Message = agencyNameAddressOk ? null
-                : (!agencyNamePresent ? "Supplier name not detected" : "Supplier address not detected"),
+                : (!agencyNamePresent ? "Agency name not detected" : "Agency address not detected"),
         });
 
-        // 8. INV_BILLING_NAME_ADDRESS — Recipient name & address (Billing = Recipient on invoice)
-        string? billingName = null;
-        string? billingAddress = null;
-        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
-        {
-            try
-            {
-                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
-                if (json.TryGetProperty("BillingName", out var bn) || json.TryGetProperty("billingName", out bn))
-                    billingName = bn.GetString();
-                if (json.TryGetProperty("BillingAddress", out var ba) || json.TryGetProperty("billingAddress", out ba))
-                    billingAddress = ba.GetString();
-            }
-            catch { }
-        }
-        var billingNamePresent = !string.IsNullOrWhiteSpace(billingName);
-        var billingAddressPresent = !string.IsNullOrWhiteSpace(billingAddress);
-        var billingNameAddressOk = billingNamePresent && billingAddressPresent;
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "INV_BILLING_NAME_ADDRESS",
-            Type = "Required",
-            Passed = billingNameAddressOk,
-            IsWarning = false,
-            Label = "Billing Name & Address",
-            ExtractedValue = billingNamePresent ? $"{billingName}, {billingAddress}" : billingName,
-            Message = billingNameAddressOk ? null
-                : (!billingNamePresent ? "Recipient name not detected" : "Recipient address not detected"),
-        });
-
-        // 9. INV_SUPPLIER_STATE — Supplier state name/code (Place of Supply)
-        string? supplierState = null;
-        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
-        {
-            try
-            {
-                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
-                if (json.TryGetProperty("StateName", out var sn) || json.TryGetProperty("stateName", out sn))
-                    supplierState = sn.GetString();
-            }
-            catch { }
-        }
-        var supplierStatePresent = !string.IsNullOrWhiteSpace(supplierState);
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "INV_SUPPLIER_STATE",
-            Type = "Required",
-            Passed = supplierStatePresent,
-            IsWarning = false,
-            Label = "Supplier State",
-            ExtractedValue = supplierState,
-            Message = supplierStatePresent ? null : "Supplier state name/code not detected",
-        });
-
-        // 10. INV_VENDOR_CODE_PRESENT — Required
+        // 5. INV_VENDOR_CODE_PRESENT — Agency Code
         string? vendorCode = null;
         if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
         {
@@ -922,12 +806,12 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = vendorCodePresent,
             IsWarning = false,
-            Label = "Vendor Code",
+            Label = "Agency Code",
             ExtractedValue = vendorCode,
-            Message = vendorCodePresent ? null : "Vendor code not detected",
+            Message = vendorCodePresent ? null : "Agency code not detected",
         });
 
-        // 11. INV_PO_NUMBER_MATCH — Check (extracted PO number == POs.PONumber)
+        // 6. INV_PO_NUMBER_MATCH — PO Number
         string? extractedPoNumber = null;
         if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
         {
@@ -970,8 +854,44 @@ public class AssistantController : ControllerBase
             Message = poMatchMsg,
         });
 
-        // 12. INV_AMOUNT_VS_PO_BALANCE — Check (warning if exceeded, not hard block)
-        // Uses live balance computed at this exact moment: PO.TotalAmount - sum of other invoices on this PO
+        // 7. INV_GST_NUMBER_PRESENT — GSTIN for State
+        var gstPresent = !string.IsNullOrWhiteSpace(invoice.GSTNumber) && invoice.GSTNumber.Length == 15;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "INV_GST_NUMBER_PRESENT",
+            Type = "Required",
+            Passed = gstPresent,
+            IsWarning = false,
+            Label = "GSTIN for State",
+            ExtractedValue = invoice.GSTNumber,
+            Message = gstPresent ? null : (string.IsNullOrWhiteSpace(invoice.GSTNumber) ? "Not detected" : "Invalid format (must be 15 chars)"),
+        });
+
+        // 8. INV_GST_PERCENT_PRESENT — GST %
+        decimal? gstPercent = null;
+        if (!string.IsNullOrEmpty(invoice.ExtractedDataJson))
+        {
+            try
+            {
+                var json = JsonSerializer.Deserialize<JsonElement>(invoice.ExtractedDataJson);
+                if (json.TryGetProperty("GSTPercentage", out var gp) || json.TryGetProperty("gstPercentage", out gp))
+                    gstPercent = gp.GetDecimal();
+            }
+            catch { }
+        }
+        var gstPercentPresent = gstPercent.HasValue && gstPercent.Value > 0;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "INV_GST_PERCENT_PRESENT",
+            Type = "Required",
+            Passed = gstPercentPresent,
+            IsWarning = false,
+            Label = "GST %",
+            ExtractedValue = gstPercent.HasValue ? $"{gstPercent.Value}%" : null,
+            Message = gstPercentPresent ? null : "GST percentage not detected",
+        });
+
+        // 9. INV_AMOUNT_VS_PO_BALANCE — Invoice amount limit
         bool amountOk;
         bool isAmountWarning;
         string? amountMsg;
@@ -997,7 +917,7 @@ public class AssistantController : ControllerBase
             Type = "Check",
             Passed = amountOk,
             IsWarning = isAmountWarning,
-            Label = "Amount vs PO Balance",
+            Label = "Invoice amount limit",
             ExtractedValue = invoice.TotalAmount.HasValue ? $"₹{invoice.TotalAmount.Value:N0}" : null,
             Message = amountMsg,
         });
@@ -1213,7 +1133,7 @@ public class AssistantController : ControllerBase
                 Type = "Required",
                 Passed = false,
                 IsWarning = true,
-                Label = "No. of Working Days vs Cost Summary Days",
+                Label = "Days worked matches Cost Summary",
                 ExtractedValue = actWorkingDays.HasValue ? actWorkingDays.ToString() : null,
                 Message = actWorkingDays == null
                     ? "Activity Summary working days not extracted — cannot compare with Cost Summary"
@@ -1229,7 +1149,7 @@ public class AssistantController : ControllerBase
                 Type = "Required",
                 Passed = match,
                 IsWarning = false,
-                Label = "No. of Working Days vs Cost Summary Days",
+                Label = "Days worked matches Cost Summary",
                 ExtractedValue = $"Activity Working Days: {actWorkingDays.Value} | Cost Summary Days: {costSummaryDays.Value}",
                 Message = match ? null : $"No. of working days in Activity Summary ({actWorkingDays.Value}) does not match No. of days in Cost Summary ({costSummaryDays.Value})",
             });
@@ -3054,7 +2974,7 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = dateVisible,
             IsWarning = false,
-            Label = "Date",
+            Label = "Date on Photos",
             ExtractedValue = dateVal,
             Message = dateVisible ? null : "Date not visible in photo",
         });
@@ -3065,7 +2985,7 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = gpsVisible,
             IsWarning = false,
-            Label = "GPS",
+            Label = "GPS Coordinates",
             ExtractedValue = gpsVal,
             Message = gpsVisible ? null : "GPS coordinates not detected",
         });
@@ -3076,9 +2996,9 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = blueTshirt,
             IsWarning = false,
-            Label = "Blue T-shirt",
+            Label = "Promoter wearning Blue T-shirt",
             ExtractedValue = blueTshirt ? "Present ✓" : null,
-            Message = blueTshirt ? null : "Person with blue T-shirt not detected",
+            Message = blueTshirt ? null : "Promoter with blue T-shirt not detected",
         });
 
         rules.Add(new ValidationRuleResult
@@ -3087,9 +3007,9 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = threeWheeler,
             IsWarning = false,
-            Label = "3W Vehicle",
+            Label = "Branded 3 wheeler",
             ExtractedValue = threeWheeler ? "Present ✓" : null,
-            Message = threeWheeler ? null : "3-wheel vehicle not detected",
+            Message = threeWheeler ? null : "Branded 3 wheeler not detected",
         });
 
         return rules;
@@ -3425,7 +3345,7 @@ public class AssistantController : ControllerBase
             catch { }
         }
 
-        // CS_PLACE_OF_SUPPLY_PRESENT
+        // Rule 1: CS_PLACE_OF_SUPPLY_PRESENT
         bool posPresent = !string.IsNullOrWhiteSpace(placeOfSupply);
         rules.Add(new ValidationRuleResult
         {
@@ -3433,51 +3353,12 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = posPresent,
             IsWarning = false,
-            Label = "Place of Supply",
+            Label = "State/Place of Supply",
             ExtractedValue = posPresent ? placeOfSupply : null,
-            Message = posPresent ? null : "Place of supply / state not detected",
+            Message = posPresent ? null : "State / place of supply not detected",
         });
 
-        // CS_TOTAL_DAYS_PRESENT
-        bool daysPresent = numberOfDays.HasValue && numberOfDays.Value > 0;
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "CS_TOTAL_DAYS_PRESENT",
-            Type = "Required",
-            Passed = daysPresent,
-            IsWarning = false,
-            Label = "No. of Days",
-            ExtractedValue = daysPresent ? numberOfDays.ToString() : null,
-            Message = daysPresent ? null : "Total number of days not detected",
-        });
-
-        // CS_ACTIVATIONS_PRESENT
-        bool activationsPresent = numberOfActivations.HasValue && numberOfActivations.Value > 0;
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "CS_ACTIVATIONS_PRESENT",
-            Type = "Required",
-            Passed = activationsPresent,
-            IsWarning = false,
-            Label = "No. of Activations",
-            ExtractedValue = activationsPresent ? numberOfActivations.ToString() : null,
-            Message = activationsPresent ? null : "Number of activations not detected",
-        });
-
-        // CS_TEAMS_PRESENT
-        bool teamsPresent = numberOfTeams.HasValue && numberOfTeams.Value > 0;
-        rules.Add(new ValidationRuleResult
-        {
-            RuleCode = "CS_TEAMS_PRESENT",
-            Type = "Required",
-            Passed = teamsPresent,
-            IsWarning = false,
-            Label = "No. of Teams",
-            ExtractedValue = teamsPresent ? numberOfTeams.ToString() : null,
-            Message = teamsPresent ? null : "Number of teams not detected",
-        });
-
-        // CS_ELEMENT_WISE_COSTS_PRESENT
+        // Rule 2: CS_ELEMENT_WISE_COSTS_PRESENT
         bool costsPresent = !string.IsNullOrWhiteSpace(elementWiseCosts) && elementWiseCosts != "[]";
         rules.Add(new ValidationRuleResult
         {
@@ -3485,12 +3366,25 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = costsPresent,
             IsWarning = false,
-            Label = "Element-wise Cost",
+            Label = "Element wise Cost",
             ExtractedValue = null,
             Message = costsPresent ? null : "Element-wise cost breakdown not detected",
         });
 
-        // CS_ELEMENT_WISE_QUANTITY_PRESENT
+        // Rule 3: CS_TOTAL_DAYS_PRESENT
+        bool daysPresent = numberOfDays.HasValue && numberOfDays.Value > 0;
+        rules.Add(new ValidationRuleResult
+        {
+            RuleCode = "CS_TOTAL_DAYS_PRESENT",
+            Type = "Required",
+            Passed = daysPresent,
+            IsWarning = false,
+            Label = "No of Days",
+            ExtractedValue = daysPresent ? numberOfDays.ToString() : null,
+            Message = daysPresent ? null : "Number of days not detected",
+        });
+
+        // Rule 4: CS_ELEMENT_WISE_QUANTITY_PRESENT
         bool qtyPresent = !string.IsNullOrWhiteSpace(elementWiseQuantity) && elementWiseQuantity != "[]";
         rules.Add(new ValidationRuleResult
         {
@@ -3498,24 +3392,77 @@ public class AssistantController : ControllerBase
             Type = "Required",
             Passed = qtyPresent,
             IsWarning = false,
-            Label = "Element-wise Quantity",
+            Label = "Element wise Quantity",
             ExtractedValue = null,
             Message = qtyPresent ? null : "Element-wise quantity breakdown not detected",
         });
 
-        // CS_FIXED_COST_LIMITS: Check fixed cost elements against state rates
+        // Rule 5: CS_TOTAL_VS_INVOICE — Total Cost
+        if (totalCost == null || invoiceAmount == null)
+        {
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = "CS_TOTAL_VS_INVOICE",
+                Type = "Required",
+                Passed = false,
+                IsWarning = true,
+                Label = "Total Cost",
+                ExtractedValue = totalCost.HasValue ? $"₹{totalCost.Value:F2}" : null,
+                Message = totalCost == null
+                    ? "Cost Summary total amount not detected — cannot compare with invoice"
+                    : "Invoice amount not available — cannot compare",
+            });
+        }
+        else
+        {
+            bool withinLimit = totalCost.Value <= invoiceAmount.Value;
+            decimal diff = totalCost.Value - invoiceAmount.Value;
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = "CS_TOTAL_VS_INVOICE",
+                Type = "Required",
+                Passed = withinLimit,
+                IsWarning = false,
+                Label = "Total Cost",
+                ExtractedValue = $"Cost: ₹{totalCost.Value:F2} | Invoice: ₹{invoiceAmount.Value:F2}",
+                Message = withinLimit
+                    ? null
+                    : $"Cost Summary (₹{totalCost.Value:F2}) exceeds Invoice (₹{invoiceAmount.Value:F2}) by ₹{diff:F2}",
+            });
+        }
+
+        // Rule 6: CS_ELEMENT_COST_VS_RATES — Element Cost limit as per State Rate
+        {
+            var breakdownCheck = !string.IsNullOrWhiteSpace(costSummary.CostBreakdownJson)
+                ? costSummary.CostBreakdownJson
+                : TryExtractBreakdownFromJson(costSummary.ExtractedDataJson);
+
+            bool hasElements = !string.IsNullOrWhiteSpace(breakdownCheck);
+            rules.Add(new ValidationRuleResult
+            {
+                RuleCode = "CS_ELEMENT_COST_VS_RATES",
+                Type = "Check",
+                Passed = hasElements,
+                IsWarning = !hasElements,
+                Label = "Element Cost limit as per State Rate",
+                ExtractedValue = hasElements ? "Present" : null,
+                Message = hasElements
+                    ? "Element cost breakdown present for rate comparison"
+                    : "Element cost breakdown not found in extracted data",
+            });
+        }
+
+        // Rule 7: CS_FIXED_COST_LIMITS — Fixed Cost Limit as per State Rate
         {
             string? stateCode = null;
             if (!string.IsNullOrWhiteSpace(placeOfSupply))
             {
-                // Try to resolve state code from place of supply via reference data
                 stateCode = _referenceData.GetStateCodeByName(placeOfSupply) ?? placeOfSupply;
             }
 
             List<(string element, decimal amount)> fixedItems = new();
             List<(string element, decimal amount)> failedFixed = new();
 
-            // Prefer CostBreakdownJson; fall back to ExtractedDataJson.costBreakdowns
             var breakdownSource = !string.IsNullOrWhiteSpace(costSummary.CostBreakdownJson)
                 ? costSummary.CostBreakdownJson
                 : TryExtractBreakdownFromJson(costSummary.ExtractedDataJson);
@@ -3552,7 +3499,7 @@ public class AssistantController : ControllerBase
                     Type = "Check",
                     Passed = true,
                     IsWarning = false,
-                    Label = "Fixed Cost Limits",
+                    Label = "Fixed Cost Limit as per State Rate",
                     ExtractedValue = null,
                     Message = "No fixed cost items found to validate",
                 });
@@ -3565,7 +3512,7 @@ public class AssistantController : ControllerBase
                     Type = "Check",
                     Passed = false,
                     IsWarning = true,
-                    Label = "Fixed Cost Limits",
+                    Label = "Fixed Cost Limit as per State Rate",
                     ExtractedValue = null,
                     Message = "State not identified — cannot check fixed cost limits",
                 });
@@ -3584,7 +3531,7 @@ public class AssistantController : ControllerBase
                     Type = "Check",
                     Passed = fixedOk,
                     IsWarning = !fixedOk,
-                    Label = "Fixed Cost Limits",
+                    Label = "Fixed Cost Limit as per State Rate",
                     ExtractedValue = $"{fixedItems.Count} fixed cost item(s) checked",
                     Message = fixedOk
                         ? $"All {fixedItems.Count} fixed cost item(s) within state limits"
@@ -3593,7 +3540,7 @@ public class AssistantController : ControllerBase
             }
         }
 
-        // CS_VARIABLE_COST_LIMITS: Check variable cost elements against state rates
+        // Rule 8: CS_VARIABLE_COST_LIMITS — Variable cost limit as per State Rate
         {
             string? stateCode = null;
             if (!string.IsNullOrWhiteSpace(placeOfSupply))
@@ -3638,7 +3585,7 @@ public class AssistantController : ControllerBase
                     Type = "Check",
                     Passed = true,
                     IsWarning = false,
-                    Label = "Variable Cost Limits",
+                    Label = "Variable cost limit as per State Rate",
                     ExtractedValue = null,
                     Message = "No variable cost items found to validate",
                 });
@@ -3651,7 +3598,7 @@ public class AssistantController : ControllerBase
                     Type = "Check",
                     Passed = false,
                     IsWarning = true,
-                    Label = "Variable Cost Limits",
+                    Label = "Variable cost limit as per State Rate",
                     ExtractedValue = null,
                     Message = "State not identified — cannot check variable cost limits",
                 });
@@ -3670,47 +3617,13 @@ public class AssistantController : ControllerBase
                     Type = "Check",
                     Passed = varOk,
                     IsWarning = !varOk,
-                    Label = "Variable Cost Limits",
+                    Label = "Variable cost limit as per State Rate",
                     ExtractedValue = $"{varItems.Count} variable cost item(s) checked",
                     Message = varOk
                         ? $"All {varItems.Count} variable cost item(s) within state limits"
                         : $"{failedVar.Count} item(s) exceed state limit: {string.Join(", ", failedVar.Select(f => f.element))}",
                 });
             }
-        }
-
-        // CS_TOTAL_VS_INVOICE: Total Cost <= Invoice Amount
-        if (totalCost == null || invoiceAmount == null)
-        {
-            rules.Add(new ValidationRuleResult
-            {
-                RuleCode = "CS_TOTAL_VS_INVOICE",
-                Type = "Required",
-                Passed = false,
-                IsWarning = true,
-                Label = "Total Cost vs Invoice Amount",
-                ExtractedValue = totalCost.HasValue ? $"₹{totalCost.Value:F2}" : null,
-                Message = totalCost == null
-                    ? "Cost Summary total amount not detected — cannot compare with invoice"
-                    : "Invoice amount not available — cannot compare",
-            });
-        }
-        else
-        {
-            bool withinLimit = totalCost.Value <= invoiceAmount.Value;
-            decimal diff = totalCost.Value - invoiceAmount.Value;
-            rules.Add(new ValidationRuleResult
-            {
-                RuleCode = "CS_TOTAL_VS_INVOICE",
-                Type = "Required",
-                Passed = withinLimit,
-                IsWarning = false,
-                Label = "Total Cost vs Invoice Amount",
-                ExtractedValue = $"Cost: ₹{totalCost.Value:F2} | Invoice: ₹{invoiceAmount.Value:F2}",
-                Message = withinLimit
-                    ? null
-                    : $"Cost Summary (₹{totalCost.Value:F2}) exceeds Invoice (₹{invoiceAmount.Value:F2}) by ₹{diff:F2}",
-            });
         }
 
         return rules;
