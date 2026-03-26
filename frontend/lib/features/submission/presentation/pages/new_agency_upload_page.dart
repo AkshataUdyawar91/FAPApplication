@@ -6,6 +6,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -1142,14 +1144,9 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
 
       if (mounted) _navigateToDashboard();
     } catch (e) {
-      String msg = 'Failed to submit: $e';
-      if (e is DioException && e.response?.data != null) {
-        final data = e.response!.data;
-        if (data is Map) {
-          msg = data['error']?.toString() ?? data['message']?.toString() ?? msg;
-        }
+      if (mounted) {
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e));
       }
-      _showError(msg);
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }
@@ -1169,13 +1166,35 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
     }
   }
 
-  void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg), backgroundColor: AppColors.rejectedText),
-      );
+  void _showError(String msg) =>
+      ErrorHandler.show(context, failure: ServerFailure(msg));
 
   void _showSuccess(String msg) => ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(msg), backgroundColor: AppColors.approvedText),
       );
+
+  /// Maps a caught exception to the appropriate Failure subtype.
+  Failure _mapExceptionToFailure(Object e) {
+    if (e is DioException) {
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+        case DioExceptionType.connectionError:
+          return const NetworkFailure('Connection timeout');
+        case DioExceptionType.badResponse:
+          final statusCode = e.response?.statusCode;
+          if (statusCode == 401) return const AuthFailure('Unauthorized');
+          if (statusCode == 403) return const AuthFailure('Forbidden');
+          if (statusCode == 404) return const NotFoundFailure();
+          return ServerFailure(
+              e.response?.data?['message']?.toString() ?? 'Server error');
+        default:
+          return const NetworkFailure();
+      }
+    }
+    return ServerFailure(e.toString());
+  }
 
   // ─── SHARED NAV ITEMS ────────────────────────────────────────────────
   List<NavItem> _getNavItems(BuildContext context) {
@@ -1837,12 +1856,8 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
                         } catch (e) {
                           debugPrint('Error updating SelectedPOId: $e');
                           if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Failed to link PO: $e'),
-                                backgroundColor: Colors.orange,
-                              ),
-                            );
+                            ErrorHandler.show(context,
+                                failure: _mapExceptionToFailure(e));
                           }
                         }
                       }

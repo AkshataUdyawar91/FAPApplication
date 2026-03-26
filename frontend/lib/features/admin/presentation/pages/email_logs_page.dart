@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import 'package:dio/dio.dart';
 
 class EmailLogsPage extends StatefulWidget {
@@ -57,9 +59,9 @@ class _EmailLogsPageState extends State<EmailLogsPage> {
         });
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load email logs: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

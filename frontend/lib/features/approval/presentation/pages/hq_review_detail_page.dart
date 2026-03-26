@@ -9,6 +9,8 @@ import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
@@ -105,6 +107,28 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
   void dispose() {
     _commentsController.dispose();
     super.dispose();
+  }
+
+  /// Maps a caught exception to the appropriate Failure subtype.
+  Failure _mapExceptionToFailure(Object e) {
+    if (e is DioException) {
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+        case DioExceptionType.connectionError:
+          return const NetworkFailure('Connection timeout');
+        case DioExceptionType.badResponse:
+          final statusCode = e.response?.statusCode;
+          if (statusCode == 401) return const AuthFailure('Unauthorized');
+          if (statusCode == 403) return const AuthFailure('Forbidden');
+          if (statusCode == 404) return const NotFoundFailure();
+          return ServerFailure(e.response?.data?['message']?.toString() ?? 'Server error');
+        default:
+          return const NetworkFailure();
+      }
+    }
+    return ServerFailure(e.toString());
   }
 
   Future<void> _loadSubmissionDetails() async {
@@ -222,12 +246,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load submission: ${e.toString()}'),
-            backgroundColor: AppColors.rejectedText,
-          ),
-        );
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e), onRetry: _loadSubmissionDetails);
       }
     }
   }
@@ -253,12 +272,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to approve: ${e.toString()}'),
-            backgroundColor: AppColors.rejectedText,
-          ),
-        );
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e));
       }
     } finally {
       if (mounted) {
@@ -301,12 +315,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to reject: ${e.toString()}'),
-            backgroundColor: AppColors.rejectedText,
-          ),
-        );
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e));
       }
     } finally {
       if (mounted) {
@@ -1367,12 +1376,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to download: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e));
       }
     }
   }
@@ -1516,11 +1520,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Failed to load document: $e'),
-              backgroundColor: Colors.red),
-        );
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e));
       }
     }
   }
@@ -1578,11 +1578,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Failed to download: $e'),
-              backgroundColor: Colors.red),
-        );
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e));
       }
     }
   }
@@ -1633,12 +1629,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to download: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e));
       }
     }
   }

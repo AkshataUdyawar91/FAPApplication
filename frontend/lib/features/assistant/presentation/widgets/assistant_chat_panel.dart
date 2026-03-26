@@ -22,6 +22,8 @@ import '../../../../core/network/dio_client.dart';
 import '../../../../core/utils/chat_intent_detector.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../submission/presentation/pages/agency_submission_detail_page.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 
 /// Embeddable side-panel version of the Field Activity Assistant.
 /// Mirrors ChatScreen logic but renders as a Column (no Scaffold).
@@ -435,9 +437,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load document: $e')),
-        );
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
       }
     }
   }
@@ -476,9 +476,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to download: $e')),
-        );
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
       }
     }
   }
@@ -2044,9 +2042,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load photo: $e')),
-        );
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
       }
     }
   }
@@ -3061,6 +3057,16 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         setState(() => _currentTeamPayload = lastBot.response!.payloadJson!);
       }
       if (newMode != _inputMode) setState(() => _inputMode = newMode);
+
+      // Show error toast for assistant errors
+      if (next.error != null && (prev == null || prev.error == null)) {
+        ErrorHandler.show(context, failure: ErrorHandler.failureFromMessage(next.error!));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ref.read(assistantNotifierProvider.notifier).clearError();
+          }
+        });
+      }
     });
 
     return Container(
@@ -3119,18 +3125,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
           // Step tracker — only visible during submission flow
           if (state.isSubmissionFlow) _buildStepTracker(state.currentStep),
-          // Error banner
-          if (state.error != null)
-            MaterialBanner(
-              content: Text(state.error!),
-              backgroundColor: Colors.red.shade50,
-              actions: [
-                TextButton(
-                  onPressed: () => ref.read(assistantNotifierProvider.notifier).clearError(),
-                  child: const Text('DISMISS'),
-                ),
-              ],
-            ),
           // Messages
           Expanded(
             child: state.messages.isEmpty && state.isLoading
