@@ -78,9 +78,10 @@ class _AgencySubmissionDetailPageState
   Map<String, dynamic> _activityValidation = {};
   Map<String, dynamic> _enquiryValidation = {};
 
-  // Blob URLs for Cost Summary and Activity Summary (from campaigns array)
+  // Blob URLs for Cost Summary, Activity Summary, and Enquiry (from campaigns array)
   String? _costSummaryBlobUrl;
   String? _activitySummaryBlobUrl;
+  String? _enquiryBlobUrl;
 
   @override
   void initState() {
@@ -176,6 +177,14 @@ class _AgencySubmissionDetailPageState
               ?? firstCampaign['activityBlobUrl']?.toString();
         }
 
+        // Extract enquiry blob URL from campaigns
+        String? enquiryBlobUrl;
+        if (campaignsList.isNotEmpty) {
+          final firstCampaign = campaignsList[0] as Map<String, dynamic>;
+          enquiryBlobUrl = firstCampaign['enquiryBlobUrl']?.toString()
+              ?? firstCampaign['enquiryUrl']?.toString();
+        }
+
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
@@ -187,6 +196,7 @@ class _AgencySubmissionDetailPageState
           _enquiryValidation = enquiryValidation;
           _costSummaryBlobUrl = costSummaryBlobUrl;
           _activitySummaryBlobUrl = activitySummaryBlobUrl;
+          _enquiryBlobUrl = enquiryBlobUrl;
           _isLoading = false;
         });
       }
@@ -409,6 +419,27 @@ class _AgencySubmissionDetailPageState
         ?? '';
   }
 
+  /// Gets document ID for Enquiry — checks documents array with multiple type aliases,
+  /// then falls back to campaigns array fields.
+  String _getEnquiryDocumentId() {
+    for (final alias in ['Enquiry', 'EnquiryData', 'Enquiry Data', 'enquiry', 'enquiry_data']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['enquiryDocumentId']?.toString()
+            ?? c['enquiryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    return _enquiryValidation['documentId']?.toString()
+        ?? _enquiryValidation['id']?.toString()
+        ?? '';
+  }
+
   /// Checks if a validation entry has any warning rules that did not pass.
   bool _hasWarningRules(Map<String, dynamic> validation) {
     try {
@@ -591,6 +622,19 @@ class _AgencySubmissionDetailPageState
               const SizedBox(height: 24),
             ],
 
+            // Enquiry Validation (view/download only, no table)
+            if (_enquiryValidation.isNotEmpty) ...[
+              _buildSingleValidationCard(
+                title: 'Enquiry Validation',
+                fileName: _getEnquiryFileName(),
+                validation: _enquiryValidation,
+                documentId: _getEnquiryDocumentId(),
+                blobUrl: _enquiryBlobUrl,
+                hideRowsAndBadge: true,
+              ),
+              const SizedBox(height: 24),
+            ],
+
             // Photo Validations (at bottom)
             if (_photoValidations.isNotEmpty) ...[
               _buildPhotoValidationsSection(_photoValidations),
@@ -601,7 +645,8 @@ class _AgencySubmissionDetailPageState
             if (_invoiceValidations.isEmpty &&
                 _photoValidations.isEmpty &&
                 _costSummaryValidation.isEmpty &&
-                _activityValidation.isEmpty)
+                _activityValidation.isEmpty &&
+                _enquiryValidation.isEmpty)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
