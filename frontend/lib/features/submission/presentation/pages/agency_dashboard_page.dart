@@ -317,6 +317,9 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                           ? AssistantChatPanel(
                               onClose: () => setState(() => _mainView = 'requests'),
                               onNewRequest: _navigateToUpload,
+                              onSubmissionComplete: () {
+                                _loadRequests();
+                              },
                               isFullWidth: true,
                             )
                           : Column(
@@ -385,6 +388,8 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           'userName': widget.userName,
           'submissionId': submissionId,
         });
+        // Refresh list when user returns from upload page
+        if (mounted) _loadRequests();
       }
     } catch (e) {
       debugPrint('Error creating draft submission: $e');

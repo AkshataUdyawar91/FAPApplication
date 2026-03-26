@@ -254,6 +254,7 @@ class _BotMessageBubbleState extends State<BotMessageBubble> {
       borderColor = Colors.red;
       icon = Icons.cancel_outlined;
     }
+    final displayLabel = rule.label ?? _ruleLabel(rule.ruleCode);
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -264,11 +265,44 @@ class _BotMessageBubbleState extends State<BotMessageBubble> {
       child: Row(children: [
         Icon(icon, size: 16, color: borderColor),
         const SizedBox(width: 8),
-        Expanded(child: Text(rule.ruleCode, style: const TextStyle(fontSize: 13))),
+        Expanded(child: Text(displayLabel, style: const TextStyle(fontSize: 13))),
         if (rule.extractedValue != null)
           Text(rule.extractedValue!, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
       ]),
     );
+  }
+
+  /// Maps rule codes to human-readable labels for chatbot display.
+  static String _ruleLabel(String code) {
+    const labels = {
+      // Invoice
+      'INV_INVOICE_NUMBER_PRESENT': 'Invoice Number',
+      'INV_DATE_PRESENT': 'Invoice Date',
+      'INV_AMOUNT_PRESENT': 'Invoice amount',
+      'INV_AGENCY_NAME_ADDRESS': 'Agency Name & Addresses',
+      'INV_VENDOR_CODE_PRESENT': 'Agency Code',
+      'INV_PO_NUMBER_MATCH': 'PO Number',
+      'INV_GST_NUMBER_PRESENT': 'GSTIN for State',
+      'INV_GST_PERCENT_PRESENT': 'GST %',
+      'INV_AMOUNT_VS_PO_BALANCE': 'Invoice amount limit',
+      // Cost Summary
+      'CS_PLACE_OF_SUPPLY_PRESENT': 'State/Place of Supply',
+      'CS_ELEMENT_WISE_COSTS_PRESENT': 'Element wise Cost',
+      'CS_TOTAL_DAYS_PRESENT': 'No of Days',
+      'CS_ELEMENT_WISE_QUANTITY_PRESENT': 'Element wise Quantity',
+      'CS_TOTAL_VS_INVOICE': 'Total Cost',
+      'CS_ELEMENT_COST_VS_RATES': 'Element Cost limit as per State Rate',
+      'CS_FIXED_COST_LIMITS': 'Fixed Cost Limit as per State Rate',
+      'CS_VARIABLE_COST_LIMITS': 'Variable cost limit as per State Rate',
+      // Activity
+      'AS_DAYS_MATCH_COST_SUMMARY': 'Days worked matches Cost Summary',
+      // Photo
+      'PHOTO_DATE_VISIBLE': 'Date on Photos',
+      'PHOTO_GPS_VISIBLE': 'GPS Coordinates',
+      'PHOTO_BLUE_TSHIRT': 'Promoter wearning Blue T-shirt',
+      'PHOTO_3W_VEHICLE': 'Branded 3 wheeler',
+    };
+    return labels[code] ?? code;
   }
 
   Widget _buildTeamSummaryCard(TeamSummaryCardModel card) {

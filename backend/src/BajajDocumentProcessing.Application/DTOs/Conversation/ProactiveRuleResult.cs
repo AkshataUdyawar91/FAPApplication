@@ -26,6 +26,12 @@ public class ProactiveRuleResult
     public required bool Passed { get; init; }
 
     /// <summary>
+    /// Human-readable label for display, e.g. "Element wise Cost"
+    /// </summary>
+    [JsonPropertyName("label")]
+    public string? Label { get; init; }
+
+    /// <summary>
     /// Value extracted from the document
     /// </summary>
     [JsonPropertyName("extractedValue")]

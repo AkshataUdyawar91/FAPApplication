@@ -71,19 +71,19 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: const BoxDecoration(
-            color: AppColors.primary,
-            border: Border(bottom: BorderSide(color: AppColors.border)),
+            color: Colors.white,
+            border: Border(bottom: BorderSide(color: Color(0xFF003087), width: 2)),
           ),
           child: Row(
             children: [
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: AppColors.primary.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child:
-                    const Icon(Icons.smart_toy, color: Colors.white, size: 20),
+                    const Icon(Icons.smart_toy, color: AppColors.primary, size: 20),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -95,14 +95,14 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                        color: AppColors.primary,
                       ),
                     ),
                     Text(
                       'Ask me anything about your submissions',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.white.withOpacity(0.8),
+                        color: AppColors.primary.withOpacity(0.7),
                       ),
                     ),
                   ],
