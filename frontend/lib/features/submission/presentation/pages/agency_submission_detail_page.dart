@@ -561,7 +561,7 @@ class _AgencySubmissionDetailPageState
             const Divider(),
             const SizedBox(height: 16),
 
-            // Invoice Validations (from invoiceValidations array)
+            // Invoice Validations
             if (_invoiceValidations.isNotEmpty) ...[
               _buildInvoiceValidationsSection(_invoiceValidations),
               const SizedBox(height: 24),
@@ -591,18 +591,6 @@ class _AgencySubmissionDetailPageState
               const SizedBox(height: 24),
             ],
 
-            // Enquiry Validation
-            if (_enquiryValidation.isNotEmpty) ...[
-              _buildSingleValidationCard(
-                title: 'Enquiry Validation',
-                fileName: _getEnquiryFileName(),
-                validation: _enquiryValidation,
-                documentId: _getDocumentIdByType('EnquiryDocument'),
-                hideRowsAndBadge: true,
-              ),
-              const SizedBox(height: 24),
-            ],
-
             // Photo Validations (at bottom)
             if (_photoValidations.isNotEmpty) ...[
               _buildPhotoValidationsSection(_photoValidations),
@@ -613,8 +601,7 @@ class _AgencySubmissionDetailPageState
             if (_invoiceValidations.isEmpty &&
                 _photoValidations.isEmpty &&
                 _costSummaryValidation.isEmpty &&
-                _activityValidation.isEmpty &&
-                _enquiryValidation.isEmpty)
+                _activityValidation.isEmpty)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -670,6 +657,9 @@ class _AgencySubmissionDetailPageState
         debugPrint('Error parsing validation details: $e');
       }
     }
+
+    // Filter to only the 9 invoice rows per spec
+    allRows = _filterInvoiceRows(allRows);
 
     return _buildValidationCardWidget(
       title: 'Invoice Validations',
@@ -767,15 +757,15 @@ class _AgencySubmissionDetailPageState
 
     // Photo Count
     if (totalPhotos != null && totalPhotos > 0) {
-      addRow('Photo Count', true, '$totalPhotos photos uploaded');
+      addRow('Photo count', true, '$totalPhotos Photos uploaded');
 
       final photosWithDate = fieldPresence?['photosWithDate'] ?? 0;
-      addRow('Date on Photos', photosWithDate == totalPhotos,
-          '$photosWithDate/$totalPhotos photos have date mentioned');
+      addRow('Date on photos', photosWithDate == totalPhotos,
+          '$photosWithDate/$totalPhotos Photos have date mentioned');
 
       final photosWithLocation = fieldPresence?['photosWithLocation'] ?? 0;
-      addRow('GPS Coordinates', photosWithLocation == totalPhotos,
-          '$photosWithLocation/$totalPhotos photos have coordinates present');
+      addRow('GPS coordinates', photosWithLocation == totalPhotos,
+          '$photosWithLocation/$totalPhotos Photos have coordinates present');
     }
 
     // No. of Days — uses crossDocument photoCount vs costSummaryDays
@@ -784,22 +774,22 @@ class _AgencySubmissionDetailPageState
       if (photoCountMatch != null) {
         final photoCount = crossDocument['photoCount'] ?? totalPhotos ?? 0;
         final costDays = crossDocument['costSummaryDays'] ?? 0;
-        addRow('No. of Days', photoCountMatch == true,
+        addRow('No. of days', photoCountMatch == true,
             photoCountMatch == true
-                ? 'Photo count ($photoCount) meets required days in Cost Summary ($costDays)'
-                : 'Photo count ($photoCount) is less than days in Cost Summary ($costDays)');
+                ? 'Photo count ($photoCount) meets required days in cost summary ($costDays)'
+                : 'Photo count ($photoCount) is less than days in cost summary ($costDays)');
       }
     }
 
     // Blue T-shirt & Branded 3W
     if (totalPhotos != null && totalPhotos > 0) {
       final photosWithBlueTshirt = fieldPresence?['photosWithBlueTshirt'] ?? 0;
-      addRow('Promoter wearing Blue T-shirt', photosWithBlueTshirt > 0,
-          '$photosWithBlueTshirt/$totalPhotos photos have promoters wear blue T-shirt');
+      addRow('Promoter wearning blue T-shirt', photosWithBlueTshirt > 0,
+          '$photosWithBlueTshirt/$totalPhotos Photos have promoters wearing blue T-shirt');
 
       final photosWithVehicle = fieldPresence?['photosWithVehicle'] ?? 0;
-      addRow('Branded 3 Wheeler', photosWithVehicle > 0,
-          '$photosWithVehicle/$totalPhotos photos have Branded 3W');
+      addRow('Branded 3 wheeler', photosWithVehicle > 0,
+          '$photosWithVehicle/$totalPhotos Photos have branded 3 wheelers');
     }
 
     return rows;
@@ -811,20 +801,20 @@ class _AgencySubmissionDetailPageState
       // Chatbot rule codes
       'INV_INVOICE_NUMBER_PRESENT': 'Invoice Number',
       'INV_DATE_PRESENT': 'Invoice Date',
-      'INV_AMOUNT_PRESENT': 'Invoice Amount',
-      'INV_GST_NUMBER_PRESENT': 'GST Number',
-      'INV_GST_PERCENT_PRESENT': 'GST Percentage',
+      'INV_AMOUNT_PRESENT': 'Invoice amount',
+      'INV_GST_NUMBER_PRESENT': 'GSTIN for State',
+      'INV_GST_PERCENT_PRESENT': 'GST %',
       'INV_HSN_SAC_PRESENT': 'HSN/SAC Code',
-      'INV_VENDOR_CODE_PRESENT': 'Vendor Code',
-      'INV_AGENCY_NAME_ADDRESS': 'Agency Name & Address',
+      'INV_VENDOR_CODE_PRESENT': 'Agency Code',
+      'INV_AGENCY_NAME_ADDRESS': 'Agency Name & Addresses',
       'INV_BILLING_NAME_ADDRESS': 'Billing Name & Address',
       'INV_SUPPLIER_STATE': 'Supplier State',
-      'INV_PO_NUMBER_MATCH': 'PO Number Match',
-      'INV_AMOUNT_VS_PO_BALANCE': 'Amount vs PO Balance',
+      'INV_PO_NUMBER_MATCH': 'PO Number',
+      'INV_AMOUNT_VS_PO_BALANCE': 'Invoice amount limit',
       // Web workflow rule codes
       'INV_NUMBER_PRESENT': 'Invoice Number',
-      'INV_GST_PRESENT': 'GST Number',
-      'INV_PO_MATCH': 'PO Number Match',
+      'INV_GST_PRESENT': 'GSTIN for State',
+      'INV_PO_MATCH': 'PO Number',
       // PO rule codes
       'PO_SAP_VERIFIED': 'SAP Verification',
       'PO_DATE_VALID': 'Date Validation',
@@ -832,7 +822,7 @@ class _AgencySubmissionDetailPageState
       'AS_DEALER_LOCATION_PRESENT': 'Dealer/Location',
       'AS_TOTAL_DAYS': 'Total No. of Days',
       'AS_TOTAL_WORKING_DAYS': 'Total No. of Working Days',
-      'AS_DAYS_MATCH_COST_SUMMARY': 'Days Match (Cost Summary)',
+      'AS_DAYS_MATCH_COST_SUMMARY': 'Days worked matches Cost Summary',
       'AS_DAYS_MATCH_TEAM_DETAILS': 'Days Match (Team Details)',
       // Cost Summary rule codes
       'CS_PLACE_OF_SUPPLY': 'Place of Supply',
@@ -904,6 +894,11 @@ class _AgencySubmissionDetailPageState
       allRows = _filterCostSummaryRows(allRows);
     }
 
+    // For Activity, show only the 1 key validation row
+    if (!hideRowsAndBadge && title.toLowerCase().contains('activity')) {
+      allRows = _filterActivityRows(allRows);
+    }
+
     final passedCount = hideRowsAndBadge ? 0 : allRows.where((r) => r['passed'] == true).length;
     final totalCount = hideRowsAndBadge ? 0 : allRows.length;
 
@@ -918,54 +913,76 @@ class _AgencySubmissionDetailPageState
     );
   }
 
-  /// Filters cost summary validation rows to only the 8 key checks
-  /// and renames labels to match the required display names.
-  List<Map<String, dynamic>> _filterCostSummaryRows(
-      List<Map<String, dynamic>> rows) {
-    // Map from lowercase source label → desired display label.
-    // Only these 8 rows should appear in the cost summary card.
-    const labelMapping = {
-      // Row 1: State/Place of Supply
-      'place of supply': 'State/Place of Supply',
-      'state/place of supply': 'State/Place of Supply',
-      // Row 2: Element wise Cost
-      'element-wise cost': 'Element wise Cost',
-      'element wise cost': 'Element wise Cost',
-      // Row 3: No of Days
-      'no. of days': 'No of Days',
-      'no of days': 'No of Days',
-      // Row 4: Element wise Quantity
-      'element-wise quantity': 'Element wise Quantity',
-      'element wise quantity': 'Element wise Quantity',
-      // Row 5: Total Cost
-      'total cost validation': 'Total Cost',
-      'total cost': 'Total Cost',
-      // Row 6: Element Cost limit as per State Rate
-      'element costs validation': 'Element Cost limit as per State Rate',
-      'element cost vs rates': 'Element Cost limit as per State Rate',
-      // Row 7: Fixed Cost Limit as per State Rate
-      'fixed costs validation': 'Fixed Cost Limit as per State Rate',
-      // Row 8: Variable cost limit as per State Rate
-      'variable costs validation': 'Variable cost limit as per State Rate',
-    };
-
-    final result = <Map<String, dynamic>>[];
-    final seenDisplayLabels = <String>{};
-
+  /// Finds the first source row matching any of the given aliases (case-insensitive).
+  Map<String, dynamic>? _findRow(List<Map<String, dynamic>> rows, List<String> aliases) {
     for (final row in rows) {
       final label = (row['label'] as String? ?? '').toLowerCase();
-      final displayLabel = labelMapping[label];
-      if (displayLabel != null && !seenDisplayLabels.contains(displayLabel)) {
-        seenDisplayLabels.add(displayLabel);
-        result.add({
-          'label': displayLabel,
-          'passed': row['passed'],
-          'message': row['message'],
-        });
+      if (aliases.contains(label)) return row;
+    }
+    return null;
+  }
+
+  /// Filters invoice rows to exactly 9 rows in Excel order. Skips rows not found.
+  List<Map<String, dynamic>> _filterInvoiceRows(List<Map<String, dynamic>> rows) {
+    const orderedSpec = [
+      ('Invoice number', ['invoice number']),
+      ('Invoice date', ['invoice date']),
+      ('Invoice amount', ['invoice amount']),
+      ('Agency name & addresses', ['agency name & addresses', 'agency name & address']),
+      ('Agency code', ['agency code', 'agency code match', 'vendor code']),
+      ('PO number', ['po number', 'po number match']),
+      ('GSTIN for state', ['gstin for state', 'gst number', 'gst state match']),
+      ('GST %', ['gst %', 'gst percentage']),
+      ('Invoice amount limit', ['invoice amount limit', 'amount vs po balance']),
+    ];
+    final result = <Map<String, dynamic>>[];
+    for (final (displayLabel, aliases) in orderedSpec) {
+      final match = _findRow(rows, aliases);
+      if (match != null) {
+        result.add({'label': displayLabel, 'passed': match['passed'], 'message': match['message']});
       }
     }
     return result;
-  }  /// Extracts all validation rows from ValidationDetailsJson.
+  }
+
+  /// Filters cost summary rows to exactly 8 rows in Excel order. Skips rows not found.
+  List<Map<String, dynamic>> _filterCostSummaryRows(List<Map<String, dynamic>> rows) {
+    const orderedSpec = [
+      ('State/Place of supply', ['place of supply', 'state/place of supply']),
+      ('Element wise cost', ['element-wise cost', 'element wise cost']),
+      ('No of days', ['no. of days', 'no of days']),
+      ('Element wise quantity', ['element-wise quantity', 'element wise quantity']),
+      ('Total cost', ['total cost validation', 'total cost']),
+      ('Element cost limit as per state rate', ['element costs validation', 'element cost vs rates']),
+      ('Fixed cost limit as per state rate', ['fixed costs validation']),
+      ('Variable cost limit as per state rate', ['variable costs validation']),
+    ];
+    final result = <Map<String, dynamic>>[];
+    for (final (displayLabel, aliases) in orderedSpec) {
+      final match = _findRow(rows, aliases);
+      if (match != null) {
+        result.add({'label': displayLabel, 'passed': match['passed'], 'message': match['message']});
+      }
+    }
+    return result;
+  }
+
+  /// Filters activity rows to exactly 1 row. Skips if not found.
+  List<Map<String, dynamic>> _filterActivityRows(List<Map<String, dynamic>> rows) {
+    const orderedSpec = [
+      ('Days worked matches cost summary', ['days worked matches cost summary', 'days match (cost summary)', 'number of days match']),
+    ];
+    final result = <Map<String, dynamic>>[];
+    for (final (displayLabel, aliases) in orderedSpec) {
+      final match = _findRow(rows, aliases);
+      if (match != null) {
+        result.add({'label': displayLabel, 'passed': match['passed'], 'message': match['message']});
+      }
+    }
+    return result;
+  }
+
+  /// Extracts all validation rows from ValidationDetailsJson.
   /// Reads: proactiveRules, fieldPresence, crossDocument, amountConsistency,
   /// lineItemMatching, vendorMatching, completeness — deduplicating by label.
   List<Map<String, dynamic>> _extractAllValidationRows(
