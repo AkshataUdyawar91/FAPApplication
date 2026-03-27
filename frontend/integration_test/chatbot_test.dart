@@ -272,12 +272,22 @@ class _ChatbotTestRunnerPanelState extends State<ChatbotTestRunnerPanel> {
     });
 
     await _step('Tap Sign In', () async {
-      _tapElevatedButton('Sign In');
+      // Small delay to ensure button is fully rendered and enabled
+      await Future.delayed(const Duration(milliseconds: 500));
+      // Try exact match first, then partial match as fallback
+      final tapped = _tapElevatedButton('Sign In') ||
+          _tapElevatedButtonContaining('Sign In');
+      if (!tapped) {
+        throw Exception('Sign In button not found in widget tree');
+      }
       // After login the dashboard loads and the chatbot auto-opens.
-      // Wait for either the dashboard text or the chatbot panel to confirm navigation.
+      // The default view is 'chatbot' so AssistantChatPanel renders immediately.
+      // 'My Requests' appears in the sidebar nav label.
       await _waitFor(
-        () => _findText('My Requests') || _findWidgetByType<AssistantChatPanel>() != null,
-        timeout: 20,
+        () => _findText('FieldIQ Assistant') ||
+            _findText('My Requests') ||
+            _findWidgetByType<AssistantChatPanel>() != null,
+        timeout: 30,
       );
     });
 

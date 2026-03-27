@@ -1823,12 +1823,12 @@ debugPrint('Agency Name: ${submissionData['agencyName']}');
       NavItem(
           icon: Icons.smart_toy,
           label: 'Assistant',
-          onTap: () => Navigator.pop(context)),
+          onTap: () => context.go('/home?view=chatbot')),
       NavItem(
           icon: Icons.list_alt,
           label: 'My Requests',
           isActive: true,
-          onTap: () => Navigator.pop(context)),
+          onTap: () => context.go('/home?view=requests')),
       NavItem(
           icon: Icons.add,
           label: 'New Claim',
@@ -1997,7 +1997,8 @@ debugPrint('Agency Name: ${submissionData['agencyName']}');
   }
 
   Widget _buildDesktopHeader(DeviceType device) {
-    final fapNumber = 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    final fapNumber = _submission?['submissionNumber']?.toString() ??
+        'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: device == DeviceType.desktop ? 24 : 16,
@@ -2064,71 +2065,121 @@ debugPrint('Agency Name: ${submissionData['agencyName']}');
     if (_submission == null) return const SizedBox();
 
     final state = _submission!['state']?.toString() ?? 'Unknown';
-    final fapNumber = 'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
+    final fapNumber = _submission!['submissionNumber']?.toString() ??
+        'FAP-${widget.submissionId.length >= 8 ? widget.submissionId.substring(0, 8).toUpperCase() : widget.submissionId.toUpperCase()}';
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
         mobile: 12, tablet: 16, desktop: 24);
+    final isMobile = device == DeviceType.mobile;
 
+    // Full-width header elements (above the split)
+    final headerWidgets = <Widget>[
+      if (isMobile) ...[
+        Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.pop(context),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Submission Details', style: AppTextStyles.h2),
+                  Text(fapNumber, style: AppTextStyles.bodySmall),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+      ],
+      Visibility(
+        visible: false,
+        child: _buildStatusCard(state, fapNumber),
+      ),
+      if (state.toLowerCase() == 'rejectedbyasm') ...[
+        const SizedBox(height: 16),
+        _buildRejectionCard(
+          rejectedBy: 'ASM',
+          reviewNotes: _submission!['asmReviewNotes']?.toString(),
+        ),
+      ],
+      if (state.toLowerCase() == 'rejectedbyhq' ||
+          state.toLowerCase() == 'rejectedbyra') ...[
+        const SizedBox(height: 16),
+        _buildRejectionCard(
+          rejectedBy: 'RA',
+          reviewNotes: _submission!['hqReviewNotes']?.toString(),
+        ),
+      ],
+      if (state.toLowerCase() == 'processingfailed') ...[
+        const SizedBox(height: 16),
+        _buildProcessingFailedCard(),
+      ],
+      const SizedBox(height: 24),
+      _buildPOSection(),
+      const SizedBox(height: 24),
+    ];
+
+    // Main body content (sits beside the sidebar on desktop)
+    final bodyContent = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_invoiceSummary != null)
+          InvoiceSummarySection(data: _invoiceSummary!),
+        const SizedBox(height: 24),
+        Visibility(
+          visible: false,
+          child: CampaignDetailsTable(
+          campaignDetails: _campaignDetails,
+          onPhotoTap: (detail) =>
+              _downloadDocument(detail.documentId, detail.documentName),
+          ),
+        ),
+        _buildValidationReportSection(),
+        ..._buildPhotoGallerySection(),
+        const SizedBox(height: 80),
+      ],
+    );
+
+    // Desktop/Tablet: header full-width, then 3/4 body + 1/4 sidebar aligned
+    if (!isMobile) {
+      return SingleChildScrollView(
+        padding: EdgeInsets.all(hPad),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ...headerWidgets,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: bodyContent,
+                ),
+                const SizedBox(width: 20),
+                SizedBox(
+                  width: MediaQuery.of(context).size.width * 0.22,
+                  child: _buildApprovalTimeline(),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Mobile: single column, timeline at the end
     return SingleChildScrollView(
       padding: EdgeInsets.all(hPad),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (device == DeviceType.mobile) ...[
-            Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Submission Details', style: AppTextStyles.h2),
-                      Text(fapNumber, style: AppTextStyles.bodySmall),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-          ],
-          Visibility(
-            visible: false,
-            child: _buildStatusCard(state, fapNumber),
-          ),
-          if (state.toLowerCase() == 'rejectedbyasm' ||
-              state.toLowerCase() == 'chrejected') ...[
-            const SizedBox(height: 16),
-            _buildRejectionCard(
-              rejectedBy: 'CH',
-              reviewNotes: _submission!['asmReviewNotes']?.toString(),
-            ),
-          ],
-          if (state.toLowerCase() == 'rejectedbyhq' ||
-              state.toLowerCase() == 'rejectedbyra' ||
-              state.toLowerCase() == 'rarejected') ...[
-            const SizedBox(height: 16),
-            _buildRejectionCard(
-              rejectedBy: 'RA',
-              reviewNotes: _submission!['hqReviewNotes']?.toString(),
-            ),
-          ],
-          if (state.toLowerCase() == 'processingfailed') ...[
-            const SizedBox(height: 16),
-            _buildProcessingFailedCard(),
-          ],
-          const SizedBox(height: 24),
-          _buildPOSection(),
-          const SizedBox(height: 24),
-
-          // Invoice Summary Section (ASM-style)
+          ...headerWidgets,
           if (_invoiceSummary != null)
             InvoiceSummarySection(data: _invoiceSummary!),
           const SizedBox(height: 24),
-
-          // Campaign Details Table (ASM-style)
           Visibility(
             visible: false,
             child: CampaignDetailsTable(
@@ -2137,13 +2188,10 @@ debugPrint('Agency Name: ${submissionData['agencyName']}');
                 _downloadDocument(detail.documentId, detail.documentName),
             ),
           ),
-          const SizedBox(height: 24),
-
-          // Validation Report API Result Section
           _buildValidationReportSection(),
-
-          // Photo Thumbnail Gallery
           ..._buildPhotoGallerySection(),
+          const SizedBox(height: 24),
+          _buildApprovalTimeline(),
           const SizedBox(height: 80),
         ],
       ),

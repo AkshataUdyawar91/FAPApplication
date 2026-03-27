@@ -325,16 +325,37 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
   }
 
   Future<void> _pickMultiplePhotoFiles(String payloadJson) async {
+    // Determine how many photos already exist for this team
+    int existingPhotos = 0;
+    try {
+      final ctx = jsonDecode(payloadJson) as Map<String, dynamic>;
+      existingPhotos = (ctx['totalPhotos'] as num?)?.toInt() ?? 0;
+    } catch (_) {}
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
       allowMultiple: true,
       withData: true,
     );
     if (result == null || result.files.isEmpty) return;
+
+    // Min 3 only applies on the first upload (no existing photos yet)
+    if (existingPhotos == 0 && result.files.length < 3) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please upload at least 3 photos. Minimum 3 photos required.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+      return;
+    }
     if (result.files.length > 10) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Maximum 10 photos per team.')),
+          const SnackBar(content: Text('Maximum 10 photos per upload. Please select up to 10 photos.')),
         );
       }
       return;
@@ -1136,7 +1157,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
                 const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
               Padding(
                 padding: const EdgeInsets.only(top: 6),
-                child: Text('Min 3, max 10 photos. Images compressed to ≤500 KB.',
+                child: Text('Min 3 photos, max 10. Images compressed to ≤500 KB.',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
               ),
             ],
@@ -1780,87 +1801,37 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
     // final teamLabel = r.teamContext?.teamName ?? 'Team ${r.teamContext?.currentTeam ?? 1}'; // hidden
     final teamName = r.teamContext != null ? 'Team ${r.teamContext!.currentTeam}' : 'this team';
 
+    // Parse totalPhotos from payloadJson to decide if "Upload More" should show
+    int totalPhotos = 0;
+    try {
+      final ctx = jsonDecode(payloadJson) as Map<String, dynamic>;
+      totalPhotos = (ctx['totalPhotos'] as num?)?.toInt() ?? 0;
+    } catch (_) {}
+    final canUploadMore = totalPhotos < 50;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // // Team name header — hidden per UI requirement
-        // Padding(
-        //   padding: const EdgeInsets.only(bottom: 8),
-        //   child: Text(
-        //     teamLabel,
-        //     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
-        //   ),
-        // ),
-        // if (photos.isEmpty)
-        //   Padding(
-        //     padding: const EdgeInsets.symmetric(vertical: 8),
-        //     child: Text('No photo results available.',
-        //         style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-        //   )
-        // else
-        //   _photoTable(photos),
         if (isLoading && isLast)
           const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
         const SizedBox(height: 12),
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          // Replace a photo — hidden per UI requirement
-          // ElevatedButton(
-          //   onPressed: isLoading
-          //       ? null
-          //       : () async {
-          //           final numCtrl = TextEditingController();
-          //           final num = await showDialog<int>(
-          //             context: context,
-          //             builder: (ctx) => AlertDialog(
-          //               title: const Text('Replace Photo'),
-          //               content: TextField(
-          //                 controller: numCtrl,
-          //                 keyboardType: TextInputType.number,
-          //                 autofocus: true,
-          //                 decoration: const InputDecoration(
-          //                   hintText: 'Enter photo number (e.g. 1, 2, 3...)',
-          //                 ),
-          //               ),
-          //               actions: [
-          //                 TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          //                 ElevatedButton(
-          //                   onPressed: () {
-          //                     final n = int.tryParse(numCtrl.text.trim());
-          //                     if (n != null) Navigator.pop(ctx, n);
-          //                   },
-          //                   child: const Text('Next'),
-          //                 ),
-          //               ],
-          //             ),
-          //           );
-          //           if (num == null || !mounted) return;
-          //           _pickSinglePhotoForReplace(num, payloadJson);
-          //         },
-          //   style: ElevatedButton.styleFrom(
-          //     backgroundColor: Colors.orange.shade700,
-          //     foregroundColor: Colors.white,
-          //     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          //     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          //   ),
-          //   child: const Text('Replace a photo',
-          //       style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
-          // ),
-          // const SizedBox(width: 6),
-          // Add more photos — hidden per UI requirement
-          // ElevatedButton(
-          //   onPressed: isLoading
-          //       ? null
-          //       : () => ref.read(assistantNotifierProvider.notifier).addMorePhotos(payloadJson),
-          //   style: ElevatedButton.styleFrom(
-          //     backgroundColor: const Color(0xFF003087),
-          //     foregroundColor: Colors.white,
-          //     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          //     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          //   ),
-          //   child: const Text('Add more photos',
-          //       style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
-          // ),
-          // const SizedBox(width: 6),
+          if (canUploadMore) ...[
+            ElevatedButton(
+              onPressed: isLoading
+                  ? null
+                  : () => ref.read(assistantNotifierProvider.notifier).addMorePhotos(payloadJson),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF003087),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: const Text('Upload more photos',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
+            ),
+            const SizedBox(width: 8),
+          ],
           ElevatedButton(
             onPressed: isLoading
                 ? null

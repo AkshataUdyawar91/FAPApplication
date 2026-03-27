@@ -1659,7 +1659,7 @@ public class AssistantController : ControllerBase
             if (!string.IsNullOrWhiteSpace(team?.CampaignName))
                 teamName = team.CampaignName;
         }
-        return $"Now upload photo proofs for {teamName} (Team {currentPhotoTeam} of {totalTeams}).\nMinimum 3 photos, maximum 10 photos.";
+        return $"Now upload photo proofs for {teamName} (Team {currentPhotoTeam} of {totalTeams}).\nMinimum 3 photos, maximum 10 per turn (up to 50 total).";
     }
 
     private async Task<AssistantResponse> HandleStartPhotoUpload(
@@ -1708,7 +1708,7 @@ public class AssistantController : ControllerBase
             return new AssistantResponse
             {
                 Type = "photo_upload",
-                Message = "Maximum 10 photos per team. Please select up to 10 photos.",
+                Message = "Maximum 10 photos per turn. Please select up to 10 photos.",
                 TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams },
                 PayloadJson = request.PayloadJson,
                 SubmissionId = submissionId,
@@ -1735,11 +1735,11 @@ public class AssistantController : ControllerBase
         if (teamId.HasValue)
             existingCount = await _context.TeamPhotos.CountAsync(p => p.TeamId == teamId.Value && !p.IsDeleted, ct);
 
-        if (existingCount + photoIds.Count > 10)
+        if (existingCount + photoIds.Count > 50)
             return new AssistantResponse
             {
                 Type = "photo_validation_results",
-                Message = $"Maximum 10 photos per team. You already have {existingCount} photo(s). Remove a photo first or proceed with current set.",
+                Message = $"Maximum 50 photos per team. You already have {existingCount} photo(s). Please proceed with the current set.",
                 TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams, TeamName = teamName },
                 PayloadJson = request.PayloadJson,
                 SubmissionId = submissionId,
@@ -2022,7 +2022,7 @@ public class AssistantController : ControllerBase
         return new AssistantResponse
         {
             Type = "photo_upload",
-            Message = $"You have {totalPhotos} photo(s) so far. Upload more (max 10 total):",
+            Message = $"You have {totalPhotos} photo(s) so far. Upload more (max 10 per turn, 50 total):",
             TeamContext = new TeamContextDto { CurrentTeam = currentPhotoTeam, TotalTeams = totalTeams },
             PayloadJson = request.PayloadJson,
             SubmissionId = submissionId,
@@ -2288,7 +2288,7 @@ public class AssistantController : ControllerBase
         int passCount = rules.Count(r => r.Passed);
         int failCount = rules.Count(r => !r.Passed);
 
-        string botMessage = $"ClaimsIQ Enquiry Dump processed:\n• {totalRecords} enquiry records found\n• {missingPhone} records with missing Customer Phone";
+        string botMessage = "ClaimsIQ Enquiry Dump processed.";
 
         // Persist to ValidationResults
         try
@@ -2534,7 +2534,6 @@ public class AssistantController : ControllerBase
             Fields = new List<FinalReviewField>
             {
                 new() { Label = "State", Value = package.CostSummary.PlaceOfSupply ?? package.ActivityState ?? "—" },
-                new() { Label = "No. of Teams", Value = package.CostSummary.NumberOfTeams?.ToString() ?? "—" },
                 new() { Label = "No. of Days", Value = package.CostSummary.NumberOfDays?.ToString() ?? "—" },
                 new() { Label = "Total Cost", Value = package.CostSummary.TotalCost.HasValue ? $"₹{package.CostSummary.TotalCost:N2}" : "—" },
             }
@@ -2549,8 +2548,6 @@ public class AssistantController : ControllerBase
             Passed = actPassed ?? true,
             Fields = new List<FinalReviewField>
             {
-                new() { Label = "Dealer", Value = package.ActivitySummary.DealerName ?? "—" },
-                new() { Label = "Total Days", Value = package.ActivitySummary.TotalDays?.ToString() ?? "—" },
                 new() { Label = "Working Days", Value = package.ActivitySummary.TotalWorkingDays?.ToString() ?? "—" },
             }
         };
@@ -3854,9 +3851,9 @@ public class AssistantController : ControllerBase
             : 0;
 
         // Allow +1 overage for single-photo replace operations (the old photo gets soft-deleted after)
-        var effectiveLimit = files.Count == 1 ? 11 : 10;
+        var effectiveLimit = files.Count == 1 ? 51 : 50;
         if (existingCount + files.Count > effectiveLimit)
-            return BadRequest(new { error = $"Maximum 10 photos per team. You already have {existingCount}." });
+            return BadRequest(new { error = $"Maximum 50 photos per team. You already have {existingCount}." });
 
         // Route each photo through DocumentService so blob upload + EXIF/AI extraction runs
         var documentService = HttpContext.RequestServices.GetRequiredService<IDocumentService>();
