@@ -261,6 +261,21 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     widget.onCampaignsChanged(_campaigns);
   }
 
+  // ── Test helpers ──
+  Future<void> testLoadDealers(String campaignId) => _loadDealersForState(campaignId);
+  List<String> testGetDealerNames(String campaignId) => _uniqueDealerNames[campaignId] ?? [];
+  List<Map<String, dynamic>> testGetCityOptions(String campaignId) => _cityOptions[campaignId] ?? [];
+  void testSelectDealerName(String campaignId, String name) {
+    final campaign = _campaigns.firstWhere((c) => c.id == campaignId);
+    _onDealerNameSelected(campaign, name);
+  }
+  void testSelectCity(String campaignId, Map<String, dynamic> dealer) {
+    final campaign = _campaigns.firstWhere((c) => c.id == campaignId);
+    _onCitySelected(campaign, dealer);
+  }
+  // ignore: invalid_use_of_protected_member
+  void testRebuild() => setState(() {});
+
   @override
   void initState() {
     super.initState();
