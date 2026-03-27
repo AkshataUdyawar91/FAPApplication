@@ -135,7 +135,7 @@ Shown only when the submission is in an actionable state. Contains:
 - Comments text field (optional)
 
 **Actionable state logic per role:**
-- ASM page (`_isSubmissionActionable`): state is `PendingCH`, `PendingApproval`, `PendingCHApproval`, or `RARejected`
+- ASM page (`_isSubmissionActionable`): state is `PendingCH`, `PendingApproval`, or `PendingCHApproval` (NOT `RARejected` — when RA rejects, the agency must resubmit; CH cannot act on RA-rejected submissions)
 - RA page (`_isSubmissionActionable`): state is `PendingRA` or `PendingHQApproval`
 
 When CH has rejected a submission (state = `CHRejected`), the RA page does NOT show action buttons. The RA can only act once the agency resubmits and the submission flows back through processing to `PendingRA`.

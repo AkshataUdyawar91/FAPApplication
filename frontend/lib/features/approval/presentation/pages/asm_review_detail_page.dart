@@ -1135,8 +1135,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
     return state == 'pendingch' ||
         state == 'pendingapproval' ||
-        state == 'pendingchapproval' ||
-        state == 'rarejected';
+        state == 'pendingchapproval';
   }
 
   /// Extracts the PO number from the submission's documents array.
