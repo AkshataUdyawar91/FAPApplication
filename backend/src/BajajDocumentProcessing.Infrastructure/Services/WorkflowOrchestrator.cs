@@ -366,8 +366,10 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                             if (activityData.Rows != null && activityData.Rows.Count > 0)
                             {
                                 package.ActivitySummary.DealerName = activityData.Rows[0].DealerName;
-                                package.ActivitySummary.TotalDays = activityData.Rows.Sum(r => r.Day);
-                                package.ActivitySummary.TotalWorkingDays = activityData.Rows.Sum(r => r.WorkingDay);
+                                package.ActivitySummary.TotalDays = activityData.TotalDays ?? activityData.Rows.Sum(r => r.Day);
+                                var workingDaySum = activityData.Rows.Sum(r => r.WorkingDay);
+                                package.ActivitySummary.TotalWorkingDays = activityData.TotalDays 
+                                    ?? (workingDaySum > 0 ? workingDaySum : activityData.Rows.Sum(r => r.Day));
                                 var locations = activityData.Rows
                                     .Where(r => !string.IsNullOrWhiteSpace(r.Location))
                                     .Select(r => r.Location)
@@ -514,12 +516,17 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                             {
                                 try
                                 {
-                                    var metadata = await _documentAgent.ExtractPhotoMetadataAsync(photo.BlobUrl, cancellationToken);
-                                    // Store metadata in Caption field as JSON for now
-                                    if (string.IsNullOrEmpty(photo.Caption))
+                                    // Skip if already extracted during chatbot flow
+                                    if (!string.IsNullOrEmpty(photo.Caption) || 
+                                        !string.IsNullOrEmpty(photo.ExtractedMetadataJson) ||
+                                        photo.BlueTshirtPresent.HasValue)
                                     {
-                                        photo.Caption = System.Text.Json.JsonSerializer.Serialize(metadata);
+                                        _logger.LogInformation("Photo {FileName} already extracted (chatbot flow), skipping", photo.FileName);
+                                        return;
                                     }
+
+                                    var metadata = await _documentAgent.ExtractPhotoMetadataAsync(photo.BlobUrl, cancellationToken);
+                                    photo.Caption = System.Text.Json.JsonSerializer.Serialize(metadata);
                                     photo.UpdatedAt = DateTime.UtcNow;
                                     _logger.LogInformation("Photo {FileName} extraction completed", photo.FileName);
                                 }

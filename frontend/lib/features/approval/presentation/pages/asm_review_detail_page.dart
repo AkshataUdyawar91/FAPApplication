@@ -88,9 +88,10 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   Map<String, dynamic> _activityValidation = {};
   Map<String, dynamic> _enquiryValidation = {};
 
-  // Blob URLs for Cost Summary and Activity Summary (fallback when documentId unavailable)
+  // Blob URLs for Cost Summary, Activity Summary, and Enquiry (fallback when documentId unavailable)
   String? _costSummaryBlobUrl;
   String? _activitySummaryBlobUrl;
+  String? _enquiryBlobUrl;
 
   // PO Balance state
   bool _isLoadingPoBalance = false;
@@ -233,6 +234,14 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                   firstCampaign['activityBlobUrl']?.toString();
         }
 
+        // Extract enquiry blob URL from campaigns
+        String? enquiryBlobUrl;
+        if (campaignsList.isNotEmpty) {
+          final firstCampaign = campaignsList[0] as Map<String, dynamic>;
+          enquiryBlobUrl = firstCampaign['enquiryBlobUrl']?.toString()
+              ?? firstCampaign['enquiryUrl']?.toString();
+        }
+
         setState(() {
           _submission = submissionData;
           _invoiceSummary = invoiceSummary;
@@ -244,6 +253,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           _enquiryValidation = enquiryValidation;
           _costSummaryBlobUrl = costSummaryBlobUrl;
           _activitySummaryBlobUrl = activitySummaryBlobUrl;
+          _enquiryBlobUrl = enquiryBlobUrl;
           _isLoading = false;
         });
       }
@@ -475,53 +485,92 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                                   child: Text('Submission not found'))
                               : SingleChildScrollView(
                                   padding: const EdgeInsets.all(24),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      _buildHeaderSection(),
-                                      const SizedBox(height: 24),
-                                      if (_invoiceSummary != null)
-                                        InvoiceSummarySection(
-                                            data: _invoiceSummary!),
-                                      const SizedBox(height: 24),
-                                      AiAnalysisSection(
-                                          submission: _submission!),
-                                      const SizedBox(height: 24),
-                                      Visibility(
-                                        visible: false,
-                                        child: CampaignDetailsTable(
-                                          campaignDetails: _campaignDetails,
-                                          onPhotoTap: (detail) {
-                                            if (detail.downloadPath != null &&
-                                                detail
-                                                    .downloadPath!.isNotEmpty) {
-                                              _downloadHierarchicalDocument(
-                                                  detail.downloadPath!,
-                                                  detail.documentName);
-                                            } else if (detail.documentId !=
-                                                    null &&
-                                                detail.documentId!.isNotEmpty) {
-                                              _downloadDocument(
-                                                  detail.documentId,
-                                                  detail.documentName);
-                                            } else {
-                                              _downloadDocumentByUrl(
-                                                  detail.blobUrl,
-                                                  detail.documentName);
-                                            }
-                                          },
-                                        ),
+                                  child: isMobile
+                                    // Mobile: single column with timeline at bottom
+                                    ? Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          _buildHeaderSection(),
+                                          const SizedBox(height: 24),
+                                          if (_invoiceSummary != null)
+                                            InvoiceSummarySection(data: _invoiceSummary!),
+                                          const SizedBox(height: 24),
+                                          AiAnalysisSection(submission: _submission!),
+                                          const SizedBox(height: 24),
+                                          Visibility(
+                                            visible: false,
+                                            child: CampaignDetailsTable(
+                                              campaignDetails: _campaignDetails,
+                                              onPhotoTap: (detail) {
+                                                if (detail.downloadPath != null && detail.downloadPath!.isNotEmpty) {
+                                                  _downloadHierarchicalDocument(detail.downloadPath!, detail.documentName);
+                                                } else if (detail.documentId != null && detail.documentId!.isNotEmpty) {
+                                                  _downloadDocument(detail.documentId, detail.documentName);
+                                                } else {
+                                                  _downloadDocumentByUrl(detail.blobUrl, detail.documentName);
+                                                }
+                                              },
+                                            ),
+                                          ),
+                                          const SizedBox(height: 24),
+                                          _buildValidationReportSection(),
+                                          ..._buildPhotoGallerySection(),
+                                          const SizedBox(height: 24),
+                                          _buildApprovalTimeline(),
+                                          const SizedBox(height: 80),
+                                        ],
+                                      )
+                                    // Desktop/Tablet: header full-width, then 3/4 body + 1/4 sidebar aligned at same top
+                                    : Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          // Full-width header with approve/reject actions
+                                          _buildHeaderSection(),
+                                          const SizedBox(height: 24),
+                                          // Side-by-side: body content + approval flow
+                                          Row(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                flex: 3,
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    if (_invoiceSummary != null)
+                                                      InvoiceSummarySection(data: _invoiceSummary!),
+                                                    const SizedBox(height: 24),
+                                                    AiAnalysisSection(submission: _submission!),
+                                                    const SizedBox(height: 24),
+                                                    Visibility(
+                                                      visible: false,
+                                                      child: CampaignDetailsTable(
+                                                        campaignDetails: _campaignDetails,
+                                                        onPhotoTap: (detail) {
+                                                          if (detail.downloadPath != null && detail.downloadPath!.isNotEmpty) {
+                                                            _downloadHierarchicalDocument(detail.downloadPath!, detail.documentName);
+                                                          } else if (detail.documentId != null && detail.documentId!.isNotEmpty) {
+                                                            _downloadDocument(detail.documentId, detail.documentName);
+                                                          } else {
+                                                            _downloadDocumentByUrl(detail.blobUrl, detail.documentName);
+                                                          }
+                                                        },
+                                                      ),
+                                                    ),
+                                                    _buildValidationReportSection(),
+                                                    ..._buildPhotoGallerySection(),
+                                                    const SizedBox(height: 80),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(width: 20),
+                                              SizedBox(
+                                                width: MediaQuery.of(context).size.width * 0.22,
+                                                child: _buildApprovalTimeline(),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
                                       ),
-                                      const SizedBox(height: 24),
-                                      _buildValidationReportSection(),
-
-                                      // Photo Thumbnail Gallery
-                                      ..._buildPhotoGallerySection(),
-
-                                      const SizedBox(height: 80),
-                                    ],
-                                  ),
                                 ),
                     ),
                     if (_isChatOpen && !isMobile)
@@ -1823,6 +1872,258 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     ];
   }
 
+  Widget _buildApprovalTimeline() {
+    final state = _submission!['state']?.toString().toLowerCase() ?? '';
+    final createdAt = _submission!['createdAt'];
+    final asmReviewedAt = _submission!['asmReviewedAt'];
+    final asmReviewNotes = _submission!['asmReviewNotes']?.toString();
+    final hqReviewedAt = _submission!['hqReviewedAt'];
+    final hqReviewNotes = _submission!['hqReviewNotes']?.toString();
+
+    // Also read the full approvalHistory array if available
+    final approvalHistory = _submission!['approvalHistory'] as List<dynamic>? ?? [];
+
+    // Determine ASM status
+    String asmStatus = 'pending';
+    if (state.contains('chrejected') || state.contains('rejectedbyasm')) {
+      asmStatus = 'rejected';
+    } else if (state.contains('chapproved') || state.contains('approved') ||
+        state.contains('rapending') || state.contains('pendingra') ||
+        state.contains('rarejected') || state.contains('rejectedbyhq')) {
+      asmStatus = 'approved';
+    } else if (asmReviewedAt != null) {
+      asmStatus = 'approved';
+    }
+
+    // Determine HQ/RA status
+    String hqStatus = 'pending';
+    if (state == 'approved' || state == 'raapproved') {
+      hqStatus = 'approved';
+    } else if (state.contains('rarejected') || state.contains('rejectedbyhq')) {
+      hqStatus = 'rejected';
+    } else if (hqReviewedAt != null) {
+      hqStatus = 'approved';
+    }
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.timeline, color: AppColors.primary, size: 22),
+                const SizedBox(width: 8),
+                const Text('Approval Flow', style: AppTextStyles.h3),
+              ],
+            ),
+            const SizedBox(height: 20),
+            _buildTimelineStep(
+              icon: Icons.upload_file,
+              color: const Color(0xFF3B82F6),
+              title: 'Submitted',
+              date: _formatDisplayDate(createdAt),
+              comment: null,
+              isCompleted: true,
+              isLast: false,
+            ),
+            _buildTimelineStep(
+              icon: asmStatus == 'approved'
+                  ? Icons.check_circle
+                  : asmStatus == 'rejected'
+                      ? Icons.cancel
+                      : Icons.schedule,
+              color: asmStatus == 'approved'
+                  ? const Color(0xFF10B981)
+                  : asmStatus == 'rejected'
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF9CA3AF),
+              title: asmStatus == 'approved'
+                  ? 'Approved by CH'
+                  : asmStatus == 'rejected'
+                      ? 'Rejected by CH'
+                      : 'Pending CH Review',
+              date: asmReviewedAt != null ? _formatDisplayDate(asmReviewedAt) : null,
+              comment: asmReviewNotes,
+              isCompleted: asmStatus != 'pending',
+              isLast: false,
+            ),
+            _buildTimelineStep(
+              icon: hqStatus == 'approved'
+                  ? Icons.check_circle
+                  : hqStatus == 'rejected'
+                      ? Icons.cancel
+                      : Icons.schedule,
+              color: hqStatus == 'approved'
+                  ? const Color(0xFF10B981)
+                  : hqStatus == 'rejected'
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF9CA3AF),
+              title: hqStatus == 'approved'
+                  ? 'Approved by RA'
+                  : hqStatus == 'rejected'
+                      ? 'Rejected by RA'
+                      : 'Pending RA Review',
+              date: hqReviewedAt != null ? _formatDisplayDate(hqReviewedAt) : null,
+              comment: hqReviewNotes,
+              isCompleted: hqStatus != 'pending',
+              isLast: true,
+            ),
+            // Show full approval history if available
+            if (approvalHistory.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 8),
+              Text('History', style: AppTextStyles.bodySmall.copyWith(
+                fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+              const SizedBox(height: 8),
+              ...approvalHistory.map((h) {
+                final entry = h as Map<String, dynamic>;
+                final action = entry['action']?.toString() ?? '';
+                final role = entry['approverRole']?.toString() ?? '';
+                final name = entry['approverName']?.toString() ?? role;
+                final comments = entry['comments']?.toString();
+                final date = entry['actionDate'];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        action.toLowerCase().contains('approved')
+                            ? Icons.check_circle_outline
+                            : action.toLowerCase().contains('rejected')
+                                ? Icons.highlight_off
+                                : Icons.info_outline,
+                        size: 16,
+                        color: action.toLowerCase().contains('approved')
+                            ? const Color(0xFF10B981)
+                            : action.toLowerCase().contains('rejected')
+                                ? const Color(0xFFDC2626)
+                                : const Color(0xFF6B7280),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '$action by $name',
+                              style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            if (date != null)
+                              Text(
+                                _formatDisplayDate(date),
+                                style: AppTextStyles.bodySmall.copyWith(
+                                  fontSize: 11, color: AppColors.textSecondary),
+                              ),
+                            if (comments != null && comments.isNotEmpty)
+                              Container(
+                                margin: const EdgeInsets.only(top: 4),
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF9FAFB),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                                ),
+                                child: Text(
+                                  comments,
+                                  style: AppTextStyles.bodySmall.copyWith(
+                                    color: const Color(0xFF4B5563), height: 1.4),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimelineStep({
+    required IconData icon,
+    required Color color,
+    required String title,
+    String? date,
+    String? comment,
+    required bool isCompleted,
+    required bool isLast,
+  }) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, size: 18, color: color),
+              ),
+              if (!isLast)
+                Expanded(
+                  child: Container(
+                    width: 2,
+                    color: isCompleted ? color.withValues(alpha: 0.3) : const Color(0xFFE5E7EB),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: AppTextStyles.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: isCompleted ? AppColors.textPrimary : AppColors.textSecondary,
+                  )),
+                  if (date != null && date.isNotEmpty)
+                    Text(date, style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textSecondary, fontSize: 11)),
+                  if (comment != null && comment.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF9FAFB),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                      ),
+                      child: Text(
+                        comment,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: const Color(0xFF4B5563), height: 1.4),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildValidationReportSection() {
     return Card(
       elevation: 2,
@@ -1877,13 +2178,15 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               const SizedBox(height: 24),
             ],
 
-            // Enquiry Validation
+            // Enquiry Validation (view/download only, no table)
             if (_enquiryValidation.isNotEmpty) ...[
               _buildSingleValidationCard(
                 title: 'Enquiry Validation',
                 fileName: _getEnquiryFileName(),
                 validation: _enquiryValidation,
-                documentId: _getDocumentIdByType('EnquiryDocument'),
+                documentId: _getEnquiryDocumentId(),
+                blobUrl: _enquiryBlobUrl,
+                hideRowsAndBadge: true,
               ),
               const SizedBox(height: 24),
             ],
@@ -1960,6 +2263,9 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         debugPrint('Error parsing invoice validation details: $e');
       }
     }
+
+    // Filter to only the 9 invoice rows per spec
+    allRows = _filterInvoiceRows(allRows);
 
     final passedCount = allRows.where((r) => r['passed'] == true).length;
     final totalCount = allRows.length;
@@ -2068,39 +2374,39 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
     // Photo Count
     if (totalPhotos != null && totalPhotos > 0) {
-      addRow('Photo Count', true, '$totalPhotos photos uploaded');
+      addRow('Photo count', true, '$totalPhotos Photos uploaded');
 
       final photosWithDate = fieldPresence?['photosWithDate'] ?? 0;
-      addRow('Date on Photos', photosWithDate == totalPhotos,
-          '$photosWithDate/$totalPhotos photos have date mentioned');
+      addRow('Date on photos', photosWithDate == totalPhotos,
+          '$photosWithDate/$totalPhotos Photos have date mentioned');
 
       final photosWithLocation = fieldPresence?['photosWithLocation'] ?? 0;
-      addRow('GPS Coordinates', photosWithLocation == totalPhotos,
-          '$photosWithLocation/$totalPhotos photos have coordinates present');
+      addRow('GPS coordinates', photosWithLocation == totalPhotos,
+          '$photosWithLocation/$totalPhotos Photos have coordinates present');
     }
 
-    // No. of Days — uses crossDocument photoCount vs costSummaryDays
+    // No. of Days — uses unique photo dates vs activity summary days
     if (crossDocument != null) {
-      final photoCountMatch = crossDocument['photoCountMatchesManDays'];
-      if (photoCountMatch != null) {
-        final photoCount = crossDocument['photoCount'] ?? totalPhotos ?? 0;
-        final costDays = crossDocument['costSummaryDays'] ?? 0;
-        addRow('No. of Days', photoCountMatch == true,
-            photoCountMatch == true
-                ? 'Photo count ($photoCount) meets required days in Cost Summary ($costDays)'
-                : 'Photo count ($photoCount) is less than days in Cost Summary ($costDays)');
+      final daysMatch = crossDocument['numberOfDaysMatches'] ?? crossDocument['photoCountMatchesManDays'];
+      if (daysMatch != null) {
+        final uniquePhotoDays = crossDocument['uniquePhotoDays'] ?? crossDocument['photoCount'] ?? totalPhotos ?? 0;
+        final activityDays = crossDocument['activitySummaryDays'] ?? crossDocument['costSummaryDays'] ?? 0;
+        addRow('No. of days', daysMatch == true,
+            daysMatch == true
+                ? 'Unique photo days ($uniquePhotoDays) matches Activity Summary days ($activityDays)'
+                : 'Unique photo days ($uniquePhotoDays) does not match Activity Summary days ($activityDays)');
       }
     }
 
     // Blue T-shirt & Branded 3W
     if (totalPhotos != null && totalPhotos > 0) {
       final photosWithBlueTshirt = fieldPresence?['photosWithBlueTshirt'] ?? 0;
-      addRow('Promoter wearing Blue T-shirt', photosWithBlueTshirt > 0,
-          '$photosWithBlueTshirt/$totalPhotos photos have promoters wear blue T-shirt');
+      addRow('Promoter wearning blue T-shirt', photosWithBlueTshirt > 0,
+          '$photosWithBlueTshirt/$totalPhotos Photos have promoters wearing blue T-shirt');
 
       final photosWithVehicle = fieldPresence?['photosWithVehicle'] ?? 0;
-      addRow('Branded 3 Wheeler', photosWithVehicle > 0,
-          '$photosWithVehicle/$totalPhotos photos have Branded 3W');
+      addRow('Branded 3 wheeler', photosWithVehicle > 0,
+          '$photosWithVehicle/$totalPhotos Photos have branded 3 wheelers');
     }
 
     return rows;
@@ -2360,20 +2666,20 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       // Chatbot rule codes
       'INV_INVOICE_NUMBER_PRESENT': 'Invoice Number',
       'INV_DATE_PRESENT': 'Invoice Date',
-      'INV_AMOUNT_PRESENT': 'Invoice Amount',
-      'INV_GST_NUMBER_PRESENT': 'GST Number',
-      'INV_GST_PERCENT_PRESENT': 'GST Percentage',
+      'INV_AMOUNT_PRESENT': 'Invoice amount',
+      'INV_GST_NUMBER_PRESENT': 'GSTIN for State',
+      'INV_GST_PERCENT_PRESENT': 'GST %',
       'INV_HSN_SAC_PRESENT': 'HSN/SAC Code',
-      'INV_VENDOR_CODE_PRESENT': 'Vendor Code',
-      'INV_AGENCY_NAME_ADDRESS': 'Agency Name & Address',
+      'INV_VENDOR_CODE_PRESENT': 'Agency Code',
+      'INV_AGENCY_NAME_ADDRESS': 'Agency Name & Addresses',
       'INV_BILLING_NAME_ADDRESS': 'Billing Name & Address',
       'INV_SUPPLIER_STATE': 'Supplier State',
-      'INV_PO_NUMBER_MATCH': 'PO Number Match',
-      'INV_AMOUNT_VS_PO_BALANCE': 'Amount vs PO Balance',
+      'INV_PO_NUMBER_MATCH': 'PO Number',
+      'INV_AMOUNT_VS_PO_BALANCE': 'Invoice amount limit',
       // Web workflow rule codes (from BuildPerDocumentResults)
       'INV_NUMBER_PRESENT': 'Invoice Number',
-      'INV_GST_PRESENT': 'GST Number',
-      'INV_PO_MATCH': 'PO Number Match',
+      'INV_GST_PRESENT': 'GSTIN for State',
+      'INV_PO_MATCH': 'PO Number',
       // PO rule codes
       'PO_SAP_VERIFIED': 'SAP Verification',
       'PO_DATE_VALID': 'Date Validation',
@@ -2381,7 +2687,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       'AS_DEALER_LOCATION_PRESENT': 'Dealer/Location',
       'AS_TOTAL_DAYS': 'Total No. of Days',
       'AS_TOTAL_WORKING_DAYS': 'Total No. of Working Days',
-      'AS_DAYS_MATCH_COST_SUMMARY': 'Days Match (Cost Summary)',
+      'AS_DAYS_MATCH_COST_SUMMARY': 'Days worked matches Cost Summary',
       'AS_DAYS_MATCH_TEAM_DETAILS': 'Days Match (Team Details)',
       // Cost Summary rule codes
       'CS_PLACE_OF_SUPPLY': 'Place of Supply',
@@ -2408,10 +2714,10 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
       'EQ_TEST_RIDE': 'Test Ride',
       // Photo rule codes
       'PHOTO_COUNT': 'Photo Count',
-      'PHOTO_DATE_VISIBLE': 'Date',
-      'PHOTO_GPS_VISIBLE': 'GPS',
-      'PHOTO_BLUE_TSHIRT': 'Blue T-shirt',
-      'PHOTO_3W_VEHICLE': '3W Vehicle',
+      'PHOTO_DATE_VISIBLE': 'Date on Photos',
+      'PHOTO_GPS_VISIBLE': 'GPS Coordinates',
+      'PHOTO_BLUE_TSHIRT': 'Promoter wearning Blue T-shirt',
+      'PHOTO_3W_VEHICLE': 'Branded 3 wheeler',
     };
     return labelMap[ruleCode] ??
         ruleCode
@@ -2768,12 +3074,34 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     return 'Enquiry Data.xlsx';
   }
 
+  /// Gets document ID for Enquiry — checks documents array with multiple aliases,
+  /// then falls back to campaigns array, then the validation object itself.
+  String _getEnquiryDocumentId() {
+    for (final alias in ['Enquiry', 'EnquiryData', 'Enquiry Data', 'enquiry', 'enquiry_data']) {
+      final id = _getDocumentIdByType(alias);
+      if (id.isNotEmpty) return id;
+    }
+    if (_submission != null) {
+      final campaigns = _submission!['campaigns'] as List? ?? [];
+      for (final c in campaigns) {
+        final id = (c as Map<String, dynamic>)['enquiryDocumentId']?.toString()
+            ?? c['enquiryId']?.toString()
+            ?? '';
+        if (id.isNotEmpty) return id;
+      }
+    }
+    return _enquiryValidation['documentId']?.toString()
+        ?? _enquiryValidation['id']?.toString()
+        ?? '';
+  }
+
   Widget _buildSingleValidationCard({
     required String title,
     String? fileName,
     required Map<String, dynamic> validation,
     String? documentId,
     String? blobUrl,
+    bool hideRowsAndBadge = false,
   }) {
     final resolvedDocId = (documentId != null && documentId.isNotEmpty)
         ? documentId
@@ -2787,7 +3115,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
 
     List<Map<String, dynamic>> allRows = [];
 
-    if (validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
+    if (!hideRowsAndBadge && validationDetailsJson != null && validationDetailsJson.isNotEmpty) {
       try {
         final validationDetails =
             jsonDecode(validationDetailsJson) as Map<String, dynamic>;
@@ -2798,58 +3126,94 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
 
     // For Cost Summary, show only the 8 key validation rows
-    if (title.toLowerCase().contains('cost summary')) {
+    if (!hideRowsAndBadge && title.toLowerCase().contains('cost summary')) {
       allRows = _filterCostSummaryRows(allRows);
     }
 
-    final passedCount = allRows.where((r) => r['passed'] == true).length;
-    final totalCount = allRows.length;
+    // For Activity, show only the 1 key validation row
+    if (!hideRowsAndBadge && title.toLowerCase().contains('activity')) {
+      allRows = _filterActivityRows(allRows);
+    }
+
+    final passedCount = hideRowsAndBadge ? 0 : allRows.where((r) => r['passed'] == true).length;
+    final totalCount = hideRowsAndBadge ? 0 : allRows.length;
 
     return _buildValidationCard(
       title: title,
       fileName: fileName ?? '',
       passedCount: passedCount,
       totalCount: totalCount,
-      rows: allRows,
+      rows: hideRowsAndBadge ? [] : allRows,
       documentId: resolvedDocId.isNotEmpty ? resolvedDocId : null,
       blobUrl: resolvedBlobUrl.isNotEmpty ? resolvedBlobUrl : null,
     );
   }
 
   /// Filters cost summary validation rows to only the 8 key checks
-  /// and renames labels to match the required display names.
-  List<Map<String, dynamic>> _filterCostSummaryRows(
-      List<Map<String, dynamic>> rows) {
-    const labelMapping = {
-      'place of supply': 'State/Place of Supply',
-      'state/place of supply': 'State/Place of Supply',
-      'element-wise cost': 'Element wise Cost',
-      'element wise cost': 'Element wise Cost',
-      'no. of days': 'No of Days',
-      'no of days': 'No of Days',
-      'element-wise quantity': 'Element wise Quantity',
-      'element wise quantity': 'Element wise Quantity',
-      'total cost validation': 'Total Cost',
-      'total cost': 'Total Cost',
-      'element costs validation': 'Element Cost limit as per State Rate',
-      'element cost vs rates': 'Element Cost limit as per State Rate',
-      'fixed costs validation': 'Fixed Cost Limit as per State Rate',
-      'variable costs validation': 'Variable cost limit as per State Rate',
-    };
-
-    final result = <Map<String, dynamic>>[];
-    final seenDisplayLabels = <String>{};
-
+  /// Finds the first source row matching any of the given aliases (case-insensitive).
+  Map<String, dynamic>? _findRow(List<Map<String, dynamic>> rows, List<String> aliases) {
     for (final row in rows) {
       final label = (row['label'] as String? ?? '').toLowerCase();
-      final displayLabel = labelMapping[label];
-      if (displayLabel != null && !seenDisplayLabels.contains(displayLabel)) {
-        seenDisplayLabels.add(displayLabel);
-        result.add({
-          'label': displayLabel,
-          'passed': row['passed'],
-          'message': row['message'],
-        });
+      if (aliases.contains(label)) return row;
+    }
+    return null;
+  }
+
+  /// Filters cost summary rows to exactly 8 rows in Excel order. Skips rows not found.
+  List<Map<String, dynamic>> _filterCostSummaryRows(List<Map<String, dynamic>> rows) {
+    const orderedSpec = [
+      ('State/Place of supply', ['place of supply', 'state/place of supply']),
+      ('Element wise cost', ['element-wise cost', 'element wise cost']),
+      ('No of days', ['no. of days', 'no of days']),
+      ('Element wise quantity', ['element-wise quantity', 'element wise quantity']),
+      ('Total cost', ['total cost validation', 'total cost']),
+      ('Element cost limit as per state rate', ['element costs validation', 'element cost vs rates']),
+      ('Fixed cost limit as per state rate', ['fixed costs validation']),
+      ('Variable cost limit as per state rate', ['variable costs validation']),
+    ];
+    final result = <Map<String, dynamic>>[];
+    for (final (displayLabel, aliases) in orderedSpec) {
+      final match = _findRow(rows, aliases);
+      if (match != null) {
+        result.add({'label': displayLabel, 'passed': match['passed'], 'message': match['message']});
+      }
+    }
+    return result;
+  }
+
+  /// Filters invoice rows to exactly 9 rows in Excel order. Skips rows not found.
+  List<Map<String, dynamic>> _filterInvoiceRows(List<Map<String, dynamic>> rows) {
+    const orderedSpec = [
+      ('Invoice number', ['invoice number']),
+      ('Invoice date', ['invoice date']),
+      ('Invoice amount', ['invoice amount']),
+      ('Agency name & addresses', ['agency name & addresses', 'agency name & address']),
+      ('Agency code', ['agency code', 'agency code match', 'vendor code']),
+      ('PO number', ['po number', 'po number match']),
+      ('GSTIN for state', ['gstin for state', 'gst number', 'gst state match']),
+      ('GST %', ['gst %', 'gst percentage']),
+      ('Invoice amount limit', ['invoice amount limit', 'amount vs po balance']),
+    ];
+    final result = <Map<String, dynamic>>[];
+    for (final (displayLabel, aliases) in orderedSpec) {
+      final match = _findRow(rows, aliases);
+      if (match != null) {
+        result.add({'label': displayLabel, 'passed': match['passed'], 'message': match['message']});
+      }
+    }
+    return result;
+  }
+
+  /// Filters activity rows to exactly 1 row. Skips if not found.
+  List<Map<String, dynamic>> _filterActivityRows(List<Map<String, dynamic>> rows) {
+    const orderedSpec = [
+      ('Days worked matches cost summary', ['days worked matches cost summary', 'days match (cost summary)', 'number of days match']),
+    ];
+    final result = <Map<String, dynamic>>[];
+    for (final (displayLabel, aliases) in orderedSpec) {
+      final match = _findRow(rows, aliases);
+      if (match != null) {
+        result.add({'label': displayLabel, 'passed': match['passed'], 'message': match['message']});
       }
     }
     return result;

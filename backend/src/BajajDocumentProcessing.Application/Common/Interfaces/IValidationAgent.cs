@@ -273,9 +273,21 @@ public class PhotoCrossDocumentResult
     public bool AllChecksPass { get; set; }
     public bool PhotoCountMatchesManDays { get; set; }
     public bool ManDaysWithinCostSummaryDays { get; set; }
+    /// <summary>
+    /// Whether unique photo days match Activity Summary days
+    /// </summary>
+    public bool NumberOfDaysMatches { get; set; }
     public int PhotoCount { get; set; }
     public int ManDays { get; set; }
     public int CostSummaryDays { get; set; }
+    /// <summary>
+    /// Number of unique days extracted from photo dates (EXIF or overlay)
+    /// </summary>
+    public int UniquePhotoDays { get; set; }
+    /// <summary>
+    /// Number of days from Activity Summary (Activation Days / Billed Days / Working Days)
+    /// </summary>
+    public int ActivitySummaryDays { get; set; }
     public List<string> Issues { get; set; } = new();
 }
 

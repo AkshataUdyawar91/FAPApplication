@@ -289,6 +289,8 @@ class TeamSummaryItemModel {
   final int photosWithGps;
   final int photosWithBlueTshirt;
   final int photosWithVehicle;
+  final int uniquePhotoDays;
+  final int activitySummaryDays;
   final List<String> failedPhotoIds;
 
   const TeamSummaryItemModel({
@@ -306,6 +308,8 @@ class TeamSummaryItemModel {
     this.photosWithGps = 0,
     this.photosWithBlueTshirt = 0,
     this.photosWithVehicle = 0,
+    this.uniquePhotoDays = 0,
+    this.activitySummaryDays = 0,
     this.failedPhotoIds = const [],
   });
 
@@ -325,6 +329,8 @@ class TeamSummaryItemModel {
       photosWithGps: json['photosWithGps'] as int? ?? 0,
       photosWithBlueTshirt: json['photosWithBlueTshirt'] as int? ?? 0,
       photosWithVehicle: json['photosWithVehicle'] as int? ?? 0,
+      uniquePhotoDays: json['uniquePhotoDays'] as int? ?? 0,
+      activitySummaryDays: json['activitySummaryDays'] as int? ?? 0,
       failedPhotoIds: (json['failedPhotoIds'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??

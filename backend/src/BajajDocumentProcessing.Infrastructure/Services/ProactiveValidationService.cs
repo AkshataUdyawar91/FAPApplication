@@ -117,25 +117,9 @@ public class ProactiveValidationService : IProactiveValidationService
         rules.Add(CheckFieldPresence("INV_DATE_PRESENT", invoice.InvoiceDate?.ToString("yyyy-MM-dd"), "Invoice Date"));
 
         // Rule 3: INV_AMOUNT_PRESENT
-        rules.Add(CheckFieldPresence("INV_AMOUNT_PRESENT", invoice.TotalAmount?.ToString("F2"), "Invoice Amount"));
+        rules.Add(CheckFieldPresence("INV_AMOUNT_PRESENT", invoice.TotalAmount?.ToString("F2"), "Invoice amount"));
 
-        // Rule 4: INV_GST_NUMBER_PRESENT
-        var gstNumber = invoice.GSTNumber ?? GetJsonField(extractedData, "gstNumber");
-        rules.Add(CheckFieldPresence("INV_GST_NUMBER_PRESENT", gstNumber, "GST Number"));
-
-        // Rule 5: INV_GST_PERCENT_PRESENT
-        var gstPercent = GetJsonField(extractedData, "gstPercent") ?? GetJsonField(extractedData, "gstPercentage");
-        rules.Add(CheckFieldPresence("INV_GST_PERCENT_PRESENT", gstPercent, "GST Percentage"));
-
-        // Rule 6: INV_HSN_SAC_PRESENT
-        var hsnSac = GetJsonField(extractedData, "hsnSacCode") ?? GetJsonField(extractedData, "hsnCode") ?? GetJsonField(extractedData, "sacCode");
-        rules.Add(CheckFieldPresence("INV_HSN_SAC_PRESENT", hsnSac, "HSN/SAC Code"));
-
-        // Rule 7: INV_VENDOR_CODE_PRESENT
-        var vendorCode = GetJsonField(extractedData, "vendorCode");
-        rules.Add(CheckFieldPresence("INV_VENDOR_CODE_PRESENT", vendorCode, "Vendor Code"));
-
-        // Rule 8: INV_AGENCY_NAME_ADDRESS
+        // Rule 4: INV_AGENCY_NAME_ADDRESS
         var agencyName = GetJsonField(extractedData, "agencyName");
         var agencyAddress = GetJsonField(extractedData, "agencyAddress");
         var agencyNameAddress = (agencyName != null && agencyAddress != null) ? $"{agencyName}, {agencyAddress}" : agencyName ?? agencyAddress;
@@ -147,36 +131,27 @@ public class ProactiveValidationService : IProactiveValidationService
             ExtractedValue = agencyNameAddress,
             ExpectedValue = null,
             Message = (!string.IsNullOrWhiteSpace(agencyName) && !string.IsNullOrWhiteSpace(agencyAddress))
-                ? "Supplier name & address found"
-                : string.IsNullOrWhiteSpace(agencyName) ? "Supplier name not detected" : "Supplier address not detected",
+                ? "Agency name & addresses found"
+                : string.IsNullOrWhiteSpace(agencyName) ? "Agency name not detected" : "Agency address not detected",
             Severity = (!string.IsNullOrWhiteSpace(agencyName) && !string.IsNullOrWhiteSpace(agencyAddress)) ? "Pass" : "Fail"
         });
 
-        // Rule 9: INV_BILLING_NAME_ADDRESS
-        var billingName = GetJsonField(extractedData, "billingName");
-        var billingAddress = GetJsonField(extractedData, "billingAddress");
-        var billingNameAddress = (billingName != null && billingAddress != null) ? $"{billingName}, {billingAddress}" : billingName ?? billingAddress;
-        rules.Add(new ProactiveRuleResult
-        {
-            RuleCode = "INV_BILLING_NAME_ADDRESS",
-            Type = "Required",
-            Passed = !string.IsNullOrWhiteSpace(billingName) && !string.IsNullOrWhiteSpace(billingAddress),
-            ExtractedValue = billingNameAddress,
-            ExpectedValue = null,
-            Message = (!string.IsNullOrWhiteSpace(billingName) && !string.IsNullOrWhiteSpace(billingAddress))
-                ? "Recipient name & address found"
-                : string.IsNullOrWhiteSpace(billingName) ? "Recipient name not detected" : "Recipient address not detected",
-            Severity = (!string.IsNullOrWhiteSpace(billingName) && !string.IsNullOrWhiteSpace(billingAddress)) ? "Pass" : "Fail"
-        });
+        // Rule 5: INV_VENDOR_CODE_PRESENT (Agency Code)
+        var vendorCode = GetJsonField(extractedData, "vendorCode");
+        rules.Add(CheckFieldPresence("INV_VENDOR_CODE_PRESENT", vendorCode, "Agency Code"));
 
-        // Rule 10: INV_SUPPLIER_STATE
-        var supplierState = GetJsonField(extractedData, "stateName") ?? GetJsonField(extractedData, "stateCode");
-        rules.Add(CheckFieldPresence("INV_SUPPLIER_STATE", supplierState, "Supplier State"));
-
-        // Rule 11: INV_PO_NUMBER_MATCH (cross-check against PO)
+        // Rule 6: INV_PO_NUMBER_MATCH (cross-check against PO)
         rules.Add(CheckPONumberMatch(extractedData, po));
 
-        // Rule 9: INV_AMOUNT_VS_PO_BALANCE (cross-check amount against PO remaining balance)
+        // Rule 7: INV_GST_NUMBER_PRESENT (GSTIN for State)
+        var gstNumber = invoice.GSTNumber ?? GetJsonField(extractedData, "gstNumber");
+        rules.Add(CheckFieldPresence("INV_GST_NUMBER_PRESENT", gstNumber, "GSTIN for State"));
+
+        // Rule 8: INV_GST_PERCENT_PRESENT (GST %)
+        var gstPercent = GetJsonField(extractedData, "gstPercent") ?? GetJsonField(extractedData, "gstPercentage");
+        rules.Add(CheckFieldPresence("INV_GST_PERCENT_PRESENT", gstPercent, "GST %"));
+
+        // Rule 9: INV_AMOUNT_VS_PO_BALANCE (Invoice amount limit)
         rules.Add(CheckInvoiceAmountVsPOBalance(invoice.TotalAmount, po));
 
         return rules;
@@ -292,24 +267,11 @@ public class ProactiveValidationService : IProactiveValidationService
         var extractedData = ParseExtractedJson(activity.ExtractedDataJson);
         var rules = new List<ProactiveRuleResult>();
 
-        // Rule 1: AS_DEALER_LOCATION_PRESENT
-        var dealerLocation = GetJsonField(extractedData, "dealerLocation")
-            ?? GetJsonField(extractedData, "location")
-            ?? GetJsonField(extractedData, "dealerName");
-        rules.Add(CheckFieldPresence("AS_DEALER_LOCATION_PRESENT", dealerLocation, "Dealer/Location"));
-
-        // Rule 2: AS_DAYS_MATCH_COST_SUMMARY — cross-check days against cost summary
+        // Rule 1: AS_DAYS_MATCH_COST_SUMMARY — cross-check days against cost summary
         var costSummary = await _db.CostSummaries
             .AsNoTracking()
             .FirstOrDefaultAsync(cs => cs.PackageId == packageId && !cs.IsDeleted, ct);
         rules.Add(CheckActivityDaysVsCostSummary(extractedData, costSummary));
-
-        // Rule 3: AS_DAYS_MATCH_TEAM_DETAILS — cross-check days against team entries
-        var teams = await _db.Teams
-            .AsNoTracking()
-            .Where(t => t.PackageId == packageId && !t.IsDeleted)
-            .ToListAsync(ct);
-        rules.Add(CheckActivityDaysVsTeamDetails(extractedData, teams));
 
         return rules;
     }
@@ -361,8 +323,8 @@ public class ProactiveValidationService : IProactiveValidationService
             ExtractedValue = activityDaysStr,
             ExpectedValue = costDaysStr,
             Message = matches
-                ? "Activity days match cost summary"
-                : "Activity days do not match cost summary days",
+                ? "Days worked matches Cost Summary"
+                : "Days worked does not match Cost Summary",
             Severity = matches ? "Pass" : "Fail"
         };
     }
@@ -436,7 +398,7 @@ public class ProactiveValidationService : IProactiveValidationService
 
     #endregion
 
-    #region Cost Summary Validation (4 rules)
+    #region Cost Summary Validation (8 rules)
 
     private async Task<List<ProactiveRuleResult>> ValidateCostSummaryAsync(
         Guid documentId, Guid packageId, CancellationToken ct)
@@ -458,28 +420,41 @@ public class ProactiveValidationService : IProactiveValidationService
         var placeOfSupply = GetJsonField(extractedData, "placeOfSupply")
             ?? GetJsonField(extractedData, "supplyPlace")
             ?? GetJsonField(extractedData, "location");
-        rules.Add(CheckFieldPresence("CS_PLACE_OF_SUPPLY_PRESENT", placeOfSupply, "Place of Supply"));
+        rules.Add(CheckFieldPresence("CS_PLACE_OF_SUPPLY_PRESENT", placeOfSupply, "State/Place of Supply"));
 
-        // Rule 2: CS_TOTAL_DAYS_PRESENT
+        // Rule 2: CS_ELEMENT_WISE_COSTS_PRESENT
+        var elementWiseCost = GetJsonField(extractedData, "costBreakdown")
+            ?? GetJsonField(extractedData, "elements")
+            ?? GetJsonField(extractedData, "lineItems")
+            ?? GetJsonField(extractedData, "elementWiseCost");
+        rules.Add(CheckFieldPresence("CS_ELEMENT_WISE_COSTS_PRESENT", elementWiseCost, "Element wise Cost"));
+
+        // Rule 3: CS_TOTAL_DAYS_PRESENT
         var totalDays = GetJsonField(extractedData, "totalDays") ?? GetJsonField(extractedData, "days");
-        rules.Add(CheckFieldPresence("CS_TOTAL_DAYS_PRESENT", totalDays, "Total Days"));
+        rules.Add(CheckFieldPresence("CS_TOTAL_DAYS_PRESENT", totalDays, "No of Days"));
 
-        // Rule 3: CS_TOTAL_VS_INVOICE — cross-check total cost against invoice amount
+        // Rule 4: CS_ELEMENT_WISE_QUANTITY_PRESENT
+        var elementWiseQuantity = GetJsonField(extractedData, "elementWiseQuantity")
+            ?? GetJsonField(extractedData, "quantity")
+            ?? GetJsonField(extractedData, "quantities");
+        rules.Add(CheckFieldPresence("CS_ELEMENT_WISE_QUANTITY_PRESENT", elementWiseQuantity, "Element wise Quantity"));
+
+        // Rule 5: CS_TOTAL_VS_INVOICE — cross-check total cost against invoice amount
         var invoice = await _db.Invoices
             .AsNoTracking()
             .FirstOrDefaultAsync(i => i.PackageId == packageId && !i.IsDeleted, ct);
         rules.Add(CheckCostTotalVsInvoice(costSummary.TotalCost, extractedData, invoice));
 
-        // Rule 4: CS_ELEMENT_COST_VS_RATES — check element costs against rate master
+        // Rule 6: CS_ELEMENT_COST_VS_RATES — Element Cost limit as per State Rate
         rules.Add(CheckElementCostsVsRates(extractedData));
 
-        // Rule 5: CS_FIXED_COST_LIMITS
+        // Rule 7: CS_FIXED_COST_LIMITS — Fixed Cost Limit as per State Rate
         var breakdownJson = !string.IsNullOrWhiteSpace(costSummary.CostBreakdownJson)
             ? costSummary.CostBreakdownJson
             : costSummary.ExtractedDataJson; // ParseCostItems handles costBreakdowns extraction
         rules.Add(CheckFixedCostLimits(breakdownJson, costSummary.PlaceOfSupply));
 
-        // Rule 6: CS_VARIABLE_COST_LIMITS
+        // Rule 8: CS_VARIABLE_COST_LIMITS — Variable cost limit as per State Rate
         rules.Add(CheckVariableCostLimits(breakdownJson, costSummary.PlaceOfSupply));
 
         return rules;
@@ -552,8 +527,8 @@ public class ProactiveValidationService : IProactiveValidationService
             ExtractedValue = parsedCostTotal.Value.ToString("F2"),
             ExpectedValue = invoice.TotalAmount.Value.ToString("F2"),
             Message = matches
-                ? "Cost summary total matches invoice amount"
-                : "Cost summary total does not match invoice amount",
+                ? "Total Cost matches invoice amount"
+                : "Total Cost does not match invoice amount",
             Severity = matches ? "Pass" : "Fail"
         };
     }
@@ -576,7 +551,7 @@ public class ProactiveValidationService : IProactiveValidationService
                 Passed = false,
                 ExtractedValue = null,
                 ExpectedValue = null,
-                Message = "Cost breakdown elements not found in extracted data",
+                Message = "Element cost breakdown not found in extracted data",
                 Severity = "Warning"
             };
         }
@@ -588,7 +563,7 @@ public class ProactiveValidationService : IProactiveValidationService
             Passed = true,
             ExtractedValue = "Present",
             ExpectedValue = null,
-            Message = "Cost breakdown elements present for rate comparison",
+            Message = "Element cost breakdown present for rate comparison",
             Severity = "Pass"
         };
     }
@@ -801,6 +776,7 @@ public class ProactiveValidationService : IProactiveValidationService
             RuleCode = ruleCode,
             Type = "Required",
             Passed = present,
+            Label = fieldName,
             ExtractedValue = present ? value : null,
             ExpectedValue = null,
             Message = present ? $"{fieldName} found" : $"{fieldName} not found in extracted data",
