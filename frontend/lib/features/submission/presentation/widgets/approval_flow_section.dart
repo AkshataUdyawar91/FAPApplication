@@ -18,24 +18,24 @@ class ApprovalFlowSection extends StatelessWidget {
     final state = submission['state']?.toString().toLowerCase() ?? '';
     final createdAt = submission['createdAt'];
     final asmReviewedAt = submission['asmReviewedAt'];
-    final asmReviewNotes = submission['asmReviewNotes']?.toString();
     final hqReviewedAt = submission['hqReviewedAt'];
-    final hqReviewNotes = submission['hqReviewNotes']?.toString();
     final approvalHistory =
         submission['approvalHistory'] as List<dynamic>? ?? [];
     final comments = submission['comments'] as List<dynamic>? ?? [];
 
-    // Extract per-role: latest approver name, last rejection reason
+    // Extract per-role: latest approver name, last rejection reason, latest CH action
     String? asmApproverName;
     String? raApproverName;
     String? asmLastRejection;
     String? raLastRejection;
+    String? latestCHAction; // Track what CH actually did (approved/rejected/resubmitted)
     for (final h in approvalHistory.reversed) {
       final entry = h as Map<String, dynamic>;
       final role = entry['approverRole']?.toString().toLowerCase() ?? '';
       final action = entry['action']?.toString().toLowerCase() ?? '';
       if (role == 'asm') {
         asmApproverName ??= entry['approverName']?.toString();
+        latestCHAction ??= action; // First match in reversed = latest
         if (asmLastRejection == null && action.contains('rejected')) {
           asmLastRejection = entry['comments']?.toString();
         }
@@ -48,54 +48,47 @@ class ApprovalFlowSection extends StatelessWidget {
       }
     }
 
-    // Determine ASM status
+    // Determine ASM status based on the actual CH action from history
     String asmStatus = 'pending';
-    if (state.contains('chrejected') || state.contains('rejectedbyasm')) {
+    if (state == 'chrejected' || state == 'rejectedbyasm') {
       asmStatus = 'rejected';
-    } else if (state.contains('approved') ||
-        state.contains('pendingra') ||
-        state.contains('pendinghq') ||
-        state.contains('rarejected') ||
-        state.contains('rejectedbyhq') ||
-        state.contains('chapproved') ||
-        state.contains('rapending')) {
-      asmStatus = 'approved';
+    } else if (state == 'pendingchreason' || state == 'pendingchclarification') {
+      asmStatus = 'asked-reason';
+    } else if (state == 'approved' ||
+        state == 'pendingra' ||
+        state == 'pendinghqapproval' ||
+        state == 'rarejected' ||
+        state == 'rejectedbyhq' ||
+        state == 'rejectedbyra' ||
+        state == 'pendingrareasonresponse' ||
+        state == 'pendingraclarificationresponse') {
+      // Check actual CH action from history — if CH rejected, show rejected
+      if (latestCHAction != null && latestCHAction.contains('rejected')) {
+        asmStatus = 'rejected';
+      } else {
+        asmStatus = 'approved';
+      }
     } else if (asmReviewedAt != null) {
       asmStatus = 'approved';
     }
 
-    // Determine HQ/RA status
+    // Determine HQ/RA status based on the status visibility matrix
     String hqStatus = 'pending';
-    if (state == 'approved' || state == 'raapproved') {
+    if (state == 'approved') {
       hqStatus = 'approved';
-    } else if (state.contains('rarejected') || state.contains('rejectedbyhq')) {
+    } else if (state == 'rarejected') {
       hqStatus = 'rejected';
+    } else if (state == 'pendingchreason' || state == 'pendingchclarification') {
+      hqStatus = 'asked-reason'; // RA asked CH for reason, waiting for response
+    } else if (state == 'pendingrareasonresponse' || state == 'pendingraclarificationresponse') {
+      hqStatus = 'reason-received'; // CH responded, RA needs to review
+    } else if (state == 'chrejected') {
+      hqStatus = 'ch-rejected'; // CH rejected, RA can act
     } else if (hqReviewedAt != null) {
       hqStatus = 'approved';
     }
 
-    // Flow step bubbles: last rejection (red) + latest comment (grey) if different
-    String? asmFlowRejection;
-    String? asmFlowComment;
-    if (asmStatus == 'rejected') {
-      asmFlowRejection = asmReviewNotes;
-    } else if (asmStatus == 'approved' && asmLastRejection != null) {
-      asmFlowRejection = asmLastRejection;
-      if (asmReviewNotes != null && asmReviewNotes != asmLastRejection) {
-        asmFlowComment = asmReviewNotes;
-      }
-    }
-
-    String? raFlowRejection;
-    String? raFlowComment;
-    if (hqStatus == 'rejected') {
-      raFlowRejection = hqReviewNotes;
-    } else if (hqStatus == 'approved' && raLastRejection != null) {
-      raFlowRejection = raLastRejection;
-      if (hqReviewNotes != null && hqReviewNotes != raLastRejection) {
-        raFlowComment = hqReviewNotes;
-      }
-    }
+    // No comment bubbles on timeline steps — History section shows all details
 
     return Card(
       elevation: 0,
@@ -129,20 +122,24 @@ class ApprovalFlowSection extends StatelessWidget {
                   ? Icons.check_circle
                   : asmStatus == 'rejected'
                       ? Icons.cancel
-                      : Icons.schedule,
+                      : asmStatus == 'asked-reason'
+                          ? Icons.question_answer
+                          : Icons.schedule,
               color: asmStatus == 'approved'
                   ? const Color(0xFF10B981)
                   : asmStatus == 'rejected'
                       ? const Color(0xFFDC2626)
-                      : const Color(0xFF9CA3AF),
+                      : asmStatus == 'asked-reason'
+                          ? const Color(0xFFF59E0B)
+                          : const Color(0xFF9CA3AF),
               title: asmStatus == 'approved'
                   ? 'Approved by CH${asmApproverName != null ? ' ($asmApproverName)' : ''}'
                   : asmStatus == 'rejected'
                       ? 'Rejected by CH${asmApproverName != null ? ' ($asmApproverName)' : ''}'
-                      : 'Pending CH Review',
+                      : asmStatus == 'asked-reason'
+                          ? 'RA Asked Reason'
+                          : 'Pending CH Review',
               date: asmReviewedAt != null ? _formatDate(asmReviewedAt) : null,
-              rejectionReason: asmFlowRejection,
-              comment: asmFlowComment,
               isCompleted: asmStatus != 'pending',
               isLast: false,
             ),
@@ -151,20 +148,36 @@ class ApprovalFlowSection extends StatelessWidget {
                   ? Icons.check_circle
                   : hqStatus == 'rejected'
                       ? Icons.cancel
-                      : Icons.schedule,
+                      : hqStatus == 'asked-reason'
+                          ? Icons.question_answer
+                          : hqStatus == 'reason-received'
+                              ? Icons.mark_email_read
+                              : hqStatus == 'ch-rejected'
+                                  ? Icons.warning_amber
+                                  : Icons.schedule,
               color: hqStatus == 'approved'
                   ? const Color(0xFF10B981)
                   : hqStatus == 'rejected'
                       ? const Color(0xFFDC2626)
-                      : const Color(0xFF9CA3AF),
+                      : hqStatus == 'asked-reason'
+                          ? const Color(0xFFF59E0B)
+                          : hqStatus == 'reason-received'
+                              ? const Color(0xFFDC2626)
+                              : hqStatus == 'ch-rejected'
+                                  ? const Color(0xFFF59E0B)
+                                  : const Color(0xFF9CA3AF),
               title: hqStatus == 'approved'
                   ? 'Approved by RA${raApproverName != null ? ' ($raApproverName)' : ''}'
                   : hqStatus == 'rejected'
                       ? 'Rejected by RA${raApproverName != null ? ' ($raApproverName)' : ''}'
-                      : 'Pending RA Review',
+                      : hqStatus == 'asked-reason'
+                          ? 'Asked Reason (Waiting for CH)'
+                          : hqStatus == 'reason-received'
+                              ? 'CH Responded'
+                              : hqStatus == 'ch-rejected'
+                                  ? 'CH Rejected'
+                                  : 'Pending RA Review',
               date: hqReviewedAt != null ? _formatDate(hqReviewedAt) : null,
-              rejectionReason: raFlowRejection,
-              comment: raFlowComment,
               isCompleted: hqStatus != 'pending',
               isLast: true,
             ),

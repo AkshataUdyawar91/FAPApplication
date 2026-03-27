@@ -80,8 +80,8 @@ The `ListSubmissions` endpoint applies different filters depending on the authen
   - `RARejected` — rejected by RA
   - `Approved` — final approval given
   - `CHRejected` — rejected by Circle Head (RA can view and act on these)
-  - `PendingCHClarification` — sent back to CH for clarification by RA
-  - `PendingRAClarificationResponse` — CH responded to clarification, awaiting RA review
+  - `PendingCHReason` — sent back to CH for clarification by RA
+  - `PendingRAReasonResponse` — CH responded to clarification, awaiting RA review
 
 ### Admin / HQ
 - No filters — sees all submissions
@@ -139,14 +139,14 @@ Agency creates request
                                       │          │ [RARejected]           │
                                       ▼          │              │         │
                                  [Uploaded]      ▼              ▼         │
-                                 (new version)  [PendingCHClarification]  │
+                                 (new version)  [PendingCHReason]  │
                                                       │                  │
                                                       ▼                  │
                                                 CH Responds              │
                                                 with reason              │
                                                       │                  │
                                                       ▼                  │
-                                          [PendingRAClarificationResponse]
+                                          [PendingRAReasonResponse]
                                                       │
                                           ┌───────────┼───────────┐
                                           ▼           ▼           ▼
@@ -155,7 +155,7 @@ Agency creates request
                                           ▼           ▼           │
                                      [Approved] [RARejected]      │
                                                                   ▼
-                                                    [PendingCHClarification]
+                                                    [PendingCHReason]
                                                     (cycle repeats)
 ```
 
@@ -170,13 +170,13 @@ Agency creates request
 | `PendingCH` | Reject | CH | `CHRejected` | Rejected | CH Rejected |
 | `PendingRA` | Approve | RA | `Approved` | Approved | Approved |
 | `PendingRA` | Reject | RA | `RARejected` | Rejected by RA | Rejected |
-| `PendingRA` | Ask Reason | RA | `PendingCHClarification` | RA Asked Reason | CH Clarification |
+| `PendingRA` | Ask Reason | RA | `PendingCHReason` | RA Asked Reason | CH Clarification |
 | `CHRejected` | Reject | RA | `RARejected` | Rejected by RA | Rejected |
-| `CHRejected` | Ask Reason | RA | `PendingCHClarification` | RA Asked Reason | CH Clarification |
-| `PendingCHClarification` | Respond | CH | `PendingRAClarificationResponse` | Reason Sent | CH Responded |
-| `PendingRAClarificationResponse` | Approve | RA | `Approved` | Approved | Approved |
-| `PendingRAClarificationResponse` | Reject | RA | `RARejected` | Rejected by RA | Rejected |
-| `PendingRAClarificationResponse` | Ask Reason | RA | `PendingCHClarification` | RA Asked Reason | CH Clarification |
+| `CHRejected` | Ask Reason | RA | `PendingCHReason` | RA Asked Reason | CH Clarification |
+| `PendingCHReason` | Respond | CH | `PendingRAReasonResponse` | Reason Sent | CH Responded |
+| `PendingRAReasonResponse` | Approve | RA | `Approved` | Approved | Approved |
+| `PendingRAReasonResponse` | Reject | RA | `RARejected` | Rejected by RA | Rejected |
+| `PendingRAReasonResponse` | Ask Reason | RA | `PendingCHReason` | RA Asked Reason | CH Clarification |
 | `RARejected` | Resubmit | Agency | `Uploaded` | — | — |
 | `CHRejected` | Resubmit | Agency | `Uploaded` | — | — |
 
@@ -288,8 +288,8 @@ File: `frontend/lib/features/approval/presentation/pages/asm_review_page.dart`
 | Backend State(s) | Normalized Key | Dropdown Label |
 |---|---|---|
 | `pendingasmapproval`, `pendingapproval`, `pendingwithasm`, `pendingch`, `pendingchapproval` | `pending` | Pending |
-| `pendingchclarification` | `ra-asked-reason` | RA Asked Reason |
-| `pendingraclarificationresponse` | `reason-sent` | Reason Sent |
+| `pendingchreason` | `ra-asked-reason` | RA Asked Reason |
+| `pendingrareasonresponse` | `reason-sent` | Reason Sent |
 | `pendinghqapproval`, `pendingwithra`, `pendingra`, `asmapproved` | `pending-with-ra` | Pending with RA |
 | `approved` | `approved` | Approved |
 | `rejectedbyasm`, `rejected`, `asmrejected`, `chrejected`, `rejectedbych` | `rejected` | Rejected |
@@ -348,7 +348,7 @@ File: `frontend/lib/features/approval/presentation/pages/hq_review_page.dart`
 ### Data Loading
 
 - Calls `GET /api/submissions` with `pageSize=100` (no explicit state filter — backend enforces RA scoping)
-- Backend returns only submissions matching RA's assigned `ActivityState` AND in `raVisibleStates`: `PendingRA`, `RARejected`, `Approved`, `CHRejected`, `PendingCHClarification`
+- Backend returns only submissions matching RA's assigned `ActivityState` AND in `raVisibleStates`: `PendingRA`, `RARejected`, `Approved`, `CHRejected`, `PendingCHReason`, `PendingRAReasonResponse`
 - KPI data loaded separately from `GET /analytics/quarterly-fap`
 - Client-side quarter/year filtering via `_matchesQuarterYear()`
 
@@ -371,11 +371,11 @@ File: `frontend/lib/features/approval/presentation/pages/hq_review_page.dart`
 | Backend State(s) | Normalized Key | Dropdown Label |
 |---|---|---|
 | `pendingra`, `pendinghqapproval` | `pending` | Pending |
-| `pendingraclarificationresponse` | `clarification-response` | CH Responded |
+| `pendingrareasonresponse` | `clarification-response` | CH Responded |
 | `approved` | `approved` | Approved |
 | `rarejected`, `rejectedbyhq`, `hqrejected`, `rejectedbyra` | `rejected` | Rejected |
 | `chrejected` | `ch-rejected` | CH Rejected |
-| `pendingchclarification`, `pendingch`, `pendingasmapproval` | `ch-clarification` | CH Clarification |
+| `pendingchreason`, `pendingch`, `pendingasmapproval` | `ch-clarification` | CH Clarification |
 | (anything else) | `other` | (raw state) |
 
 ### Status Badge Colors (RA)
@@ -415,34 +415,34 @@ When RA opens a submission from the dashboard, the available actions depend on t
 
 | Submission State | Approve | Reject (to Agency) | Ask CH Clarification |
 |---|---|---|---|
-| `PendingRA` | ✅ | ✅ | ✅ |
-| `PendingRAClarificationResponse` | ✅ | ✅ | ✅ |
+| `PendingRA` | ✅ | ✅ | ❌ |
+| `PendingRAReasonResponse` | ✅ | ✅ | ✅ |
 | `CHRejected` | ❌ | ✅ | ✅ |
-| `PendingCHClarification` | ❌ | ❌ | ❌ |
-| `RARejected` | ❌ | ❌ | ❌ |
+| `PendingCHReason` | ❌ | ✅ | ✅ |
+| `RARejected` | ❌ | ❌ | ✅ |
 | `Approved` | ❌ | ❌ | ❌ |
 
 ### Action Endpoints
 
 | Action | Endpoint | Accepted States | Result State |
 |---|---|---|---|
-| Approve | `PATCH /api/submissions/{id}/hq-approve` | `PendingRA`, `PendingRAClarificationResponse` | `Approved` |
-| Reject to Agency | `PATCH /api/submissions/{id}/hq-reject` | `PendingRA`, `CHRejected`, `PendingRAClarificationResponse` | `RARejected` |
-| Ask CH Clarification | `PATCH /api/submissions/{id}/ra-send-back-to-ch` | `PendingRA`, `CHRejected`, `PendingRAClarificationResponse` | `PendingCHClarification` |
-| CH Respond to Clarification | `PATCH /api/submissions/{id}/asm-respond-clarification` | `PendingCHClarification` | `PendingRAClarificationResponse` |
+| Approve | `PATCH /api/submissions/{id}/hq-approve` | `PendingRA`, `PendingRAReasonResponse` | `Approved` |
+| Reject to Agency | `PATCH /api/submissions/{id}/hq-reject` | `PendingRA`, `CHRejected`, `PendingCHReason`, `PendingRAReasonResponse` | `RARejected` |
+| Ask CH Reason | `PATCH /api/submissions/{id}/ra-send-back-to-ch` | `RARejected`, `CHRejected`, `PendingCHReason`, `PendingRAReasonResponse` | `PendingCHReason` |
+| CH Respond to Clarification | `PATCH /api/submissions/{id}/asm-respond-clarification` | `PendingCHReason` | `PendingRAReasonResponse` |
 
 ### State Flow After RA Actions
 
 ```
 PendingRA ──→ Approved                        (RA approves — final)
 PendingRA ──→ RARejected                      (RA rejects — Agency must resubmit)
-PendingRA ──→ PendingCHClarification          (RA asks CH for reason)
+PendingRA ──→ PendingCHReason                  (RA asks CH for reason)
 CHRejected ──→ RARejected                     (RA fully rejects)
-CHRejected ──→ PendingCHClarification         (RA asks CH to reconsider)
-PendingCHClarification ──→ PendingRAClarificationResponse  (CH responds with reason)
-PendingRAClarificationResponse ──→ Approved   (RA approves after clarification)
-PendingRAClarificationResponse ──→ RARejected (RA rejects after clarification)
-PendingRAClarificationResponse ──→ PendingCHClarification  (RA asks again)
+CHRejected ──→ PendingCHReason                (RA asks CH to reconsider)
+PendingCHReason ──→ PendingRAReasonResponse    (CH responds with reason)
+PendingRAReasonResponse ──→ Approved           (RA approves after clarification)
+PendingRAReasonResponse ──→ RARejected         (RA rejects after clarification)
+PendingRAReasonResponse ──→ PendingCHReason    (RA asks again)
 ```
 
 ---

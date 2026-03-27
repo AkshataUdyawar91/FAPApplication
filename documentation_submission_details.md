@@ -135,10 +135,15 @@ Shown only when the submission is in an actionable state. Contains:
 - Comments text field (optional)
 
 **Actionable state logic per role:**
-- ASM page (`_isSubmissionActionable`): state is `PendingCH`, `PendingApproval`, `PendingCHApproval`, or `PendingCHClarification` (NOT `RARejected` — when RA rejects, the agency must resubmit; CH cannot act on RA-rejected submissions). When state is `PendingCHClarification`, ASM sees the RA's clarification request and a "Respond to RA" button instead of Approve/Reject.
-- RA page (`_isSubmissionActionable`): state is `PendingRA`, `PendingHQApproval`, `CHRejected`, `RejectedByASM`, or `PendingRAClarificationResponse`
+- ASM page (`_isSubmissionActionable`): state is `PendingCH`, `PendingApproval`, `PendingCHApproval`, or `PendingCHReason` (NOT `RARejected` — when RA rejects, the agency must resubmit; CH cannot act on RA-rejected submissions). When state is `PendingCHReason`, ASM sees the RA's clarification request and a "Respond to RA" button instead of Approve/Reject.
+- RA page (`_isSubmissionActionable`): state is `PendingRA`, `RARejected`, `CHRejected`, `PendingCHReason`, or `PendingRAReasonResponse`. Button visibility per state:
+  - `PendingRA`: Approve ✅, Reject ✅, Ask Reason ❌
+  - `RARejected`: Ask Reason ✅ only
+  - `CHRejected`: Reject ✅, Ask Reason ✅ (no Approve)
+  - `PendingCHReason`: Reject ✅, Ask Reason ✅ (no Approve)
+  - `PendingRAReasonResponse`: Approve ✅, Reject ✅, Ask Reason ✅
 
-When CH has rejected a submission (state = `CHRejected`), the RA page does NOT show action buttons. The RA can only act once the agency resubmits and the submission flows back through processing to `PendingRA`.
+When CH has rejected a submission (state = `CHRejected`), the RA page shows Reject and Ask Reason buttons but NOT Approve.
 
 ASM actions call `PATCH /api/submissions/{id}/asm-approve` or `PATCH /api/submissions/{id}/asm-reject`.
 RA actions call `PATCH /api/submissions/{id}/hq-approve`, `PATCH /api/submissions/{id}/hq-reject`, or `PATCH /api/submissions/{id}/ra-send-back-to-ch`.
@@ -146,11 +151,11 @@ RA actions call `PATCH /api/submissions/{id}/hq-approve`, `PATCH /api/submission
 RA has three action options:
 - Approve: Final approval, submission is complete
 - Reject: Fully rejects to Agency for resubmission (state → `RARejected`)
-- Ask CH Clarification: Sends back to Circle Head for clarification (state → `PendingCHClarification`)
+- Ask CH Clarification: Sends back to Circle Head for clarification (state → `PendingCHReason`)
 
 CH clarification flow:
-- When RA asks for clarification, state → `PendingCHClarification` (ASM sees "RA Asked Reason")
-- CH responds with clarification, state → `PendingRAClarificationResponse` (ASM sees "Reason Sent", RA sees "CH Responded")
+- When RA asks for clarification, state → `PendingCHReason` (ASM sees "RA Asked Reason")
+- CH responds with clarification, state → `PendingRAReasonResponse` (ASM sees "Reason Sent", RA sees "CH Responded")
 - RA can then approve, reject, or ask for clarification again
 
 ### 8. PO Balance Section (ASM only)
@@ -231,44 +236,31 @@ A card pinned to the right side of the page on desktop/tablet (stacks at the bot
 
 #### Timeline Flow Steps
 
-The timeline has 3 fixed steps:
+The timeline has 3 fixed steps. The CH step title and icon are derived from the actual approval history (latest CH action), not just the current package state.
 
-| Step | Icon | Title (varies by state) | Date Source |
+| Step | Icon | Title (varies by state/history) | Date Source |
 |---|---|---|---|
 | 1. Submitted | Upload icon (blue) | "Submitted" | `submission.createdAt` |
-| 2. CH Review | Check/Cancel/Clock | "Approved by CH (Name)" / "Rejected by CH (Name)" / "Pending CH Review" | `submission.asmReviewedAt` |
-| 3. RA Review | Check/Cancel/Clock | "Approved by RA (Name)" / "Rejected by RA (Name)" / "Pending RA Review" | `submission.hqReviewedAt` |
+| 2. CH Review | Derived from history | "Approved by CH (Name)" / "Rejected by CH (Name)" / "RA Asked Reason" / "Pending CH Review" | `submission.asmReviewedAt` |
+| 3. RA Review | Derived from state | "Approved by RA (Name)" / "Rejected by RA (Name)" / "Asked Reason (Waiting for CH)" / "CH Responded" / "CH Rejected" / "Pending RA Review" | `submission.hqReviewedAt` |
+
+CH step status is determined by checking the latest CH (ASM role) action in `approvalHistory[]`:
+- If latest CH action is `Rejected` → shows "Rejected by CH" (red) even if current state is `PendingRAReasonResponse`
+- If latest CH action is `Approved` → shows "Approved by CH" (green)
+- If state is `PendingCHReason` → shows "RA Asked Reason" (amber)
+- Otherwise → "Pending CH Review" (grey)
+
+RA step status is determined by the current package state:
+- `Approved` → "Approved by RA" (green)
+- `RARejected` → "Rejected by RA" (red)
+- `PendingCHReason` → "Asked Reason (Waiting for CH)" (amber)
+- `PendingRAReasonResponse` → "CH Responded" (red)
+- `CHRejected` → "CH Rejected" (amber)
+- Otherwise → "Pending RA Review" (grey)
 
 Approver names are extracted from the latest ASM/RA entry in `approvalHistory[]` and appended to the title in parentheses.
 
-#### Flow Step Comment Logic (max 2 bubbles per step, same on all pages)
-
-Each flow step can show up to 2 comment bubbles. The logic is identical across all three pages:
-
-| Current State | Prior Rejection? | What Shows |
-|---|---|---|
-| Rejected | — | 1 red bubble (rejection reason) |
-| Approved | Yes | Red bubble (last rejection) + grey bubble (approval comment, if different) |
-| Approved | No | Nothing |
-| Pending | — | Nothing |
-
-The logic per step:
-
-**If step is currently rejected:**
-- Show the rejection reason as a red bubble (1 bubble)
-
-**If step is currently approved AND there was a prior rejection for that role:**
-- Show the last rejection reason as a red bubble
-- Show the latest approval comment as a grey bubble (only if different from the rejection)
-
-**If step is currently approved AND there was NO prior rejection:**
-- Show nothing (0 bubbles)
-
-**If step is pending:**
-- Show nothing
-
-**Rejection reason styling**: Red background (`#FEF2F2`), red border (`#FCA5A5`), error icon, dark red text (`#991B1B`).
-**Comment styling**: Grey background (`#F9FAFB`), grey border (`#E5E7EB`), grey text (`#4B5563`).
+The timeline steps show only the step icon, title, and date — no comment or rejection bubbles. All details are in the History section below.
 
 #### History Section
 
@@ -295,7 +287,7 @@ Below the history, if `comments[]` is populated (from `RequestComments` table), 
 | RA Approve | `request.Notes` if provided, otherwise `"Approved by RA"` |
 | RA Reject | `request.Reason` (the rejection reason) |
 | RA Send Back to CH | `request.Reason` (the clarification reason). Action = `SentBackToCH` |
-| CH Respond to Clarification | `request.Notes` if provided, otherwise `"Clarification provided by CH"`. Action = `Resubmitted`. State → `PendingRAClarificationResponse` |
+| CH Respond to Clarification | `request.Notes` if provided, otherwise `"Clarification provided by CH"`. Action = `Resubmitted`. State → `PendingRAReasonResponse` |
 | Resubmit (Agency) | `"Resubmitted by Agency"` |
 | Resubmit (ASM to RA) | `request.Notes` |
 | Send back to Agency | `"Sent back to Agency: {request.Reason}"` |
@@ -353,7 +345,7 @@ Controller: `SubmissionsController.GetSubmission()`
 Authorization: JWT required. Role-based filtering:
 - Agency: can only see submissions belonging to their agency (`package.AgencyId == user.AgencyId`)
 - ASM/Circle Head: can only see submissions where `ActivityState` matches their assigned states
-- RA: can only see submissions where `ActivityState` matches their RA-assigned states AND `State` is one of `PendingRA`, `RARejected`, `Approved`, `CHRejected`, `PendingCHClarification`, `PendingRAClarificationResponse`
+- RA: can only see submissions where `ActivityState` matches their RA-assigned states AND `State` is one of `PendingRA`, `RARejected`, `Approved`, `CHRejected`, `PendingCHReason`, `PendingRAReasonResponse`
 - HQ/Admin: can see all submissions
 
 Response DTO: `SubmissionDetailResponse`
@@ -418,7 +410,7 @@ API response root → DB table `DocumentPackages`
 | API Field (JSON) | Type | DB Entity | DB Column | Notes |
 |---|---|---|---|---|
 | `id` | `Guid` | `DocumentPackage` | `Id` | Primary key |
-| `state` | `string` | `DocumentPackage` | `State` | Enum `PackageState` → `.ToString()`. Values: `Draft`, `Uploaded`, `Extracting`, `Validating`, `PendingCH`, `CHRejected`, `PendingRA`, `RARejected`, `Approved`, `PendingCHClarification`, `PendingRAClarificationResponse` |
+| `state` | `string` | `DocumentPackage` | `State` | Enum `PackageState` → `.ToString()`. Values: `Draft`, `Uploaded`, `Extracting`, `Validating`, `PendingCH`, `CHRejected`, `PendingRA`, `RARejected`, `Approved`, `PendingCHReason`, `PendingRAReasonResponse` |
 | `createdAt` | `DateTime` | `DocumentPackage` | `CreatedAt` | UTC |
 | `updatedAt` | `DateTime?` | `DocumentPackage` | `UpdatedAt` | UTC |
 | `submissionNumber` | `string?` | `DocumentPackage` | `SubmissionNumber` | Format: `CIQ-YYYY-XXXXX`. Generated at submit time |
@@ -878,8 +870,8 @@ Same API call and data extraction pattern. Additionally:
 | `PATCH /api/submissions/{id}/asm-reject` | PATCH | ASM rejects submission. Body: `{ Reason }` |
 | `PATCH /api/submissions/{id}/ra-approve` | PATCH | RA approves submission. Body: `{ notes }` |
 | `PATCH /api/submissions/{id}/ra-reject` | PATCH | RA rejects submission. Body: `{ Reason }` |
-| `PATCH /api/submissions/{id}/ra-send-back-to-ch` | PATCH | RA sends back to CH for clarification. Body: `{ Reason }`. State → `PendingCHClarification` |
-| `PATCH /api/submissions/{id}/asm-respond-clarification` | PATCH | CH responds to RA clarification. Body: `{ notes }`. State → `PendingRAClarificationResponse` |
+| `PATCH /api/submissions/{id}/ra-send-back-to-ch` | PATCH | RA sends back to CH for clarification. Body: `{ Reason }`. State → `PendingCHReason` |
+| `PATCH /api/submissions/{id}/asm-respond-clarification` | PATCH | CH responds to RA clarification. Body: `{ notes }`. State → `PendingRAReasonResponse` |
 | `GET /api/hierarchical/{id}/structure` | GET | Hierarchical campaign structure with photos, cost/activity summary URLs |
 | `GET /api/documents/{id}/extraction-status` | GET | Poll AI extraction status |
 | `GET /api/documents/{id}/view` | GET | Download/view document file content |
