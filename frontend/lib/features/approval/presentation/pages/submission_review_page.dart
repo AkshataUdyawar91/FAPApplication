@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import '../providers/approval_providers.dart';
 import '../providers/approval_notifier.dart';
 import '../widgets/validation_result_card.dart';
@@ -227,9 +229,7 @@ class _SubmissionReviewPageState extends ConsumerState<SubmissionReviewPage> {
           Navigator.pop(context);
         }
         if (next.error != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(next.error!)),
-          );
+          ErrorHandler.show(context, failure: ErrorHandler.failureFromMessage(next.error!));
           ref.read(approvalNotifierProvider.notifier).clearError();
         }
       },

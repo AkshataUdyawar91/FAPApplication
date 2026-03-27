@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import 'package:dio/dio.dart';
 import '../../data/models/agency_dto.dart';
 
@@ -36,6 +38,27 @@ class _AgencyFormDialogState extends State<AgencyFormDialog> {
     super.dispose();
   }
 
+  Failure _mapExceptionToFailure(Object e) {
+    if (e is DioException) {
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+        case DioExceptionType.connectionError:
+          return const NetworkFailure('Connection timeout');
+        case DioExceptionType.badResponse:
+          final statusCode = e.response?.statusCode;
+          if (statusCode == 401) return const AuthFailure('Unauthorized');
+          if (statusCode == 403) return const AuthFailure('Forbidden');
+          if (statusCode == 404) return const NotFoundFailure();
+          return ServerFailure(e.response?.data?['message']?.toString() ?? 'Server error');
+        default:
+          return const NetworkFailure();
+      }
+    }
+    return ServerFailure(e.toString());
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
@@ -55,10 +78,9 @@ class _AgencyFormDialogState extends State<AgencyFormDialog> {
       }
       if (mounted) Navigator.pop(context, true);
     } on DioException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Save failed: ${e.response?.data?['message'] ?? e.message}'),
-        backgroundColor: Colors.red,
-      ));
+      if (mounted) {
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e));
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }

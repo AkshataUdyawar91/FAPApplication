@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:dio/dio.dart';
 import 'package:equatable/equatable.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/datasources/assistant_remote_datasource.dart';
@@ -83,13 +84,38 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
 
   AssistantNotifier(this._dataSource) : super(const AssistantState());
 
+  /// Maps an exception to a user-friendly error message.
+  String _friendlyError(Object e) {
+    if (e is DioException) {
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+        case DioExceptionType.connectionError:
+          return 'No internet connection. Check your network and try again.';
+        case DioExceptionType.badResponse:
+          final statusCode = e.response?.statusCode;
+          if (statusCode == 401 || statusCode == 403) {
+            return 'Your session has expired. Please sign in again.';
+          }
+          if (statusCode == 404) return 'The requested resource could not be found.';
+          final serverMsg = e.response?.data?['message']?.toString();
+          if (serverMsg != null && serverMsg.isNotEmpty) return serverMsg;
+          return 'Something went wrong on our end. Please try again later.';
+        default:
+          return 'No internet connection. Check your network and try again.';
+      }
+    }
+    return 'Something went wrong. Please try again.';
+  }
+
   Future<void> greet() async {
     state = state.copyWith(isLoading: true, error: null, isSubmissionFlow: false, currentStep: 0);
     try {
       final response = await _dataSource.sendMessage(action: 'greet');
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -131,7 +157,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
         state = state.copyWith(selectedPO: response.selectedPO);
       }
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -142,7 +168,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.sendMessage(action: 'search_po', message: query);
       _addBotMessage(response, replaceLastBot: true);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -162,7 +188,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
         state = state.copyWith(submissionId: response.submissionId);
       }
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -173,7 +199,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.sendMessage(action: 'search_state', message: query);
       _addBotMessage(response, replaceLastBot: true);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -193,7 +219,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
         state = state.copyWith(submissionId: response.submissionId);
       }
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -204,7 +230,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.sendMessage(action: 'list_states');
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -239,7 +265,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -274,7 +300,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -295,7 +321,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -306,7 +332,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.sendMessage(action: 'reupload_activity_summary');
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -321,7 +347,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -332,7 +358,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.sendMessage(action: 'reupload_invoice');
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -366,7 +392,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -377,7 +403,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.sendMessage(action: 'continue_after_cost_summary');
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -388,7 +414,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.sendMessage(action: 'reupload_cost_summary');
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -399,7 +425,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.uploadPO(fileBytes: bytes, fileName: fileName);
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -419,7 +445,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       }
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -437,7 +463,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       }
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -452,7 +478,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response, replaceLastBot: true);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -473,7 +499,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       }
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -494,7 +520,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       }
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -511,7 +537,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       }
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -555,7 +581,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       }
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -569,7 +595,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       }
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -579,7 +605,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.sendMessage(action: 'add_more_photos', payloadJson: payloadJson);
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -597,7 +623,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       }
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -613,7 +639,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -647,7 +673,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -658,7 +684,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       final response = await _dataSource.sendMessage(action: 'reupload_enquiry_dump');
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -676,7 +702,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -694,7 +720,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -710,7 +736,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
       );
       _addBotMessage(response);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(isLoading: false, error: _friendlyError(e));
     }
   }
 
@@ -728,7 +754,7 @@ class AssistantNotifier extends StateNotifier<AssistantState> {
         teamNumber: teamNumber,
       );
     } catch (e) {
-      state = state.copyWith(error: e.toString());
+      state = state.copyWith(error: _friendlyError(e));
       return [];
     }
   }
