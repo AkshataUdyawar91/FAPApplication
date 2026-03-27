@@ -395,7 +395,8 @@ public class ValidationAgent : IValidationAgent
                 result.PhotoCrossDocument = ValidatePhotoCrossDocument(
                     allTeamPhotos,
                     activityData,
-                    costSummaryData);
+                    costSummaryData,
+                    package.ActivitySummary?.TotalWorkingDays);
                 
                 if (!result.PhotoCrossDocument.AllChecksPass)
                 {
@@ -1494,7 +1495,8 @@ public class ValidationAgent : IValidationAgent
     private PhotoCrossDocumentResult ValidatePhotoCrossDocument(
         List<Domain.Entities.TeamPhotos> photos,
         ActivityData? activityData,
-        CostSummaryData? costSummaryData)
+        CostSummaryData? costSummaryData,
+        int? entityTotalWorkingDays = null)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
         _logger.LogInformation(
@@ -1558,8 +1560,12 @@ public class ValidationAgent : IValidationAgent
         int uniquePhotoDays = uniqueDates.Count;
         result.UniquePhotoDays = uniquePhotoDays;
 
-        // Get Activity Summary days (Activation Days / Billed Days / Working Days — all equivalent)
-        int activitySummaryDays = activityData?.Rows?.Sum(r => r.WorkingDay) ?? activityData?.TotalDays ?? 0;
+        // Get Activity Summary days — prefer the entity's stored TotalWorkingDays (set during extraction),
+        // fall back to summing rows, then TotalDays from parsed JSON
+        int activitySummaryDays = entityTotalWorkingDays
+            ?? activityData?.Rows?.Sum(r => r.WorkingDay)
+            ?? activityData?.TotalDays
+            ?? 0;
         result.ActivitySummaryDays = activitySummaryDays;
 
         // Also keep cost summary days for backward compatibility
