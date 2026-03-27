@@ -7,6 +7,8 @@ import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
@@ -69,6 +71,28 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
     return 'other';
   }
 
+  /// Maps a caught exception to the appropriate Failure subtype.
+  Failure _mapExceptionToFailure(Object e) {
+    if (e is DioException) {
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+        case DioExceptionType.connectionError:
+          return const NetworkFailure('Connection timeout');
+        case DioExceptionType.badResponse:
+          final statusCode = e.response?.statusCode;
+          if (statusCode == 401) return const AuthFailure('Unauthorized');
+          if (statusCode == 403) return const AuthFailure('Forbidden');
+          if (statusCode == 404) return const NotFoundFailure();
+          return ServerFailure(e.response?.data?['message']?.toString() ?? 'Server error');
+        default:
+          return const NetworkFailure();
+      }
+    }
+    return ServerFailure(e.toString());
+  }
+
   @override
   void initState() {
     super.initState();
@@ -113,11 +137,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Failed to load submissions: $e'),
-              backgroundColor: AppColors.rejectedText),
-        );
+        ErrorHandler.show(context, failure: _mapExceptionToFailure(e), onRetry: _loadDocuments);
       }
     }
   }

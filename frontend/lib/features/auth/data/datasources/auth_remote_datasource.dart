@@ -16,80 +16,61 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
 
   @override
   Future<AuthResponse> login(String email, String password) async {
-    try {
-      final response = await dio.post(
-        '/auth/login',
-        data: {
-          'email': email,
-          'password': password,
-        },
-      );
+    final response = await dio.post(
+      '/auth/login',
+      data: {
+        'email': email,
+        'password': password,
+      },
+    );
 
-      if (response.statusCode == 200) {
-        return AuthResponse.fromJson(response.data);
-      } else {
-        throw Exception('Login failed');
-      }
-    } on DioException catch (e) {
-      final message = e.response?.data?['message'] ?? e.message;
-      throw Exception('Login failed: $message');
+    if (response.statusCode == 200) {
+      return AuthResponse.fromJson(response.data);
+    } else {
+      throw Exception('Login failed');
     }
   }
 
   @override
   Future<void> refreshToken(String token) async {
-    try {
-      final response = await dio.post(
-        '/auth/refresh',
-        data: {'token': token},
-      );
+    final response = await dio.post(
+      '/auth/refresh',
+      data: {'token': token},
+    );
 
-      if (response.statusCode != 200) {
-        throw Exception('Token refresh failed');
-      }
-    } on DioException catch (e) {
-      throw Exception('Network error: ${e.message}');
+    if (response.statusCode != 200) {
+      throw Exception('Token refresh failed');
     }
   }
 
   @override
   Future<String> getSsoAuthorizeUrl(String redirectUri) async {
-    try {
-      final response = await dio.get(
-        '/auth/sso/authorize',
-        queryParameters: {'redirectUri': redirectUri},
-      );
+    final response = await dio.get(
+      '/auth/sso/authorize',
+      queryParameters: {'redirectUri': redirectUri},
+    );
 
-      if (response.statusCode == 200) {
-        return response.data['authorizeUrl'] as String;
-      } else {
-        throw Exception('Failed to get SSO authorize URL');
-      }
-    } on DioException catch (e) {
-      final message = e.response?.data?['message'] ?? e.message;
-      throw Exception('SSO error: $message');
+    if (response.statusCode == 200) {
+      return response.data['authorizeUrl'] as String;
+    } else {
+      throw Exception('Failed to get SSO authorize URL');
     }
   }
 
   @override
   Future<AuthResponse> ssoLogin(String code, String redirectUri) async {
-    try {
-      final response = await dio.post(
-        '/auth/sso/token',
-        data: {
-          'code': code,
-          'redirectUri': redirectUri,
-        },
-      );
+    final response = await dio.post(
+      '/auth/sso/token',
+      data: {
+        'code': code,
+        'redirectUri': redirectUri,
+      },
+    );
 
-      if (response.statusCode == 200) {
-        return AuthResponse.fromJson(response.data);
-      } else {
-        throw Exception('SSO login failed');
-      }
-    } on DioException catch (e) {
-      final message = e.response?.data?['message'] ?? e.message;
-      throw Exception('SSO login failed: $message');
+    if (response.statusCode == 200) {
+      return AuthResponse.fromJson(response.data);
+    } else {
+      throw Exception('SSO login failed');
     }
   }
 }

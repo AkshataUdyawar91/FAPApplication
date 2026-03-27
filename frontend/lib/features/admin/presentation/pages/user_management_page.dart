@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import 'package:dio/dio.dart';
 import '../widgets/user_form_dialog.dart';
 import '../widgets/user_table.dart';
@@ -63,11 +65,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Failed to load users: $e'),
-              backgroundColor: Colors.red),
-        );
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
