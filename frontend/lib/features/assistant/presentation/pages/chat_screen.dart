@@ -407,16 +407,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _pickMultiplePhotoFiles(String payloadJson) async {
+    // Determine how many photos already exist for this team
+    int existingPhotos = 0;
+    try {
+      final ctx = jsonDecode(payloadJson) as Map<String, dynamic>;
+      existingPhotos = (ctx['totalPhotos'] as num?)?.toInt() ?? 0;
+    } catch (_) {}
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
       allowMultiple: true,
       withData: true,
     );
     if (result == null || result.files.isEmpty) return;
+
+    // Min 3 only applies on the first upload (no existing photos yet)
+    if (existingPhotos == 0 && result.files.length < 3) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please upload at least 3 photos. Minimum 3 photos required.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+      return;
+    }
     if (result.files.length > 10) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Maximum 10 photos per team.')),
+          const SnackBar(content: Text('Maximum 10 photos per upload. Please select up to 10 photos.')),
         );
       }
       return;
@@ -827,7 +848,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
               Padding(
                 padding: const EdgeInsets.only(top: 6),
-                child: Text('Min 3, max 10 photos. Images compressed to ≤500 KB.',
+                child: Text('Min 3 photos, max 10. Images compressed to ≤500 KB.',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
               ),
             ],
@@ -1371,6 +1392,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final payloadJson = r.payloadJson ?? _currentTeamPayload;
     final teamName = r.teamContext != null ? 'Team ${r.teamContext!.currentTeam}' : 'this team';
 
+    // Parse totalPhotos from payloadJson to decide if "Upload More" should show
+    int totalPhotos = photos.length;
+    try {
+      final ctx = jsonDecode(payloadJson) as Map<String, dynamic>;
+      totalPhotos = (ctx['totalPhotos'] as num?)?.toInt() ?? photos.length;
+    } catch (_) {}
+    final canUploadMore = totalPhotos < 50;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1432,22 +1461,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   style: TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
             ),
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: OutlinedButton(
-              onPressed: isLoading
-                  ? null
-                  : () => ref.read(assistantNotifierProvider.notifier).addMorePhotos(payloadJson),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF003087),
-                side: const BorderSide(color: Color(0xFF003087)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          if (canUploadMore) ...[
+            const SizedBox(width: 6),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: isLoading
+                    ? null
+                    : () => ref.read(assistantNotifierProvider.notifier).addMorePhotos(payloadJson),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF003087),
+                  side: const BorderSide(color: Color(0xFF003087)),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                child: const Text('Upload more photos',
+                    style: TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
               ),
-              child: const Text('Add more photos',
-                  style: TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, softWrap: false),
             ),
-          ),
+          ],
           const SizedBox(width: 6),
           Expanded(
             child: ElevatedButton(

@@ -29,8 +29,8 @@ On mobile, everything stacks vertically in a single column with the Approval Flo
 | # | Section | Agency Page | ASM Page | RA Page | Position | Description |
 |---|---|---|---|---|---|---|
 | 1 | Header / Title Bar | ✅ | ✅ | ✅ | Full width | Submission ID, invoice number, agency name, date, status badge |
-| 2 | Rejection Card | ✅ (conditional) | — | — | Full width | Red card shown when state is `RejectedByASM` or `RejectedByRA` with rejection reason and "Edit Submission" button |
-| 3 | Processing Failed Card | ✅ (conditional) | — | — | Full width | Yellow warning card shown when state is `ProcessingFailed` with "Edit & Resubmit" button |
+| 2 | Rejection Card | ✅ (conditional) | — | — | Full width | Red card shown when state is `CHRejected` or `RARejected` with rejection reason and "Edit Submission" button |
+| 3 | Processing Failed Card | ✅ (conditional) | — | — | Full width | Yellow warning card shown when submission processing has failed, with "Edit & Resubmit" button. **NOTE: There is no `ProcessingFailed` value in the `PackageState` enum — this state is checked client-side and may rely on a custom/legacy mapping.** |
 | 4 | PO Section | ✅ | — | — | Full width | Expandable card showing PO document with extracted fields and download button |
 | 5 | Invoice Summary | ✅ | ✅ | ✅ | Left (3/4) | Card with 3 key metrics: Invoice Amount, Agency Name, Submitted Date |
 | 6 | ASM Review Card | — | — | ✅ | Left (3/4) | Shows ASM review date and notes (only if ASM has already reviewed) |
@@ -59,15 +59,15 @@ ASM page fields:
 - Title: `{invoiceNumber} - {agencyName}` (parsed from `documents[].extractedData` for invoice number, `agencyName` from response)
 - Request number: `submissionNumber` field (format `CIQ-YYYY-XXXXX`), fallback to `REQ-{id first 8 chars}`
 - Submitted date: `createdAt` formatted as `DD MMM YYYY`
-- Approve/Reject buttons (only when submission is in an actionable state like `PendingApproval` or `CHApproved`)
+- Approve/Reject buttons (only when submission is in an actionable state like `PendingCH` or `PendingRA`)
 - Comments text field for reviewer notes
 
 Data sources: `submission.state`, `submission.submissionNumber`, `submission.createdAt`, `submission.documents[type=Invoice].extractedData.InvoiceNumber`, `submission.agencyName`
 
 ### 2. Rejection Card (Agency only, conditional)
 
-Shown when `state` is `RejectedByASM` or `RejectedByRA`. Displays:
-- Who rejected: "Rejected by ASM" or "Rejected by RA"
+Shown when `state` is `CHRejected` or `RARejected`. Displays:
+- Who rejected: "Rejected by CH" or "Rejected by RA"
 - Rejection reason: `asmReviewNotes` (for ASM rejection) or `hqReviewNotes` (for RA rejection)
 - "Edit Submission" button that navigates to the upload/edit page
 
@@ -76,6 +76,8 @@ Data sources: `submission.state`, `submission.asmReviewNotes`, `submission.hqRev
 ### 3. Processing Failed Card (Agency only, conditional)
 
 Shown when `state` is `ProcessingFailed`. Yellow warning card with "Edit & Resubmit" button.
+
+**NOTE: `ProcessingFailed` is not a value in the current `PackageState` enum (`Draft`, `Uploaded`, `Extracting`, `Validating`, `PendingCH`, `CHRejected`, `PendingRA`, `RARejected`, `Approved`). This state check may rely on a client-side mapping or a legacy/planned enum value.**
 
 Data source: `submission.state`
 
@@ -132,7 +134,7 @@ Shown only when the submission is in an actionable state. Contains:
 - "Approve Request" elevated button → calls approve API
 - Comments text field (optional)
 
-These actions call `POST /api/submissions/{id}/approve` or `POST /api/submissions/{id}/reject` with the reviewer's comments.
+These actions call `PATCH /api/submissions/{id}/asm-approve` or `PATCH /api/submissions/{id}/asm-reject` with the reviewer's comments.
 
 ### 8. PO Balance Section (ASM only)
 
@@ -214,10 +216,10 @@ The timeline has 3 fixed steps:
 | 3. RA Review | Check/Cancel/Clock | "Approved by RA" / "Rejected by RA" / "Pending RA Review" | `submission.hqReviewedAt` | `submission.hqReviewNotes` |
 
 Step status is derived from `submission.state`:
-- CH approved: state contains `chapproved`, `approved`, `rapending`, `pendingra`, `rarejected`, or `rejectedbyhq`
-- CH rejected: state contains `chrejected` or `rejectedbyasm`
-- RA approved: state is `approved` or `raapproved`
-- RA rejected: state contains `rarejected` or `rejectedbyhq`
+- CH approved: state is `PendingRA`, `RARejected`, or `Approved`
+- CH rejected: state is `CHRejected`
+- RA approved: state is `Approved`
+- RA rejected: state is `RARejected`
 
 Each step shows:
 - Colored circle icon (green=approved, red=rejected, grey=pending)
@@ -346,16 +348,16 @@ API response root → DB table `DocumentPackages`
 | API Field (JSON) | Type | DB Entity | DB Column | Notes |
 |---|---|---|---|---|
 | `id` | `Guid` | `DocumentPackage` | `Id` | Primary key |
-| `state` | `string` | `DocumentPackage` | `State` | Enum `PackageState` → `.ToString()`. Values: `Draft`, `Uploaded`, `Extracting`, `Validating`, `Validated`, `Scoring`, `Recommending`, `PendingApproval`, `CHApproved`, `CHRejected`, `RAPending`, `RAApproved`, `RARejected`, `Approved`, `Rejected`, `ReuploadRequested` |
+| `state` | `string` | `DocumentPackage` | `State` | Enum `PackageState` → `.ToString()`. Values: `Draft`, `Uploaded`, `Extracting`, `Validating`, `PendingCH`, `CHRejected`, `PendingRA`, `RARejected`, `Approved` |
 | `createdAt` | `DateTime` | `DocumentPackage` | `CreatedAt` | UTC |
 | `updatedAt` | `DateTime?` | `DocumentPackage` | `UpdatedAt` | UTC |
 | `submissionNumber` | `string?` | `DocumentPackage` | `SubmissionNumber` | Format: `CIQ-YYYY-XXXXX`. Generated at submit time |
 | `activityState` | `string?` | `DocumentPackage` | `ActivityState` | State/region where activity was conducted (e.g., "Maharashtra") |
 | `selectedPOId` | `Guid?` | `DocumentPackage` | `SelectedPOId` | FK to `POs` table, set during chatbot PO selection |
-| `currentStep` | `int` | `DocumentPackage` | `CurrentStep` | Conversational flow step (0-9) |
+| `currentStep` | `int` | `DocumentPackage` | `CurrentStep` | Conversational flow step (0-10) |
 | `versionNumber` | `int` | `DocumentPackage` | `VersionNumber` | Starts at 1, increments on resubmission |
-| `agencyId` | `Guid?` | `DocumentPackage` | `AgencyId` | FK to `Agencies` table |
-| `agencyName` | `string?` | `DocumentPackage` → `Agency` | `Agency.Name` | Resolved via navigation property |
+| `agencyId` | `Guid?` | `DocumentPackage` | `AgencyId` | FK to `Agencies` table. **NOTE: Not currently set in the response mapping — always `null` in API output. The `Agency` navigation property is not `.Include()`d in the query.** |
+| `agencyName` | `string?` | — | — | **NOTE: Not currently set in the response mapping — always `null` in API output. The `Agency` navigation property is not `.Include()`d in the query, so `Agency.Name` cannot be resolved.** |
 | `assignedCircleHeadUserId` | `Guid?` | `DocumentPackage` | `AssignedCircleHeadUserId` | Auto-assigned at submit time via StateMapping |
 
 ---
@@ -435,8 +437,12 @@ This flat array contains PO and Invoice documents only. Cost Summary, Activity S
 | `RefreshedAt` | `DateTime?` | When balance was last refreshed from SAP |
 | `FileName` | `string` | Original uploaded filename |
 | `BlobUrl` | `string` | Azure Blob Storage URL |
+| `FileSizeBytes` | `long` | File size in bytes |
+| `ContentType` | `string` | MIME content type |
 | `ExtractedDataJson` | `string?` | Full AI-extracted data as JSON |
 | `ExtractionConfidence` | `double?` | AI confidence score (0.0–1.0) |
+| `IsFlaggedForReview` | `bool` | Flagged for manual review |
+| `VersionNumber` | `int` | Matches parent package version |
 
 ### Invoice Document
 
@@ -464,6 +470,8 @@ This flat array contains PO and Invoice documents only. Cost Summary, Activity S
 | `TotalAmount` | `decimal?` | Total invoice amount |
 | `FileName` | `string` | Original uploaded filename |
 | `BlobUrl` | `string` | Azure Blob Storage URL |
+| `FileSizeBytes` | `long` | File size in bytes |
+| `ContentType` | `string` | MIME content type |
 | `ExtractedDataJson` | `string?` | Full AI-extracted data as JSON |
 | `ExtractionConfidence` | `double?` | AI confidence score (0.0–1.0) |
 | `IsFlaggedForReview` | `bool` | Flagged for manual review |
@@ -540,6 +548,8 @@ Each campaign represents a Team. Cost Summary, Activity Summary, and Invoices ar
 | `PackageId` | `Guid` | FK to `DocumentPackages` |
 | `FileName` | `string` | Original filename |
 | `BlobUrl` | `string` | Azure Blob Storage URL |
+| `FileSizeBytes` | `long` | File size in bytes |
+| `ContentType` | `string` | MIME content type |
 | `Caption` | `string?` | Photo caption |
 | `PhotoTimestamp` | `DateTime?` | EXIF timestamp |
 | `Latitude` | `double?` | EXIF GPS latitude |
@@ -553,6 +563,7 @@ Each campaign represents a Team. Cost Summary, Activity Summary, and Invoices ar
 | `ExtractionConfidence` | `double?` | AI confidence (0–100) |
 | `IsFlaggedForReview` | `bool` | Flagged for manual review |
 | `DisplayOrder` | `int` | Sort order within team |
+| `VersionNumber` | `int` | Matches parent package version |
 
 ---
 
@@ -575,8 +586,12 @@ Not in `documents[]` array. Accessed via `campaigns[].costSummaryFileName`, `cam
 | `CostBreakdownJson` | `string?` | Detailed breakdown with `isFixedCost`/`isVariableCost` flags |
 | `FileName` | `string` | Original filename |
 | `BlobUrl` | `string` | Azure Blob Storage URL |
+| `FileSizeBytes` | `long` | File size in bytes |
+| `ContentType` | `string` | MIME content type |
 | `ExtractedDataJson` | `string?` | Full AI-extracted data JSON |
 | `ExtractionConfidence` | `double?` | AI confidence (0.0–1.0) |
+| `IsFlaggedForReview` | `bool` | Flagged for manual review |
+| `VersionNumber` | `int` | Matches parent package version |
 
 ---
 
@@ -595,8 +610,12 @@ Not in `documents[]` array. Accessed via `campaigns[].activitySummaryFileName` a
 | `TotalWorkingDays` | `int?` | Total working days from WorkingDay column |
 | `FileName` | `string` | Original filename |
 | `BlobUrl` | `string` | Azure Blob Storage URL |
+| `FileSizeBytes` | `long` | File size in bytes |
+| `ContentType` | `string` | MIME content type |
 | `ExtractedDataJson` | `string?` | Full AI-extracted data JSON |
 | `ExtractionConfidence` | `double?` | AI confidence (0.0–1.0) |
+| `IsFlaggedForReview` | `bool` | Flagged for manual review |
+| `VersionNumber` | `int` | Matches parent package version |
 
 ---
 
@@ -613,6 +632,8 @@ Not in `documents[]` array. Accessed via `campaigns[].activitySummaryFileName` a
 | `ContentType` | `string` | MIME type |
 | `ExtractedDataJson` | `string?` | Full AI-extracted data JSON (contains `Records[]` with enquiry rows) |
 | `ExtractionConfidence` | `double?` | AI confidence (0.0–1.0) |
+| `IsFlaggedForReview` | `bool` | Flagged for manual review |
+| `VersionNumber` | `int` | Matches parent package version |
 
 ---
 
@@ -631,21 +652,45 @@ enquiryValidation    → WHERE DocumentType = 'EnquiryDocument'  AND DocumentId 
 photoValidations[]   → WHERE DocumentType = 'TeamPhoto'        AND DocumentId IN (PackageId, ...all photo IDs)
 ```
 
+### Two Validation Flows
+
+Validation rules are written by two different flows depending on how the submission was created. Both flows write to the same `ValidationResults` table columns (`RuleResultsJson` and `ValidationDetailsJson`), but they run at different times and with different logic.
+
+**1. Chatbot Flow (Proactive) — `AssistantController` + `ProactiveValidationService`**
+
+- Triggered during the conversational submission flow (chatbot) as documents are uploaded step-by-step.
+- Validates each document immediately after upload using `ProactiveValidationService`.
+- Writes rules to `RuleResultsJson` as a JSON array of `ValidationRuleResult` objects.
+- Writes a structured `ValidationDetailsJson` containing a `proactiveRules[]` array.
+- Each rule has: `ruleCode`, `type`, `passed`, `isWarning`, `label`, `extractedValue`, `expectedValue`, `message`.
+
+**2. Web Flow (Reactive) — `ValidationAgent`**
+
+- Triggered by the workflow pipeline after the full submission is created via the web upload page.
+- Runs all validations in batch after extraction completes.
+- Writes rules to `RuleResultsJson` as a JSON array with the same structure.
+- Writes `ValidationDetailsJson` with section-based structure (e.g., `InvoiceFieldPresence`, cross-document checks) plus a `proactiveRules[]` array merged in.
+- If proactive rules already exist (from a prior chatbot step), the reactive flow merges them via `MergeProactiveRulesIntoDetails()` — reactive rules take precedence for duplicates since they use live API data.
+
+**Key difference**: The chatbot flow validates incrementally per document; the web flow validates everything at once after submission. Both produce the same rule codes (e.g., `INV_VENDOR_CODE_PRESENT` for Agency Code) so the frontend can parse them identically from `validationDetailsJson.proactiveRules[]`.
+
+**Agency Code example**: Both flows check `INV_VENDOR_CODE_PRESENT` (label: "Agency Code") by reading `VendorCode` from `Invoice.ExtractedDataJson`. This ensures the Agency Code validation appears on the submission details page regardless of which flow created the submission.
+
 ### PO / Cost Summary / Activity / Enquiry Validation DTO (`ValidationResultDto`)
 
-| API Field | DB Entity | DB Column |
-|---|---|---|
-| `documentId` | `ValidationResult` | `DocumentId` |
-| `allValidationsPassed` | `ValidationResult` | `AllValidationsPassed` |
-| `failureReason` | `ValidationResult` | `FailureReason` |
-| `sapVerificationPassed` | `ValidationResult` | `SapVerificationPassed` |
-| `amountConsistencyPassed` | `ValidationResult` | `AmountConsistencyPassed` |
-| `lineItemMatchingPassed` | `ValidationResult` | `LineItemMatchingPassed` |
-| `completenessCheckPassed` | `ValidationResult` | `CompletenessCheckPassed` |
-| `dateValidationPassed` | `ValidationResult` | `DateValidationPassed` |
-| `vendorMatchingPassed` | `ValidationResult` | `VendorMatchingPassed` |
-| `ruleResultsJson` | `ValidationResult` | `RuleResultsJson` |
-| `validationDetailsJson` | `ValidationResult` | `ValidationDetailsJson` |
+| API Field | DB Entity | DB Column | Notes |
+|---|---|---|---|
+| `documentId` | `ValidationResult` | `DocumentId` | **NOTE: For `poValidation`, `documentId` is NOT set in the response mapping (always `null`). It IS set for `costSummaryValidation`, `activityValidation`, and `enquiryValidation`.** |
+| `allValidationsPassed` | `ValidationResult` | `AllValidationsPassed` | |
+| `failureReason` | `ValidationResult` | `FailureReason` | |
+| `sapVerificationPassed` | `ValidationResult` | `SapVerificationPassed` | |
+| `amountConsistencyPassed` | `ValidationResult` | `AmountConsistencyPassed` | |
+| `lineItemMatchingPassed` | `ValidationResult` | `LineItemMatchingPassed` | |
+| `completenessCheckPassed` | `ValidationResult` | `CompletenessCheckPassed` | |
+| `dateValidationPassed` | `ValidationResult` | `DateValidationPassed` | |
+| `vendorMatchingPassed` | `ValidationResult` | `VendorMatchingPassed` | |
+| `ruleResultsJson` | `ValidationResult` | `RuleResultsJson` | JSON array of validation rule results. Written by both chatbot (proactive) and web (reactive) flows. Contains objects with `ruleCode`, `type`, `passed`, `isWarning`, `label`, `extractedValue`, `expectedValue`, `message`. |
+| `validationDetailsJson` | `ValidationResult` | `ValidationDetailsJson` | Structured validation details. Chatbot flow writes `proactiveRules[]` array directly. Web flow writes section-based structure (e.g., `InvoiceFieldPresence`) plus merges `proactiveRules[]` via `MergeProactiveRulesIntoDetails()`. Frontend reads `proactiveRules[]` (or `rules[]` fallback) for the validation table display. |
 
 ### Invoice / Photo Validation DTO (`DocumentValidationDto`)
 
@@ -694,6 +739,10 @@ Additional DB columns not in the API response:
 ## 11. Comments
 
 API field: `comments[]` → DB table `RequestComments`
+
+**NOTE: The `comments[]` field is defined in the `SubmissionDetailResponse` DTO but is NOT currently populated in the `GetSubmission` controller mapping. The `RequestComments` collection is not `.Include()`d in the EF Core query and is never mapped to the response. This field will always be `null` in the API output.**
+
+Expected DTO mapping (when implemented):
 
 | API Field | DB Column |
 |---|---|

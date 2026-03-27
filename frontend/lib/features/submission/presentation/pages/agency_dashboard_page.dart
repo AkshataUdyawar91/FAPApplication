@@ -21,11 +21,13 @@ import '../../../../core/widgets/pagination_bar.dart';
 class AgencyDashboardPage extends ConsumerStatefulWidget {
   final String token;
   final String userName;
+  final String initialView;
 
   const AgencyDashboardPage({
     super.key,
     required this.token,
     required this.userName,
+    this.initialView = 'chatbot',
   });
 
   @override
@@ -45,7 +47,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   bool _isSidebarCollapsed = true;
   bool _isChatbotOpen = true;
   // 'chatbot' = show assistant, 'requests' = show requests table
-  String _mainView = 'chatbot';
+  late String _mainView;
   // when true, requests view shows only pending claims (no header/stats)
   bool _pendingClaimsMode = false;
 
@@ -58,6 +60,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   @override
   void initState() {
     super.initState();
+    _mainView = widget.initialView;
     // Sync token into authTokenProvider so AssistantChatPanel's dio interceptor picks it up
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.token.isNotEmpty) {

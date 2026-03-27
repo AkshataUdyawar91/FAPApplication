@@ -395,7 +395,8 @@ public class ValidationAgent : IValidationAgent
                 result.PhotoCrossDocument = ValidatePhotoCrossDocument(
                     allTeamPhotos,
                     activityData,
-                    costSummaryData);
+                    costSummaryData,
+                    package.ActivitySummary?.TotalWorkingDays);
                 
                 if (!result.PhotoCrossDocument.AllChecksPass)
                 {
@@ -1494,7 +1495,8 @@ public class ValidationAgent : IValidationAgent
     private PhotoCrossDocumentResult ValidatePhotoCrossDocument(
         List<Domain.Entities.TeamPhotos> photos,
         ActivityData? activityData,
-        CostSummaryData? costSummaryData)
+        CostSummaryData? costSummaryData,
+        int? entityTotalWorkingDays = null)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
         _logger.LogInformation(
@@ -1558,8 +1560,12 @@ public class ValidationAgent : IValidationAgent
         int uniquePhotoDays = uniqueDates.Count;
         result.UniquePhotoDays = uniquePhotoDays;
 
-        // Get Activity Summary days (Activation Days / Billed Days / Working Days — all equivalent)
-        int activitySummaryDays = activityData?.Rows?.Sum(r => r.WorkingDay) ?? activityData?.TotalDays ?? 0;
+        // Get Activity Summary days — prefer the entity's stored TotalWorkingDays (set during extraction),
+        // fall back to summing rows, then TotalDays from parsed JSON
+        int activitySummaryDays = entityTotalWorkingDays
+            ?? activityData?.Rows?.Sum(r => r.WorkingDay)
+            ?? activityData?.TotalDays
+            ?? 0;
         result.ActivitySummaryDays = activitySummaryDays;
 
         // Also keep cost summary days for backward compatibility
@@ -2006,6 +2012,8 @@ public class ValidationAgent : IValidationAgent
             };
             // Read agency/billing/state from ExtractedDataJson (not stored as dedicated columns on Invoice entity)
             string? invAgencyName = null, invAgencyAddr = null, invBillingName = null, invBillingAddr = null, invStateVal = null;
+            decimal? invGstPercent = null;
+            string? invVendorCode = null;
             if (!string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
             {
                 try
@@ -2017,9 +2025,16 @@ public class ValidationAgent : IValidationAgent
                     if (invJson.TryGetProperty("BillingAddress", out var ba) || invJson.TryGetProperty("billingAddress", out ba)) invBillingAddr = ba.GetString();
                     if (invJson.TryGetProperty("StateName", out var sn) || invJson.TryGetProperty("stateName", out sn)) invStateVal = sn.GetString();
                     if (string.IsNullOrWhiteSpace(invStateVal) && (invJson.TryGetProperty("StateCode", out var sc) || invJson.TryGetProperty("stateCode", out sc))) invStateVal = sc.GetString();
+                    if (invJson.TryGetProperty("GSTPercentage", out var gp) || invJson.TryGetProperty("gstPercentage", out gp) || invJson.TryGetProperty("gstPercent", out gp))
+                    {
+                        if (gp.ValueKind == JsonValueKind.Number) invGstPercent = gp.GetDecimal();
+                    }
+                    if (invJson.TryGetProperty("VendorCode", out var vc) || invJson.TryGetProperty("vendorCode", out vc)) invVendorCode = vc.GetString();
                 }
                 catch { }
             }
+            // Also fall back to the entity's extracted data (already parsed above via invJson)
+            // invGstPercent is already populated from ExtractedDataJson if present
             var invAgencyOk = !string.IsNullOrWhiteSpace(invAgencyName) && !string.IsNullOrWhiteSpace(invAgencyAddr);
             var invAgencyExtracted = invAgencyOk ? $"{invAgencyName}, {invAgencyAddr}" : invAgencyName ?? invAgencyAddr;
             var invBillingOk = !string.IsNullOrWhiteSpace(invBillingName) && !string.IsNullOrWhiteSpace(invBillingAddr);
@@ -2033,22 +2048,22 @@ public class ValidationAgent : IValidationAgent
                 new { ruleCode = "INV_AMOUNT_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Amount") ?? false), isWarning = false, label = "Invoice Amount", extractedValue = invoiceDoc.TotalAmount.HasValue ? $"₹{invoiceDoc.TotalAmount:N0}" : null, message = (string?)null },
                 new { ruleCode = "INV_GST_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("GST Number") ?? false), isWarning = false, label = "GST Number", extractedValue = invoiceDoc.GSTNumber, message = (string?)null },
                 new { ruleCode = "INV_AGENCY_NAME_ADDRESS", type = "Required", passed = invAgencyOk, isWarning = false, label = "Agency Name & Address", extractedValue = invAgencyExtracted, message = invAgencyOk ? null : (string.IsNullOrWhiteSpace(invAgencyName) ? "Supplier name not detected" : "Supplier address not detected") },
+                new { ruleCode = "INV_VENDOR_CODE_PRESENT", type = "Required", passed = !string.IsNullOrWhiteSpace(invVendorCode), isWarning = false, label = "Agency Code", extractedValue = invVendorCode, message = !string.IsNullOrWhiteSpace(invVendorCode) ? null : "Agency code not detected" },
                 new { ruleCode = "INV_BILLING_NAME_ADDRESS", type = "Required", passed = invBillingOk, isWarning = false, label = "Billing Name & Address", extractedValue = invBillingExtracted, message = invBillingOk ? null : (string.IsNullOrWhiteSpace(invBillingName) ? "Recipient name not detected" : "Recipient address not detected") },
                 new { ruleCode = "INV_SUPPLIER_STATE", type = "Required", passed = invStateOk, isWarning = false, label = "Supplier State", extractedValue = invStateVal, message = invStateOk ? null : "Supplier state not detected" },
                 new { ruleCode = "INV_PO_MATCH", type = "Required", passed = result.InvoiceCrossDocument?.PONumberMatches ?? true, isWarning = false, label = "PO Number Match", extractedValue = (string?)null, message = result.InvoiceCrossDocument?.PONumberMatches == false ? "PO number mismatch" : null },
+                new { ruleCode = "INV_GST_PERCENT_PRESENT", type = "Required", passed = invGstPercent.HasValue && invGstPercent.Value > 0, isWarning = false, label = "GST %", extractedValue = invGstPercent.HasValue && invGstPercent.Value > 0 ? $"{invGstPercent.Value}%" : (string?)null, message = invGstPercent.HasValue && invGstPercent.Value > 0 ? null : "Field is missing" },
             };
-            // Only include PO balance rule when the balance was actually checked (PoBalanceAmount has a value).
-            // This prevents a default "passed: true" from overriding a chatbot rule that correctly has "Passed: false".
-            if (result.InvoiceCrossDocument?.PoBalanceAmount.HasValue == true)
+            // INV_AMOUNT_VS_PO_BALANCE — always include
             {
                 var indian = new System.Globalization.CultureInfo("en-IN");
-                var poBalPassed = result.InvoiceCrossDocument.PoBalanceValid;
+                var poBalPassed = result.InvoiceCrossDocument?.PoBalanceValid ?? true;
                 var extractedAmt = invoiceDoc.TotalAmount.HasValue
                     ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)}"
                     : (string?)null;
                 var poBalMsg = !poBalPassed && invoiceDoc.TotalAmount.HasValue
-                    ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)} exceeds available PO balance (₹{result.InvoiceCrossDocument.PoBalanceAmount.Value.ToString("N0", indian)})"
-                    : (string?)null;
+                    ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)} exceeds available PO balance (₹{result.InvoiceCrossDocument!.PoBalanceAmount!.Value.ToString("N0", indian)})"
+                    : (result.InvoiceCrossDocument?.PoBalanceAmount.HasValue == true ? null : "Field is missing");
                 invRules.Add(new { ruleCode = "INV_AMOUNT_VS_PO_BALANCE", type = "Required", passed = poBalPassed, isWarning = false, label = "Amount vs PO Balance", extractedValue = extractedAmt, message = poBalMsg });
             }
             items.Add((DocumentType.Invoice, invoiceDoc.Id, invPassed,
