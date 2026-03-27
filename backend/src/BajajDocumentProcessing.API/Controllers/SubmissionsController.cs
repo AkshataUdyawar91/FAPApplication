@@ -380,6 +380,8 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.EnquiryDocument)
                 .Include(p => p.RequestApprovalHistory)
                     .ThenInclude(h => h.Approver)
+                .Include(p => p.RequestComments)
+                    .ThenInclude(c => c.User)
                 .AsSplitQuery()
                 .AsQueryable();
 
@@ -659,6 +661,18 @@ public class SubmissionsController : ControllerBase
                         Comments = h.Comments,
                         ActionDate = h.ActionDate,
                         VersionNumber = h.VersionNumber,
+                    }).ToList(),
+                Comments = package.RequestComments
+                    .Where(c => !c.IsDeleted)
+                    .OrderBy(c => c.CommentDate)
+                    .Select(c => new CommentItemDto
+                    {
+                        Id = c.Id,
+                        UserName = c.User?.FullName,
+                        UserRole = c.UserRole.ToString(),
+                        CommentText = c.CommentText,
+                        CommentDate = c.CommentDate,
+                        VersionNumber = c.VersionNumber,
                     }).ToList(),
             };
 
