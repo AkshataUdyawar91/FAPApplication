@@ -1119,6 +1119,8 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     }
   }
 
+  /// RA can only act on submissions in PendingRA state.
+  /// CHRejected submissions must be resubmitted by Agency before RA can act again.
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
     return state == 'pendingra' || state == 'pendinghqapproval';

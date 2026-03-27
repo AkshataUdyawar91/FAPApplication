@@ -412,6 +412,16 @@ public class SubmissionsController : ControllerBase
                     return NotFound(new { error = "Submission not found" });
                 }
                 query = query.Where(p => p.ActivityState != null && assignedStates.Contains(p.ActivityState));
+
+                // RA should only see submissions that have reached RA level or beyond
+                // CHRejected submissions are not visible to RA — they must be resubmitted by Agency first
+                var raVisibleStates = new[]
+                {
+                    PackageState.PendingRA,
+                    PackageState.RARejected,
+                    PackageState.Approved
+                };
+                query = query.Where(p => raVisibleStates.Contains(p.State));
             }
 
             var package = await query.FirstOrDefaultAsync(p => p.Id == id, cancellationToken);

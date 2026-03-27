@@ -66,9 +66,9 @@ Data sources: `submission.state`, `submission.submissionNumber`, `submission.cre
 
 ### 2. Rejection Card (Agency only, conditional)
 
-Shown when `state` is `CHRejected` or `RARejected`. Displays:
+Shown when `state` is `CHRejected` or `RARejected` (also matches legacy aliases `RejectedByASM`, `RejectedByHQ`, `RejectedByRA`). Displays:
 - Who rejected: "Rejected by CH" or "Rejected by RA"
-- Rejection reason: `asmReviewNotes` (for ASM rejection) or `hqReviewNotes` (for RA rejection)
+- Rejection reason: `asmReviewNotes` (for CH rejection) or `hqReviewNotes` (for RA rejection)
 - "Edit Submission" button that navigates to the upload/edit page
 
 Data sources: `submission.state`, `submission.asmReviewNotes`, `submission.hqReviewNotes`
@@ -127,14 +127,21 @@ How it works:
 
 Data sources: `submission.confidenceScore`, `submission.recommendation`, all `*Validation.validationDetailsJson` fields
 
-### 7. Approve/Reject Actions (ASM only)
+### 7. Approve/Reject Actions (ASM and RA)
 
 Shown only when the submission is in an actionable state. Contains:
 - "Reject" outlined button → opens reject dialog for reason input
 - "Approve Request" elevated button → calls approve API
 - Comments text field (optional)
 
-These actions call `PATCH /api/submissions/{id}/asm-approve` or `PATCH /api/submissions/{id}/asm-reject` with the reviewer's comments.
+**Actionable state logic per role:**
+- ASM page (`_isSubmissionActionable`): state is `PendingCH`, `PendingApproval`, `PendingCHApproval`, or `RARejected`
+- RA page (`_isSubmissionActionable`): state is `PendingRA` or `PendingHQApproval`
+
+When CH has rejected a submission (state = `CHRejected`), the RA page does NOT show action buttons. The RA can only act once the agency resubmits and the submission flows back through processing to `PendingRA`.
+
+ASM actions call `PATCH /api/submissions/{id}/asm-approve` or `PATCH /api/submissions/{id}/asm-reject`.
+RA actions call `PATCH /api/submissions/{id}/hq-approve` or `PATCH /api/submissions/{id}/hq-reject`.
 
 ### 8. PO Balance Section (ASM only)
 
@@ -221,6 +228,12 @@ Step status is derived from `submission.state`:
 - RA approved: state is `Approved`
 - RA rejected: state is `RARejected`
 
+**State string matching**: The backend returns `PackageState` enum names (`CHRejected`, `RARejected`, `PendingRA`, etc.). The frontend normalizes to lowercase and matches against both the enum names and legacy aliases:
+- CH rejected: `chrejected` or `rejectedbyasm`
+- CH approved: `approved`, `pendingra`, `rarejected`, `pendinghq`, `rejectedbyhq`
+- RA rejected: `rarejected` or `rejectedbyhq`
+- RA approved: `approved`
+
 Each step shows:
 - Colored circle icon (green=approved, red=rejected, grey=pending)
 - Title text
@@ -284,7 +297,7 @@ Controller: `SubmissionsController.GetSubmission()`
 Authorization: JWT required. Role-based filtering:
 - Agency: can only see submissions belonging to their agency (`package.AgencyId == user.AgencyId`)
 - ASM/Circle Head: can only see submissions where `ActivityState` matches their assigned states
-- RA: can only see submissions where `ActivityState` matches their RA-assigned states
+- RA: can only see submissions where `ActivityState` matches their RA-assigned states AND `State` is one of `PendingRA`, `RARejected`, `Approved` (CHRejected submissions are not visible to RA — they must be resubmitted by Agency first)
 - HQ/Admin: can see all submissions
 
 Response DTO: `SubmissionDetailResponse`

@@ -2091,14 +2091,16 @@ class _AgencySubmissionDetailPageState
         visible: false,
         child: _buildStatusCard(state, fapNumber),
       ),
-      if (state.toLowerCase() == 'rejectedbyasm') ...[
+      if (state.toLowerCase() == 'chrejected' ||
+          state.toLowerCase() == 'rejectedbyasm') ...[
         const SizedBox(height: 16),
         _buildRejectionCard(
-          rejectedBy: 'ASM',
+          rejectedBy: 'CH',
           reviewNotes: _submission!['asmReviewNotes']?.toString(),
         ),
       ],
-      if (state.toLowerCase() == 'rejectedbyhq' ||
+      if (state.toLowerCase() == 'rarejected' ||
+          state.toLowerCase() == 'rejectedbyhq' ||
           state.toLowerCase() == 'rejectedbyra') ...[
         const SizedBox(height: 16),
         _buildRejectionCard(
@@ -2880,10 +2882,12 @@ class _AgencySubmissionDetailPageState
 
     // Determine ASM status
     String asmStatus = 'pending';
-    if (state.contains('rejectedbyasm')) {
+    if (state.contains('chrejected') || state.contains('rejectedbyasm')) {
       asmStatus = 'rejected';
     } else if (state.contains('approved') ||
+        state.contains('pendingra') ||
         state.contains('pendinghq') ||
+        state.contains('rarejected') ||
         state.contains('rejectedbyhq')) {
       asmStatus = 'approved';
     } else if (asmReviewedAt != null) {
@@ -2896,7 +2900,7 @@ class _AgencySubmissionDetailPageState
     String hqStatus = 'pending';
     if (state == 'approved') {
       hqStatus = 'approved';
-    } else if (state.contains('rejectedbyhq')) {
+    } else if (state.contains('rarejected') || state.contains('rejectedbyhq')) {
       hqStatus = 'rejected';
     } else if (hqReviewedAt != null) {
       hqStatus = hqReviewNotes != null && hqReviewNotes.isNotEmpty
@@ -3080,7 +3084,7 @@ class _AgencySubmissionDetailPageState
         'borderColor': const Color(0xFF6EE7B7),
         'icon': Icons.check_circle,
       };
-    } else if (stateLower == 'rejectedbyasm') {
+    } else if (stateLower == 'chrejected' || stateLower == 'rejectedbyasm') {
       return {
         'label': 'Rejected by CH',
         'color': const Color(0xFFDC2626),
@@ -3088,7 +3092,7 @@ class _AgencySubmissionDetailPageState
         'borderColor': const Color(0xFFFCA5A5),
         'icon': Icons.cancel,
       };
-    } else if (stateLower == 'rejectedbyhq' || stateLower == 'rejectedbyra') {
+    } else if (stateLower == 'rarejected' || stateLower == 'rejectedbyhq' || stateLower == 'rejectedbyra') {
       return {
         'label': 'Rejected by RA',
         'color': const Color(0xFFDC2626),
@@ -3104,7 +3108,8 @@ class _AgencySubmissionDetailPageState
         'borderColor': const Color(0xFFFCA5A5),
         'icon': Icons.cancel,
       };
-    } else if (stateLower.contains('pendinghq') ||
+    } else if (stateLower.contains('pendingra') ||
+        stateLower.contains('pendinghq') ||
         stateLower == 'asmapproved') {
       return {
         'label': 'Pending with RA',
