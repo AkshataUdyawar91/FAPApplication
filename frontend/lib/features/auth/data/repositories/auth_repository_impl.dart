@@ -4,7 +4,6 @@ import '../../domain/entities/user.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../datasources/auth_local_datasource.dart';
 import '../datasources/auth_remote_datasource.dart';
-import '../models/user_model.dart';
 
 /// Implementation of AuthRepository
 class AuthRepositoryImpl implements AuthRepository {
@@ -17,18 +16,25 @@ class AuthRepositoryImpl implements AuthRepository {
   });
 
   @override
-  Future<Either<Failure, User>> login(String email, String password) async {
+  Future<Either<Failure, (User, String)>> login(String email, String password) async {
     try {
       final response = await remoteDataSource.login(email, password);
-      
-      // Cache user and token
-      await localDataSource.cacheUser(response.user);
-      await localDataSource.saveTokens(
-        response.token,
-        '', // Backend uses token refresh endpoint, no separate refresh token
-      );
 
-      return Right(response.user);
+      // Cache user and token — wrapped separately so a storage failure
+      // doesn't prevent the user from proceeding after a successful login.
+      try {
+        await localDataSource.cacheUser(response.user);
+        await localDataSource.saveTokens(
+          response.token,
+          '', // Backend uses token refresh endpoint, no separate refresh token
+        );
+      } catch (storageError) {
+        // Log but don't fail — the user authenticated successfully.
+        // On web release builds, secure storage can occasionally throw.
+        print('[AuthRepository] Warning: failed to cache credentials: $storageError');
+      }
+
+      return Right((response.user, response.token));
     } catch (e) {
       return Left(ServerFailure(e.toString()));
     }
@@ -80,15 +86,20 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
-  Future<Either<Failure, User>> ssoLogin(String code, String redirectUri) async {
+  Future<Either<Failure, (User, String)>> ssoLogin(String code, String redirectUri) async {
     try {
       final response = await remoteDataSource.ssoLogin(code, redirectUri);
 
-      // Cache user and token
-      await localDataSource.cacheUser(response.user);
-      await localDataSource.saveTokens(response.token, '');
+      // Cache user and token — wrapped separately so a storage failure
+      // doesn't prevent the user from proceeding.
+      try {
+        await localDataSource.cacheUser(response.user);
+        await localDataSource.saveTokens(response.token, '');
+      } catch (storageError) {
+        print('[AuthRepository] Warning: failed to cache SSO credentials: $storageError');
+      }
 
-      return Right(response.user);
+      return Right((response.user, response.token));
     } catch (e) {
       return Left(ServerFailure(e.toString()));
     }

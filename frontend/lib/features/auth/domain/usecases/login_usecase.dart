@@ -9,7 +9,7 @@ class LoginUseCase {
 
   const LoginUseCase(this.repository);
 
-  Future<Either<Failure, User>> call(String email, String password) async {
+  Future<Either<Failure, (User, String)>> call(String email, String password) async {
     return await repository.login(email, password);
   }
 }
