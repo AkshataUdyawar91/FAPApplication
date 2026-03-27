@@ -23,6 +23,7 @@ import '../../../approval/data/models/campaign_detail_row.dart';
 import '../../../approval/presentation/utils/submission_data_transformer.dart';
 import '../../../approval/presentation/widgets/invoice_summary_section.dart';
 import '../../../approval/presentation/widgets/campaign_details_table.dart';
+import '../widgets/document_preview_screen.dart';
 
 class AgencySubmissionDetailPage extends ConsumerStatefulWidget {
   final String submissionId;
@@ -159,6 +160,10 @@ class _AgencySubmissionDetailPageState
                 photoValidations = photoDocs;
               }
             }
+
+          print('Submission data: ${submissionData.toString()}');
+          print('Agency Name: ${submissionData['agencyName']}');
+
           } catch (e2) {
             debugPrint('Fallback photo validation fetch failed: $e2');
           }
@@ -184,6 +189,8 @@ class _AgencySubmissionDetailPageState
           enquiryBlobUrl = firstCampaign['enquiryBlobUrl']?.toString()
               ?? firstCampaign['enquiryUrl']?.toString();
         }
+        debugPrint('Submission data: ${submissionData.toString()}');
+debugPrint('Agency Name: ${submissionData['agencyName']}');
 
         setState(() {
           _submission = submissionData;
@@ -1316,9 +1323,9 @@ class _AgencySubmissionDetailPageState
                       SizedBox(
                         height: 28,
                         child: ElevatedButton.icon(
-                          onPressed: () {
+                          onPressed: () async {
                             if (resolvedDocId.isNotEmpty) {
-                              _downloadDocumentDirect(resolvedDocId, fileName ?? title);
+                              await _downloadDocumentDirect(resolvedDocId, fileName ?? title);
                             } else {
                               _downloadByBlobUrl(resolvedBlobUrl, fileName ?? title);
                             }
@@ -2091,15 +2098,17 @@ class _AgencySubmissionDetailPageState
             visible: false,
             child: _buildStatusCard(state, fapNumber),
           ),
-          if (state.toLowerCase() == 'rejectedbyasm') ...[
+          if (state.toLowerCase() == 'rejectedbyasm' ||
+              state.toLowerCase() == 'chrejected') ...[
             const SizedBox(height: 16),
             _buildRejectionCard(
-              rejectedBy: 'ASM',
+              rejectedBy: 'CH',
               reviewNotes: _submission!['asmReviewNotes']?.toString(),
             ),
           ],
           if (state.toLowerCase() == 'rejectedbyhq' ||
-              state.toLowerCase() == 'rejectedbyra') ...[
+              state.toLowerCase() == 'rejectedbyra' ||
+              state.toLowerCase() == 'rarejected') ...[
             const SizedBox(height: 16),
             _buildRejectionCard(
               rejectedBy: 'RA',
@@ -2135,7 +2144,6 @@ class _AgencySubmissionDetailPageState
 
           // Photo Thumbnail Gallery
           ..._buildPhotoGallerySection(),
-
           const SizedBox(height: 80),
         ],
       ),
@@ -2255,10 +2263,16 @@ class _AgencySubmissionDetailPageState
               children: [
                 Expanded(
                     child: _buildInfoItem(
-                        'Submitted', _formatDate(_submission!['createdAt']))),
+                        'Invoice Amount',
+                        _invoiceSummary?.invoiceAmount ?? 'N/A')),
                 Expanded(
-                    child: _buildInfoItem('Last Updated',
-                        _formatDate(_submission!['updatedAt']))),
+                    child: _buildInfoItem(
+                        'Agency',
+                        _invoiceSummary?.agencyName ?? 'N/A')),
+                Expanded(
+                    child: _buildInfoItem(
+                        'Submitted on',
+                        _invoiceSummary?.submittedDate ?? 'N/A')),
               ],
             ),
             // Submit button - show only for draft/uploaded states
@@ -2831,11 +2845,12 @@ class _AgencySubmissionDetailPageState
 
     // Determine ASM status
     String asmStatus = 'pending';
-    if (state.contains('rejectedbyasm')) {
+    if (state.contains('rejectedbyasm') || state.contains('chrejected')) {
       asmStatus = 'rejected';
     } else if (state.contains('approved') ||
         state.contains('pendinghq') ||
-        state.contains('rejectedbyhq')) {
+        state.contains('rejectedbyhq') ||
+        state.contains('rarejected')) {
       asmStatus = 'approved';
     } else if (asmReviewedAt != null) {
       asmStatus = asmReviewNotes != null && asmReviewNotes.isNotEmpty
@@ -2847,7 +2862,7 @@ class _AgencySubmissionDetailPageState
     String hqStatus = 'pending';
     if (state == 'approved') {
       hqStatus = 'approved';
-    } else if (state.contains('rejectedbyhq')) {
+    } else if (state.contains('rejectedbyhq') || state.contains('rarejected')) {
       hqStatus = 'rejected';
     } else if (hqReviewedAt != null) {
       hqStatus = hqReviewNotes != null && hqReviewNotes.isNotEmpty
@@ -3031,7 +3046,7 @@ class _AgencySubmissionDetailPageState
         'borderColor': const Color(0xFF6EE7B7),
         'icon': Icons.check_circle,
       };
-    } else if (stateLower == 'rejectedbyasm') {
+    } else if (stateLower == 'rejectedbyasm' || stateLower == 'chrejected') {
       return {
         'label': 'Rejected by CH',
         'color': const Color(0xFFDC2626),
@@ -3039,7 +3054,7 @@ class _AgencySubmissionDetailPageState
         'borderColor': const Color(0xFFFCA5A5),
         'icon': Icons.cancel,
       };
-    } else if (stateLower == 'rejectedbyhq' || stateLower == 'rejectedbyra') {
+    } else if (stateLower == 'rejectedbyhq' || stateLower == 'rejectedbyra' || stateLower == 'rarejected') {
       return {
         'label': 'Rejected by RA',
         'color': const Color(0xFFDC2626),
@@ -3167,8 +3182,52 @@ class _AgencySubmissionDetailPageState
           }
           return;
         }
+        
+        // Get validation data for this document
+        final validation = _getValidationForDocument(documentId);
+        final isPassed = validation?['allValidationsPassed'] ?? validation?['allPassed'] ?? true;
+        final failureReason = validation?['failureReason']?.toString();
+        final photoDate = _getPhotoDateForDocument(documentId)
+            ?? validation?['validatedAt']?.toString();
+        final dateStr = _formatPreviewDate(photoDate);
+        
+        // Create blob URL from base64
         final bytes = base64.decode(base64Content);
-        if (mounted) _showDocumentPreview(bytes, contentType, name);
+        final blob = web.Blob(
+          [bytes.toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final blobUrl = web.URL.createObjectURL(blob);
+        
+        // Create preview data
+        final previewData = DocumentPreviewData(
+          filename: name,
+          imageUrl: blobUrl,
+          isPassed: isPassed,
+          failureReason: failureReason,
+          date: dateStr,
+        );
+        
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (context) => DocumentPreviewScreen(
+              documents: [previewData],
+              initialIndex: 0,
+              onClose: () {
+                Navigator.pop(context);
+                web.URL.revokeObjectURL(blobUrl);
+              },
+              onDownload: () {
+                final anchor = web.document.createElement('a')
+                    as web.HTMLAnchorElement;
+                anchor.href = blobUrl;
+                anchor.download = name;
+                anchor.click();
+              },
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -3176,6 +3235,78 @@ class _AgencySubmissionDetailPageState
           SnackBar(content: Text('Failed to load document: $e'), backgroundColor: Colors.red),
         );
       }
+    }
+  }
+
+  /// Get validation data for a specific document.
+  /// For photos, also checks per-photo validation from the gallery data
+  /// since photo validations are often aggregate (documentId = packageId).
+  Map<String, dynamic>? _getValidationForDocument(String documentId) {
+    // Check photo validations (direct match)
+    for (final v in _photoValidations) {
+      final vMap = v as Map<String, dynamic>;
+      if (vMap['documentId']?.toString() == documentId) {
+        return vMap;
+      }
+    }
+    
+    // Check invoice validations
+    for (final v in _invoiceValidations) {
+      final vMap = v as Map<String, dynamic>;
+      if (vMap['documentId']?.toString() == documentId) {
+        return vMap;
+      }
+    }
+    
+    // Check cost summary validation
+    if (_costSummaryValidation['documentId']?.toString() == documentId) {
+      return _costSummaryValidation;
+    }
+    
+    // Check activity validation
+    if (_activityValidation['documentId']?.toString() == documentId) {
+      return _activityValidation;
+    }
+
+    // Fallback for photos: check per-photo status from gallery validation logic
+    final galleryPhotos = _collectPhotosWithValidation();
+    for (final item in galleryPhotos) {
+      if (item.documentId == documentId) {
+        return {
+          'allValidationsPassed': !item.hasError,
+          'failureReason': item.hasError ? 'Photo validation failed' : null,
+        };
+      }
+    }
+    
+    return null;
+  }
+
+  /// Gets the photo date (EXIF timestamp or overlay date) for a document by searching campaigns.
+  String? _getPhotoDateForDocument(String documentId) {
+    final campaigns = _submission?['campaigns'] as List? ?? [];
+    for (final campaign in campaigns) {
+      final photos = (campaign as Map<String, dynamic>)['photos'] as List? ?? [];
+      for (final photo in photos) {
+        final photoMap = photo as Map<String, dynamic>;
+        final id = photoMap['id']?.toString() ?? '';
+        if (id == documentId) {
+          return photoMap['photoTimestamp']?.toString()
+              ?? photoMap['photoDateOverlay']?.toString();
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Formats a UTC date string for the document preview panel.
+  String? _formatPreviewDate(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return null;
+    try {
+      final dt = DateTime.parse(dateStr).toLocal();
+      return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return dateStr;
     }
   }
 
@@ -3435,3 +3566,5 @@ class _AgencySubmissionDetailPageState
     );
   }
 }
+
+

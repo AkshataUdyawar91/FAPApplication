@@ -906,31 +906,69 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
             // View Details button
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  context.pushNamed(
-                    'submission-detail',
-                    extra: {
-                      'submissionId': request['id'],
-                      'token': widget.token,
-                      'userName': widget.userName,
-                      'poNumber': request['poNumber']?.toString() ??
-                          request['poNo']?.toString() ??
-                          '',
-                    },
-                  );
-                },
-                icon: const Icon(Icons.visibility_outlined, size: 18),
-                label: const Text('View Details'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2563EB),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-              ),
+              child: rawState.toLowerCase() == 'draft'
+                  ? ElevatedButton.icon(
+                      onPressed: () {
+                        // Print previously saved data
+                        debugPrint('=== EDIT DRAFT (MOBILE) - PREVIOUSLY SAVED DATA ===');
+                        debugPrint('Submission ID: ${request['id']}');
+                        debugPrint('Submission Number: ${request['submissionNumber']}');
+                        debugPrint('State: ${request['state']}');
+                        debugPrint('PO Number: ${request['poNumber']}');
+                        debugPrint('Invoice Number: ${request['invoiceNumber']}');
+                        debugPrint('Invoice Amount: ${request['invoiceAmount']}');
+                        debugPrint('Created At: ${request['createdAt']}');
+                        debugPrint('Updated At: ${request['updatedAt']}');
+                        debugPrint('Document Count: ${request['documentCount']}');
+                        debugPrint('Overall Confidence: ${request['overallConfidence']}');
+                        debugPrint('Full Data: $request');
+                        debugPrint('====================================================');
+                        
+                        context.pushNamed(
+                          'agency-upload',
+                          extra: {
+                            'token': widget.token,
+                            'userName': widget.userName,
+                            'submissionId': request['id'],
+                          },
+                        );
+                      },
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('Edit Draft'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2563EB),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    )
+                  : ElevatedButton.icon(
+                      onPressed: () {
+                        context.pushNamed(
+                          'submission-detail',
+                          extra: {
+                            'submissionId': request['id'],
+                            'token': widget.token,
+                            'userName': widget.userName,
+                            'poNumber': request['poNumber']?.toString() ??
+                                request['poNo']?.toString() ??
+                                '',
+                          },
+                        );
+                      },
+                      icon: const Icon(Icons.visibility_outlined, size: 18),
+                      label: const Text('View Details'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2563EB),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
             ),
           ],
         ),
@@ -1040,23 +1078,55 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                       SizedBox(
                         width: 80,
                         child: Center(
-                          child: IconButton(
-                            icon: const Icon(Icons.visibility_outlined),
-                            color: AppColors.primary,
-                            onPressed: () {
-                              // Navigate to detailed view page
-                              context.pushNamed(
-                                'submission-detail',
-                                extra: {
-                                  'submissionId': r['id'],
-                                  'token': widget.token,
-                                  'userName': widget.userName,
-                                  'poNumber': r['poNumber']?.toString() ?? '',
-                                },
-                              );
-                            },
-                            tooltip: 'View Details',
-                          ),
+                          child: rawState.toLowerCase() == 'draft'
+                              ? IconButton(
+                                  icon: const Icon(Icons.edit_outlined),
+                                  color: AppColors.primary,
+                                  onPressed: () {
+                                    // Print previously saved data
+                                    debugPrint('=== EDIT DRAFT - PREVIOUSLY SAVED DATA ===');
+                                    debugPrint('Submission ID: ${r['id']}');
+                                    debugPrint('Submission Number: ${r['submissionNumber']}');
+                                    debugPrint('State: ${r['state']}');
+                                    debugPrint('PO Number: ${r['poNumber']}');
+                                    debugPrint('Invoice Number: ${r['invoiceNumber']}');
+                                    debugPrint('Invoice Amount: ${r['invoiceAmount']}');
+                                    debugPrint('Created At: ${r['createdAt']}');
+                                    debugPrint('Updated At: ${r['updatedAt']}');
+                                    debugPrint('Document Count: ${r['documentCount']}');
+                                    debugPrint('Overall Confidence: ${r['overallConfidence']}');
+                                    debugPrint('Full Data: $r');
+                                    debugPrint('=====================================');
+                                    
+                                    // Navigate to edit draft
+                                    context.pushNamed(
+                                      'agency-upload',
+                                      extra: {
+                                        'token': widget.token,
+                                        'userName': widget.userName,
+                                        'submissionId': r['id'],
+                                      },
+                                    );
+                                  },
+                                  tooltip: 'Edit Draft',
+                                )
+                              : IconButton(
+                                  icon: const Icon(Icons.visibility_outlined),
+                                  color: AppColors.primary,
+                                  onPressed: () {
+                                    // Navigate to detailed view page
+                                    context.pushNamed(
+                                      'submission-detail',
+                                      extra: {
+                                        'submissionId': r['id'],
+                                        'token': widget.token,
+                                        'userName': widget.userName,
+                                        'poNumber': r['poNumber']?.toString() ?? '',
+                                      },
+                                    );
+                                  },
+                                  tooltip: 'View Details',
+                                ),
                         ),
                       ),
                     ),
@@ -1216,6 +1286,7 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase();
 
+    if (state == 'draft') return 'draft';
     if (['uploaded', 'extracting', 'validating'].contains(state))
       return 'pending';
     if (['validated', 'recommending'].contains(state)) return 'pending';

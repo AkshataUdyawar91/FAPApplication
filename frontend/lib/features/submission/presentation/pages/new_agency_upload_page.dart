@@ -102,6 +102,11 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
         if (!_tabController.indexIsChanging) return;
         setState(() => _currentStep = _tabController.index + 1);
       });
+    
+    // Load POs and states first, then load existing submission if in edit mode
+    _loadPOs();
+    _loadIndianStates();
+    
     if (_isEditMode) {
       _currentPackageId = widget.submissionId;
       _loadExistingSubmission();
@@ -109,8 +114,6 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
       // New submission with draft ID provided
       _currentPackageId = widget.submissionId;
     }
-    _loadPOs();
-    _loadIndianStates();
   }
 
   @override
@@ -180,6 +183,18 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
         // Restore activation state — API returns 'activityState'
         _selectedActivationState = data['activityState']?.toString();
 
+        // Pre-fill PO selection if available (for draft mode)
+        final selectedPoId = data['selectedPoId']?.toString();
+        if (selectedPoId != null && selectedPoId.isNotEmpty) {
+          // Find the PO in the available list and select it
+          for (final po in _availablePOs) {
+            if (po['id']?.toString() == selectedPoId) {
+              _selectedPO = po;
+              break;
+            }
+          }
+        }
+
         // Extract PO data from documents
         final documents = data['documents'] as List? ?? [];
         final poDoc = documents.firstWhere(
@@ -219,17 +234,55 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
         if (_existingActivitySummaryFileName != null) _activitySummarySavedToDb = true;
         if (_existingEnquiryDocFileName != null) _enquiryDocSavedToDb = true;
 
-        // Invoices live inside campaigns[0].invoices in the API response
-        // (the backend puts package-level invoices in the first campaign's
-        //  Invoices list for display purposes — see GetSubmission controller).
-        final invoicesData = campaignsList.isNotEmpty
-            ? (campaignsList[0] as Map<String, dynamic>)['invoices'] as List? ??
-                []
-            : <dynamic>[];
+        // Invoices can be at two locations:
+        // 1. Inside campaigns[0].invoices (package-level invoices)
+        // 2. In documents array with type "Invoice"
+        List<dynamic> invoicesData = [];
+        
+        // Try campaigns first
+        if (campaignsList.isNotEmpty) {
+          final campaignInvoices = (campaignsList[0] as Map<String, dynamic>)['invoices'] as List? ?? [];
+          if (campaignInvoices.isNotEmpty) {
+            invoicesData = campaignInvoices;
+          }
+        }
+        
+        // If no invoices in campaigns, try documents array
+        if (invoicesData.isEmpty) {
+          final documents = data['documents'] as List? ?? [];
+          final invoiceDocs = documents.where((doc) => doc['type']?.toString() == 'Invoice').toList();
+          if (invoiceDocs.isNotEmpty) {
+            invoicesData = invoiceDocs.map((doc) {
+              // Extract invoice details from extractedData JSON
+              Map<String, dynamic> extractedData = {};
+              if (doc['extractedData'] != null) {
+                try {
+                  final extractedStr = doc['extractedData'];
+                  if (extractedStr is String) {
+                    extractedData = jsonDecode(extractedStr) as Map<String, dynamic>;
+                  } else if (extractedStr is Map) {
+                    extractedData = Map<String, dynamic>.from(extractedStr);
+                  }
+                } catch (e) {
+                  debugPrint('Error parsing extractedData: $e');
+                }
+              }
+              
+              return {
+                'id': doc['id']?.toString() ?? UniqueKey().toString(),
+                'fileName': doc['filename']?.toString() ?? '',
+                'invoiceNumber': extractedData['InvoiceNumber']?.toString() ?? '',
+                'invoiceDate': extractedData['InvoiceDate']?.toString() ?? '',
+                'totalAmount': extractedData['TotalAmount']?.toString() ?? '',
+                'gstNumber': extractedData['GSTNumber']?.toString() ?? '',
+              };
+            }).toList();
+          }
+        }
 
         if (invoicesData.isNotEmpty) {
           _invoices = invoicesData.map((inv) {
-            return InvoiceItemData(
+            final invoice = InvoiceItemData(
               id: inv['id']?.toString() ?? UniqueKey().toString(),
               invoiceNumber: inv['invoiceNumber']?.toString() ?? '',
               invoiceDate: _formatDateForField(inv['invoiceDate']),
@@ -238,7 +291,14 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
               existingFileName: inv['fileName']?.toString(),
               savedToDb: true, // already in DB
             );
+            // Mark as successfully extracted since it's from the database
+            invoice.extractionStatus = ExtractionStatus.success;
+            debugPrint('Loaded invoice: number=${invoice.invoiceNumber}, date=${invoice.invoiceDate}, amount=${invoice.totalAmount}, gstin=${invoice.gstNumber}, fileName=${invoice.existingFileName}');
+            return invoice;
           }).toList();
+          debugPrint('Total invoices loaded: ${_invoices.length}');
+        } else {
+          debugPrint('No invoices found in response');
         }
 
         // Extract teams — use the already-fetched campaignsList
@@ -2413,11 +2473,41 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
                       ),
                     ),
                     IconButton(
-                      onPressed: () => setState(() {
-                        invoice.file = null;
-                        invoice.extractionStatus = ExtractionStatus.none;
-                        invoice.extractionError = null;
-                      }),
+                      onPressed: () async {
+                        // Delete invoice from database if it has an ID
+                        if (invoice.id.isNotEmpty && invoice.savedToDb) {
+                          try {
+                            await _dio.delete(
+                              '/submissions/${_currentPackageId}/invoices/${invoice.id}',
+                              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+                            );
+                            debugPrint('Invoice deleted from database: ${invoice.id}');
+                          } catch (e) {
+                            debugPrint('Error deleting invoice from database: $e');
+                            if (mounted) {
+                              _showError('Failed to delete invoice from database');
+                            }
+                          }
+                        }
+                        
+                        // Clear local state
+                        setState(() {
+                          invoice.file = null;
+                          invoice.existingFileName = null;
+                          invoice.extractionStatus = ExtractionStatus.none;
+                          invoice.extractionError = null;
+                          // Clear all invoice field values
+                          invoice.invoiceNumber = '';
+                          invoice.invoiceDate = '';
+                          invoice.totalAmount = '';
+                          invoice.gstNumber = '';
+                          invoice.invoiceNumberController.clear();
+                          invoice.invoiceDateController.clear();
+                          invoice.totalAmountController.clear();
+                          invoice.gstNumberController.clear();
+                          invoice.savedToDb = false;
+                        });
+                      },
                       icon: const Icon(Icons.close,
                           color: AppColors.rejectedText, size: 24),
                       tooltip: 'Remove file',

@@ -459,6 +459,12 @@ public class CampaignPhotoDto
     
     [JsonPropertyName("caption")]
     public string? Caption { get; init; }
+
+    [JsonPropertyName("photoTimestamp")]
+    public DateTime? PhotoTimestamp { get; init; }
+
+    [JsonPropertyName("photoDateOverlay")]
+    public string? PhotoDateOverlay { get; init; }
 }
 
 /// <summary>

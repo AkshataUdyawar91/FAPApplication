@@ -373,6 +373,7 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.ConfidenceScore)
                 .Include(p => p.Recommendation)
                 .Include(p => p.SubmittedBy)
+                .Include(p => p.Agency)
                 .Include(p => p.Teams)
                     .ThenInclude(c => c.Photos)
                 .Include(p => p.CostSummary)
@@ -492,6 +493,8 @@ public class SubmissionsController : ControllerBase
                 HQReviewNotes = raApproval?.Comments,
                 ReviewedAt = asmApproval?.ActionDate,
                 ReviewNotes = asmApproval?.Comments,
+                AgencyId = package.AgencyId,
+                AgencyName = package.Agency?.SupplierName ?? "",
                 Documents = BuildDocumentDtos(package),
                 Campaigns = package.Teams.Where(c => !c.IsDeleted).Select((c, index) => new CampaignDto
                 {
@@ -513,7 +516,9 @@ public class SubmissionsController : ControllerBase
                         Id = p2.Id,
                         FileName = p2.FileName,
                         BlobUrl = p2.BlobUrl,
-                        Caption = p2.Caption
+                        Caption = p2.Caption,
+                        PhotoTimestamp = p2.PhotoTimestamp,
+                        PhotoDateOverlay = p2.PhotoDateOverlay
                     }).ToList(),
                     // Include package-level invoices in the first campaign so the frontend can display them
                     Invoices = index == 0
@@ -923,11 +928,10 @@ public class SubmissionsController : ControllerBase
             }
 
             // Order by creation date descending
-            // Exclude Draft packages — they are incomplete and not yet submitted
-            query = query.Where(p => p.State != PackageState.Draft);
-            // Exclude orphan packages created by PO extraction that were never submitted
-            // (no SubmissionNumber means process-async was never triggered)
-            query = query.Where(p => p.SubmissionNumber != null || p.State >= PackageState.Extracting);
+            // Include drafts (no SubmissionNumber yet) and all submitted packages
+            // Exclude only orphan packages created by PO extraction that were never submitted
+            // (orphans are Uploaded state with no SubmissionNumber and no invoices)
+            query = query.Where(p => p.State == PackageState.Draft || p.SubmissionNumber != null || p.State >= PackageState.Extracting);
 
             query = query.OrderByDescending(p => p.CreatedAt);
 
@@ -1755,6 +1759,94 @@ public class SubmissionsController : ControllerBase
         {
             _logger.LogError(ex, "Error requesting reupload for submission {Id}", id);
             return StatusCode(500, new { error = "An error occurred while requesting reupload" });
+        }
+    }
+
+    /// <summary>
+    /// Delete an invoice from a submission (Agency role only, draft mode only).
+    /// Soft-deletes the invoice by setting IsDeleted = true.
+    /// Only the package owner can delete invoices from their draft submission.
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission/package</param>
+    /// <param name="invoiceId">Unique identifier of the invoice to delete</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>204 No Content on success</returns>
+    /// <response code="204">Invoice successfully deleted</response>
+    /// <response code="400">Bad request - package not in draft state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - Agency role required or user does not own package</response>
+    /// <response code="404">Not found - package or invoice does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpDelete("{id}/invoices/{invoiceId}")]
+    [Authorize(Roles = "Agency")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> DeleteInvoice(
+        Guid id,
+        Guid invoiceId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Get user ID from token
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                _logger.LogWarning("User ID claim not found in token");
+                return Unauthorized(new { error = "User ID not found in token" });
+            }
+
+            var userId = Guid.Parse(userIdClaim);
+
+            // Load package with invoices
+            var package = await _context.DocumentPackages
+                .Include(p => p.Invoices)
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                _logger.LogWarning("Package {PackageId} not found", id);
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            // Verify ownership
+            if (package.SubmittedByUserId != userId)
+            {
+                _logger.LogWarning("User {UserId} attempted to delete invoice from package {PackageId} owned by {OwnerId}",
+                    userId, id, package.SubmittedByUserId);
+                return Forbid();
+            }
+
+            // Only allow deletion in Draft state
+            if (package.State != PackageState.Draft)
+            {
+                _logger.LogWarning("Attempted to delete invoice from package {PackageId} in state {State}",
+                    id, package.State);
+                return BadRequest(new { error = "Invoices can only be deleted from draft submissions" });
+            }
+
+            // Find the invoice
+            var invoice = package.Invoices.FirstOrDefault(i => i.Id == invoiceId);
+            if (invoice == null)
+            {
+                _logger.LogWarning("Invoice {InvoiceId} not found in package {PackageId}", invoiceId, id);
+                return NotFound(new { error = "Invoice not found" });
+            }
+
+            // Soft delete the invoice
+            invoice.IsDeleted = true;
+            invoice.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Invoice {InvoiceId} soft-deleted from package {PackageId} by user {UserId}",
+                invoiceId, id, userId);
+
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting invoice {InvoiceId} from package {PackageId}", invoiceId, id);
+            return StatusCode(500, new { error = "An error occurred while deleting the invoice" });
         }
     }
 

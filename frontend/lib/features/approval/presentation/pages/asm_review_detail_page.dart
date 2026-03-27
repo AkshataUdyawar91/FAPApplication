@@ -24,6 +24,7 @@ import '../widgets/invoice_summary_section.dart';
 import '../widgets/campaign_details_table.dart';
 import '../widgets/ai_analysis_section.dart';
 import '../../data/models/campaign_detail_row.dart';
+import '../../../submission/presentation/widgets/document_preview_screen.dart';
 
 class ASMReviewDetailPage extends ConsumerStatefulWidget {
   final String submissionId;
@@ -68,6 +69,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     ),
   )..interceptors.add(PrettyDioLogger(responseBody: false));
   final _commentsController = TextEditingController();
+  late ScrollController _scrollController;
 
   bool _isLoading = true;
   Map<String, dynamic>? _submission;
@@ -99,12 +101,14 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
   @override
   void initState() {
     super.initState();
+    _scrollController = ScrollController();
     _loadSubmissionDetails();
   }
 
   @override
   void dispose() {
     _commentsController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -419,8 +423,24 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                 letterSpacing: 0.5),
           ),
           const Spacer(),
+          IconButton(
+            onPressed: _scrollToComments,
+            icon: const Icon(Icons.comment, color: Colors.white, size: 22),
+            tooltip: 'View comments',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+          const SizedBox(width: 8),
         ],
       ),
+    );
+  }
+
+  void _scrollToComments() {
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeInOut,
     );
   }
 
@@ -475,6 +495,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                               ? const Center(
                                   child: Text('Submission not found'))
                               : SingleChildScrollView(
+                                  controller: _scrollController,
                                   padding: const EdgeInsets.all(24),
                                   child: Column(
                                     crossAxisAlignment:
@@ -1435,8 +1456,52 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
           }
           return;
         }
+        
+        // Get validation data for this document
+        final validation = _getValidationForDocument(documentId);
+        final isPassed = validation?['allValidationsPassed'] ?? validation?['allPassed'] ?? true;
+        final failureReason = validation?['failureReason']?.toString();
+        final photoDate = _getPhotoDateForDocument(documentId)
+            ?? validation?['validatedAt']?.toString();
+        final dateStr = _formatPreviewDate(photoDate);
+        
+        // Create blob URL from base64
         final bytes = base64.decode(base64Content);
-        if (mounted) _showDocumentPreview(bytes, contentType, name);
+        final blob = web.Blob(
+          [bytes.toJS].toJS,
+          web.BlobPropertyBag(type: contentType),
+        );
+        final blobUrl = web.URL.createObjectURL(blob);
+        
+        // Create preview data
+        final previewData = DocumentPreviewData(
+          filename: name,
+          imageUrl: blobUrl,
+          isPassed: isPassed,
+          failureReason: failureReason,
+          date: dateStr,
+        );
+        
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (context) => DocumentPreviewScreen(
+              documents: [previewData],
+              initialIndex: 0,
+              onClose: () {
+                Navigator.pop(context);
+                web.URL.revokeObjectURL(blobUrl);
+              },
+              onDownload: () {
+                final anchor = web.document.createElement('a')
+                    as web.HTMLAnchorElement;
+                anchor.href = blobUrl;
+                anchor.download = name;
+                anchor.click();
+              },
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -1446,6 +1511,78 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
               backgroundColor: Colors.red),
         );
       }
+    }
+  }
+
+  /// Get validation data for a specific document.
+  /// For photos, also checks per-photo validation from the gallery data
+  /// since photo validations are often aggregate (documentId = packageId).
+  Map<String, dynamic>? _getValidationForDocument(String documentId) {
+    // Check photo validations (direct match)
+    for (final v in _photoValidations) {
+      final vMap = v as Map<String, dynamic>;
+      if (vMap['documentId']?.toString() == documentId) {
+        return vMap;
+      }
+    }
+    
+    // Check invoice validations
+    for (final v in _invoiceValidations) {
+      final vMap = v as Map<String, dynamic>;
+      if (vMap['documentId']?.toString() == documentId) {
+        return vMap;
+      }
+    }
+    
+    // Check cost summary validation
+    if (_costSummaryValidation?['documentId']?.toString() == documentId) {
+      return _costSummaryValidation;
+    }
+    
+    // Check activity validation
+    if (_activityValidation?['documentId']?.toString() == documentId) {
+      return _activityValidation;
+    }
+
+    // Fallback for photos: check per-photo status from gallery validation logic
+    final galleryPhotos = _collectPhotosWithValidation();
+    for (final item in galleryPhotos) {
+      if (item.documentId == documentId) {
+        return {
+          'allValidationsPassed': !item.hasError,
+          'failureReason': item.hasError ? 'Photo validation failed' : null,
+        };
+      }
+    }
+    
+    return null;
+  }
+
+  /// Gets the photo date (EXIF timestamp or overlay date) for a document by searching campaigns.
+  String? _getPhotoDateForDocument(String documentId) {
+    final campaigns = _submission?['campaigns'] as List? ?? [];
+    for (final campaign in campaigns) {
+      final photos = (campaign as Map<String, dynamic>)['photos'] as List? ?? [];
+      for (final photo in photos) {
+        final photoMap = photo as Map<String, dynamic>;
+        final id = photoMap['id']?.toString() ?? '';
+        if (id == documentId) {
+          return photoMap['photoTimestamp']?.toString()
+              ?? photoMap['photoDateOverlay']?.toString();
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Formats a UTC date string for the document preview panel.
+  String? _formatPreviewDate(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return null;
+    try {
+      final dt = DateTime.parse(dateStr).toLocal();
+      return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return dateStr;
     }
   }
 
