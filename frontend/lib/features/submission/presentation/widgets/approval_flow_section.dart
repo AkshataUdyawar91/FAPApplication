@@ -210,10 +210,14 @@ class ApprovalFlowSection extends StatelessWidget {
 
     final isApproved = action.toLowerCase().contains('approved');
     final isRejected = action.toLowerCase().contains('rejected');
+    final isSentBackToCH = action.toLowerCase().contains('sentbacktoch');
     final roleLabel = role == 'ASM' ? 'CH' : role;
+
+    // Friendly display for SentBackToCH action
+    final displayAction = isSentBackToCH ? 'Clarification requested' : action;
     final displayLabel = name.isNotEmpty && name != role
-        ? '$action by $roleLabel ($name)'
-        : '$action by $roleLabel';
+        ? '$displayAction by $roleLabel ($name)'
+        : '$displayAction by $roleLabel';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -225,13 +229,17 @@ class ApprovalFlowSection extends StatelessWidget {
                 ? Icons.check_circle_outline
                 : isRejected
                     ? Icons.highlight_off
-                    : Icons.info_outline,
+                    : isSentBackToCH
+                        ? Icons.question_answer
+                        : Icons.info_outline,
             size: 16,
             color: isApproved
                 ? const Color(0xFF10B981)
                 : isRejected
                     ? const Color(0xFFDC2626)
-                    : const Color(0xFF6B7280),
+                    : isSentBackToCH
+                        ? const Color(0xFFF59E0B)
+                        : const Color(0xFF6B7280),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -252,12 +260,16 @@ class ApprovalFlowSection extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: isRejected
                           ? const Color(0xFFFEF2F2)
-                          : const Color(0xFFF9FAFB),
+                          : isSentBackToCH
+                              ? const Color(0xFFFFFBEB)
+                              : const Color(0xFFF9FAFB),
                       borderRadius: BorderRadius.circular(6),
                       border: Border.all(
                           color: isRejected
                               ? const Color(0xFFFCA5A5)
-                              : const Color(0xFFE5E7EB)),
+                              : isSentBackToCH
+                                  ? const Color(0xFFFCD34D)
+                                  : const Color(0xFFE5E7EB)),
                     ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,

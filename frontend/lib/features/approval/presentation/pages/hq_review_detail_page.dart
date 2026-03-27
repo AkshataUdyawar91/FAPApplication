@@ -291,7 +291,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       if (response.statusCode == 200 && mounted) {
         // Update state immediately
         setState(() {
-          _submission!['state'] = 'RejectedByRA';
+          _submission!['state'] = 'RARejected';
           _submission!['hqReviewedAt'] = DateTime.now().toIso8601String();
           _submission!['hqReviewNotes'] = reason;
         });
@@ -303,11 +303,9 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           ),
         );
 
-        // Optionally navigate back after a short delay to show updated status
         await Future.delayed(const Duration(milliseconds: 500));
         if (mounted) {
-          Navigator.pop(
-              context, true); // Return true to indicate refresh needed
+          Navigator.pop(context, true);
         }
       }
     } catch (e) {
@@ -315,6 +313,50 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to reject: ${e.toString()}'),
+            backgroundColor: AppColors.rejectedText,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
+    }
+  }
+
+  /// Sends the submission back to Circle Head for clarification.
+  Future<void> _sendBackToCH(String reason) async {
+    setState(() => _isProcessing = true);
+
+    try {
+      final response = await _dio.patch(
+        '/submissions/${widget.submissionId}/ra-send-back-to-ch',
+        data: {'Reason': reason},
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        setState(() {
+          _submission!['state'] = 'PendingCHReason';
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sent back to Circle Head for clarification'),
+            backgroundColor: Color(0xFFF59E0B),
+          ),
+        );
+
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          Navigator.pop(context, true);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send back: ${e.toString()}'),
             backgroundColor: AppColors.rejectedText,
           ),
         );
@@ -338,7 +380,7 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-                'Please provide a reason for rejection (minimum 10 characters):'),
+                'This will reject the submission and send it back to the Agency for resubmission. Please provide a reason (minimum 10 characters):'),
             const SizedBox(height: 16),
             TextField(
               controller: reasonController,
@@ -386,6 +428,74 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
               backgroundColor: const Color(0xFFEF4444),
             ),
             child: const Text('Reject'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shows dialog for RA to ask clarification from Circle Head.
+  void _showAskClarificationDialog() {
+    final reasonController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ask Clarification from CH'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+                'This will send the submission back to Circle Head for clarification. Please describe what needs to be clarified (minimum 10 characters):'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: reasonController,
+              maxLines: 4,
+              maxLength: 500,
+              decoration: const InputDecoration(
+                hintText: 'Enter clarification details...',
+                border: OutlineInputBorder(),
+                helperText: 'Minimum 10 characters required',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final reason = reasonController.text.trim();
+              if (reason.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please describe what needs clarification'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              if (reason.length < 10) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                        'Clarification details must be at least 10 characters'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(context);
+              _sendBackToCH(reason);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFF59E0B),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Send to CH'),
           ),
         ],
       ),
@@ -763,23 +873,38 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
         // Action buttons
         if (_isSubmissionActionable()) ...[
           const SizedBox(height: 12),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              OutlinedButton(
-                onPressed: _isProcessing ? null : _showRejectDialog,
+              if (!_isAskReasonOnlyState())
+                OutlinedButton(
+                  onPressed: _isProcessing ? null : _showRejectDialog,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFEF4444),
+                    side: const BorderSide(color: Color(0xFFEF4444)),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24)),
+                  ),
+                  child: const Text('Reject'),
+                ),
+              OutlinedButton.icon(
+                onPressed: _isProcessing ? null : _showAskClarificationDialog,
+                icon: const Icon(Icons.question_answer, size: 16),
+                label: const Text('Ask CH Reason'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFFEF4444),
-                  side: const BorderSide(color: Color(0xFFEF4444)),
+                  foregroundColor: const Color(0xFFF59E0B),
+                  side: const BorderSide(color: Color(0xFFF59E0B)),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(24)),
                 ),
-                child: const Text('Reject'),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
+              if (!_isAskReasonOnlyState() && !_isNoApproveState())
+                ElevatedButton(
                   onPressed: _isProcessing ? null : _approveSubmission,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF10B981),
@@ -799,7 +924,6 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                       : const Text('Approve Request',
                           overflow: TextOverflow.ellipsis),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -899,42 +1023,60 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                       spacing: 12,
                       runSpacing: 12,
                       children: [
-                        OutlinedButton(
-                          onPressed:
-                              _isProcessing ? null : _showRejectDialog,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFFEF4444),
-                            side:
-                                const BorderSide(color: Color(0xFFEF4444)),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 24, vertical: 14),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(24)),
+                        if (!_isAskReasonOnlyState())
+                          OutlinedButton(
+                            onPressed:
+                                _isProcessing ? null : _showRejectDialog,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFEF4444),
+                              side:
+                                  const BorderSide(color: Color(0xFFEF4444)),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(24)),
+                            ),
+                            child: const Text('Reject',
+                                style: TextStyle(fontSize: 15)),
                           ),
-                          child: const Text('Reject',
+                        OutlinedButton.icon(
+                          onPressed:
+                              _isProcessing ? null : _showAskClarificationDialog,
+                          icon: const Icon(Icons.question_answer, size: 16),
+                          label: const Text('Ask CH Reason',
                               style: TextStyle(fontSize: 15)),
-                        ),
-                        ElevatedButton(
-                          onPressed:
-                              _isProcessing ? null : _approveSubmission,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF10B981),
-                            foregroundColor: Colors.white,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFF59E0B),
+                            side:
+                                const BorderSide(color: Color(0xFFF59E0B)),
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 24, vertical: 14),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(24)),
                           ),
-                          child: _isProcessing
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.white),
-                                )
-                              : const Text('Approve Request',
-                                  style: TextStyle(fontSize: 15)),
                         ),
+                        if (!_isAskReasonOnlyState() && !_isNoApproveState())
+                          ElevatedButton(
+                            onPressed:
+                                _isProcessing ? null : _approveSubmission,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10B981),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(24)),
+                            ),
+                            child: _isProcessing
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2, color: Colors.white),
+                                  )
+                                : const Text('Approve Request',
+                                    style: TextStyle(fontSize: 15)),
+                          ),
                       ],
                     ),
                   ],
@@ -1008,6 +1150,19 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
       backgroundColor = const Color(0xFFDEEAFF);
       textColor = const Color(0xFF0066FF);
       displayText = 'Pending CH Review';
+    } else if (normalizedState == 'chrejected' ||
+        normalizedState == 'rejectedbyasm') {
+      backgroundColor = const Color(0xFFFEF3C7);
+      textColor = const Color(0xFF92400E);
+      displayText = 'CH Rejected';
+    } else if (normalizedState == 'pendingchclarification' || normalizedState == 'pendingchreason') {
+      backgroundColor = const Color(0xFFFFF7ED);
+      textColor = const Color(0xFFC2410C);
+      displayText = 'Asked Reason';
+    } else if (normalizedState == 'pendingraclarificationresponse' || normalizedState == 'pendingrareasonresponse') {
+      backgroundColor = const Color(0xFFECFDF5);
+      textColor = const Color(0xFF065F46);
+      displayText = 'CH Responded';
     } else {
       backgroundColor = const Color(0xFFF3F4F6);
       textColor = const Color(0xFF6B7280);
@@ -1120,11 +1275,39 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
     }
   }
 
-  /// RA can only act on submissions in PendingRA state.
-  /// CHRejected submissions must be resubmitted by Agency before RA can act again.
+  /// RA can act on submissions based on the status visibility matrix.
+  /// PendingRA: approve, reject (no ask reason).
+  /// RARejected: ask reason only.
+  /// PendingCHReason: reject, ask reason again (no approve).
+  /// PendingRAReasonResponse: approve, reject, ask reason.
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
-    return state == 'pendingra' || state == 'pendinghqapproval';
+    return state == 'pendingra' ||
+        state == 'pendinghqapproval' ||
+        state == 'rarejected' ||
+        state == 'chrejected' ||
+        state == 'rejectedbyasm' ||
+        state == 'pendingchclarification' ||
+        state == 'pendingchreason' ||
+        state == 'pendingraclarificationresponse' ||
+        state == 'pendingrareasonresponse';
+  }
+
+  /// Returns true when RA can only ask reason (no approve/reject).
+  /// RARejected: only ask reason.
+  bool _isAskReasonOnlyState() {
+    final state = _submission?['state']?.toString().toLowerCase() ?? '';
+    return state == 'rarejected';
+  }
+
+  /// Returns true when RA cannot approve but can reject and ask reason.
+  /// CHRejected, PendingCHReason: reject + ask reason (no approve).
+  bool _isNoApproveState() {
+    final state = _submission?['state']?.toString().toLowerCase() ?? '';
+    return state == 'chrejected' ||
+        state == 'rejectedbyasm' ||
+        state == 'pendingchclarification' ||
+        state == 'pendingchreason';
   }
 
   String? _extractPoNumber() {

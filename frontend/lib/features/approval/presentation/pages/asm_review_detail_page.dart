@@ -317,6 +317,111 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
   }
 
+  /// Responds to RA's clarification request and sends submission back to RA.
+  Future<void> _respondToClarification(String notes) async {
+    setState(() => _isProcessing = true);
+
+    try {
+      final response = await _dio.patch(
+        '/submissions/${widget.submissionId}/asm-respond-clarification',
+        data: {'notes': notes},
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Clarification sent to RA'),
+            backgroundColor: Color(0xFF10B981),
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          Navigator.pop(context, true);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send clarification: ${e.toString()}'),
+            backgroundColor: AppColors.rejectedText,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
+    }
+  }
+
+  void _showRespondClarificationDialog() {
+    final notesController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Respond to RA Clarification'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+                'Provide your clarification response to RA (minimum 10 characters):'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: notesController,
+              maxLines: 4,
+              maxLength: 500,
+              decoration: const InputDecoration(
+                hintText: 'Enter your clarification response...',
+                border: OutlineInputBorder(),
+                helperText: 'Minimum 10 characters required',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final notes = notesController.text.trim();
+              if (notes.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please provide a clarification response'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              if (notes.length < 10) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                        'Clarification must be at least 10 characters'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(context);
+              _respondToClarification(notes);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF10B981),
+            ),
+            child: const Text('Send Clarification'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showRejectDialog() {
     final reasonController = TextEditingController();
 
@@ -739,30 +844,55 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         _buildPoBalanceSection(),
         // Action buttons
         if (_isSubmissionActionable()) ...[
+          // Show clarification request card if in clarification state
+          if (_isClarificationState()) ...[
+            const SizedBox(height: 12),
+            _buildClarificationRequestCard(),
+          ],
           const SizedBox(height: 12),
-          Row(
-            children: [
-              OutlinedButton(
-                onPressed: _isProcessing ? null : _showRejectDialog,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFFEF4444),
-                  side: const BorderSide(color: Color(0xFFEF4444)),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          if (_isClarificationState())
+            // Clarification state: show Respond button only
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isProcessing ? null : _showRespondClarificationDialog,
+                icon: const Icon(Icons.reply, size: 18),
+                label: _isProcessing
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Respond to RA'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 ),
-                child: const Text('Reject'),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _isProcessing ? null : _approveSubmission,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF10B981),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
+            )
+          else
+            Row(
+              children: [
+                OutlinedButton(
+                  onPressed: _isProcessing ? null : _showRejectDialog,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFEF4444),
+                    side: const BorderSide(color: Color(0xFFEF4444)),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   ),
-                  child: _isProcessing
+                  child: const Text('Reject'),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _isProcessing ? null : _approveSubmission,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF10B981),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                    ),
+                    child: _isProcessing
                       ? const SizedBox(
                           width: 16,
                           height: 16,
@@ -887,45 +1017,68 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                   ),
                   // Action buttons — only for actionable states
                   if (_isSubmissionActionable()) ...[
+                    if (_isClarificationState()) ...[
+                      const SizedBox(height: 16),
+                      _buildClarificationRequestCard(),
+                    ],
                     const SizedBox(height: 20),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        OutlinedButton(
-                          onPressed:
-                              _isProcessing ? null : _showRejectDialog,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFFEF4444),
-                            side:
-                                const BorderSide(color: Color(0xFFEF4444)),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 12),
-                          ),
-                          child: const Text('Reject'),
+                    if (_isClarificationState())
+                      ElevatedButton.icon(
+                        onPressed:
+                            _isProcessing ? null : _showRespondClarificationDialog,
+                        icon: const Icon(Icons.reply, size: 18),
+                        label: _isProcessing
+                            ? const SizedBox(
+                                width: 16, height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : const Text('Respond to RA'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 12),
                         ),
-                        ElevatedButton(
-                          onPressed:
-                              _isProcessing ? null : _approveSubmission,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF10B981),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 12),
+                      )
+                    else
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          OutlinedButton(
+                            onPressed:
+                                _isProcessing ? null : _showRejectDialog,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFEF4444),
+                              side:
+                                  const BorderSide(color: Color(0xFFEF4444)),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 12),
+                            ),
+                            child: const Text('Reject'),
                           ),
-                          child: _isProcessing
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text('Approve Request'),
-                        ),
-                      ],
-                    ),
+                          ElevatedButton(
+                            onPressed:
+                                _isProcessing ? null : _approveSubmission,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10B981),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 12),
+                            ),
+                            child: _isProcessing
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text('Approve Request'),
+                          ),
+                        ],
+                      ),
                   ],
                 ],
               ),
@@ -1131,11 +1284,73 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
   }
 
+  /// Builds a card showing the RA's clarification request.
+  Widget _buildClarificationRequestCard() {
+    final clarificationReason = _getLatestClarificationRequest();
+    if (clarificationReason == null || clarificationReason.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFDBA74)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.question_answer, color: Color(0xFFC2410C), size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'RA Clarification Request',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFFC2410C),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            clarificationReason,
+            style: const TextStyle(fontSize: 14, color: Color(0xFF78350F)),
+          ),
+        ],
+      ),
+    );
+  }
+
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
     return state == 'pendingch' ||
         state == 'pendingapproval' ||
-        state == 'pendingchapproval';
+        state == 'pendingchapproval' ||
+        state == 'pendingchclarification' ||
+        state == 'pendingchreason';
+  }
+
+  /// Returns true if the submission is pending CH clarification from RA.
+  bool _isClarificationState() {
+    final state = _submission?['state']?.toString().toLowerCase() ?? '';
+    return state == 'pendingchclarification' || state == 'pendingchreason';
+  }
+
+  /// Extracts the latest RA clarification request from approval history.
+  String? _getLatestClarificationRequest() {
+    final history = _submission?['approvalHistory'] as List<dynamic>? ?? [];
+    for (final entry in history.reversed) {
+      final action = (entry['action']?.toString() ?? '').toLowerCase();
+      if (action.contains('sentbacktoch')) {
+        return entry['comments']?.toString();
+      }
+    }
+    return null;
   }
 
   /// Extracts the PO number from the submission's documents array.

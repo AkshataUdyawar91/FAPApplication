@@ -18,6 +18,7 @@ import '../../../../core/widgets/quarter_year_filter.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/network/dio_client.dart';
+import '../../../../core/widgets/pagination_bar.dart';
 import '../../../analytics/data/models/quarterly_fap_kpi_model.dart';
 
 class HQReviewPage extends ConsumerStatefulWidget {
@@ -46,6 +47,12 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
   bool _isSidebarCollapsed = true;
   List<Map<String, dynamic>> _documents = [];
 
+  // Pagination state
+  int _currentPage = 1;
+  int _totalItems = 0;
+  int _totalPages = 1;
+  static const int _pageSize = 20;
+
   // KPI state
   String _selectedQuarter = 'Q${(DateTime.now().month - 1) ~/ 3 + 1}';
   int _selectedYear = DateTime.now().year;
@@ -56,15 +63,19 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
   String _normalizeStatus(String backendState) {
     final state = backendState.toLowerCase().replaceAll('_', '');
     if (state == 'pendingra' || state == 'pendinghqapproval') return 'pending';
+    if (state == 'pendingraclarificationresponse' || state == 'pendingrareasonresponse') return 'clarification-response';
     if (state == 'approved') return 'approved';
     if (state == 'rarejected' ||
         state == 'rejectedbyhq' ||
         state == 'hqrejected' ||
         state == 'rejectedbyra') return 'rejected';
+    if (state == 'chrejected') return 'ch-rejected';
+    if (state == 'pendingchclarification' || state == 'pendingchreason') {
+      return 'ch-clarification';
+    }
     if (state == 'pendingch' ||
-        state == 'pendingasmapproval' ||
-        state == 'chrejected') {
-      return 'ch-level';
+        state == 'pendingasmapproval') {
+      return 'ch-clarification';
     }
     return 'other';
   }
@@ -82,23 +93,18 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
     super.dispose();
   }
 
-  Future<void> _loadDocuments() async {
+  Future<void> _loadDocuments({int page = 1}) async {
     if (!mounted) return;
     setState(() => _isLoading = true);
     try {
-      // Backend enforces RA role scoping: only returns submissions in
-      // PendingRA, Approved, RARejected states for the RA's assigned activity states.
-      // A single call without state filter fetches all RA-visible submissions.
       final response = await _dio.get(
         '/submissions',
-        queryParameters: {
-          'pageSize': 100,
-        },
+        queryParameters: {'page': page, 'pageSize': _pageSize},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
-        final items = <Map<String, dynamic>>[];
         final data = response.data;
+        final items = <Map<String, dynamic>>[];
         if (data is Map && data.containsKey('items')) {
           items.addAll(List<Map<String, dynamic>>.from(data['items']));
         }
@@ -106,6 +112,10 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
         if (mounted) {
           setState(() {
             _documents = items;
+            _totalItems = data is Map ? (data['total'] ?? 0) : 0;
+            final total = _totalItems;
+            _totalPages = (total / _pageSize).ceil().clamp(1, 9999);
+            _currentPage = page;
             _isLoading = false;
           });
         }
@@ -442,6 +452,13 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
             _buildSearchBar(),
             const SizedBox(height: 24),
             _buildDocumentsList(),
+            PaginationBar(
+              currentPage: _currentPage,
+              totalPages: _totalPages,
+              totalItems: _totalItems,
+              pageSize: _pageSize,
+              onPageChanged: (page) => _loadDocuments(page: page),
+            ),
             const SizedBox(height: 80),
           ],
         ),
@@ -614,6 +631,9 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
           DropdownMenuItem(value: 'approved', child: Text('Approved')),
           DropdownMenuItem(value: 'pending', child: Text('Pending')),
           DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
+          DropdownMenuItem(value: 'ch-rejected', child: Text('CH Rejected')),
+          DropdownMenuItem(value: 'ch-clarification', child: Text('Asked Reason')),
+          DropdownMenuItem(value: 'clarification-response', child: Text('CH Responded')),
         ],
         onChanged: (value) {
           if (value != null) setState(() => _statusFilter = value);
@@ -876,7 +896,7 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
         'poNumber': doc['poNumber']?.toString(),
       },
     );
-    if (mounted && (result == true || result == null)) _loadDocuments();
+    if (mounted && (result == true || result == null)) _loadDocuments(page: _currentPage);
   }
 
   int? get _sortColumnIndex {
@@ -1039,6 +1059,24 @@ class _HQReviewPageState extends ConsumerState<HQReviewPage> {
         textColor = AppColors.rejectedText;
         borderColor = AppColors.rejectedBorder;
         label = 'Rejected';
+        break;
+      case 'ch-rejected':
+        bgColor = const Color(0xFFFEF3C7);
+        textColor = const Color(0xFF92400E);
+        borderColor = const Color(0xFFFCD34D);
+        label = 'CH Rejected';
+        break;
+      case 'ch-clarification':
+        bgColor = const Color(0xFFFFF7ED);
+        textColor = const Color(0xFFC2410C);
+        borderColor = const Color(0xFFFDBA74);
+        label = 'Asked Reason';
+        break;
+      case 'clarification-response':
+        bgColor = const Color(0xFFECFDF5);
+        textColor = const Color(0xFF065F46);
+        borderColor = const Color(0xFF6EE7B7);
+        label = 'CH Responded';
         break;
       default:
         bgColor = AppColors.reviewBackground;
