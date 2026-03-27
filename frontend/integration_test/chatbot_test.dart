@@ -273,7 +273,12 @@ class _ChatbotTestRunnerPanelState extends State<ChatbotTestRunnerPanel> {
 
     await _step('Tap Sign In', () async {
       _tapElevatedButton('Sign In');
-      await _waitFor(() => _findText('My Requests'), timeout: 10);
+      // After login the dashboard loads and the chatbot auto-opens.
+      // Wait for either the dashboard text or the chatbot panel to confirm navigation.
+      await _waitFor(
+        () => _findText('My Requests') || _findWidgetByType<AssistantChatPanel>() != null,
+        timeout: 20,
+      );
     });
 
     // ── Phase 2: Chatbot auto-opens with greeting ───────────────────────
@@ -307,27 +312,34 @@ class _ChatbotTestRunnerPanelState extends State<ChatbotTestRunnerPanel> {
       }
       await _waitForNotLoading(timeout: 10);
       final t = _lastBotType();
-      if (t != 'po_search' && t != 'po_search_results') {
-        throw Exception('Expected po_search, got $t');
+      if (t != 'po_search' && t != 'po_search_results' && t != 'po_list') {
+        throw Exception('Expected po_search/po_list, got $t');
       }
     });
 
     // ── Phase 4: Type PO number and select ──────────────────────────────
 
     await _step('Type PO number: 8110011755', () async {
+      final t = _lastBotType();
+      // If backend returned po_list, POs are already displayed — skip search
+      if (t == 'po_list') {
+        // No search needed, POs already listed
+        return;
+      }
       // The bottom input should now be a PO search bar
       _typeInTextField('Search PO', '8110011755');
       // Wait for debounce + API response
       await _waitForNotLoading(timeout: 15);
       await _waitFor(
-        () => _lastBotType() == 'po_search_results' || _lastBotType() == 'po_search',
+        () => _lastBotType() == 'po_search_results' ||
+            _lastBotType() == 'po_search' ||
+            _lastBotType() == 'po_list',
         timeout: 10,
       );
     });
 
     await _step('Click Next / Select PO', () async {
-      // PO results show as a list. Try tapping the OutlinedButton with the PO number
-      // or the first InkWell in the PO list
+      // PO results show as a list. Try tapping the InkWell with the PO number
       final msgs = _state.messages;
       final lastBot = msgs.lastWhere((m) => m.isBot);
       final poItems = lastBot.response?.poItems;

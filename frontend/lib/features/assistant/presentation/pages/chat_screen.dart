@@ -762,18 +762,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       case 'team_name_input':
         return AssistantBubble(
           message: msg.content,
-          child: r.teamContext != null
-              ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
-              : null,
         );
       case 'team_count_input':
         return AssistantBubble(message: msg.content);
       case 'dealer_search':
         return AssistantBubble(
           message: msg.content,
-          child: r.teamContext != null
-              ? _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams)
-              : null,
         );
       case 'dealer_list':
       case 'dealer_search_results':
@@ -813,11 +807,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (r.teamContext != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams),
-                ),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -911,23 +900,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-
-  Widget _teamProgressIndicator(int current, int total) {
-    return Row(children: [
-      Text('Team $current of $total',
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7280))),
-      const SizedBox(width: 8),
-      Expanded(
-        child: LinearProgressIndicator(
-          value: current / total,
-          backgroundColor: Colors.grey.shade200,
-          color: const Color(0xFF003087),
-          minHeight: 4,
-          borderRadius: BorderRadius.circular(2),
-        ),
-      ),
-    ]);
-  }
 
   Widget _dealerList(List<DealerItemModel> dealers, String payloadJson) {
     return Column(
@@ -1402,11 +1374,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (r.teamContext != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: _teamProgressIndicator(r.teamContext!.currentTeam, r.teamContext!.totalTeams),
-          ),
         // Photo table
         if (photos.isEmpty)
           Padding(

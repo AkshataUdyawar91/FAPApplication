@@ -2243,20 +2243,27 @@ Respond ONLY with a JSON object in this exact format:
                     new ChatRequestSystemMessage(@"You are an Activity Summary data extraction expert specializing in Indian marketing activity documents.
 Analyze the provided Activity Summary image and extract ALL structured information with maximum accuracy.
 
-REQUIRED FIELDS TO EXTRACT:
-1. Dealer and Location Details - For EACH location extract:
-   - locationName: City/town name
-   - dealerName: Dealer name
-   - district: District name
-   - state/city: State/City name
-   - numberOfDays: Number of days at this location
-   - startDate: Start date at this location (YYYY-MM-DD)
-   - endDate: End date at this location (YYYY-MM-DD)
+The document may have one of these formats:
+FORMAT A - Rows per dealer: Each row has Dealer, Location, To, From, Day, Working Day
+FORMAT B - Dealers as columns with summary rows: Dealer Name, District Name, Start Date, End Date, Total Days, Activation Days, Billed Days as rows, with each column being a different dealer/location.
+
+REQUIRED FIELDS TO EXTRACT per dealer/location:
+- dealerName: Dealer name
+- locationName: City/town/district name
+- state: State name if visible
+- numberOfDays: Total days (from 'Total Days' or 'Day' field)
+- startDate: Start date (YYYY-MM-DD)
+- endDate: End date (YYYY-MM-DD)
+
+ALSO EXTRACT summary totals:
+- totalDays: Grand total from 'Total Days' row (TOTAL column or sum of all dealers).
+- totalWorkingDays: Grand total from 'Activation Days' or 'Billed Days' or 'Working Days' row (TOTAL column). These terms are equivalent — use whichever is present. This is DIFFERENT from totalDays. Do NOT use 'Total Days' for this field unless no Activation/Billed/Working Days row exists.
 
 CRITICAL INSTRUCTIONS:
 - Extract EXACT values visible in the image.
+- For FORMAT B: each column (dealer) becomes one entry in locationActivities.
+- 'Activation Days', 'Billed Days', 'Working Days' are ALL equivalent — use whichever is present.
 - If a field is not found, use empty string for text, 0 for numbers, null for dates.
-- Total Days should be the sum of all location days if not explicitly stated.
 
 Respond ONLY with a JSON object in this exact format:
 {
@@ -2270,6 +2277,8 @@ Respond ONLY with a JSON object in this exact format:
       ""endDate"": ""YYYY-MM-DD""
     }
   ],
+  ""totalDays"": 0,
+  ""totalWorkingDays"": 0,
   ""confidence"": 0.0
 }"),
                     new ChatRequestUserMessage(
@@ -2313,18 +2322,25 @@ Respond ONLY with a JSON object in this exact format:
                 new ChatRequestSystemMessage(@"You are an Activity Summary data extraction expert.
 Analyze the provided text extracted from an Activity Summary document.
 
-The document is a table with these columns:
-1. Dealer - Dealer name (e.g., 'Magadh Auto Agency')
-2. Location - City/town name (e.g., 'Patna')
-3. To - End date (convert to YYYY-MM-DD)
-4. From - Start date (convert to YYYY-MM-DD)
-5. Day - Total number of days
-6. Working Day - Number of working days
+The document may have one of these formats:
+FORMAT A - Rows per dealer:
+  Columns: Dealer, Location, To, From, Day, Working Day
+
+FORMAT B - Dealers as columns with summary rows:
+  Rows like: Dealer Name, District Name, Team No, Start Date, End Date, Total Days, Activation Days, Billed Days, etc.
+  Each column represents a different dealer/location.
 
 CRITICAL INSTRUCTIONS:
-- Extract EVERY row from the table.
-- Handle date formats like 2/14/2025, 01.02.2025, 01-Feb-2025 → convert to YYYY-MM-DD.
+- Extract EVERY dealer/location entry as a separate row.
+- For FORMAT B: each column (dealer) becomes one row. Read Start Date, End Date, Total Days/Activation Days/Billed Days for each.
+- Handle date formats like 2/14/2025, 01.02.2025, 01-Feb-2025, 01-Dec-25 → convert to YYYY-MM-DD.
 - If a field is not found, use empty string for text, 0 for numbers, null for dates.
+- For 'day': use the value from 'Total Days' row for each dealer.
+- For 'workingDay': use the value from 'Activation Days' or 'Billed Days' or 'Working Days' row for each dealer (these terms are equivalent). If none of these rows exist, fall back to 'Total Days'.
+
+SUMMARY FIELDS (from the TOTAL column or by summing all dealers):
+- 'totalDays': the grand total from the 'Total Days' row (TOTAL column).
+- 'totalWorkingDays': the grand total from 'Activation Days' or 'Billed Days' or 'Working Days' row (TOTAL column). These terms are equivalent — use whichever is present. This is DIFFERENT from totalDays. Do NOT use 'Total Days' for this field unless no Activation/Billed/Working Days row exists.
 
 Respond ONLY with a JSON object in this exact format:
 {
@@ -2338,6 +2354,8 @@ Respond ONLY with a JSON object in this exact format:
       ""workingDay"": 0
     }
   ],
+  ""totalDays"": 0,
+  ""totalWorkingDays"": 0,
   ""confidence"": 0.0
 }"),
                 new ChatRequestUserMessage($"Extract all activity summary rows from this text:\n\n{extractedText}")
@@ -2367,21 +2385,65 @@ Respond ONLY with a JSON object in this exact format:
 
             var activityData = new ActivityData
             {
-                Rows = parsed.Rows?.Select(r => new ActivityRow
-                {
-                    DealerName = r.DealerName ?? string.Empty,
-                    Location = r.Location ?? string.Empty,
-                    ToDate = r.ToDate,
-                    FromDate = r.FromDate,
-                    Day = r.Day,
-                    WorkingDay = r.WorkingDay
-                }).ToList() ?? new List<ActivityRow>(),
                 FieldConfidences = new Dictionary<string, double>
                 {
                     ["Overall"] = parsed.Confidence
                 },
                 IsFlaggedForReview = parsed.Confidence < CONFIDENCE_THRESHOLD
             };
+
+            // Handle rows-based format (text extraction)
+            if (parsed.Rows != null && parsed.Rows.Count > 0)
+            {
+                activityData.Rows = parsed.Rows.Select(r => new ActivityRow
+                {
+                    DealerName = r.DealerName ?? string.Empty,
+                    Location = r.Location ?? string.Empty,
+                    ToDate = r.ToDate,
+                    FromDate = r.FromDate,
+                    Day = r.Day,
+                    WorkingDay = r.WorkingDay > 0 ? r.WorkingDay : r.Day
+                }).ToList();
+            }
+            // Handle locationActivities-based format (image extraction)
+            else if (parsed.LocationActivities != null && parsed.LocationActivities.Count > 0)
+            {
+                activityData.Rows = parsed.LocationActivities.Select(la => new ActivityRow
+                {
+                    DealerName = la.DealerName ?? string.Empty,
+                    Location = la.LocationName ?? string.Empty,
+                    LocationName = la.LocationName ?? string.Empty,
+                    State = la.State,
+                    ToDate = la.EndDate,
+                    FromDate = la.StartDate,
+                    Day = la.NumberOfDays,
+                    WorkingDay = la.NumberOfDays,
+                    NumberOfDays = la.NumberOfDays,
+                    StartDate = la.StartDate,
+                    EndDate = la.EndDate
+                }).ToList();
+            }
+            else
+            {
+                activityData.Rows = new List<ActivityRow>();
+            }
+
+            // Use explicit totals from AI response if available, otherwise sum from rows
+            // Priority: totalWorkingDays (Activation/Billed Days) > totalDays (Total Days) > row sums
+            if (parsed.TotalWorkingDays.HasValue && parsed.TotalWorkingDays.Value > 0)
+            {
+                activityData.TotalDays = parsed.TotalWorkingDays.Value;
+            }
+            else if (parsed.TotalDays.HasValue && parsed.TotalDays.Value > 0)
+            {
+                activityData.TotalDays = parsed.TotalDays.Value;
+            }
+            else
+            {
+                var rowWorkingDaySum = activityData.Rows.Sum(r => r.WorkingDay);
+                var rowDaySum = activityData.Rows.Sum(r => r.Day);
+                activityData.TotalDays = rowWorkingDaySum > 0 ? rowWorkingDaySum : rowDaySum;
+            }
 
             return activityData;
         }
@@ -2400,7 +2462,20 @@ Respond ONLY with a JSON object in this exact format:
     private class ActivityDataResponse
     {
         public List<ActivityRowResponse>? Rows { get; set; }
+        public List<LocationActivityResponse>? LocationActivities { get; set; }
+        public int? TotalDays { get; set; }
+        public int? TotalWorkingDays { get; set; }
         public double Confidence { get; set; }
+    }
+
+    private class LocationActivityResponse
+    {
+        public string? LocationName { get; set; }
+        public string? DealerName { get; set; }
+        public string? State { get; set; }
+        public int NumberOfDays { get; set; }
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
     }
 
     // CHANGE: Simplified ActivityRowResponse to match table columns: Dealer, Location, To, From, Day, Working Day

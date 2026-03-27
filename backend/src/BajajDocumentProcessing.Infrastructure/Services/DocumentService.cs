@@ -618,8 +618,10 @@ public class DocumentService : IDocumentService
                                 if (parsed?.Rows != null && parsed.Rows.Count > 0)
                                 {
                                     actEntity.DealerName = parsed.Rows[0].DealerName;
-                                    actEntity.TotalDays = parsed.Rows.Sum(r => r.Day);
-                                    actEntity.TotalWorkingDays = parsed.Rows.Sum(r => r.WorkingDay);
+                                    actEntity.TotalDays = parsed.TotalDays ?? parsed.Rows.Sum(r => r.Day);
+                                    var wdSum = parsed.Rows.Sum(r => r.WorkingDay);
+                                    actEntity.TotalWorkingDays = parsed.TotalDays 
+                                        ?? (wdSum > 0 ? wdSum : parsed.Rows.Sum(r => r.Day));
                                 }
                             }
                             catch (Exception parseEx)
