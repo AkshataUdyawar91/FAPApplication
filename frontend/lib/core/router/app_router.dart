@@ -97,10 +97,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/home',
         name: 'home',
         builder: (context, state) {
+          final initialView = state.uri.queryParameters['view'] ?? 'chatbot';
           return DashboardWrapper(
             builder: (token, userName, onLogout) => AgencyDashboardPage(
               token: token,
               userName: userName,
+              initialView: initialView,
             ),
           );
         },

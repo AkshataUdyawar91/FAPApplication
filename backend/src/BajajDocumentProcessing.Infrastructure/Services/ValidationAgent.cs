@@ -2006,6 +2006,7 @@ public class ValidationAgent : IValidationAgent
             };
             // Read agency/billing/state from ExtractedDataJson (not stored as dedicated columns on Invoice entity)
             string? invAgencyName = null, invAgencyAddr = null, invBillingName = null, invBillingAddr = null, invStateVal = null;
+            decimal? invGstPercent = null;
             if (!string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
             {
                 try
@@ -2017,9 +2018,15 @@ public class ValidationAgent : IValidationAgent
                     if (invJson.TryGetProperty("BillingAddress", out var ba) || invJson.TryGetProperty("billingAddress", out ba)) invBillingAddr = ba.GetString();
                     if (invJson.TryGetProperty("StateName", out var sn) || invJson.TryGetProperty("stateName", out sn)) invStateVal = sn.GetString();
                     if (string.IsNullOrWhiteSpace(invStateVal) && (invJson.TryGetProperty("StateCode", out var sc) || invJson.TryGetProperty("stateCode", out sc))) invStateVal = sc.GetString();
+                    if (invJson.TryGetProperty("GSTPercentage", out var gp) || invJson.TryGetProperty("gstPercentage", out gp) || invJson.TryGetProperty("gstPercent", out gp))
+                    {
+                        if (gp.ValueKind == JsonValueKind.Number) invGstPercent = gp.GetDecimal();
+                    }
                 }
                 catch { }
             }
+            // Also fall back to the entity's extracted data (already parsed above via invJson)
+            // invGstPercent is already populated from ExtractedDataJson if present
             var invAgencyOk = !string.IsNullOrWhiteSpace(invAgencyName) && !string.IsNullOrWhiteSpace(invAgencyAddr);
             var invAgencyExtracted = invAgencyOk ? $"{invAgencyName}, {invAgencyAddr}" : invAgencyName ?? invAgencyAddr;
             var invBillingOk = !string.IsNullOrWhiteSpace(invBillingName) && !string.IsNullOrWhiteSpace(invBillingAddr);
@@ -2036,19 +2043,18 @@ public class ValidationAgent : IValidationAgent
                 new { ruleCode = "INV_BILLING_NAME_ADDRESS", type = "Required", passed = invBillingOk, isWarning = false, label = "Billing Name & Address", extractedValue = invBillingExtracted, message = invBillingOk ? null : (string.IsNullOrWhiteSpace(invBillingName) ? "Recipient name not detected" : "Recipient address not detected") },
                 new { ruleCode = "INV_SUPPLIER_STATE", type = "Required", passed = invStateOk, isWarning = false, label = "Supplier State", extractedValue = invStateVal, message = invStateOk ? null : "Supplier state not detected" },
                 new { ruleCode = "INV_PO_MATCH", type = "Required", passed = result.InvoiceCrossDocument?.PONumberMatches ?? true, isWarning = false, label = "PO Number Match", extractedValue = (string?)null, message = result.InvoiceCrossDocument?.PONumberMatches == false ? "PO number mismatch" : null },
+                new { ruleCode = "INV_GST_PERCENT_PRESENT", type = "Required", passed = invGstPercent.HasValue && invGstPercent.Value > 0, isWarning = false, label = "GST %", extractedValue = invGstPercent.HasValue && invGstPercent.Value > 0 ? $"{invGstPercent.Value}%" : (string?)null, message = invGstPercent.HasValue && invGstPercent.Value > 0 ? null : "Field is missing" },
             };
-            // Only include PO balance rule when the balance was actually checked (PoBalanceAmount has a value).
-            // This prevents a default "passed: true" from overriding a chatbot rule that correctly has "Passed: false".
-            if (result.InvoiceCrossDocument?.PoBalanceAmount.HasValue == true)
+            // INV_AMOUNT_VS_PO_BALANCE — always include
             {
                 var indian = new System.Globalization.CultureInfo("en-IN");
-                var poBalPassed = result.InvoiceCrossDocument.PoBalanceValid;
+                var poBalPassed = result.InvoiceCrossDocument?.PoBalanceValid ?? true;
                 var extractedAmt = invoiceDoc.TotalAmount.HasValue
                     ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)}"
                     : (string?)null;
                 var poBalMsg = !poBalPassed && invoiceDoc.TotalAmount.HasValue
-                    ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)} exceeds available PO balance (₹{result.InvoiceCrossDocument.PoBalanceAmount.Value.ToString("N0", indian)})"
-                    : (string?)null;
+                    ? $"₹{invoiceDoc.TotalAmount.Value.ToString("N0", indian)} exceeds available PO balance (₹{result.InvoiceCrossDocument!.PoBalanceAmount!.Value.ToString("N0", indian)})"
+                    : (result.InvoiceCrossDocument?.PoBalanceAmount.HasValue == true ? null : "Field is missing");
                 invRules.Add(new { ruleCode = "INV_AMOUNT_VS_PO_BALANCE", type = "Required", passed = poBalPassed, isWarning = false, label = "Amount vs PO Balance", extractedValue = extractedAmt, message = poBalMsg });
             }
             items.Add((DocumentType.Invoice, invoiceDoc.Id, invPassed,

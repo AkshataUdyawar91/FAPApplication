@@ -909,9 +909,13 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
   List<NavItem> _getNavItems(BuildContext context) {
     return [
       NavItem(
-          icon: Icons.dashboard,
-          label: 'Home',
-          onTap: _navigateToDashboard),
+          icon: Icons.smart_toy,
+          label: 'Assistant',
+          onTap: () => context.go('/home?view=chatbot')),
+      NavItem(
+          icon: Icons.list_alt,
+          label: 'My Requests',
+          onTap: () => context.go('/home?view=requests')),
       NavItem(
           icon: Icons.upload_file,
           label: 'New Claim',

@@ -1183,11 +1183,11 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
       NavItem(
           icon: Icons.smart_toy,
           label: 'Assistant',
-          onTap: _navigateToDashboard),
+          onTap: () => context.go('/home?view=chatbot')),
       NavItem(
           icon: Icons.list_alt,
           label: 'My Requests',
-          onTap: _navigateToDashboard),
+          onTap: () => context.go('/home?view=requests')),
       NavItem(
           icon: Icons.add,
           label: 'New Claim',
