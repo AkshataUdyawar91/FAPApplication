@@ -496,56 +496,101 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
                                   child: Text('Submission not found'))
                               : SingleChildScrollView(
                                   padding: const EdgeInsets.all(24),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      _buildHeaderSection(),
-                                      const SizedBox(height: 24),
-                                      if (_invoiceSummary != null)
-                                        InvoiceSummarySection(
-                                            data: _invoiceSummary!),
-                                      const SizedBox(height: 24),
-                                      _buildASMReviewSection(),
-                                      const SizedBox(height: 24),
-                                      AiAnalysisSection(
-                                          submission: _submission!),
-                                      const SizedBox(height: 24),
-                                      InvoiceDocumentsTable(
-                                        documents: _invoiceDocuments,
-                                        onDocumentTap: (doc) =>
-                                            _downloadDocument(doc.documentId,
-                                                doc.documentName),
+                                  child: isMobile
+                                    // Mobile: single column with timeline at bottom
+                                    ? Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          _buildHeaderSection(),
+                                          const SizedBox(height: 24),
+                                          if (_invoiceSummary != null)
+                                            InvoiceSummarySection(data: _invoiceSummary!),
+                                          const SizedBox(height: 24),
+                                          _buildASMReviewSection(),
+                                          const SizedBox(height: 24),
+                                          AiAnalysisSection(submission: _submission!),
+                                          const SizedBox(height: 24),
+                                          InvoiceDocumentsTable(
+                                            documents: _invoiceDocuments,
+                                            onDocumentTap: (doc) => _downloadDocument(doc.documentId, doc.documentName),
+                                          ),
+                                          const SizedBox(height: 24),
+                                          Visibility(
+                                            visible: false,
+                                            child: CampaignDetailsTable(
+                                              campaignDetails: _campaignDetails,
+                                              onPhotoTap: (detail) {
+                                                if (detail.downloadPath != null && detail.downloadPath!.isNotEmpty) {
+                                                  _downloadHierarchicalDocument(detail.downloadPath!, detail.documentName);
+                                                } else {
+                                                  _downloadDocument(detail.documentId, detail.documentName);
+                                                }
+                                              },
+                                            ),
+                                          ),
+                                          const SizedBox(height: 24),
+                                          _buildValidationReportSection(),
+                                          ..._buildPhotoGallerySection(),
+                                          const SizedBox(height: 24),
+                                          _buildApprovalTimeline(),
+                                          const SizedBox(height: 80),
+                                        ],
+                                      )
+                                    // Desktop/Tablet: header full-width, then 3/4 body + 1/4 sidebar
+                                    : Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          _buildHeaderSection(),
+                                          const SizedBox(height: 24),
+                                          Row(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                flex: 3,
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    if (_invoiceSummary != null)
+                                                      InvoiceSummarySection(data: _invoiceSummary!),
+                                                    const SizedBox(height: 24),
+                                                    _buildASMReviewSection(),
+                                                    const SizedBox(height: 24),
+                                                    AiAnalysisSection(submission: _submission!),
+                                                    const SizedBox(height: 24),
+                                                    InvoiceDocumentsTable(
+                                                      documents: _invoiceDocuments,
+                                                      onDocumentTap: (doc) => _downloadDocument(doc.documentId, doc.documentName),
+                                                    ),
+                                                    const SizedBox(height: 24),
+                                                    Visibility(
+                                                      visible: false,
+                                                      child: CampaignDetailsTable(
+                                                        campaignDetails: _campaignDetails,
+                                                        onPhotoTap: (detail) {
+                                                          if (detail.downloadPath != null && detail.downloadPath!.isNotEmpty) {
+                                                            _downloadHierarchicalDocument(detail.downloadPath!, detail.documentName);
+                                                          } else {
+                                                            _downloadDocument(detail.documentId, detail.documentName);
+                                                          }
+                                                        },
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 24),
+                                                    _buildValidationReportSection(),
+                                                    ..._buildPhotoGallerySection(),
+                                                    const SizedBox(height: 80),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(width: 20),
+                                              SizedBox(
+                                                width: MediaQuery.of(context).size.width * 0.22,
+                                                child: _buildApprovalTimeline(),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
                                       ),
-                                      const SizedBox(height: 24),
-                                      Visibility(
-                                        visible: false,
-                                        child: CampaignDetailsTable(
-                                          campaignDetails: _campaignDetails,
-                                          onPhotoTap: (detail) {
-                                            if (detail.downloadPath != null &&
-                                                detail
-                                                    .downloadPath!.isNotEmpty) {
-                                              _downloadHierarchicalDocument(
-                                                  detail.downloadPath!,
-                                                  detail.documentName);
-                                            } else {
-                                              _downloadDocument(
-                                                  detail.documentId,
-                                                  detail.documentName);
-                                            }
-                                          },
-                                        ),
-                                      ),
-                                      const SizedBox(height: 24),
-                                      _buildValidationReportSection(),
-
-                                      // Photo Thumbnail Gallery
-                                      ..._buildPhotoGallerySection(),
-
-                                      const SizedBox(height: 80),
-                                    ],
-                                  ),
                                 ),
                     ),
                     if (_isChatOpen && !isMobile)
@@ -1928,6 +1973,213 @@ class _HQReviewDetailPageState extends ConsumerState<HQReviewDetailPage> {
         onPhotoTap: (docId, fileName) => _viewDocument(docId, fileName),
       ),
     ];
+  }
+
+  Widget _buildApprovalTimeline() {
+    final state = _submission!['state']?.toString().toLowerCase() ?? '';
+    final createdAt = _submission!['createdAt'];
+    final asmReviewedAt = _submission!['asmReviewedAt'];
+    final asmReviewNotes = _submission!['asmReviewNotes']?.toString();
+    final hqReviewedAt = _submission!['hqReviewedAt'];
+    final hqReviewNotes = _submission!['hqReviewNotes']?.toString();
+    final approvalHistory = _submission!['approvalHistory'] as List<dynamic>? ?? [];
+
+    String asmStatus = 'pending';
+    if (state.contains('chrejected') || state.contains('rejectedbyasm')) {
+      asmStatus = 'rejected';
+    } else if (state.contains('chapproved') || state.contains('approved') ||
+        state.contains('rapending') || state.contains('pendingra') ||
+        state.contains('rarejected') || state.contains('rejectedbyhq')) {
+      asmStatus = 'approved';
+    } else if (asmReviewedAt != null) {
+      asmStatus = 'approved';
+    }
+
+    String hqStatus = 'pending';
+    if (state == 'approved' || state == 'raapproved') {
+      hqStatus = 'approved';
+    } else if (state.contains('rarejected') || state.contains('rejectedbyhq')) {
+      hqStatus = 'rejected';
+    } else if (hqReviewedAt != null) {
+      hqStatus = 'approved';
+    }
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.timeline, color: AppColors.primary, size: 22),
+                const SizedBox(width: 8),
+                const Text('Approval Flow', style: AppTextStyles.h3),
+              ],
+            ),
+            const SizedBox(height: 20),
+            _buildTimelineStep(
+              icon: Icons.upload_file,
+              color: const Color(0xFF3B82F6),
+              title: 'Submitted',
+              date: _formatDisplayDate(createdAt),
+              comment: null,
+              isCompleted: true,
+              isLast: false,
+            ),
+            _buildTimelineStep(
+              icon: asmStatus == 'approved' ? Icons.check_circle
+                  : asmStatus == 'rejected' ? Icons.cancel : Icons.schedule,
+              color: asmStatus == 'approved' ? const Color(0xFF10B981)
+                  : asmStatus == 'rejected' ? const Color(0xFFDC2626) : const Color(0xFF9CA3AF),
+              title: asmStatus == 'approved' ? 'Approved by CH'
+                  : asmStatus == 'rejected' ? 'Rejected by CH' : 'Pending CH Review',
+              date: asmReviewedAt != null ? _formatDisplayDate(asmReviewedAt) : null,
+              comment: asmReviewNotes,
+              isCompleted: asmStatus != 'pending',
+              isLast: false,
+            ),
+            _buildTimelineStep(
+              icon: hqStatus == 'approved' ? Icons.check_circle
+                  : hqStatus == 'rejected' ? Icons.cancel : Icons.schedule,
+              color: hqStatus == 'approved' ? const Color(0xFF10B981)
+                  : hqStatus == 'rejected' ? const Color(0xFFDC2626) : const Color(0xFF9CA3AF),
+              title: hqStatus == 'approved' ? 'Approved by RA'
+                  : hqStatus == 'rejected' ? 'Rejected by RA' : 'Pending RA Review',
+              date: hqReviewedAt != null ? _formatDisplayDate(hqReviewedAt) : null,
+              comment: hqReviewNotes,
+              isCompleted: hqStatus != 'pending',
+              isLast: true,
+            ),
+            if (approvalHistory.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 8),
+              Text('History', style: AppTextStyles.bodySmall.copyWith(
+                fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+              const SizedBox(height: 8),
+              ...approvalHistory.map((h) {
+                final entry = h as Map<String, dynamic>;
+                final action = entry['action']?.toString() ?? '';
+                final name = entry['approverName']?.toString() ?? entry['approverRole']?.toString() ?? '';
+                final comments = entry['comments']?.toString();
+                final date = entry['actionDate'];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        action.toLowerCase().contains('approved') ? Icons.check_circle_outline
+                            : action.toLowerCase().contains('rejected') ? Icons.highlight_off
+                            : Icons.info_outline,
+                        size: 16,
+                        color: action.toLowerCase().contains('approved') ? const Color(0xFF10B981)
+                            : action.toLowerCase().contains('rejected') ? const Color(0xFFDC2626)
+                            : const Color(0xFF6B7280),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('$action by $name',
+                              style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600)),
+                            if (date != null)
+                              Text(_formatDisplayDate(date),
+                                style: AppTextStyles.bodySmall.copyWith(fontSize: 11, color: AppColors.textSecondary)),
+                            if (comments != null && comments.isNotEmpty)
+                              Container(
+                                margin: const EdgeInsets.only(top: 4),
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF9FAFB),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                                ),
+                                child: Text(comments,
+                                  style: AppTextStyles.bodySmall.copyWith(color: const Color(0xFF4B5563), height: 1.4)),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimelineStep({
+    required IconData icon,
+    required Color color,
+    required String title,
+    String? date,
+    String? comment,
+    required bool isCompleted,
+    required bool isLast,
+  }) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, size: 18, color: color),
+              ),
+              if (!isLast)
+                Expanded(
+                  child: Container(width: 2, color: isCompleted ? color.withValues(alpha: 0.3) : const Color(0xFFE5E7EB)),
+                ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: AppTextStyles.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: isCompleted ? AppColors.textPrimary : AppColors.textSecondary)),
+                  if (date != null && date.isNotEmpty)
+                    Text(date, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textSecondary, fontSize: 11)),
+                  if (comment != null && comment.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF9FAFB),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                      ),
+                      child: Text(comment, style: AppTextStyles.bodySmall.copyWith(color: const Color(0xFF4B5563), height: 1.4)),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildValidationReportSection() {
