@@ -6,27 +6,41 @@ This document describes the submission detail pages — what sections are shown,
 
 ## UI Sections Overview
 
-There are two detail pages that consume the same API:
+There are three detail pages that consume the same API:
 
 1. Agency Submission Detail Page (`agency_submission_detail_page.dart`) — for Agency users viewing their own submissions
 2. ASM Review Detail Page (`asm_review_detail_page.dart`) — for Circle Head / ASM users reviewing submissions for approval
+3. HQ/RA Review Detail Page (`hq_review_detail_page.dart`) — for RA (Regional Authority) users performing final approval
 
-Both pages call `GET /api/submissions/{id}` and render the same core sections with role-specific differences.
+All three pages call `GET /api/submissions/{id}` and render the same core sections with role-specific differences.
+
+### Page Layout Structure
+
+On desktop/tablet, all three pages use a split layout:
+- Full-width header area (top): Header, Rejection Card, PO Section
+- Below that, a side-by-side Row:
+  - Left (3/4 width): Invoice Summary, AI Recommendation, Validation Summary, Photo Gallery
+  - Right (1/4 width): Approval Flow timeline (sticky sidebar)
+
+On mobile, everything stacks vertically in a single column with the Approval Flow at the very bottom.
 
 ### Section Layout (top to bottom)
 
-| # | Section | Agency Page | ASM Page | Description |
-|---|---|---|---|---|
-| 1 | Header / Title Bar | ✅ | ✅ | Submission ID, invoice number, agency name, date, status badge |
-| 2 | Rejection Card | ✅ (conditional) | — | Red card shown when state is `RejectedByASM` or `RejectedByRA` with rejection reason and "Edit Submission" button |
-| 3 | Processing Failed Card | ✅ (conditional) | — | Yellow warning card shown when state is `ProcessingFailed` with "Edit & Resubmit" button |
-| 4 | PO Section | ✅ | — | Expandable card showing PO document with extracted fields (PO Number, Date, Vendor, Amount, etc.) and download button |
-| 5 | Invoice Summary | ✅ | ✅ | Card with 3 key metrics: Invoice Amount, Agency Name, Submitted Date |
-| 6 | AI Recommendation | — | ✅ | Collapsible card showing AI pass percentage, approve/reject recommendation |
-| 7 | Approve/Reject Actions | — | ✅ | Approve and Reject buttons with optional comments field (only for actionable states) |
-| 8 | PO Balance | — | ✅ | Shows remaining PO balance fetched from separate API |
-| 9 | Validation Summary | ✅ | ✅ | Card containing per-document validation tables (Invoice, Cost Summary, Activity, Enquiry, Photos) |
-| 10 | Photo Gallery | ✅ | ✅ | Thumbnail grid of team photos with color-coded borders (green=passed, red=failed, yellow=warning, grey=pending) |
+| # | Section | Agency Page | ASM Page | RA Page | Position | Description |
+|---|---|---|---|---|---|---|
+| 1 | Header / Title Bar | ✅ | ✅ | ✅ | Full width | Submission ID, invoice number, agency name, date, status badge |
+| 2 | Rejection Card | ✅ (conditional) | — | — | Full width | Red card shown when state is `RejectedByASM` or `RejectedByRA` with rejection reason and "Edit Submission" button |
+| 3 | Processing Failed Card | ✅ (conditional) | — | — | Full width | Yellow warning card shown when state is `ProcessingFailed` with "Edit & Resubmit" button |
+| 4 | PO Section | ✅ | — | — | Full width | Expandable card showing PO document with extracted fields and download button |
+| 5 | Invoice Summary | ✅ | ✅ | ✅ | Left (3/4) | Card with 3 key metrics: Invoice Amount, Agency Name, Submitted Date |
+| 6 | ASM Review Card | — | — | ✅ | Left (3/4) | Shows ASM review date and notes (only if ASM has already reviewed) |
+| 7 | AI Recommendation | — | ✅ | ✅ | Left (3/4) | Collapsible card showing AI pass percentage, approve/reject recommendation |
+| 8 | Approve/Reject Actions | — | ✅ | ✅ | Left (3/4) | Approve and Reject buttons with optional comments field |
+| 9 | PO Balance | — | ✅ | ✅ | Left (3/4) | Shows remaining PO balance fetched from separate API |
+| 10 | Invoice Documents Table | — | — | ✅ | Left (3/4) | Table of PO documents with validation status and remarks |
+| 11 | Validation Summary | ✅ | ✅ | ✅ | Left (3/4) | Card containing per-document validation tables |
+| 12 | Photo Gallery | ✅ | ✅ | ✅ | Left (3/4) | Thumbnail grid of team photos with color-coded borders |
+| 13 | Approval Flow | ✅ | ✅ | ✅ | Right (1/4) | Timeline showing Submitted → CH Review → RA Review with dates, comments, and full history |
 
 ---
 
@@ -88,9 +102,20 @@ Shared widget (`InvoiceSummarySection`) showing 3 key metrics in a horizontal ca
 
 Responsive: horizontal layout on desktop, vertical stack on mobile.
 
-### 6. AI Recommendation Section (ASM only)
+### 6. ASM Review Card (RA page only)
 
-Collapsible card (`AiAnalysisSection`) showing AI analysis results. Only renders if `confidenceScore` or `recommendation` exists in the response.
+Shown only on the HQ/RA review page when the ASM has already reviewed the submission (`asmReviewedAt != null`). Displays:
+- Green check icon with "ASM Review" title
+- Review date: `asmReviewedAt` formatted as `DD MMM YYYY HH:mm`
+- ASM notes: `asmReviewNotes` (if provided)
+
+This gives the RA reviewer context on what the ASM decided before they make their own decision.
+
+Data sources: `submission.asmReviewedAt`, `submission.asmReviewNotes`
+
+### 7. AI Recommendation Section (ASM and RA)
+
+Collapsible card (`AiAnalysisSection`) showing AI analysis results. Only renders if `confidenceScore` or `recommendation` exists in the response. Present on both ASM and RA pages.
 
 How it works:
 1. Computes an overall pass percentage by iterating all `validationDetailsJson` across invoice, cost summary, activity, enquiry, and photo validations
@@ -116,9 +141,20 @@ Fetches and displays the remaining PO balance from a separate API call. Shows:
 - Loading spinner while fetching
 - Error message if fetch fails
 
-### 9. Validation Summary Section
+### 10. Invoice Documents Table (RA page only)
 
-The largest section. A card containing per-document validation sub-sections, each rendered as an expandable validation card.
+Table widget (`InvoiceDocumentsTable`) showing PO documents with validation status. Only shown on the HQ/RA review page. Each row shows:
+- Serial number
+- Document category (PO)
+- Filename (clickable to download)
+- Validation status (OK / Failed)
+- Remarks (parsed from `validationResult.failureReason` by keyword matching)
+
+Data sources: `submission.documents[]` filtered by `type == "PO"`, `submission.validationResult.failureReason`
+
+### 11. Validation Summary Section
+
+The largest section.
 
 Sub-sections rendered in order:
 1. Invoice Validations (one card per invoice)
@@ -145,7 +181,7 @@ If no validation data exists for any document type, shows "No validation data av
 
 Data sources: `submission.invoiceValidations[]`, `submission.costSummaryValidation`, `submission.activityValidation`, `submission.enquiryValidation`, `submission.photoValidations[]` — each containing `validationDetailsJson`
 
-### 10. Photo Thumbnail Gallery
+### 12. Photo Thumbnail Gallery
 
 Grid of photo thumbnails collected from all campaigns. Each photo has a color-coded border:
 - Green border: all validation rules passed
@@ -164,6 +200,38 @@ How photos are collected:
 4. If submission state is `Draft`/`Uploaded`/`Extracting`/`Validating`, all photos show as pending (grey)
 
 Data sources: `submission.campaigns[].photos[]` (id, fileName), `submission.photoValidations[]` (documentId, allPassed, failureReason, validationDetailsJson)
+
+### 13. Approval Flow (Right Sidebar — 1/4 width)
+
+A card pinned to the right side of the page on desktop/tablet (stacks at the bottom on mobile). Shows the full approval lifecycle as a vertical timeline.
+
+The timeline has 3 fixed steps:
+
+| Step | Icon | Title (varies by state) | Date Source | Comment Source |
+|---|---|---|---|---|
+| 1. Submitted | Upload icon (blue) | "Submitted" | `submission.createdAt` | — |
+| 2. CH Review | Check/Cancel/Clock | "Approved by CH" / "Rejected by CH" / "Pending CH Review" | `submission.asmReviewedAt` | `submission.asmReviewNotes` |
+| 3. RA Review | Check/Cancel/Clock | "Approved by RA" / "Rejected by RA" / "Pending RA Review" | `submission.hqReviewedAt` | `submission.hqReviewNotes` |
+
+Step status is derived from `submission.state`:
+- CH approved: state contains `chapproved`, `approved`, `rapending`, `pendingra`, `rarejected`, or `rejectedbyhq`
+- CH rejected: state contains `chrejected` or `rejectedbyasm`
+- RA approved: state is `approved` or `raapproved`
+- RA rejected: state contains `rarejected` or `rejectedbyhq`
+
+Each step shows:
+- Colored circle icon (green=approved, red=rejected, grey=pending)
+- Title text
+- Date (formatted as `DD MMM YYYY HH:mm`)
+- Comment bubble (if reviewer left comments/rejection reason)
+
+Below the timeline, if `approvalHistory[]` is populated in the API response, a "History" section renders the full chronological list of all approval actions with:
+- Action icon (green check for approved, red X for rejected, grey info for others)
+- "{Action} by {ApproverName}" text
+- Date
+- Comment bubble (if comments exist)
+
+Data sources: `submission.state`, `submission.createdAt`, `submission.asmReviewedAt`, `submission.asmReviewNotes`, `submission.hqReviewedAt`, `submission.hqReviewNotes`, `submission.approvalHistory[]`
 
 ---
 
@@ -184,12 +252,23 @@ User opens detail page
     │       │       invoiceValidations[], costSummaryValidation, activityValidation,
     │       │       enquiryValidation, photoValidations[]
     │       │
-    │       └─ Extract blob URLs from campaigns[0]
-    │               costSummaryBlobUrl, activitySummaryBlobUrl, enquiryBlobUrl
+    │       ├─ Extract blob URLs from campaigns[0]
+    │       │       costSummaryBlobUrl, activitySummaryBlobUrl, enquiryBlobUrl
+    │       │
+    │       └─ Extract approval history from response
+    │               approvalHistory[], asmReviewedAt, asmReviewNotes,
+    │               hqReviewedAt, hqReviewNotes
     │
     ├─ (ASM only) Fetch PO balance from separate endpoint
     │
-    └─ Render all sections
+    └─ Render layout
+            │
+            ├─ Full-width header area (top)
+            │       Header, Rejection Card, PO Section
+            │
+            └─ Side-by-side Row (desktop/tablet)
+                    ├─ Left 3/4: Invoice Summary, AI, Validations, Photos
+                    └─ Right 1/4: Approval Flow timeline
 ```
 
 ---
@@ -221,7 +300,7 @@ _context.DocumentPackages
     .Include(p => p.CostSummary)
     .Include(p => p.ActivitySummary)
     .Include(p => p.EnquiryDocument)
-    .Include(p => p.RequestApprovalHistory)
+    .Include(p => p.RequestApprovalHistory).ThenInclude(h => h.Approver)
     .AsSplitQuery()
 ```
 
@@ -655,6 +734,18 @@ Same API call and data extraction pattern. Additionally:
 - Shows AI analysis section with confidence scores and recommendation
 - Provides approve/reject actions with comments
 
+### HQ/RA Review Detail Page
+
+File: `frontend/lib/features/approval/presentation/pages/hq_review_detail_page.dart`
+
+Same API call and data extraction pattern. Additionally:
+- Shows ASM Review Card with prior ASM decision and notes
+- Shows Invoice Documents Table (PO documents with validation status)
+- Loads PO balance via separate endpoint
+- Shows AI analysis section
+- Provides RA-level approve/reject actions with comments
+- Also fetches hierarchical structure via `GET /api/hierarchical/{id}/structure` for campaign photos and document URLs
+
 ---
 
 ## Additional API Endpoints
@@ -664,5 +755,10 @@ Same API call and data extraction pattern. Additionally:
 | `GET /api/submissions/{id}` | GET | Full submission detail (documented above) |
 | `GET /api/submissions/{id}/validation-report` | GET | Enhanced validation report (ASM/RA only). Uses `IEnhancedValidationReportService` |
 | `PATCH /api/submissions/{id}` | PATCH | Update draft submission (state, selectedPOId). Agency only, Draft state only |
+| `PATCH /api/submissions/{id}/asm-approve` | PATCH | ASM approves submission. Body: `{ notes }` |
+| `PATCH /api/submissions/{id}/asm-reject` | PATCH | ASM rejects submission. Body: `{ Reason }` |
+| `PATCH /api/submissions/{id}/ra-approve` | PATCH | RA approves submission. Body: `{ notes }` |
+| `PATCH /api/submissions/{id}/ra-reject` | PATCH | RA rejects submission. Body: `{ Reason }` |
+| `GET /api/hierarchical/{id}/structure` | GET | Hierarchical campaign structure with photos, cost/activity summary URLs |
 | `GET /api/documents/{id}/extraction-status` | GET | Poll AI extraction status |
 | `GET /api/documents/{id}/view` | GET | Download/view document file content |
