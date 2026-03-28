@@ -216,9 +216,20 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
         }
 
         // Extract package-level documents
-        _existingCostSummaryFileName = data['costSummaryFileName']?.toString();
+        // Try package level first, then fall back to campaigns[0]
+        final campaignsList = data['campaigns'] as List? ?? [];
+        final firstCampaign = campaignsList.isNotEmpty
+            ? campaignsList[0] as Map<String, dynamic>
+            : <String, dynamic>{};
+        
+        _existingCostSummaryFileName =
+            data['costSummaryFileName']?.toString() ??
+            firstCampaign['costSummaryFileName']?.toString();
+        
         _existingActivitySummaryFileName =
-            data['activitySummaryFileName']?.toString();
+            data['activitySummaryFileName']?.toString() ??
+            firstCampaign['activitySummaryFileName']?.toString();
+        
         _existingEnquiryDocFileName = data['enquiryDocFileName']?.toString();
 
         // Extract invoices at package level (linked to PO)
@@ -1721,6 +1732,9 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
   }
 
   /// Dashed upload row — shows filename + Replace when uploaded, or upload prompt when empty.
+  /// File row UI — shows filename + Replace when uploaded, or upload prompt when empty.
+  /// When file exists: Green box with filename, "Uploaded" status, and Replace button
+  /// When file doesn't exist: Dashed upload area with cloud icon and upload prompt
   Widget _buildFlatFileRow({
     required PlatformFile? file,
     required String? existingFileName,
@@ -1730,67 +1744,120 @@ class _AgencyUploadPageState extends ConsumerState<AgencyUploadPage>
     final displayName = file?.name ?? existingFileName;
     final hasFile = displayName != null;
 
+    // ✅ WHEN FILE EXISTS: Green box with filename, status, and Replace button
     if (hasFile) {
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: const Color(0xFFF0FDF4),
+          color: const Color(0xFFE8F5E9), // Light green background
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+          border: Border.all(
+            color: const Color(0xFFC8E6C9), // Green border
+            width: 1.5,
+          ),
         ),
         child: Row(
           children: [
+            // File icon
+            Icon(
+              Icons.description_outlined,
+              size: 20,
+              color: const Color(0xFF2E7D32), // Dark green
+            ),
+            const SizedBox(width: 12),
+            // Filename and status
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(displayName,
-                      style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: Color(0xFF15803D))),
+                  Text(
+                    displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF1B5E20), // Dark green text
+                    ),
+                  ),
                   const SizedBox(height: 2),
-                  const Text('Uploaded',
-                      style: TextStyle(fontSize: 11, color: Color(0xFF16A34A))),
+                  const Text(
+                    'Uploaded',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF388E3C), // Green status
+                    ),
+                  ),
                 ],
               ),
             ),
+            const SizedBox(width: 12),
+            // Replace button
             TextButton(
               onPressed: onPick,
               style: TextButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  padding: const EdgeInsets.symmetric(horizontal: 8)),
-              child: const Text('Replace', style: TextStyle(fontSize: 13)),
+                foregroundColor: AppColors.primary,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                minimumSize: const Size(0, 32),
+              ),
+              child: const Text(
+                'Replace',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ),
           ],
         ),
       );
     }
 
+    // ❌ WHEN FILE DOESN'T EXIST: Dashed upload area with cloud icon
     return InkWell(
       onTap: onPick,
       borderRadius: BorderRadius.circular(8),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 20),
+        padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 16),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-              color: AppColors.border, width: 1.5, style: BorderStyle.solid),
+            color: const Color(0xFFBDBDBD), // Gray border
+            width: 1.5,
+            style: BorderStyle.solid,
+          ),
+          color: const Color(0xFFFAFAFA), // Light gray background
         ),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.cloud_upload_outlined,
-                size: 32, color: AppColors.primary.withOpacity(0.5)),
-            const SizedBox(height: 6),
-            const Text('Click to upload',
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.primary)),
-            const SizedBox(height: 2),
-            const Text('PDF, Word, Excel, Images supported',
-                style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+            // Cloud upload icon
+            Icon(
+              Icons.cloud_upload_outlined,
+              size: 40,
+              color: AppColors.primary.withOpacity(0.6),
+            ),
+            const SizedBox(height: 12),
+            // "Click to upload" text
+            Text(
+              'Click to upload',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            // Supported formats text
+            const Text(
+              'PDF, Word, Excel, Images supported',
+              style: TextStyle(
+                fontSize: 12,
+                color: Color(0xFF757575), // Gray text
+              ),
+            ),
           ],
         ),
       ),

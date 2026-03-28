@@ -10,5 +10,6 @@ public enum DocumentType
     CostSummary = 3,
     ActivitySummary = 4,
     EnquiryDocument = 5,
-    TeamPhoto = 6
+    TeamPhoto = 6,
+    AdditionalDocument = 7
 }

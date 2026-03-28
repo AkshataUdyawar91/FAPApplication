@@ -80,6 +80,24 @@ public class SubmissionDetailResponse
     public List<CampaignDto>? Campaigns { get; init; }
     
     /// <summary>
+    /// Package-level Cost Summary filename (for draft mode when no campaigns exist)
+    /// </summary>
+    [JsonPropertyName("costSummaryFileName")]
+    public string? CostSummaryFileName { get; init; }
+    
+    /// <summary>
+    /// Package-level Activity Summary filename (for draft mode when no campaigns exist)
+    /// </summary>
+    [JsonPropertyName("activitySummaryFileName")]
+    public string? ActivitySummaryFileName { get; init; }
+    
+    /// <summary>
+    /// Package-level Enquiry Document filename (for draft mode when no campaigns exist)
+    /// </summary>
+    [JsonPropertyName("enquiryDocFileName")]
+    public string? EnquiryDocFileName { get; init; }
+    
+    /// <summary>
     /// Validation results
     /// </summary>
     [JsonPropertyName("validationResult")]
@@ -432,6 +450,12 @@ public class CampaignInvoiceDto
 
     [JsonPropertyName("vendorName")]
     public string? VendorName { get; init; }
+
+    [JsonPropertyName("invoiceDate")]
+    public DateTime? InvoiceDate { get; init; }
+
+    [JsonPropertyName("gstNumber")]
+    public string? GSTNumber { get; init; }
 
     [JsonPropertyName("totalAmount")]
     public decimal? TotalAmount { get; init; }

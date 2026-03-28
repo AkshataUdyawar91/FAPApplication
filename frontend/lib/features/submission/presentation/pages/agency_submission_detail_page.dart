@@ -2098,15 +2098,14 @@ debugPrint('Agency Name: ${submissionData['agencyName']}');
         visible: false,
         child: _buildStatusCard(state, fapNumber),
       ),
-      if (state.toLowerCase() == 'rejectedbyasm') ...[
+      if (state.toLowerCase() == 'chrejected') ...[
         const SizedBox(height: 16),
         _buildRejectionCard(
-          rejectedBy: 'ASM',
+          rejectedBy: 'CH',
           reviewNotes: _submission!['asmReviewNotes']?.toString(),
         ),
       ],
-      if (state.toLowerCase() == 'rejectedbyhq' ||
-          state.toLowerCase() == 'rejectedbyra') ...[
+      if (state.toLowerCase() == 'rarejected') ...[
         const SizedBox(height: 16),
         _buildRejectionCard(
           rejectedBy: 'RA',
@@ -2893,12 +2892,12 @@ debugPrint('Agency Name: ${submissionData['agencyName']}');
 
     // Determine ASM status
     String asmStatus = 'pending';
-    if (state.contains('rejectedbyasm') || state.contains('chrejected')) {
+    final stateLower = state.toLowerCase();
+    if (stateLower.contains('chrejected')) {
       asmStatus = 'rejected';
-    } else if (state.contains('approved') ||
-        state.contains('pendinghq') ||
-        state.contains('rejectedbyhq') ||
-        state.contains('rarejected')) {
+    } else if (stateLower.contains('approved') ||
+        stateLower.contains('pendingra') ||
+        stateLower.contains('rarejected')) {
       asmStatus = 'approved';
     } else if (asmReviewedAt != null) {
       asmStatus = asmReviewNotes != null && asmReviewNotes.isNotEmpty
@@ -2908,9 +2907,9 @@ debugPrint('Agency Name: ${submissionData['agencyName']}');
 
     // Determine HQ/RA status
     String hqStatus = 'pending';
-    if (state == 'approved') {
+    if (stateLower == 'approved') {
       hqStatus = 'approved';
-    } else if (state.contains('rejectedbyhq') || state.contains('rarejected')) {
+    } else if (stateLower.contains('rarejected')) {
       hqStatus = 'rejected';
     } else if (hqReviewedAt != null) {
       hqStatus = hqReviewNotes != null && hqReviewNotes.isNotEmpty
@@ -3094,7 +3093,7 @@ debugPrint('Agency Name: ${submissionData['agencyName']}');
         'borderColor': const Color(0xFF6EE7B7),
         'icon': Icons.check_circle,
       };
-    } else if (stateLower == 'rejectedbyasm' || stateLower == 'chrejected') {
+    } else if (stateLower == 'chrejected') {
       return {
         'label': 'Rejected by CH',
         'color': const Color(0xFFDC2626),
@@ -3102,7 +3101,7 @@ debugPrint('Agency Name: ${submissionData['agencyName']}');
         'borderColor': const Color(0xFFFCA5A5),
         'icon': Icons.cancel,
       };
-    } else if (stateLower == 'rejectedbyhq' || stateLower == 'rejectedbyra' || stateLower == 'rarejected') {
+    } else if (stateLower == 'rarejected') {
       return {
         'label': 'Rejected by RA',
         'color': const Color(0xFFDC2626),

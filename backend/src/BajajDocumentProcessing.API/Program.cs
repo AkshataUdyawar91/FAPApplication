@@ -14,7 +14,11 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
 builder.Services.AddSignalR();
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    // Add custom model validation filter for user-friendly error messages
+    options.Filters.Add<ModelValidationFilter>();
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {

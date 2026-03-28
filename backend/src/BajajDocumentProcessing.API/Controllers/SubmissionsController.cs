@@ -497,6 +497,11 @@ public class SubmissionsController : ControllerBase
                 AgencyId = package.AgencyId,
                 AgencyName = package.Agency?.SupplierName ?? "",
                 Documents = BuildDocumentDtos(package),
+                // Package-level document filenames (for draft mode only when no campaigns exist)
+                // Only return these in Draft state to enable "Replace" button in draft mode
+                CostSummaryFileName = package.State == PackageState.Draft ? package.CostSummary?.FileName : null,
+                ActivitySummaryFileName = package.State == PackageState.Draft ? package.ActivitySummary?.FileName : null,
+                EnquiryDocFileName = package.State == PackageState.Draft ? package.EnquiryDocument?.FileName : null,
                 Campaigns = package.Teams.Where(c => !c.IsDeleted).Select((c, index) => new CampaignDto
                 {
                     Id = c.Id,
@@ -528,6 +533,8 @@ public class SubmissionsController : ControllerBase
                             Id = i.Id,
                             InvoiceNumber = i.InvoiceNumber,
                             VendorName = i.VendorName,
+                            InvoiceDate = i.InvoiceDate,
+                            GSTNumber = i.GSTNumber,
                             TotalAmount = i.TotalAmount,
                             FileName = i.FileName ?? "",
                             BlobUrl = i.BlobUrl ?? ""
