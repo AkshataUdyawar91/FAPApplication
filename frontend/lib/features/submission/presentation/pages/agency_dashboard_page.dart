@@ -1,6 +1,7 @@
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import '../../../../core/constants/api_constants.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -19,6 +20,7 @@ import '../../../assistant/presentation/widgets/assistant_chat_panel.dart';
 import '../../../../core/widgets/chat_end_drawer.dart';
 import '../../../../core/widgets/nav_item.dart';
 import '../../../../core/widgets/pagination_bar.dart';
+import 'validation_testing_page.dart';
 
 class AgencyDashboardPage extends ConsumerStatefulWidget {
   final String token;
@@ -92,7 +94,8 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           if (statusCode == 401) return const AuthFailure('Unauthorized');
           if (statusCode == 403) return const AuthFailure('Forbidden');
           if (statusCode == 404) return const NotFoundFailure();
-          return ServerFailure(e.response?.data?['message']?.toString() ?? 'Server error');
+          return ServerFailure(
+              e.response?.data?['message']?.toString() ?? 'Server error');
         default:
           return const NetworkFailure();
       }
@@ -128,7 +131,9 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ErrorHandler.show(context, failure: _mapExceptionToFailure(e), onRetry: () => _loadRequests(page: page));
+        ErrorHandler.show(context,
+            failure: _mapExceptionToFailure(e),
+            onRetry: () => _loadRequests(page: page));
       }
     }
   }
@@ -150,16 +155,23 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         'recommending'
       ].contains(state)) {
         statuses.add('extracting');
-      } else if (['pendingapproval', 'pendingchapproval', 'pendingch'].contains(state)) {
+      } else if (['pendingapproval', 'pendingchapproval', 'pendingch']
+          .contains(state)) {
         statuses.add('pending_with_asm');
-      } else if (['asmapproved', 'pendinghqapproval', 'pendingra'].contains(state)) {
+      } else if (['asmapproved', 'pendinghqapproval', 'pendingra']
+          .contains(state)) {
         statuses.add('pending_with_ra');
       } else if (state == 'approved') {
         statuses.add('approved');
-      } else if (['rejected', 'rejectedbyasm', 'reuploadrequested', 'chrejected']
-          .contains(state)) {
+      } else if ([
+        'rejected',
+        'rejectedbyasm',
+        'reuploadrequested',
+        'chrejected'
+      ].contains(state)) {
         statuses.add('rejected_by_asm');
-      } else if (['rejectedbyhq', 'rejectedbyra', 'rarejected'].contains(state)) {
+      } else if (['rejectedbyhq', 'rejectedbyra', 'rarejected']
+          .contains(state)) {
         statuses.add('rejected_by_ra');
       }
     }
@@ -225,21 +237,27 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           ].contains(state);
           break;
         case 'pending_with_asm':
-          matchesStatus =
-              ['pendingapproval', 'pendingchapproval', 'pendingch'].contains(state);
+          matchesStatus = ['pendingapproval', 'pendingchapproval', 'pendingch']
+              .contains(state);
           break;
         case 'pending_with_ra':
-          matchesStatus = ['asmapproved', 'pendinghqapproval', 'pendingra'].contains(state);
+          matchesStatus =
+              ['asmapproved', 'pendinghqapproval', 'pendingra'].contains(state);
           break;
         case 'approved':
           matchesStatus = state == 'approved';
           break;
         case 'rejected_by_asm':
-          matchesStatus = ['rejected', 'rejectedbyasm', 'reuploadrequested', 'chrejected']
-              .contains(state);
+          matchesStatus = [
+            'rejected',
+            'rejectedbyasm',
+            'reuploadrequested',
+            'chrejected'
+          ].contains(state);
           break;
         case 'rejected_by_ra':
-          matchesStatus = ['rejectedbyhq', 'rejectedbyra', 'rarejected'].contains(state);
+          matchesStatus =
+              ['rejectedbyhq', 'rejectedbyra', 'rarejected'].contains(state);
           break;
       }
       return matchesSearch && matchesStatus;
@@ -265,7 +283,8 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       }).length,
       'pendingWithASM': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
-        return ['pendingapproval', 'pendingchapproval', 'pendingch'].contains(s);
+        return ['pendingapproval', 'pendingchapproval', 'pendingch']
+            .contains(s);
       }).length,
       'pendingWithRA': _requests.where((r) {
         final s = r['state']?.toString().toLowerCase() ?? '';
@@ -284,7 +303,6 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
       }).length,
     };
   }
-
 
   // ─── BUILD ───────────────────────────────────────────────────────────
   @override
@@ -305,7 +323,8 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                   iconTheme: const IconThemeData(color: Colors.white),
                   actions: [
                     IconButton(
-                        icon: const Icon(Icons.add_comment, color: Colors.white),
+                        icon:
+                            const Icon(Icons.add_comment, color: Colors.white),
                         onPressed: _navigateToChatbot),
                   ],
                 )
@@ -338,23 +357,29 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
                     Expanded(
                       child: _mainView == 'chatbot'
                           ? AssistantChatPanel(
-                              onClose: () => setState(() => _mainView = 'requests'),
+                              onClose: () =>
+                                  setState(() => _mainView = 'requests'),
                               onNewRequest: _navigateToUpload,
                               onSubmissionComplete: () {
                                 _loadRequests();
                               },
                               isFullWidth: true,
                             )
-                          : Column(
-                              children: [
-                                if (!isMobile && !_pendingClaimsMode) _buildHeader(device),
-                                Expanded(
-                                  child: _isLoading
-                                      ? const Center(child: CircularProgressIndicator())
-                                      : _buildContent(device),
+                          : _mainView == 'validation_testing'
+                              ? ValidationTestingPage(token: widget.token)
+                              : Column(
+                                  children: [
+                                    if (!isMobile && !_pendingClaimsMode)
+                                      _buildHeader(device),
+                                    Expanded(
+                                      child: _isLoading
+                                          ? const Center(
+                                              child:
+                                                  CircularProgressIndicator())
+                                          : _buildContent(device),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
                     ),
                     if (_isChatOpen && !isMobile)
                       ChatSidePanel(
@@ -443,13 +468,10 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
           label: 'My Requests',
           isActive: _mainView == 'requests',
           onTap: () => setState(() {
-            _mainView = 'requests';
-            _pendingClaimsMode = false;
-          })),
-      NavItem(
-          icon: Icons.add,
-          label: 'New Claim',
-          onTap: _navigateToUpload),
+                _mainView = 'requests';
+                _pendingClaimsMode = false;
+              })),
+      NavItem(icon: Icons.add, label: 'New Claim', onTap: _navigateToUpload),
       NavItem(
           icon: Icons.notifications,
           label: 'Notifications',
@@ -464,6 +486,12 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
             ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Settings coming soon')));
           }),
+      if (kDebugMode)
+        NavItem(
+            icon: Icons.verified_user,
+            label: 'Validation Testing',
+            isActive: _mainView == 'validation_testing',
+            onTap: () => setState(() => _mainView = 'validation_testing')),
     ];
   }
 
@@ -524,16 +552,31 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
     // Pending claims mode: no stats, pre-filtered to pending, with a simple header
     if (_pendingClaimsMode) {
       // Force filter to pending states
-      final pendingStates = {'uploaded', 'extracting', 'pending_with_asm', 'pending_with_ra'};
+      final pendingStates = {
+        'uploaded',
+        'extracting',
+        'pending_with_asm',
+        'pending_with_ra'
+      };
       if (!pendingStates.contains(_statusFilter)) {
         // reset to 'all' so _filteredRequests shows everything, then we filter below
       }
       final pendingRequests = _requests.where((req) {
         final state = req['state']?.toString().toLowerCase() ?? '';
         return [
-          'uploaded', 'draft', 'extracting', 'validating', 'validated',
-          'scoring', 'recommending', 'pendingapproval', 'pendingchapproval',
-          'pendingch', 'asmapproved', 'pendinghqapproval', 'pendingra',
+          'uploaded',
+          'draft',
+          'extracting',
+          'validating',
+          'validated',
+          'scoring',
+          'recommending',
+          'pendingapproval',
+          'pendingchapproval',
+          'pendingch',
+          'asmapproved',
+          'pendinghqapproval',
+          'pendingra',
         ].contains(state);
       }).toList();
 
