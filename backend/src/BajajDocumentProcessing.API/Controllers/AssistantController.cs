@@ -990,6 +990,29 @@ public class AssistantController : ControllerBase
         if (actSummary == null)
             return new AssistantResponse { Type = "error", Message = "Activity Summary document not found. Please try uploading again." };
 
+        // Wait for background extraction to complete (up to 60s)
+        bool actExtractionReady = !string.IsNullOrEmpty(actSummary.ExtractedDataJson)
+            && (actSummary.TotalDays.HasValue || actSummary.TotalWorkingDays.HasValue || !string.IsNullOrWhiteSpace(actSummary.DealerName));
+
+        if (!actExtractionReady)
+        {
+            _logger.LogInformation("Waiting for activity summary extraction to complete for {DocId}", docId);
+            for (int i = 0; i < 30; i++)
+            {
+                await Task.Delay(2000, ct);
+                var refreshed = await _context.ActivitySummaries
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.Id == docId && !a.IsDeleted, ct);
+                if (refreshed != null)
+                {
+                    actSummary = refreshed;
+                    bool ready = !string.IsNullOrEmpty(refreshed.ExtractedDataJson)
+                        && (refreshed.TotalDays.HasValue || refreshed.TotalWorkingDays.HasValue || !string.IsNullOrWhiteSpace(refreshed.DealerName));
+                    if (ready) break;
+                }
+            }
+        }
+
         // Fetch cost summary for the same package (for AS_DAYS_MATCH_COST_SUMMARY check)
         // Prefer exact document ID to avoid picking up stale previous uploads
         Domain.Entities.CostSummary? costSummary = null;
@@ -2166,7 +2189,7 @@ public class AssistantController : ControllerBase
                             try
                             {
                                 var actData = System.Text.Json.JsonSerializer.Deserialize<Application.DTOs.Documents.ActivityData>(actSummary.ExtractedDataJson);
-                                activitySummaryDays = actData?.Rows?.Sum(r => r.WorkingDay) ?? actData?.TotalDays ?? 0;
+                                activitySummaryDays = actData?.TotalWorkingDays ?? actData?.TotalDays ?? actData?.Rows?.Sum(r => r.WorkingDay) ?? 0;
                             }
                             catch { }
                         }
@@ -3006,12 +3029,18 @@ public class AssistantController : ControllerBase
                 {
                     if (json.TryGetProperty("hasBlueTshirtPerson", out var bt)) blueTshirt = bt.GetBoolean();
                     else if (json.TryGetProperty("blueTshirtPresent", out var bt2)) blueTshirt = bt2.GetBoolean();
+                    // Apply confidence threshold: pass if blueTshirtConfidence >= 0.60
+                    if (!blueTshirt && json.TryGetProperty("blueTshirtConfidence", out var bc))
+                        blueTshirt = bc.GetDouble() >= 0.60;
                 }
 
                 if (!threeWheeler)
                 {
                     if (json.TryGetProperty("has3WVehicle", out var tw)) threeWheeler = tw.GetBoolean();
                     else if (json.TryGetProperty("threeWheelerPresent", out var tw2)) threeWheeler = tw2.GetBoolean();
+                    // Apply confidence threshold: pass if vehicleConfidence >= 0.60
+                    if (!threeWheeler && json.TryGetProperty("vehicleConfidence", out var vc))
+                        threeWheeler = vc.GetDouble() >= 0.60;
                 }
             }
             catch { }
@@ -3163,12 +3192,15 @@ public class AssistantController : ControllerBase
         _logger.LogInformation("=== COST SUMMARY VALIDATION === DocumentId: {DocId}", docId);
 
         var costSummary = await _context.CostSummaries
+            .AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == docId && !c.IsDeleted, ct);
 
         if (costSummary == null)
             return new AssistantResponse { Type = "error", Message = "Cost Summary document not found. Please try uploading again." };
 
         // Wait for background extraction to complete (up to 60s)
+        // Wait until ExtractedDataJson is populated (dedicated columns may be empty if AI parse failed,
+        // but the fallback in RunCostSummaryValidationRules will read from ExtractedDataJson directly)
         if (string.IsNullOrEmpty(costSummary.ExtractedDataJson))
         {
             _logger.LogInformation("Waiting for cost summary extraction to complete for {DocId}", docId);
@@ -3178,7 +3210,7 @@ public class AssistantController : ControllerBase
                 var refreshed = await _context.CostSummaries
                     .AsNoTracking()
                     .FirstOrDefaultAsync(c => c.Id == docId && !c.IsDeleted, ct);
-                if (!string.IsNullOrEmpty(refreshed?.ExtractedDataJson))
+                if (refreshed != null && !string.IsNullOrEmpty(refreshed.ExtractedDataJson))
                 {
                     costSummary = refreshed;
                     break;
