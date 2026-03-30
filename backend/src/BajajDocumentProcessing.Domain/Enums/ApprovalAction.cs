@@ -24,5 +24,10 @@ public enum ApprovalAction
     /// <summary>
     /// Package was resubmitted after rejection.
     /// </summary>
-    Resubmitted = 4
+    Resubmitted = 4,
+
+    /// <summary>
+    /// Package was sent back to Circle Head by RA for clarification.
+    /// </summary>
+    SentBackToCH = 5
 }

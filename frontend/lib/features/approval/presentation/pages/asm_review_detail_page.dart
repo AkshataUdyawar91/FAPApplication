@@ -9,6 +9,7 @@ import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../submission/presentation/widgets/approval_flow_section.dart';
 import '../../../../core/error/error_handler.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/responsive/responsive.dart';
@@ -325,6 +326,111 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
   }
 
+  /// Responds to RA's clarification request and sends submission back to RA.
+  Future<void> _respondToClarification(String notes) async {
+    setState(() => _isProcessing = true);
+
+    try {
+      final response = await _dio.patch(
+        '/submissions/${widget.submissionId}/asm-respond-clarification',
+        data: {'notes': notes},
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Clarification sent to RA'),
+            backgroundColor: Color(0xFF10B981),
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          Navigator.pop(context, true);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send clarification: ${e.toString()}'),
+            backgroundColor: AppColors.rejectedText,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
+    }
+  }
+
+  void _showRespondClarificationDialog() {
+    final notesController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Respond to RA Clarification'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+                'Provide your clarification response to RA (minimum 10 characters):'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: notesController,
+              maxLines: 4,
+              maxLength: 500,
+              decoration: const InputDecoration(
+                hintText: 'Enter your clarification response...',
+                border: OutlineInputBorder(),
+                helperText: 'Minimum 10 characters required',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final notes = notesController.text.trim();
+              if (notes.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please provide a clarification response'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              if (notes.length < 10) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                        'Clarification must be at least 10 characters'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(context);
+              _respondToClarification(notes);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF10B981),
+            ),
+            child: const Text('Send Clarification'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showRejectDialog() {
     final reasonController = TextEditingController();
 
@@ -516,7 +622,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                                           _buildValidationReportSection(),
                                           ..._buildPhotoGallerySection(),
                                           const SizedBox(height: 24),
-                                          _buildApprovalTimeline(),
+                                          ApprovalFlowSection(submission: _submission!),
                                           const SizedBox(height: 80),
                                         ],
                                       )
@@ -565,7 +671,7 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                                               const SizedBox(width: 20),
                                               SizedBox(
                                                 width: MediaQuery.of(context).size.width * 0.22,
-                                                child: _buildApprovalTimeline(),
+                                                child: ApprovalFlowSection(submission: _submission!),
                                               ),
                                             ],
                                           ),
@@ -747,30 +853,55 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         _buildPoBalanceSection(),
         // Action buttons
         if (_isSubmissionActionable()) ...[
+          // Show clarification request card if in clarification state
+          if (_isClarificationState()) ...[
+            const SizedBox(height: 12),
+            _buildClarificationRequestCard(),
+          ],
           const SizedBox(height: 12),
-          Row(
-            children: [
-              OutlinedButton(
-                onPressed: _isProcessing ? null : _showRejectDialog,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFFEF4444),
-                  side: const BorderSide(color: Color(0xFFEF4444)),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          if (_isClarificationState())
+            // Clarification state: show Respond button only
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isProcessing ? null : _showRespondClarificationDialog,
+                icon: const Icon(Icons.reply, size: 18),
+                label: _isProcessing
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Respond to RA'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 ),
-                child: const Text('Reject'),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _isProcessing ? null : _approveSubmission,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF10B981),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
+            )
+          else
+            Row(
+              children: [
+                OutlinedButton(
+                  onPressed: _isProcessing ? null : _showRejectDialog,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFEF4444),
+                    side: const BorderSide(color: Color(0xFFEF4444)),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   ),
-                  child: _isProcessing
+                  child: const Text('Reject'),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _isProcessing ? null : _approveSubmission,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF10B981),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                    ),
+                    child: _isProcessing
                       ? const SizedBox(
                           width: 16,
                           height: 16,
@@ -895,45 +1026,68 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
                   ),
                   // Action buttons — only for actionable states
                   if (_isSubmissionActionable()) ...[
+                    if (_isClarificationState()) ...[
+                      const SizedBox(height: 16),
+                      _buildClarificationRequestCard(),
+                    ],
                     const SizedBox(height: 20),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        OutlinedButton(
-                          onPressed:
-                              _isProcessing ? null : _showRejectDialog,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFFEF4444),
-                            side:
-                                const BorderSide(color: Color(0xFFEF4444)),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 12),
-                          ),
-                          child: const Text('Reject'),
+                    if (_isClarificationState())
+                      ElevatedButton.icon(
+                        onPressed:
+                            _isProcessing ? null : _showRespondClarificationDialog,
+                        icon: const Icon(Icons.reply, size: 18),
+                        label: _isProcessing
+                            ? const SizedBox(
+                                width: 16, height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : const Text('Respond to RA'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 12),
                         ),
-                        ElevatedButton(
-                          onPressed:
-                              _isProcessing ? null : _approveSubmission,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF10B981),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 12),
+                      )
+                    else
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          OutlinedButton(
+                            onPressed:
+                                _isProcessing ? null : _showRejectDialog,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFEF4444),
+                              side:
+                                  const BorderSide(color: Color(0xFFEF4444)),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 12),
+                            ),
+                            child: const Text('Reject'),
                           ),
-                          child: _isProcessing
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text('Approve Request'),
-                        ),
-                      ],
-                    ),
+                          ElevatedButton(
+                            onPressed:
+                                _isProcessing ? null : _approveSubmission,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10B981),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 12),
+                            ),
+                            child: _isProcessing
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text('Approve Request'),
+                          ),
+                        ],
+                      ),
                   ],
                 ],
               ),
@@ -1139,12 +1293,73 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
     }
   }
 
+  /// Builds a card showing the RA's clarification request.
+  Widget _buildClarificationRequestCard() {
+    final clarificationReason = _getLatestClarificationRequest();
+    if (clarificationReason == null || clarificationReason.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFDBA74)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.question_answer, color: Color(0xFFC2410C), size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'RA Clarification Request',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFFC2410C),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            clarificationReason,
+            style: const TextStyle(fontSize: 14, color: Color(0xFF78350F)),
+          ),
+        ],
+      ),
+    );
+  }
+
   bool _isSubmissionActionable() {
     final state = _submission?['state']?.toString().toLowerCase() ?? '';
     return state == 'pendingch' ||
         state == 'pendingapproval' ||
         state == 'pendingchapproval' ||
-        state == 'rarejected';
+        state == 'pendingchclarification' ||
+        state == 'pendingchreason';
+  }
+
+  /// Returns true if the submission is pending CH clarification from RA.
+  bool _isClarificationState() {
+    final state = _submission?['state']?.toString().toLowerCase() ?? '';
+    return state == 'pendingchclarification' || state == 'pendingchreason';
+  }
+
+  /// Extracts the latest RA clarification request from approval history.
+  String? _getLatestClarificationRequest() {
+    final history = _submission?['approvalHistory'] as List<dynamic>? ?? [];
+    for (final entry in history.reversed) {
+      final action = (entry['action']?.toString() ?? '').toLowerCase();
+      if (action.contains('sentbacktoch')) {
+        return entry['comments']?.toString();
+      }
+    }
+    return null;
   }
 
   /// Extracts the PO number from the submission's documents array.
@@ -1870,258 +2085,6 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         onPhotoTap: (docId, fileName) => _viewDocument(docId, fileName),
       ),
     ];
-  }
-
-  Widget _buildApprovalTimeline() {
-    final state = _submission!['state']?.toString().toLowerCase() ?? '';
-    final createdAt = _submission!['createdAt'];
-    final asmReviewedAt = _submission!['asmReviewedAt'];
-    final asmReviewNotes = _submission!['asmReviewNotes']?.toString();
-    final hqReviewedAt = _submission!['hqReviewedAt'];
-    final hqReviewNotes = _submission!['hqReviewNotes']?.toString();
-
-    // Also read the full approvalHistory array if available
-    final approvalHistory = _submission!['approvalHistory'] as List<dynamic>? ?? [];
-
-    // Determine ASM status
-    String asmStatus = 'pending';
-    if (state.contains('chrejected') || state.contains('rejectedbyasm')) {
-      asmStatus = 'rejected';
-    } else if (state.contains('chapproved') || state.contains('approved') ||
-        state.contains('rapending') || state.contains('pendingra') ||
-        state.contains('rarejected') || state.contains('rejectedbyhq')) {
-      asmStatus = 'approved';
-    } else if (asmReviewedAt != null) {
-      asmStatus = 'approved';
-    }
-
-    // Determine HQ/RA status
-    String hqStatus = 'pending';
-    if (state == 'approved' || state == 'raapproved') {
-      hqStatus = 'approved';
-    } else if (state.contains('rarejected') || state.contains('rejectedbyhq')) {
-      hqStatus = 'rejected';
-    } else if (hqReviewedAt != null) {
-      hqStatus = 'approved';
-    }
-
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: AppColors.border),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.timeline, color: AppColors.primary, size: 22),
-                const SizedBox(width: 8),
-                const Text('Approval Flow', style: AppTextStyles.h3),
-              ],
-            ),
-            const SizedBox(height: 20),
-            _buildTimelineStep(
-              icon: Icons.upload_file,
-              color: const Color(0xFF3B82F6),
-              title: 'Submitted',
-              date: _formatDisplayDate(createdAt),
-              comment: null,
-              isCompleted: true,
-              isLast: false,
-            ),
-            _buildTimelineStep(
-              icon: asmStatus == 'approved'
-                  ? Icons.check_circle
-                  : asmStatus == 'rejected'
-                      ? Icons.cancel
-                      : Icons.schedule,
-              color: asmStatus == 'approved'
-                  ? const Color(0xFF10B981)
-                  : asmStatus == 'rejected'
-                      ? const Color(0xFFDC2626)
-                      : const Color(0xFF9CA3AF),
-              title: asmStatus == 'approved'
-                  ? 'Approved by CH'
-                  : asmStatus == 'rejected'
-                      ? 'Rejected by CH'
-                      : 'Pending CH Review',
-              date: asmReviewedAt != null ? _formatDisplayDate(asmReviewedAt) : null,
-              comment: asmReviewNotes,
-              isCompleted: asmStatus != 'pending',
-              isLast: false,
-            ),
-            _buildTimelineStep(
-              icon: hqStatus == 'approved'
-                  ? Icons.check_circle
-                  : hqStatus == 'rejected'
-                      ? Icons.cancel
-                      : Icons.schedule,
-              color: hqStatus == 'approved'
-                  ? const Color(0xFF10B981)
-                  : hqStatus == 'rejected'
-                      ? const Color(0xFFDC2626)
-                      : const Color(0xFF9CA3AF),
-              title: hqStatus == 'approved'
-                  ? 'Approved by RA'
-                  : hqStatus == 'rejected'
-                      ? 'Rejected by RA'
-                      : 'Pending RA Review',
-              date: hqReviewedAt != null ? _formatDisplayDate(hqReviewedAt) : null,
-              comment: hqReviewNotes,
-              isCompleted: hqStatus != 'pending',
-              isLast: true,
-            ),
-            // Show full approval history if available
-            if (approvalHistory.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Divider(),
-              const SizedBox(height: 8),
-              Text('History', style: AppTextStyles.bodySmall.copyWith(
-                fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
-              const SizedBox(height: 8),
-              ...approvalHistory.map((h) {
-                final entry = h as Map<String, dynamic>;
-                final action = entry['action']?.toString() ?? '';
-                final role = entry['approverRole']?.toString() ?? '';
-                final name = entry['approverName']?.toString() ?? role;
-                final comments = entry['comments']?.toString();
-                final date = entry['actionDate'];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        action.toLowerCase().contains('approved')
-                            ? Icons.check_circle_outline
-                            : action.toLowerCase().contains('rejected')
-                                ? Icons.highlight_off
-                                : Icons.info_outline,
-                        size: 16,
-                        color: action.toLowerCase().contains('approved')
-                            ? const Color(0xFF10B981)
-                            : action.toLowerCase().contains('rejected')
-                                ? const Color(0xFFDC2626)
-                                : const Color(0xFF6B7280),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '$action by $name',
-                              style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600),
-                            ),
-                            if (date != null)
-                              Text(
-                                _formatDisplayDate(date),
-                                style: AppTextStyles.bodySmall.copyWith(
-                                  fontSize: 11, color: AppColors.textSecondary),
-                              ),
-                            if (comments != null && comments.isNotEmpty)
-                              Container(
-                                margin: const EdgeInsets.only(top: 4),
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF9FAFB),
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: const Color(0xFFE5E7EB)),
-                                ),
-                                child: Text(
-                                  comments,
-                                  style: AppTextStyles.bodySmall.copyWith(
-                                    color: const Color(0xFF4B5563), height: 1.4),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTimelineStep({
-    required IconData icon,
-    required Color color,
-    required String title,
-    String? date,
-    String? comment,
-    required bool isCompleted,
-    required bool isLast,
-  }) {
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Column(
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, size: 18, color: color),
-              ),
-              if (!isLast)
-                Expanded(
-                  child: Container(
-                    width: 2,
-                    color: isCompleted ? color.withValues(alpha: 0.3) : const Color(0xFFE5E7EB),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: AppTextStyles.bodyMedium.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: isCompleted ? AppColors.textPrimary : AppColors.textSecondary,
-                  )),
-                  if (date != null && date.isNotEmpty)
-                    Text(date, style: AppTextStyles.bodySmall.copyWith(
-                      color: AppColors.textSecondary, fontSize: 11)),
-                  if (comment != null && comment.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9FAFB),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                      ),
-                      child: Text(
-                        comment,
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: const Color(0xFF4B5563), height: 1.4),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildValidationReportSection() {

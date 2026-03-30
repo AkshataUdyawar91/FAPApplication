@@ -380,6 +380,8 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.EnquiryDocument)
                 .Include(p => p.RequestApprovalHistory)
                     .ThenInclude(h => h.Approver)
+                .Include(p => p.RequestComments)
+                    .ThenInclude(c => c.User)
                 .AsSplitQuery()
                 .AsQueryable();
 
@@ -412,6 +414,19 @@ public class SubmissionsController : ControllerBase
                     return NotFound(new { error = "Submission not found" });
                 }
                 query = query.Where(p => p.ActivityState != null && assignedStates.Contains(p.ActivityState));
+
+                // RA should only see submissions that have reached RA level or beyond
+                // Also includes CHRejected and PendingCHReason (sent back for clarification) so RA can monitor
+                var raVisibleStates = new[]
+                {
+                    PackageState.PendingRA,
+                    PackageState.RARejected,
+                    PackageState.Approved,
+                    PackageState.CHRejected,
+                    PackageState.PendingCHReason,
+                    PackageState.PendingRAReasonResponse
+                };
+                query = query.Where(p => raVisibleStates.Contains(p.State));
             }
 
             var package = await query.FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
@@ -649,6 +664,18 @@ public class SubmissionsController : ControllerBase
                         Comments = h.Comments,
                         ActionDate = h.ActionDate,
                         VersionNumber = h.VersionNumber,
+                    }).ToList(),
+                Comments = package.RequestComments
+                    .Where(c => !c.IsDeleted)
+                    .OrderBy(c => c.CommentDate)
+                    .Select(c => new CommentItemDto
+                    {
+                        Id = c.Id,
+                        UserName = c.User?.FullName,
+                        UserRole = c.UserRole.ToString(),
+                        CommentText = c.CommentText,
+                        CommentDate = c.CommentDate,
+                        VersionNumber = c.VersionNumber,
                     }).ToList(),
             };
 
@@ -915,11 +942,15 @@ public class SubmissionsController : ControllerBase
                 query = query.Where(p => p.ActivityState != null && assignedStates.Contains(p.ActivityState));
 
                 // RA should only see submissions that have been approved by ASM (reached RA level or beyond)
+                // Also includes CHRejected and PendingCHReason so RA can monitor
                 var raVisibleStates = new[]
                 {
                     PackageState.PendingRA,
                     PackageState.RARejected,
-                    PackageState.Approved
+                    PackageState.Approved,
+                    PackageState.CHRejected,
+                    PackageState.PendingCHReason,
+                    PackageState.PendingRAReasonResponse
                 };
                 query = query.Where(p => raVisibleStates.Contains(p.State));
             }
@@ -1157,6 +1188,87 @@ public class SubmissionsController : ControllerBase
     }
 
     /// <summary>
+    /// Respond to RA clarification request — CH provides clarification and sends back to RA (ASM role only)
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Clarification response notes (required)</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Clarification provided, sent back to RA</response>
+    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - ASM role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/asm-respond-clarification")]
+    [Authorize(Roles = "ASM")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ASMRespondClarification(
+        Guid id,
+        [FromBody] ApproveSubmissionRequest? request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            if (package.State != PackageState.PendingCHReason)
+            {
+                return BadRequest(new { error = $"Submission is not pending CH clarification. Current state: {package.State}" });
+            }
+
+            // Move to PendingRAReasonResponse so ASM can see "Reason Sent"
+            // and RA knows this is a clarification response
+            package.State = PackageState.PendingRAReasonResponse;
+
+            var history = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.ASM,
+                Action = Domain.Enums.ApprovalAction.Resubmitted,
+                Comments = request?.Notes ?? "Clarification provided by CH",
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(history);
+
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.PendingRAReasonResponse.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
+
+            _logger.LogInformation("Submission {Id} clarification provided by CH {UserId}, sent back to RA", id, userId);
+
+            return Ok(new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Clarification provided, sent back to RA for review"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error responding to clarification for submission {Id}", id);
+            return StatusCode(500, new { error = "An error occurred while responding to clarification" });
+        }
+    }
+
+    /// <summary>
     /// Reject a submission at ASM level and send back to Agency (ASM role only)
     /// </summary>
     /// <param name="id">Unique identifier of the submission</param>
@@ -1279,7 +1391,7 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingRA)
+            if (package.State != PackageState.PendingRA && package.State != PackageState.PendingRAReasonResponse)
             {
                 return BadRequest(new { error = $"Submission is not in pending RA approval state. Current state: {package.State}" });
             }
@@ -1367,9 +1479,9 @@ public class SubmissionsController : ControllerBase
                 return NotFound(new { error = "Submission not found" });
             }
 
-            if (package.State != PackageState.PendingRA)
+            if (package.State != PackageState.PendingRA && package.State != PackageState.CHRejected && package.State != PackageState.PendingCHReason && package.State != PackageState.PendingRAReasonResponse)
             {
-                return BadRequest(new { error = $"Submission is not in pending RA approval state. Current state: {package.State}" });
+                return BadRequest(new { error = $"Submission is not in a state that can be rejected by RA. Current state: {package.State}" });
             }
 
             package.State = PackageState.RARejected;
@@ -1419,6 +1531,88 @@ public class SubmissionsController : ControllerBase
         {
             _logger.LogError(ex, "Error rejecting submission {Id} by HQ", id);
             return StatusCode(500, new { error = "An error occurred while rejecting the submission" });
+        }
+    }
+
+    /// <summary>
+    /// Send a submission back to Circle Head for clarification (RA role only).
+    /// Transitions state from PendingRA back to PendingCH so CH can re-review.
+    /// </summary>
+    /// <param name="id">Unique identifier of the submission</param>
+    /// <param name="request">Clarification reason (required)</param>
+    /// <param name="cancellationToken">Cancellation token for async operation</param>
+    /// <returns>Updated submission status</returns>
+    /// <response code="200">Submission sent back to CH for clarification</response>
+    /// <response code="400">Bad request - submission not in correct state</response>
+    /// <response code="401">Unauthorized - authentication required</response>
+    /// <response code="403">Forbidden - RA role required</response>
+    /// <response code="404">Not found - submission does not exist</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPatch("{id}/ra-send-back-to-ch")]
+    [Authorize(Roles = "HQ,RA")]
+    [ProducesResponseType(typeof(SubmissionStatusResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> RASendBackToCH(
+        Guid id,
+        [FromBody] RejectSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value ?? throw new System.UnauthorizedAccessException());
+
+            var package = await _context.DocumentPackages
+                .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+            if (package == null)
+            {
+                return NotFound(new { error = "Submission not found" });
+            }
+
+            if (package.State != PackageState.RARejected && package.State != PackageState.CHRejected && package.State != PackageState.PendingCHReason && package.State != PackageState.PendingRAReasonResponse)
+            {
+                return BadRequest(new { error = $"Submission is not in a state that can be sent back to CH. Current state: {package.State}" });
+            }
+
+            // Move to PendingCHReason so Circle Head knows RA requested reason
+            package.State = PackageState.PendingCHReason;
+
+            var history = new Domain.Entities.RequestApprovalHistory
+            {
+                Id = Guid.NewGuid(),
+                PackageId = package.Id,
+                ApproverId = userId,
+                ApproverRole = Domain.Enums.UserRole.RA,
+                Action = Domain.Enums.ApprovalAction.SentBackToCH,
+                Comments = request.Reason,
+                ActionDate = DateTime.UtcNow,
+                VersionNumber = package.VersionNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.RequestApprovalHistories.Add(history);
+
+            package.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // Push SubmissionStatusChanged event via SignalR
+            await _submissionNotificationService.SendSubmissionStatusChangedAsync(
+                id,
+                new { submissionId = id, newStatus = PackageState.PendingCHReason.ToString(), assignedTo = (Guid?)null },
+                cancellationToken);
+
+            _logger.LogInformation("Submission {Id} sent back to CH by RA {UserId} for clarification. Reason: {Reason}",
+                id, userId, request.Reason);
+
+            return Ok(new SubmissionStatusResponse
+            {
+                Id = package.Id,
+                State = package.State.ToString(),
+                Message = "Sent back to Circle Head for clarification"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending submission {Id} back to CH", id);
+            return StatusCode(500, new { error = "An error occurred while sending back to Circle Head" });
         }
     }
 

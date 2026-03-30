@@ -66,9 +66,9 @@ Data sources: `submission.state`, `submission.submissionNumber`, `submission.cre
 
 ### 2. Rejection Card (Agency only, conditional)
 
-Shown when `state` is `CHRejected` or `RARejected`. Displays:
+Shown when `state` is `CHRejected` or `RARejected` (also matches legacy aliases `RejectedByASM`, `RejectedByHQ`, `RejectedByRA`). Displays:
 - Who rejected: "Rejected by CH" or "Rejected by RA"
-- Rejection reason: `asmReviewNotes` (for ASM rejection) or `hqReviewNotes` (for RA rejection)
+- Rejection reason: `asmReviewNotes` (for CH rejection) or `hqReviewNotes` (for RA rejection)
 - "Edit Submission" button that navigates to the upload/edit page
 
 Data sources: `submission.state`, `submission.asmReviewNotes`, `submission.hqReviewNotes`
@@ -127,14 +127,36 @@ How it works:
 
 Data sources: `submission.confidenceScore`, `submission.recommendation`, all `*Validation.validationDetailsJson` fields
 
-### 7. Approve/Reject Actions (ASM only)
+### 7. Approve/Reject Actions (ASM and RA)
 
 Shown only when the submission is in an actionable state. Contains:
 - "Reject" outlined button → opens reject dialog for reason input
 - "Approve Request" elevated button → calls approve API
 - Comments text field (optional)
 
-These actions call `PATCH /api/submissions/{id}/asm-approve` or `PATCH /api/submissions/{id}/asm-reject` with the reviewer's comments.
+**Actionable state logic per role:**
+- ASM page (`_isSubmissionActionable`): state is `PendingCH`, `PendingApproval`, `PendingCHApproval`, or `PendingCHReason` (NOT `RARejected` — when RA rejects, the agency must resubmit; CH cannot act on RA-rejected submissions). When state is `PendingCHReason`, ASM sees the RA's clarification request and a "Respond to RA" button instead of Approve/Reject.
+- RA page (`_isSubmissionActionable`): state is `PendingRA`, `RARejected`, `CHRejected`, `PendingCHReason`, or `PendingRAReasonResponse`. Button visibility per state:
+  - `PendingRA`: Approve ✅, Reject ✅, Ask Reason ❌
+  - `RARejected`: Ask Reason ✅ only
+  - `CHRejected`: Reject ✅, Ask Reason ✅ (no Approve)
+  - `PendingCHReason`: Reject ✅, Ask Reason ✅ (no Approve)
+  - `PendingRAReasonResponse`: Approve ✅, Reject ✅, Ask Reason ✅
+
+When CH has rejected a submission (state = `CHRejected`), the RA page shows Reject and Ask Reason buttons but NOT Approve.
+
+ASM actions call `PATCH /api/submissions/{id}/asm-approve` or `PATCH /api/submissions/{id}/asm-reject`.
+RA actions call `PATCH /api/submissions/{id}/hq-approve`, `PATCH /api/submissions/{id}/hq-reject`, or `PATCH /api/submissions/{id}/ra-send-back-to-ch`.
+
+RA has three action options:
+- Approve: Final approval, submission is complete
+- Reject: Fully rejects to Agency for resubmission (state → `RARejected`)
+- Ask CH Clarification: Sends back to Circle Head for clarification (state → `PendingCHReason`)
+
+CH clarification flow:
+- When RA asks for clarification, state → `PendingCHReason` (ASM sees "RA Asked Reason")
+- CH responds with clarification, state → `PendingRAReasonResponse` (ASM sees "Reason Sent", RA sees "CH Responded")
+- RA can then approve, reject, or ask for clarification again
 
 ### 8. PO Balance Section (ASM only)
 
@@ -205,35 +227,74 @@ Data sources: `submission.campaigns[].photos[]` (id, fileName), `submission.phot
 
 ### 13. Approval Flow (Right Sidebar — 1/4 width)
 
-A card pinned to the right side of the page on desktop/tablet (stacks at the bottom on mobile). Shows the full approval lifecycle as a vertical timeline.
+Implemented as a shared widget: `ApprovalFlowSection` (`frontend/lib/features/submission/presentation/widgets/approval_flow_section.dart`). Used by all three detail pages:
+- Agency page: `ApprovalFlowSection(submission: _submission!)`
+- ASM page: `ApprovalFlowSection(submission: _submission!)`
+- RA page: `ApprovalFlowSection(submission: _submission!)`
 
-The timeline has 3 fixed steps:
+A card pinned to the right side of the page on desktop/tablet (stacks at the bottom on mobile). Shows the full approval lifecycle as a vertical timeline with a history section below.
 
-| Step | Icon | Title (varies by state) | Date Source | Comment Source |
-|---|---|---|---|---|
-| 1. Submitted | Upload icon (blue) | "Submitted" | `submission.createdAt` | — |
-| 2. CH Review | Check/Cancel/Clock | "Approved by CH" / "Rejected by CH" / "Pending CH Review" | `submission.asmReviewedAt` | `submission.asmReviewNotes` |
-| 3. RA Review | Check/Cancel/Clock | "Approved by RA" / "Rejected by RA" / "Pending RA Review" | `submission.hqReviewedAt` | `submission.hqReviewNotes` |
+#### Timeline Flow Steps
 
-Step status is derived from `submission.state`:
-- CH approved: state is `PendingRA`, `RARejected`, or `Approved`
-- CH rejected: state is `CHRejected`
-- RA approved: state is `Approved`
-- RA rejected: state is `RARejected`
+The timeline has 3 fixed steps. The CH step title and icon are derived from the actual approval history (latest CH action), not just the current package state.
 
-Each step shows:
-- Colored circle icon (green=approved, red=rejected, grey=pending)
-- Title text
-- Date (formatted as `DD MMM YYYY HH:mm`)
-- Comment bubble (if reviewer left comments/rejection reason)
+| Step | Icon | Title (varies by state/history) | Date Source |
+|---|---|---|---|
+| 1. Submitted | Upload icon (blue) | "Submitted" | `submission.createdAt` |
+| 2. CH Review | Derived from history | "Approved by CH (Name)" / "Rejected by CH (Name)" / "RA Asked Reason" / "Pending CH Review" | `submission.asmReviewedAt` |
+| 3. RA Review | Derived from state | "Approved by RA (Name)" / "Rejected by RA (Name)" / "Asked Reason (Waiting for CH)" / "CH Responded" / "CH Rejected" / "Pending RA Review" | `submission.hqReviewedAt` |
 
-Below the timeline, if `approvalHistory[]` is populated in the API response, a "History" section renders the full chronological list of all approval actions with:
+CH step status is determined by checking the latest CH (ASM role) action in `approvalHistory[]`:
+- If latest CH action is `Rejected` → shows "Rejected by CH" (red) even if current state is `PendingRAReasonResponse`
+- If latest CH action is `Approved` → shows "Approved by CH" (green)
+- If state is `PendingCHReason` → shows "RA Asked Reason" (amber)
+- Otherwise → "Pending CH Review" (grey)
+
+RA step status is determined by the current package state:
+- `Approved` → "Approved by RA" (green)
+- `RARejected` → "Rejected by RA" (red)
+- `PendingCHReason` → "Asked Reason (Waiting for CH)" (amber)
+- `PendingRAReasonResponse` → "CH Responded" (red)
+- `CHRejected` → "CH Rejected" (amber)
+- Otherwise → "Pending RA Review" (grey)
+
+Approver names are extracted from the latest ASM/RA entry in `approvalHistory[]` and appended to the title in parentheses.
+
+The timeline steps show only the step icon, title, and date — no comment or rejection bubbles. All details are in the History section below.
+
+#### History Section
+
+Below the timeline, if `approvalHistory[]` is populated, a "History" section renders all approval actions in **latest-first order** with:
 - Action icon (green check for approved, red X for rejected, grey info for others)
-- "{Action} by {ApproverName}" text
+- "{Action} by {RoleLabel} ({ApproverName})" text — where RoleLabel maps `ASM` → `CH`, others as-is
 - Date
-- Comment bubble (if comments exist)
+- Comment/reason bubble: rejection reasons use red styling; approval comments use grey styling
 
-Data sources: `submission.state`, `submission.createdAt`, `submission.asmReviewedAt`, `submission.asmReviewNotes`, `submission.hqReviewedAt`, `submission.hqReviewNotes`, `submission.approvalHistory[]`
+#### Comments Section
+
+Below the history, if `comments[]` is populated (from `RequestComments` table), a "Comments" section renders standalone comments with:
+- Chat bubble icon
+- "{RoleLabel} ({UserName})" header
+- Date
+- Comment text in grey-styled container
+
+**Note on comment storage**: The `RequestApprovalHistory.Comments` field stores either an approval comment OR a rejection reason — never both at once. Each approval/rejection action creates a new `RequestApprovalHistory` row with its comment in the `Comments` field. There is no separate field for rejection reasons vs. approval notes — they share the same column. The frontend distinguishes them by checking the `Action` field (`Approved` vs `Rejected`).
+
+| Action | What's stored in `RequestApprovalHistory.Comments` |
+|---|---|
+| ASM Approve | `request.Notes` if provided, otherwise `"Approved by ASM"` |
+| ASM Reject | `request.Reason` (the rejection reason) |
+| RA Approve | `request.Notes` if provided, otherwise `"Approved by RA"` |
+| RA Reject | `request.Reason` (the rejection reason) |
+| RA Send Back to CH | `request.Reason` (the clarification reason). Action = `SentBackToCH` |
+| CH Respond to Clarification | `request.Notes` if provided, otherwise `"Clarification provided by CH"`. Action = `Resubmitted`. State → `PendingRAReasonResponse` |
+| Resubmit (Agency) | `"Resubmitted by Agency"` |
+| Resubmit (ASM to RA) | `request.Notes` |
+| Send back to Agency | `"Sent back to Agency: {request.Reason}"` |
+
+The `RequestComments` table is a separate entity designed for standalone discussion-style comments. It exists in the schema and is now loaded by the API, but no endpoint currently writes to it.
+
+Data sources: `submission.state`, `submission.createdAt`, `submission.asmReviewedAt`, `submission.asmReviewNotes`, `submission.hqReviewedAt`, `submission.hqReviewNotes`, `submission.approvalHistory[]`, `submission.comments[]`
 
 ---
 
@@ -284,7 +345,7 @@ Controller: `SubmissionsController.GetSubmission()`
 Authorization: JWT required. Role-based filtering:
 - Agency: can only see submissions belonging to their agency (`package.AgencyId == user.AgencyId`)
 - ASM/Circle Head: can only see submissions where `ActivityState` matches their assigned states
-- RA: can only see submissions where `ActivityState` matches their RA-assigned states
+- RA: can only see submissions where `ActivityState` matches their RA-assigned states AND `State` is one of `PendingRA`, `RARejected`, `Approved`, `CHRejected`, `PendingCHReason`, `PendingRAReasonResponse`
 - HQ/Admin: can see all submissions
 
 Response DTO: `SubmissionDetailResponse`
@@ -303,6 +364,7 @@ _context.DocumentPackages
     .Include(p => p.ActivitySummary)
     .Include(p => p.EnquiryDocument)
     .Include(p => p.RequestApprovalHistory).ThenInclude(h => h.Approver)
+    .Include(p => p.RequestComments).ThenInclude(c => c.User)
     .AsSplitQuery()
 ```
 
@@ -348,7 +410,7 @@ API response root → DB table `DocumentPackages`
 | API Field (JSON) | Type | DB Entity | DB Column | Notes |
 |---|---|---|---|---|
 | `id` | `Guid` | `DocumentPackage` | `Id` | Primary key |
-| `state` | `string` | `DocumentPackage` | `State` | Enum `PackageState` → `.ToString()`. Values: `Draft`, `Uploaded`, `Extracting`, `Validating`, `PendingCH`, `CHRejected`, `PendingRA`, `RARejected`, `Approved` |
+| `state` | `string` | `DocumentPackage` | `State` | Enum `PackageState` → `.ToString()`. Values: `Draft`, `Uploaded`, `Extracting`, `Validating`, `PendingCH`, `CHRejected`, `PendingRA`, `RARejected`, `Approved`, `PendingCHReason`, `PendingRAReasonResponse` |
 | `createdAt` | `DateTime` | `DocumentPackage` | `CreatedAt` | UTC |
 | `updatedAt` | `DateTime?` | `DocumentPackage` | `UpdatedAt` | UTC |
 | `submissionNumber` | `string?` | `DocumentPackage` | `SubmissionNumber` | Format: `CIQ-YYYY-XXXXX`. Generated at submit time |
@@ -384,7 +446,7 @@ These fields are derived from the `RequestApprovalHistory` collection, not store
 | `PackageId` | `Guid` | FK to `DocumentPackages` |
 | `ApproverId` | `Guid` | FK to `Users` |
 | `ApproverRole` | `enum UserRole` | `Agency`, `ASM`, `RA`, `Admin` |
-| `Action` | `enum ApprovalAction` | `Submitted`, `Approved`, `Rejected`, `Resubmitted` |
+| `Action` | `enum ApprovalAction` | `Submitted`, `Approved`, `Rejected`, `Resubmitted`, `SentBackToCH` |
 | `Comments` | `string?` | Reviewer comments |
 | `ActionDate` | `DateTime` | When the action was taken |
 | `VersionNumber` | `int` | Package version at time of action |
@@ -740,9 +802,9 @@ Additional DB columns not in the API response:
 
 API field: `comments[]` → DB table `RequestComments`
 
-**NOTE: The `comments[]` field is defined in the `SubmissionDetailResponse` DTO but is NOT currently populated in the `GetSubmission` controller mapping. The `RequestComments` collection is not `.Include()`d in the EF Core query and is never mapped to the response. This field will always be `null` in the API output.**
+The `comments[]` field is now populated in the `GetSubmission` controller mapping. The `RequestComments` collection is `.Include()`d in the EF Core query with `.ThenInclude(c => c.User)` and mapped to the response DTO.
 
-Expected DTO mapping (when implemented):
+**Note**: While the DTO and API now return `comments[]`, no approval/rejection endpoint currently writes to the `RequestComments` table. All approval notes and rejection reasons are stored in `RequestApprovalHistory.Comments` instead. The `RequestComments` table is designed for standalone discussion-style comments but has no writers yet.
 
 | API Field | DB Column |
 |---|---|
@@ -808,6 +870,8 @@ Same API call and data extraction pattern. Additionally:
 | `PATCH /api/submissions/{id}/asm-reject` | PATCH | ASM rejects submission. Body: `{ Reason }` |
 | `PATCH /api/submissions/{id}/ra-approve` | PATCH | RA approves submission. Body: `{ notes }` |
 | `PATCH /api/submissions/{id}/ra-reject` | PATCH | RA rejects submission. Body: `{ Reason }` |
+| `PATCH /api/submissions/{id}/ra-send-back-to-ch` | PATCH | RA sends back to CH for clarification. Body: `{ Reason }`. State → `PendingCHReason` |
+| `PATCH /api/submissions/{id}/asm-respond-clarification` | PATCH | CH responds to RA clarification. Body: `{ notes }`. State → `PendingRAReasonResponse` |
 | `GET /api/hierarchical/{id}/structure` | GET | Hierarchical campaign structure with photos, cost/activity summary URLs |
 | `GET /api/documents/{id}/extraction-status` | GET | Poll AI extraction status |
 | `GET /api/documents/{id}/view` | GET | Download/view document file content |

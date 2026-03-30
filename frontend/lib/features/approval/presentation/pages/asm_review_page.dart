@@ -18,6 +18,7 @@ import '../../../../core/widgets/kpi_card.dart';
 import '../../../../core/widgets/quarter_year_filter.dart';
 import '../../../../core/utils/currency_formatter.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/widgets/pagination_bar.dart';
 import '../../../analytics/data/models/quarterly_fap_kpi_model.dart';
 
 class ASMReviewPage extends ConsumerStatefulWidget {
@@ -47,6 +48,12 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
   bool _isSidebarCollapsed = true;
   List<Map<String, dynamic>> _documents = [];
 
+  // Pagination state
+  int _currentPage = 1;
+  int _totalItems = 0;
+  int _totalPages = 1;
+  static const int _pageSize = 20;
+
   // KPI state
   String _selectedQuarter = 'Q${(DateTime.now().month - 1) ~/ 3 + 1}';
   int _selectedYear = DateTime.now().year;
@@ -62,6 +69,8 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
         state == 'pendingwithasm' ||
         state == 'pendingch' ||
         state == 'pendingchapproval') return 'pending';
+    if (state == 'pendingchclarification' || state == 'pendingchreason') return 'ra-asked-reason';
+    if (state == 'pendingraclarificationresponse' || state == 'pendingrareasonresponse') return 'reason-sent';
     if (state == 'pendinghqapproval' ||
         state == 'pendingwithra' ||
         state == 'pendingra' ||
@@ -100,33 +109,31 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
     super.dispose();
   }
 
-  Future<void> _loadDocuments() async {
-    print(
-        '[ASM Dashboard] Loading documents with token: ${widget.token.substring(0, 20)}...');
+  Future<void> _loadDocuments({int page = 1}) async {
     setState(() => _isLoading = true);
     try {
       final response = await _dio.get(
         '/submissions',
+        queryParameters: {'page': page, 'pageSize': _pageSize},
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
-      print('[ASM Dashboard] Response status: ${response.statusCode}');
-      print('[ASM Dashboard] Response data: ${response.data}');
 
       if (response.statusCode == 200 && mounted) {
         setState(() {
           final data = response.data;
           if (data is Map && data.containsKey('items')) {
             _documents = List<Map<String, dynamic>>.from(data['items']);
-            print('[ASM Dashboard] Loaded ${_documents.length} documents');
           } else {
             _documents = [];
-            print('[ASM Dashboard] No items in response');
           }
+          _totalItems = data is Map ? (data['total'] ?? 0) : 0;
+          final total = _totalItems;
+          _totalPages = (total / _pageSize).ceil().clamp(1, 9999);
+          _currentPage = page;
           _isLoading = false;
         });
       }
     } catch (e) {
-      print('[ASM Dashboard] Error loading documents: $e');
       if (mounted) {
         setState(() => _isLoading = false);
         final failure = _mapExceptionToFailure(e);
@@ -456,7 +463,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
     final hPad = responsiveValue<double>(MediaQuery.of(context).size.width,
         mobile: 12, tablet: 16, desktop: 24);
     return RefreshIndicator(
-      onRefresh: _loadDocuments,
+      onRefresh: () => _loadDocuments(page: _currentPage),
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(hPad),
@@ -475,6 +482,13 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
             _buildSearchBar(),
             const SizedBox(height: 24),
             _buildDocumentsList(),
+            PaginationBar(
+              currentPage: _currentPage,
+              totalPages: _totalPages,
+              totalItems: _totalItems,
+              pageSize: _pageSize,
+              onPageChanged: (page) => _loadDocuments(page: page),
+            ),
             const SizedBox(height: 80),
           ],
         ),
@@ -642,6 +656,8 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
         items: const [
           DropdownMenuItem(value: 'all', child: Text('All')),
           DropdownMenuItem(value: 'pending', child: Text('Pending')),
+          DropdownMenuItem(value: 'ra-asked-reason', child: Text('RA Asked Reason')),
+          DropdownMenuItem(value: 'reason-sent', child: Text('Reason Sent')),
           DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
           DropdownMenuItem(
               value: 'rejected-by-ra', child: Text('Rejected by RA')),
@@ -824,7 +840,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
         'poNumber': poNumber,
       },
     );
-    if (result == true || result == null) _loadDocuments();
+    if (result == true || result == null) _loadDocuments(page: _currentPage);
   }
 
   int? get _sortColumnIndex {
@@ -956,6 +972,18 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
         textColor = AppColors.pendingText;
         borderColor = AppColors.pendingBorder;
         label = 'Pending';
+        break;
+      case 'ra-asked-reason':
+        bgColor = const Color(0xFFFFF7ED);
+        textColor = const Color(0xFFC2410C);
+        borderColor = const Color(0xFFFDBA74);
+        label = 'RA Asked Reason';
+        break;
+      case 'reason-sent':
+        bgColor = const Color(0xFFECFDF5);
+        textColor = const Color(0xFF065F46);
+        borderColor = const Color(0xFF6EE7B7);
+        label = 'Reason Sent';
         break;
       case 'pending-with-ra':
         bgColor = const Color(0xFFFEF3C7);
