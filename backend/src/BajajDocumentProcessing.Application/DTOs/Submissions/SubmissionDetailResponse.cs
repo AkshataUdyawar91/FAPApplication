@@ -210,6 +210,12 @@ public class SubmissionDetailResponse
     /// </summary>
     [JsonPropertyName("selectedPOId")]
     public Guid? SelectedPOId { get; init; }
+
+    /// <summary>
+    /// Selected PO Number from conversational flow (for frontend PO selection matching)
+    /// </summary>
+    [JsonPropertyName("selectedPONumber")]
+    public string? SelectedPONumber { get; init; }
 }
 
 /// <summary>

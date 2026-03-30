@@ -482,6 +482,34 @@ public class SubmissionsController : ControllerBase
                 .OrderByDescending(h => h.ActionDate)
                 .FirstOrDefault();
 
+            // Get the PO number for SelectedPOId (for frontend PO selection matching)
+            string? selectedPONumber = null;
+            if (package.SelectedPOId.HasValue)
+            {
+                var selectedPO = await _context.POs
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(po => po.Id == package.SelectedPOId.Value && !po.IsDeleted, cancellationToken);
+                
+                if (selectedPO != null)
+                {
+                    selectedPONumber = selectedPO.PONumber;
+                    
+                    // Fallback: try ExtractedDataJson if PONumber is empty
+                    if (string.IsNullOrEmpty(selectedPONumber) && !string.IsNullOrEmpty(selectedPO.ExtractedDataJson))
+                    {
+                        try
+                        {
+                            var poData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(selectedPO.ExtractedDataJson);
+                            if (poData.TryGetProperty("PONumber", out var poNum))
+                                selectedPONumber = poNum.GetString();
+                            else if (poData.TryGetProperty("poNumber", out var poNum2))
+                                selectedPONumber = poNum2.GetString();
+                        }
+                        catch { }
+                    }
+                }
+            }
+
             var response = new SubmissionDetailResponse
             {
                 Id = package.Id,
@@ -650,6 +678,7 @@ public class SubmissionsController : ControllerBase
                 AssignedCircleHeadUserId = package.AssignedCircleHeadUserId,
                 ActivityState = package.ActivityState,
                 SelectedPOId = package.SelectedPOId,
+                SelectedPONumber = selectedPONumber,
                 ApprovalHistory = package.RequestApprovalHistory
                     .OrderBy(h => h.ActionDate)
                     .Select(h => new ApprovalHistoryItemDto

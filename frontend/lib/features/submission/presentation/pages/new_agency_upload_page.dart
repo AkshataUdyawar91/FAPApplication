@@ -53,6 +53,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
   List<Map<String, dynamic>> _availablePOs = [];
   Map<String, dynamic>? _selectedPO;
   bool _isLoadingPOs = false;
+  bool _poSelectionLocked = false; // Prevent PO re-selection in draft mode
   final _poSearchController = TextEditingController();
 
   // Indian states dropdown
@@ -104,15 +105,26 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
       });
     
     // Load POs and states first, then load existing submission if in edit mode
-    _loadPOs();
     _loadIndianStates();
     
     if (_isEditMode) {
       _currentPackageId = widget.submissionId;
-      _loadExistingSubmission();
-    } else if (widget.submissionId != null) {
-      // New submission with draft ID provided
-      _currentPackageId = widget.submissionId;
+      // For draft mode: load POs first, then load existing submission
+      // This ensures _availablePOs is populated before we try to match selectedPoId
+      debugPrint('[Draft Mode] Starting PO load...');
+      _loadPOs().then((_) {
+        debugPrint('[Draft Mode] POs loaded: ${_availablePOs.length} POs available');
+        if (mounted) {
+          debugPrint('[Draft Mode] Loading existing submission...');
+          _loadExistingSubmission();
+        }
+      });
+    } else {
+      // For new submission: load POs normally
+      _loadPOs();
+      if (widget.submissionId != null) {
+        _currentPackageId = widget.submissionId;
+      }
     }
   }
 
@@ -202,24 +214,21 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
         // Restore activation state — API returns 'activityState'
         _selectedActivationState = data['activityState']?.toString();
 
-        // Pre-fill PO selection if available (for draft mode)
-        final selectedPoId = data['selectedPoId']?.toString();
-        if (selectedPoId != null && selectedPoId.isNotEmpty) {
-          // Find the PO in the available list and select it
-          for (final po in _availablePOs) {
-            if (po['id']?.toString() == selectedPoId) {
-              _selectedPO = po;
-              break;
-            }
-          }
-        }
-
-        // Extract PO data from documents
+        // Extract PO data from documents FIRST (needed for PO selection logic)
         final documents = data['documents'] as List? ?? [];
-        final poDoc = documents.firstWhere(
+        debugPrint('[Draft Mode] Total documents in response: ${documents.length}');
+        for (int i = 0; i < documents.length; i++) {
+          final doc = documents[i];
+          debugPrint('[Draft Mode] Document $i: type=${doc['type']}, filename=${doc['filename']}');
+        }
+        
+        // Declare poDoc at method scope so it's available throughout
+        dynamic poDoc = documents.firstWhere(
           (d) => d['type']?.toString() == 'PO',
           orElse: () => null,
         );
+        debugPrint('[Draft Mode] PO document found: ${poDoc != null}');
+        
         if (poDoc != null) {
           _existingPOFileName = poDoc['filename']?.toString();
           final extractedData = poDoc['extractedData'];
@@ -234,6 +243,52 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
               // PO data loaded for edit mode reference (used by POFieldsSection if present)
             }
           }
+        }
+
+        // Pre-fill PO selection if available (for draft mode)
+        // Backend returns 'SelectedPOId' (capital S)
+        var selectedPoId = data['SelectedPOId']?.toString() ?? data['selectedPoId']?.toString();
+        var selectedPoNumber = data['SelectedPONumber']?.toString() ?? data['selectedPONumber']?.toString();
+        debugPrint('[Draft Mode] SelectedPOId from API: $selectedPoId');
+        debugPrint('[Draft Mode] SelectedPONumber from API: $selectedPoNumber');
+        debugPrint('[Draft Mode] Available POs count: ${_availablePOs.length}');
+        
+        // If we have SelectedPONumber, use it to find the PO (more reliable than inferring from documents)
+        if (selectedPoNumber != null && selectedPoNumber.isNotEmpty && selectedPoId == null) {
+          debugPrint('[Draft Mode] Using SelectedPONumber to find PO...');
+          for (final po in _availablePOs) {
+            final poNum = po['poNumber']?.toString();
+            if (poNum == selectedPoNumber) {
+              selectedPoId = po['id']?.toString();
+              debugPrint('[Draft Mode] Found matching PO by number: $poNum with ID: $selectedPoId');
+              break;
+            }
+          }
+        }
+        
+        if (selectedPoId != null && selectedPoId.isNotEmpty) {
+          debugPrint('[Draft Mode] Looking for PO with ID: $selectedPoId');
+          // Find the PO in the available list and select it
+          bool found = false;
+          for (final po in _availablePOs) {
+            final poId = po['id']?.toString();
+            debugPrint('[Draft Mode] Checking PO: id=$poId, poNumber=${po['poNumber']}');
+            if (poId == selectedPoId) {
+              setState(() {
+                _selectedPO = po;
+                // Lock PO selection in draft mode to prevent re-selection
+                _poSelectionLocked = true;
+              });
+              found = true;
+              debugPrint('[Draft Mode] ✓ PO selected and locked: ${po['poNumber']}');
+              break;
+            }
+          }
+          if (!found) {
+            debugPrint('[Draft Mode] ✗ PO not found in available list!');
+          }
+        } else {
+          debugPrint('[Draft Mode] No SelectedPOId or SelectedPONumber in response');
         }
 
         // Extract package-level documents — cost/activity/enquiry filenames
@@ -1808,15 +1863,17 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
                         fontWeight: FontWeight.w500),
                   ),
                 const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () => setState(() {
-                    _selectedPO = null;
-                    _currentPackageId = null;
-                    _poSearchController.clear();
-                  }),
-                  child: const Icon(Icons.close,
-                      size: 16, color: AppColors.rejectedText),
-                ),
+                // Only show close button if PO is not locked (not in draft mode)
+                if (!_poSelectionLocked)
+                  GestureDetector(
+                    onTap: () => setState(() {
+                      _selectedPO = null;
+                      _currentPackageId = null;
+                      _poSearchController.clear();
+                    }),
+                    child: const Icon(Icons.close,
+                        size: 16, color: AppColors.rejectedText),
+                  ),
               ],
             ),
           )
@@ -1824,9 +1881,12 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
           // Search field
           TextFormField(
             controller: _poSearchController,
+            enabled: !_poSelectionLocked, // Disable when PO is locked in draft mode
             style: const TextStyle(fontSize: 14),
             decoration: InputDecoration(
-              hintText: 'Search by PO number or vendor name...',
+              hintText: _poSelectionLocked 
+                  ? 'PO selected (cannot change in draft mode)' 
+                  : 'Search by PO number or vendor name...',
               hintStyle:
                   const TextStyle(color: Color(0xFF9E9E9E), fontSize: 13),
               prefixIcon: _isLoadingPOs
@@ -1839,7 +1899,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
                     )
                   : const Icon(Icons.search,
                       color: AppColors.primary, size: 20),
-              suffixIcon: _poSearchController.text.isNotEmpty
+              suffixIcon: _poSearchController.text.isNotEmpty && !_poSelectionLocked
                   ? IconButton(
                       icon: const Icon(Icons.clear, size: 18),
                       onPressed: () {
@@ -1856,6 +1916,9 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
               enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                   borderSide: const BorderSide(color: AppColors.border)),
+              disabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: Color(0xFFE0E0E0))),
               focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                   borderSide:
@@ -1863,14 +1926,16 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
               isDense: true,
             ),
             onChanged: (v) {
-              setState(() {});
-              Future.delayed(const Duration(milliseconds: 350), () {
-                if (_poSearchController.text == v) _loadPOs(search: v);
-              });
+              if (!_poSelectionLocked) {
+                setState(() {});
+                Future.delayed(const Duration(milliseconds: 350), () {
+                  if (_poSearchController.text == v) _loadPOs(search: v);
+                });
+              }
             },
           ),
           // Dropdown results
-          if (_availablePOs.isNotEmpty) ...[
+          if (_availablePOs.isNotEmpty && !_poSelectionLocked) ...[
             const SizedBox(height: 4),
             Container(
               constraints: const BoxConstraints(maxHeight: 220),
