@@ -142,9 +142,19 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
       _kpiError = null;
     });
     try {
+      final queryParams = {
+        'quarter': _selectedQuarter,
+        'year': _selectedYear,
+      };
+      
+      // Add status filter if not 'all'
+      if (_statusFilter != 'all') {
+        queryParams['status'] = _statusFilter;
+      }
+      
       final response = await _dio.get(
         '/analytics/quarterly-fap',
-        queryParameters: {'quarter': _selectedQuarter, 'year': _selectedYear},
+        queryParameters: queryParams,
         options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
       );
       if (response.statusCode == 200 && mounted) {
@@ -628,7 +638,10 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
           DropdownMenuItem(value: 'approved', child: Text('Approved')),
         ],
         onChanged: (value) {
-          if (value != null) setState(() => _statusFilter = value);
+          if (value != null) {
+            setState(() => _statusFilter = value);
+            _loadKpiData();  // ← Reload KPIs when status changes
+          }
         },
       ),
     );

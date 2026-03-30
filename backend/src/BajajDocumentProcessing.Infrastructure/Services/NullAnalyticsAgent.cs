@@ -55,7 +55,7 @@ public class NullAnalyticsAgent : IAnalyticsAgent
             "Configure Azure AI Search to enable this feature.");
     }
 
-    public Task<QuarterlyFapKpiResponse> GetQuarterlyFapKpisAsync(string quarter, int year, CancellationToken cancellationToken = default)
+    public Task<QuarterlyFapKpiResponse> GetQuarterlyFapKpisAsync(string quarter, int year, string? status = null, CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("Quarterly FAP KPI retrieval skipped - Azure AI Search not configured");
         return Task.FromResult(new QuarterlyFapKpiResponse

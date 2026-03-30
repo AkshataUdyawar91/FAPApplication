@@ -187,6 +187,7 @@ public class AnalyticsController : ControllerBase
     public async Task<IActionResult> GetQuarterlyFapKpis(
         [FromQuery] string quarter = "current",
         [FromQuery] int? year = null,
+        [FromQuery] string? status = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -212,7 +213,7 @@ public class AnalyticsController : ControllerBase
 
             quarter = quarter.ToUpperInvariant() == "ALL" ? "All" : quarter.ToUpperInvariant();
 
-            var result = await _analyticsAgent.GetQuarterlyFapKpisAsync(quarter, resolvedYear, cancellationToken);
+            var result = await _analyticsAgent.GetQuarterlyFapKpisAsync(quarter, resolvedYear, status, cancellationToken);
             return Ok(result);
         }
         catch (Exception ex)

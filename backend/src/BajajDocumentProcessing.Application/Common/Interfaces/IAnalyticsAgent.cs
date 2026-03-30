@@ -50,7 +50,7 @@ public interface IAnalyticsAgent
     /// <param name="cancellationToken">Cancellation token for async operation</param>
     /// <returns>Natural language narrative describing key insights</returns>
     Task<string> GenerateNarrativeAsync(KPIDashboard kpis, CancellationToken cancellationToken = default);
-    Task<QuarterlyFapKpiResponse> GetQuarterlyFapKpisAsync(string quarter, int year, CancellationToken cancellationToken = default);
+    Task<QuarterlyFapKpiResponse> GetQuarterlyFapKpisAsync(string quarter, int year, string? status = null, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

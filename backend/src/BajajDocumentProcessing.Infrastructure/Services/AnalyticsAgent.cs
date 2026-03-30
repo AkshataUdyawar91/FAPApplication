@@ -377,26 +377,46 @@ Provide a 2-3 paragraph summary highlighting the most important insights.";
     public async Task<QuarterlyFapKpiResponse> GetQuarterlyFapKpisAsync(
         string quarter,
         int year,
+        string? status = null,
         CancellationToken cancellationToken = default)
     {
-        var cacheKey = $"{CacheKeyPrefix}quarterly_fap_{quarter}_{year}";
+        var cacheKey = $"{CacheKeyPrefix}quarterly_fap_{quarter}_{year}_{status ?? "all"}";
 
         if (_cache.TryGetValue<QuarterlyFapKpiResponse>(cacheKey, out var cached) && cached != null)
         {
-            _logger.LogDebug("Returning cached quarterly FAP KPIs for {Quarter} {Year}", quarter, year);
+            _logger.LogDebug("Returning cached quarterly FAP KPIs for {Quarter} {Year} Status={Status}", quarter, year, status ?? "all");
             return cached;
         }
 
-        _logger.LogInformation("Calculating quarterly FAP KPIs for {Quarter} {Year}", quarter, year);
+        _logger.LogInformation("Calculating quarterly FAP KPIs for {Quarter} {Year} Status={Status}", quarter, year, status ?? "all");
 
         var (startDate, endDate) = GetQuarterDateRange(quarter, year);
 
-        var packages = await _context.DocumentPackages
+        var query = _context.DocumentPackages
             .Include(p => p.Invoices)
-            .Where(p => p.State == PackageState.Approved)
             .Where(p => p.CreatedAt >= startDate && p.CreatedAt <= endDate)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
+            .AsNoTracking();
+
+        // Apply status filter if provided
+        if (!string.IsNullOrEmpty(status))
+        {
+            query = status.ToLower() switch
+            {
+                "pending" => query.Where(p => new[] { PackageState.PendingCH, PackageState.PendingRA }.Contains(p.State)),
+                "approved" => query.Where(p => p.State == PackageState.Approved),
+                "rejected" => query.Where(p => new[] { PackageState.CHRejected, PackageState.RARejected }.Contains(p.State)),
+                "rejected-by-ra" => query.Where(p => p.State == PackageState.RARejected),
+                "pending-with-ra" => query.Where(p => p.State == PackageState.PendingRA),
+                _ => query.Where(p => p.State == PackageState.Approved) // Default to approved
+            };
+        }
+        else
+        {
+            // Default: show only approved packages
+            query = query.Where(p => p.State == PackageState.Approved);
+        }
+
+        var packages = await query.ToListAsync(cancellationToken);
 
         decimal fapAmount = 0;
         int fapCount = 0;
@@ -432,7 +452,7 @@ Provide a 2-3 paragraph summary highlighting the most important insights.";
         };
 
         _cache.Set(cacheKey, response, CacheDuration);
-        _logger.LogInformation("Quarterly FAP KPIs calculated: Amount={FapAmount}, Count={FapCount}", fapAmount, fapCount);
+        _logger.LogInformation("Quarterly FAP KPIs calculated: Amount={FapAmount}, Count={FapCount}, Status={Status}", fapAmount, fapCount, status ?? "all");
 
         return response;
     }
