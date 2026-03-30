@@ -527,6 +527,21 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
                                     var metadata = await _documentAgent.ExtractPhotoMetadataAsync(photo.BlobUrl, cancellationToken);
                                     photo.Caption = System.Text.Json.JsonSerializer.Serialize(metadata);
+                                    photo.ExtractedMetadataJson = photo.Caption;
+
+                                    // Populate dedicated columns so ValidationAgent can read them
+                                    if (metadata.Timestamp.HasValue)
+                                        photo.PhotoTimestamp = metadata.Timestamp.Value;
+                                    if (!string.IsNullOrEmpty(metadata.PhotoDateFromOverlay))
+                                        photo.PhotoDateOverlay = metadata.PhotoDateFromOverlay;
+                                    if (metadata.HasBlueTshirtPerson || metadata.BlueTshirtConfidence >= 0.60)
+                                        photo.BlueTshirtPresent = true;
+                                    else if (metadata.BlueTshirtConfidence < 0.60)
+                                        photo.BlueTshirtPresent = false;
+                                    photo.ThreeWheelerPresent = metadata.Has3WVehicle || metadata.VehicleConfidence >= 0.60;
+                                    photo.DateVisible = metadata.Timestamp.HasValue || !string.IsNullOrEmpty(metadata.PhotoDateFromOverlay);
+                                    if (metadata.Latitude.HasValue) photo.Latitude = metadata.Latitude.Value;
+                                    if (metadata.Longitude.HasValue) photo.Longitude = metadata.Longitude.Value;
                                     photo.UpdatedAt = DateTime.UtcNow;
                                     _logger.LogInformation("Photo {FileName} extraction completed", photo.FileName);
                                 }

@@ -1577,10 +1577,12 @@ Extract EVERY field you can see. Do not leave fields empty if data is visible.")
                 {
                     var visionAnalysis = await AnalyzePhotoContentAsync(imageUrl, cancellationToken);
                 
-                    metadata.HasBlueTshirtPerson = visionAnalysis.HasBlueTshirtPerson;
-                    metadata.BlueTshirtPersonCount = visionAnalysis.BlueTshirtPersonCount;
+                    metadata.HasBlueTshirtPerson = visionAnalysis.HasBlueTshirtPerson || visionAnalysis.BlueTshirtConfidence >= 0.60;
+                    metadata.BlueTshirtPersonCount = visionAnalysis.BlueTshirtPersonCount > 0
+                        ? visionAnalysis.BlueTshirtPersonCount
+                        : (metadata.HasBlueTshirtPerson ? 1 : 0);
                     metadata.HasBajajVehicle = visionAnalysis.HasBajajVehicle;
-                    metadata.Has3WVehicle = visionAnalysis.Has3WVehicle;
+                    metadata.Has3WVehicle = visionAnalysis.Has3WVehicle || visionAnalysis.VehicleConfidence >= 0.60;
                     metadata.BlueTshirtConfidence = visionAnalysis.BlueTshirtConfidence;
                     metadata.VehicleConfidence = visionAnalysis.VehicleConfidence;
                     metadata.PhotoDateFromOverlay = visionAnalysis.PhotoDateFromOverlay;
@@ -1667,17 +1669,55 @@ Analyze this photo carefully and detect the following. Be precise and thorough.
 
 WHAT TO DETECT:
 
-1. PERSON WITH BLUE T-SHIRT/SHIRT:
-   - Look for any person wearing blue clothing (light blue, dark blue, navy, royal blue)
-   - Must be worn by a real person (not on a banner/poster)
-   - Count how many people are wearing blue
-   - Confidence: 0.9+ if clearly visible, 0.5-0.8 if partially visible
+1. PERSON WITH BAJAJ BLUE UNIFORM (Promoter/Field Staff):
+   STRICT RULE: Bajaj logo or branding MUST be visible on the clothing. Without it, do NOT count.
 
-2. 3-WHEEL VEHICLE (Auto-Rickshaw / Cargo Vehicle):
-   - Three-wheeled vehicle (auto-rickshaw, Bajaj RE, cargo 3-wheeler)
-   - May have Bajaj branding
-   - Common in Indian streets
-   - Set has3WVehicle=true if ANY 3-wheeler is visible
+   VALID — blue clothing WITH visible Bajaj logo/branding:
+   - Blue t-shirt (round neck) WITH Bajaj logo/text visible
+   - Blue polo t-shirt WITH Bajaj logo/text visible
+   - Blue hoodie / sweatshirt WITH Bajaj logo/text visible
+   - Blue jacket / windcheater WITH Bajaj logo/text visible
+   - Logo can be small — even a small Bajaj logo on chest/sleeve counts
+
+   NOT VALID — reject ALL of these:
+   - Any blue clothing (t-shirt, polo, hoodie, jacket) with NO visible Bajaj logo or branding
+   - Blue formal shirt (button-down) — even with Bajaj logo
+   - General public/customer/bystander in blue — even with logo
+   - Blue jeans/pants
+   - Blue clothing on banners, posters, or vehicle
+
+   CONFIDENCE RULES:
+   - 0.95+ if Bajaj logo clearly visible on blue clothing
+   - 0.75+ if Bajaj logo partially visible or small but detectable
+   - 0.30 or less if blue clothing present but NO Bajaj logo visible
+   - Set hasBlueTshirtPerson=true ONLY if Bajaj logo/branding is detected AND confidence >= 0.65
+
+2. BRANDED 3-WHEEL VEHICLE (Bajaj Maxima Auto-Rickshaw ONLY):
+   STRICT RULE: Only a Bajaj-branded 3-wheeler counts. A plain auto-rickshaw, e-rickshaw, or any other vehicle WITHOUT Bajaj branding = has3WVehicle=false, vehicleConfidence=0.0.
+
+   PRIMARY SIGNAL - BLUE ADVERTISEMENT BOARD ON TOP (strongest indicator):
+   - A rectangular blue hoarding/board mounted on the ROOF of the vehicle
+   - The board has white/yellow text in Hindi and/or English
+   - Shows 'Bajaj Maxima' branding, pricing like Rs.27,999/- or Rs.34,000/-
+   - Hindi text about earning/investment may be visible on the board
+   - If this blue Bajaj board is visible on top of any vehicle: has3WVehicle=true, vehicleConfidence=0.95
+
+   SECONDARY SIGNALS (Bajaj branding must be confirmed):
+   - 'Maxima' or 'Bajaj' or 'Bajaj Maxima' text/logo on vehicle body, windshield sticker, or side panel
+   - 'S.R. Bajaj' or similar Bajaj dealer sticker on windshield
+   - Green and yellow auto-rickshaw body WITH any of the above Bajaj branding visible
+   - CNG sticker combined with Bajaj branding
+
+   STRICT REJECTION RULES - set has3WVehicle=false, vehicleConfidence=0.0 if:
+   - Auto-rickshaw is present but has NO Bajaj branding anywhere on the vehicle
+   - Only a generic yellow-green auto without any Bajaj board, sticker, or logo
+   - E-rickshaw, cargo vehicle, or any other 3-wheeler without Bajaj branding
+   - Bajaj branding is only on a pamphlet/leaflet held by a person (not on the vehicle itself)
+
+   PARTIAL VISIBILITY RULES:
+   - Vehicle may be viewed from rear, side, or front - still valid if Bajaj branding is detectable
+   - People standing in front of or around the vehicle - look for Bajaj branding behind/around them
+   - vehicleConfidence: 0.90+ if blue Bajaj board clearly visible, 0.75+ if Bajaj branding on body clearly visible, 0.60+ if partially obscured but Bajaj branding still detectable
 
 3. GPS OVERLAY TEXT (if visible at bottom of image):
    - Read the DATE from the overlay (format like '01/04/2025')
@@ -1712,7 +1752,7 @@ If GPS overlay is not visible, set photoDateFromOverlay to empty string and lat/
                 new ChatRequestUserMessage(
                     new ChatMessageContentItem[]
                     {
-                        new ChatMessageTextContentItem("Analyze this campaign photo. Detect: 1) People with blue t-shirt (count them), 2) Any 3-wheel vehicle, 3) Read GPS overlay text if visible (date, lat/long, location), 4) Human faces (count them, independent of clothing)."),
+                        new ChatMessageTextContentItem("Analyze this Indian marketing campaign photo. Detect: 1) BAJAJ BLUE UNIFORM — person wearing blue t-shirt, blue polo, or blue hoodie/jacket WITH visible Bajaj logo or branding. Bajaj logo MUST be present on the clothing — without it, do NOT count regardless of color. Blue formal shirt does NOT count. General public in blue without Bajaj logo does NOT count. 2) Bajaj Maxima branded 3-wheel auto-rickshaw ONLY — look for blue Bajaj advertisement board on roof, 'Bajaj'/'Maxima' text or logo on vehicle. Plain auto without Bajaj branding = NOT valid. 3) GPS overlay text at bottom (date, lat/long, location). 4) Human faces (count them)."),
                         CreateImageContentItem(imageData)
                     })
             }
@@ -2432,6 +2472,7 @@ Respond ONLY with a JSON object in this exact format:
             // Priority: totalWorkingDays (Activation/Billed Days) > totalDays (Total Days) > row sums
             if (parsed.TotalWorkingDays.HasValue && parsed.TotalWorkingDays.Value > 0)
             {
+                activityData.TotalWorkingDays = parsed.TotalWorkingDays.Value;
                 activityData.TotalDays = parsed.TotalWorkingDays.Value;
             }
             else if (parsed.TotalDays.HasValue && parsed.TotalDays.Value > 0)

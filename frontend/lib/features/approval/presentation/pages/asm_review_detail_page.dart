@@ -2115,19 +2115,19 @@ class _ASMReviewDetailPageState extends ConsumerState<ASMReviewDetailPage> {
         final activityDays = crossDocument['activitySummaryDays'] ?? crossDocument['costSummaryDays'] ?? 0;
         addRow('No. of days', daysMatch == true,
             daysMatch == true
-                ? 'Unique photo days ($uniquePhotoDays) matches Activity Summary days ($activityDays)'
-                : 'Unique photo days ($uniquePhotoDays) does not match Activity Summary days ($activityDays)');
+                ? 'Photo days ($uniquePhotoDays) matches Activity Summary days ($activityDays)'
+                : 'Photo days ($uniquePhotoDays) does not match Activity Summary days ($activityDays)');
       }
     }
 
     // Blue T-shirt & Branded 3W
     if (totalPhotos != null && totalPhotos > 0) {
       final photosWithBlueTshirt = fieldPresence?['photosWithBlueTshirt'] ?? 0;
-      addRow('Promoter wearning blue T-shirt', photosWithBlueTshirt > 0,
+      addRow('Promoter wearning blue T-shirt', photosWithBlueTshirt == totalPhotos,
           '$photosWithBlueTshirt/$totalPhotos Photos have promoters wearing blue T-shirt');
 
       final photosWithVehicle = fieldPresence?['photosWithVehicle'] ?? 0;
-      addRow('Branded 3 wheeler', photosWithVehicle > 0,
+      addRow('Branded 3 wheeler', photosWithVehicle == totalPhotos,
           '$photosWithVehicle/$totalPhotos Photos have branded 3 wheelers');
     }
 

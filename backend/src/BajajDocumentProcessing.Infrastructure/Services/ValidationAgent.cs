@@ -1558,8 +1558,12 @@ public class ValidationAgent : IValidationAgent
         int uniquePhotoDays = uniqueDates.Count;
         result.UniquePhotoDays = uniquePhotoDays;
 
-        // Get Activity Summary days (Activation Days / Billed Days / Working Days — all equivalent)
-        int activitySummaryDays = activityData?.Rows?.Sum(r => r.WorkingDay) ?? activityData?.TotalDays ?? 0;
+        // Get Activity Summary days — use explicit total first, then fall back to row sum
+        // Priority matches chatbot: TotalWorkingDays entity column > TotalDays > Rows.Sum(WorkingDay)
+        int activitySummaryDays = activityData?.TotalWorkingDays
+            ?? activityData?.TotalDays
+            ?? activityData?.Rows?.Sum(r => r.WorkingDay)
+            ?? 0;
         result.ActivitySummaryDays = activitySummaryDays;
 
         // Also keep cost summary days for backward compatibility
@@ -1574,7 +1578,7 @@ public class ValidationAgent : IValidationAgent
         if (!result.NumberOfDaysMatches && activitySummaryDays > 0)
         {
             result.AllChecksPass = false;
-            result.Issues.Add($"Photos cover {uniquePhotoDays} unique day(s) but Activity Summary states {activitySummaryDays} day(s)");
+            result.Issues.Add($"Photo days ({uniquePhotoDays}) does not match Activity Summary days ({activitySummaryDays})");
         }
         else if (!result.NumberOfDaysMatches && activitySummaryDays == 0 && costSummaryDays > 0)
         {
@@ -1584,7 +1588,7 @@ public class ValidationAgent : IValidationAgent
             if (!result.NumberOfDaysMatches)
             {
                 result.AllChecksPass = false;
-                result.Issues.Add($"Photos cover {uniquePhotoDays} unique day(s) but Cost Summary states {costSummaryDays} day(s)");
+            result.Issues.Add($"Photo days ({uniquePhotoDays}) does not match Cost Summary days ({costSummaryDays})");
             }
         }
 
@@ -2170,7 +2174,7 @@ public class ValidationAgent : IValidationAgent
                 new { ruleCode = "PHOTO_GPS_VISIBLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("GPS") || f.Contains("location")) ?? false), isWarning = false, label = "GPS", extractedValue = (string?)null, message = (string?)null },
                 new { ruleCode = "PHOTO_BLUE_TSHIRT", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("t-shirt") || f.Contains("tshirt") || f.Contains("Blue")) ?? false), isWarning = false, label = "Blue T-shirt", extractedValue = (string?)null, message = (string?)null },
                 new { ruleCode = "PHOTO_3W_VEHICLE", type = "Required", passed = !(ph?.MissingFields?.Any(f => f.Contains("vehicle") || f.Contains("Vehicle") || f.Contains("3W")) ?? false), isWarning = false, label = "3W Vehicle", extractedValue = (string?)null, message = (string?)null },
-                new { ruleCode = "PHOTO_NO_OF_DAYS", type = "Required", passed = result.PhotoCrossDocument?.NumberOfDaysMatches ?? true, isWarning = false, label = "No. of Days", extractedValue = result.PhotoCrossDocument != null ? $"Unique Photo Days: {result.PhotoCrossDocument.UniquePhotoDays} | Activity Summary Days: {result.PhotoCrossDocument.ActivitySummaryDays}" : null, message = result.PhotoCrossDocument != null && !result.PhotoCrossDocument.NumberOfDaysMatches ? string.Join("; ", result.PhotoCrossDocument.Issues) : null }
+                new { ruleCode = "PHOTO_NO_OF_DAYS", type = "Required", passed = result.PhotoCrossDocument?.NumberOfDaysMatches ?? true, isWarning = false, label = "No. of Days", extractedValue = result.PhotoCrossDocument != null ? (result.PhotoCrossDocument.NumberOfDaysMatches ? $"Photo days ({result.PhotoCrossDocument.UniquePhotoDays}) matches Activity Summary days ({result.PhotoCrossDocument.ActivitySummaryDays})" : $"Photo days ({result.PhotoCrossDocument.UniquePhotoDays}) does not match Activity Summary days ({result.PhotoCrossDocument.ActivitySummaryDays})") : null, message = result.PhotoCrossDocument != null && !result.PhotoCrossDocument.NumberOfDaysMatches ? string.Join("; ", result.PhotoCrossDocument.Issues) : null }
             };
             items.Add((DocumentType.TeamPhoto, package.Id, passed,
                 issues.Count > 0 ? string.Join("; ", issues) : null,
@@ -2207,8 +2211,9 @@ public class ValidationAgent : IValidationAgent
                         { dateVisible = true; dateVal = metadata.PhotoDateFromOverlay; }
                         if (!gpsVisible && metadata.Latitude.HasValue && metadata.Longitude.HasValue)
                         { gpsVisible = true; gpsVal = $"{metadata.Latitude:F4}, {metadata.Longitude:F4}"; }
-                        if (!blueTshirt) blueTshirt = metadata.HasBlueTshirtPerson;
-                        if (!threeWheeler) threeWheeler = metadata.HasBajajVehicle || metadata.Has3WVehicle;
+                        if (!blueTshirt) blueTshirt = metadata.HasBlueTshirtPerson || metadata.BlueTshirtConfidence >= 0.60;
+                        if (!threeWheeler) threeWheeler = metadata.HasBajajVehicle || metadata.Has3WVehicle
+                            || metadata.VehicleConfidence >= 0.60;
                     }
                 }
                 catch { /* skip malformed metadata */ }

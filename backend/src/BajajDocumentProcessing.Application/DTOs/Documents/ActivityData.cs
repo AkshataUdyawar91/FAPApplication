@@ -29,6 +29,11 @@ public class ActivityData
     /// Total number of days across all activities
     /// </summary>
     public int? TotalDays { get; set; }
+
+    /// <summary>
+    /// Total working days (Activation/Billed/Working Days) across all activities
+    /// </summary>
+    public int? TotalWorkingDays { get; set; }
     
     /// <summary>
     /// AI confidence scores for each extracted field (0-100)
