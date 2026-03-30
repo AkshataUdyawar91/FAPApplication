@@ -67,7 +67,7 @@ Data sources: `submission.state`, `submission.submissionNumber`, `submission.cre
 ### 2. Rejection Card (Agency only, conditional)
 
 Shown when `state` is `CHRejected` or `RARejected` (also matches legacy aliases `RejectedByASM`, `RejectedByHQ`, `RejectedByRA`). Displays:
-- Who rejected: "Rejected by CH" or "Rejected by RA"
+- Who rejected: "Rejected by Circle head" or "Rejected by Finance" (per Excel spec labels)
 - Rejection reason: `asmReviewNotes` (for CH rejection) or `hqReviewNotes` (for RA rejection)
 - "Edit Submission" button that navigates to the upload/edit page
 
@@ -135,28 +135,19 @@ Shown only when the submission is in an actionable state. Contains:
 - Comments text field (optional)
 
 **Actionable state logic per role:**
-- ASM page (`_isSubmissionActionable`): state is `PendingCH`, `PendingApproval`, `PendingCHApproval`, or `PendingCHReason` (NOT `RARejected` — when RA rejects, the agency must resubmit; CH cannot act on RA-rejected submissions). When state is `PendingCHReason`, ASM sees the RA's clarification request and a "Respond to RA" button instead of Approve/Reject.
-- RA page (`_isSubmissionActionable`): state is `PendingRA`, `RARejected`, `CHRejected`, `PendingCHReason`, or `PendingRAReasonResponse`. Button visibility per state:
+- ASM page (`_isSubmissionActionable`): state is `PendingCH`, `PendingApproval`, `PendingCHApproval`, or `PendingCHReason` (NOT `RARejected` — when RA rejects, the agency must resubmit; CH cannot act on RA-rejected submissions). When state is `PendingCHReason`, ASM sees the RA's clarification request and a "Respond to RA" button instead of Approve/Reject. **Note**: `PendingCHReason` is marked as Unused in the Excel spec, so this code path may not be reachable in the active flow.
+- RA page (`_isSubmissionActionable`): Per the Excel spec, RA can only Accept and Reject when state is `PendingRA` (status 6). The "Can RA Ask Reason" column is ❌ for all active statuses. Button visibility per state:
   - `PendingRA`: Approve ✅, Reject ✅, Ask Reason ❌
-  - `RARejected`: Ask Reason ✅ only
-  - `CHRejected`: Reject ✅, Ask Reason ✅ (no Approve)
-  - `PendingCHReason`: Reject ✅, Ask Reason ✅ (no Approve)
-  - `PendingRAReasonResponse`: Approve ✅, Reject ✅, Ask Reason ✅
+  - All other states: no RA actions available
 
-When CH has rejected a submission (state = `CHRejected`), the RA page shows Reject and Ask Reason buttons but NOT Approve.
+**Note on unused clarification flow**: The frontend may still have code paths for `PendingCHReason`, `PendingRAReasonResponse`, and the "Ask Reason" action for backward compatibility, but per the Excel spec these states (IDs 9, 10) are Unused and the RA Ask Reason action is not available on any active status.
 
 ASM actions call `PATCH /api/submissions/{id}/asm-approve` or `PATCH /api/submissions/{id}/asm-reject`.
-RA actions call `PATCH /api/submissions/{id}/hq-approve`, `PATCH /api/submissions/{id}/hq-reject`, or `PATCH /api/submissions/{id}/ra-send-back-to-ch`.
+RA actions call `PATCH /api/submissions/{id}/hq-approve` or `PATCH /api/submissions/{id}/hq-reject`.
 
-RA has three action options:
-- Approve: Final approval, submission is complete
-- Reject: Fully rejects to Agency for resubmission (state → `RARejected`)
-- Ask CH Clarification: Sends back to Circle Head for clarification (state → `PendingCHReason`)
-
-CH clarification flow:
-- When RA asks for clarification, state → `PendingCHReason` (ASM sees "RA Asked Reason")
-- CH responds with clarification, state → `PendingRAReasonResponse` (ASM sees "Reason Sent", RA sees "CH Responded")
-- RA can then approve, reject, or ask for clarification again
+RA has two action options in the active flow:
+- Approve: Final approval, submission is complete (state → `Approved`)
+- Reject: Fully rejects to Agency for resubmission (state → `RARejected` / "Rejected by Finance")
 
 ### 8. PO Balance Section (ASM only)
 
@@ -240,23 +231,22 @@ The timeline has 3 fixed steps. The CH step title and icon are derived from the 
 
 | Step | Icon | Title (varies by state/history) | Date Source |
 |---|---|---|---|
-| 1. Submitted | Upload icon (blue) | "Submitted" | `submission.createdAt` |
-| 2. CH Review | Derived from history | "Approved by CH (Name)" / "Rejected by CH (Name)" / "RA Asked Reason" / "Pending CH Review" | `submission.asmReviewedAt` |
-| 3. RA Review | Derived from state | "Approved by RA (Name)" / "Rejected by RA (Name)" / "Asked Reason (Waiting for CH)" / "CH Responded" / "CH Rejected" / "Pending RA Review" | `submission.hqReviewedAt` |
+| 1. Submitted | Upload icon (blue) | "Submitted" or "Re-Submitted" (if ReSubmit=1) | `submission.createdAt` |
+| 2. CH Review | Derived from history | "Approved by CH (Name)" / "Rejected by Circle head (Name)" / "Pending CH Review" | `submission.asmReviewedAt` |
+| 3. RA Review | Derived from state | "Approved (Name)" / "Rejected by Finance (Name)" / "Pending RA Review" | `submission.hqReviewedAt` |
 
 CH step status is determined by checking the latest CH (ASM role) action in `approvalHistory[]`:
-- If latest CH action is `Rejected` → shows "Rejected by CH" (red) even if current state is `PendingRAReasonResponse`
+- If latest CH action is `Rejected` → shows "Rejected by Circle head" (red)
 - If latest CH action is `Approved` → shows "Approved by CH" (green)
-- If state is `PendingCHReason` → shows "RA Asked Reason" (amber)
 - Otherwise → "Pending CH Review" (grey)
 
 RA step status is determined by the current package state:
-- `Approved` → "Approved by RA" (green)
-- `RARejected` → "Rejected by RA" (red)
-- `PendingCHReason` → "Asked Reason (Waiting for CH)" (amber)
-- `PendingRAReasonResponse` → "CH Responded" (red)
-- `CHRejected` → "CH Rejected" (amber)
+- `Approved` → "Approved" (green)
+- `RARejected` → "Rejected by Finance" (red)
+- `CHRejected` → "Rejected by Circle head" (amber) — RA sees this label per Excel
 - Otherwise → "Pending RA Review" (grey)
+
+**Note on unused states**: The `PendingCHReason` → "RA Asked Reason" (amber) and `PendingRAReasonResponse` → "CH Responded" timeline steps are defined in the frontend but correspond to Unused status IDs (9, 10) per the Excel spec. These states are not reachable in the active flow.
 
 Approver names are extracted from the latest ASM/RA entry in `approvalHistory[]` and appended to the title in parentheses.
 
@@ -285,10 +275,10 @@ Below the history, if `comments[]` is populated (from `RequestComments` table), 
 | ASM Approve | `request.Notes` if provided, otherwise `"Approved by ASM"` |
 | ASM Reject | `request.Reason` (the rejection reason) |
 | RA Approve | `request.Notes` if provided, otherwise `"Approved by RA"` |
-| RA Reject | `request.Reason` (the rejection reason) |
-| RA Send Back to CH | `request.Reason` (the clarification reason). Action = `SentBackToCH` |
-| CH Respond to Clarification | `request.Notes` if provided, otherwise `"Clarification provided by CH"`. Action = `Resubmitted`. State → `PendingRAReasonResponse` |
-| Resubmit (Agency) | `"Resubmitted by Agency"` |
+| RA Reject | `request.Reason` (the rejection reason). State → `RARejected` ("Rejected by Finance") |
+| ~~RA Send Back to CH~~ | ~~`request.Reason` (the clarification reason). Action = `SentBackToCH`~~ **(Unused per Excel spec)** |
+| ~~CH Respond to Clarification~~ | ~~`request.Notes` if provided, otherwise `"Clarification provided by CH"`. Action = `Resubmitted`. State → `PendingRAReasonResponse`~~ **(Unused per Excel spec)** |
+| Resubmit (Agency) | `"Resubmitted by Agency"`. Triggers ReSubmit flow (ReSubmit bit = 1) |
 | Resubmit (ASM to RA) | `request.Notes` |
 | Send back to Agency | `"Sent back to Agency: {request.Reason}"` |
 
@@ -345,7 +335,7 @@ Controller: `SubmissionsController.GetSubmission()`
 Authorization: JWT required. Role-based filtering:
 - Agency: can only see submissions belonging to their agency (`package.AgencyId == user.AgencyId`)
 - ASM/Circle Head: can only see submissions where `ActivityState` matches their assigned states
-- RA: can only see submissions where `ActivityState` matches their RA-assigned states AND `State` is one of `PendingRA`, `RARejected`, `Approved`, `CHRejected`, `PendingCHReason`, `PendingRAReasonResponse`
+- RA: can only see submissions where `ActivityState` matches their RA-assigned states AND `State` is one of `PendingRA`, `RARejected`, `Approved`, `CHRejected`. **Note**: `PendingCHReason` and `PendingRAReasonResponse` are defined but Unused per the Excel spec; the backend may still include them for backward compatibility.
 - HQ/Admin: can see all submissions
 
 Response DTO: `SubmissionDetailResponse`
@@ -410,7 +400,7 @@ API response root → DB table `DocumentPackages`
 | API Field (JSON) | Type | DB Entity | DB Column | Notes |
 |---|---|---|---|---|
 | `id` | `Guid` | `DocumentPackage` | `Id` | Primary key |
-| `state` | `string` | `DocumentPackage` | `State` | Enum `PackageState` → `.ToString()`. Values: `Draft`, `Uploaded`, `Extracting`, `Validating`, `PendingCH`, `CHRejected`, `PendingRA`, `RARejected`, `Approved`, `PendingCHReason`, `PendingRAReasonResponse` |
+| `state` | `string` | `DocumentPackage` | `State` | Enum `PackageState` → `.ToString()`. Base values (ReSubmit=0): `Draft` (0), `Uploaded` (1), `Extracting` (2), `Validating` (3), `PendingCH` (4), `CHRejected` (5), `PendingRA` (6), `RARejected` (7), `Approved` (8). Status IDs 9 (`PendingCHReason`) and 10 (`PendingRAReasonResponse`) are defined but **Unused** per the Excel spec. When `ReSubmit=1`, status IDs 4–8 map to ReSubmit variants: `ReSubmitPendingCH`, `ReSubmitCHRejected`, `ReSubmitPendingRA`, `ReSubmitRARejected`, `ReSubmitApproved`. See `ReSubmit` column below. |
 | `createdAt` | `DateTime` | `DocumentPackage` | `CreatedAt` | UTC |
 | `updatedAt` | `DateTime?` | `DocumentPackage` | `UpdatedAt` | UTC |
 | `submissionNumber` | `string?` | `DocumentPackage` | `SubmissionNumber` | Format: `CIQ-YYYY-XXXXX`. Generated at submit time |
@@ -420,7 +410,50 @@ API response root → DB table `DocumentPackages`
 | `versionNumber` | `int` | `DocumentPackage` | `VersionNumber` | Starts at 1, increments on resubmission |
 | `agencyId` | `Guid?` | `DocumentPackage` | `AgencyId` | FK to `Agencies` table. **NOTE: Not currently set in the response mapping — always `null` in API output. The `Agency` navigation property is not `.Include()`d in the query.** |
 | `agencyName` | `string?` | — | — | **NOTE: Not currently set in the response mapping — always `null` in API output. The `Agency` navigation property is not `.Include()`d in the query, so `Agency.Name` cannot be resolved.** |
+| `reSubmit` | `bool` | `DocumentPackage` | `ReSubmit` | **New column.** Bit flag (`0` or `1`). Default `0`. Set to `1` when the Agency resubmits a previously rejected submission. Used together with `State` to distinguish first-time submissions from resubmissions at the same approval stage. For example, `State=PendingCH` + `ReSubmit=0` = first submission pending CH review; `State=PendingCH` + `ReSubmit=1` = resubmission pending CH review. See "ReSubmit Variants" below. |
 | `assignedCircleHeadUserId` | `Guid?` | `DocumentPackage` | `AssignedCircleHeadUserId` | Auto-assigned at submit time via StateMapping |
+
+### ReSubmit Bit — Status Variant Mapping
+
+The `ReSubmit` column on `DocumentPackages` is a `bit` (boolean) flag that, combined with the `State` column (status ID), determines the effective status name and the labels each role sees. The same status IDs (4–8) are reused for resubmissions with `ReSubmit=1`.
+
+| Status ID | ReSubmit | Effective Status Name | Agency Sees | CH (ASM) Sees | RA Sees |
+|---|---|---|---|---|---|
+| 4 | 0 | `PendingCH` | Pending with CH | Pending | ❌ Hidden |
+| 4 | 1 | `ReSubmitPendingCH` | Re-Submit to CH | Pending Re-Submit | ❌ Hidden |
+| 5 | 0 | `CHRejected` | Rejected by Circle head | Rejected | Rejected by Circle head |
+| 5 | 1 | `ReSubmitCHRejected` | Rejected by Circle head | Rejected | ❌ Hidden |
+| 6 | 0 | `PendingRA` | Pending Finance approval | Pending Finance approval | Pending your Approval |
+| 6 | 1 | `ReSubmitPendingRA` | Pending Finance approval | Pending Finance approval | Pending your Approval |
+| 7 | 0 | `RARejected` | Rejected by Finance | Rejected by Finance | Rejected by Finance |
+| 7 | 1 | `ReSubmitRARejected` | Rejected by Finance | Rejected by Finance | Rejected by Finance |
+| 8 | 0 | `Approved` | Approved | Approved | Approved |
+| 8 | 1 | `ReSubmitApproved` | Approved | Approved | Approved |
+
+**Database column definition:**
+
+```sql
+-- New column on DocumentPackages table
+ALTER TABLE DocumentPackages
+ADD ReSubmit BIT NOT NULL DEFAULT 0;
+```
+
+**EF Core entity property:**
+
+```csharp
+// In DocumentPackage.cs (Domain entity)
+public bool ReSubmit { get; set; } = false;
+```
+
+**When ReSubmit is set:**
+- When Agency resubmits a `CHRejected` or `RARejected` submission, the system sets `ReSubmit = 1` and transitions `State` back to `PendingCH` (status ID 4).
+- The `ReSubmit` flag persists through the entire resubmission approval cycle (PendingCH → PendingRA → Approved/Rejected).
+- The `VersionNumber` column is also incremented on resubmission (existing behavior).
+
+**Key difference from first submission (ReSubmit=0):**
+- Agency sees "Re-Submit to CH" instead of "Pending with CH" at the CH review stage.
+- CH sees "Pending Re-Submit" instead of "Pending" — signaling this is a resubmission.
+- `ReSubmitCHRejected` (5, R=1) is ❌ Hidden from RA, unlike first-time `CHRejected` (5, R=0) which RA can see.
 
 ---
 
@@ -868,10 +901,10 @@ Same API call and data extraction pattern. Additionally:
 | `PATCH /api/submissions/{id}` | PATCH | Update draft submission (state, selectedPOId). Agency only, Draft state only |
 | `PATCH /api/submissions/{id}/asm-approve` | PATCH | ASM approves submission. Body: `{ notes }` |
 | `PATCH /api/submissions/{id}/asm-reject` | PATCH | ASM rejects submission. Body: `{ Reason }` |
-| `PATCH /api/submissions/{id}/ra-approve` | PATCH | RA approves submission. Body: `{ notes }` |
-| `PATCH /api/submissions/{id}/ra-reject` | PATCH | RA rejects submission. Body: `{ Reason }` |
-| `PATCH /api/submissions/{id}/ra-send-back-to-ch` | PATCH | RA sends back to CH for clarification. Body: `{ Reason }`. State → `PendingCHReason` |
-| `PATCH /api/submissions/{id}/asm-respond-clarification` | PATCH | CH responds to RA clarification. Body: `{ notes }`. State → `PendingRAReasonResponse` |
+| `PATCH /api/submissions/{id}/ra-approve` | PATCH | RA approves submission. Body: `{ notes }`. State → `Approved` |
+| `PATCH /api/submissions/{id}/ra-reject` | PATCH | RA rejects submission. Body: `{ Reason }`. State → `RARejected` ("Rejected by Finance") |
+| `PATCH /api/submissions/{id}/ra-send-back-to-ch` | PATCH | RA sends back to CH for clarification. Body: `{ Reason }`. State → `PendingCHReason`. **Unused per Excel spec — status 9 is not active** |
+| `PATCH /api/submissions/{id}/asm-respond-clarification` | PATCH | CH responds to RA clarification. Body: `{ notes }`. State → `PendingRAReasonResponse`. **Unused per Excel spec — status 10 is not active** |
 | `GET /api/hierarchical/{id}/structure` | GET | Hierarchical campaign structure with photos, cost/activity summary URLs |
 | `GET /api/documents/{id}/extraction-status` | GET | Poll AI extraction status |
 | `GET /api/documents/{id}/view` | GET | Download/view document file content |

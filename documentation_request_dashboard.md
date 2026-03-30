@@ -76,12 +76,11 @@ The `ListSubmissions` endpoint applies different filters depending on the authen
 ### RA (Regional Authority)
 - Filters by `ActivityState`: only submissions whose `ActivityState` matches the user's RA-assigned states (resolved via `ResolveRAAssignedStatesAsync` from `StateMapping.RAUserId`)
 - State restriction — only sees submissions in these states:
-  - `PendingRA` — awaiting RA review
-  - `RARejected` — rejected by RA
+  - `PendingRA` — awaiting RA review ("Pending your Approval")
+  - `RARejected` — rejected by RA ("Rejected by Finance")
   - `Approved` — final approval given
-  - `CHRejected` — rejected by Circle Head (RA can view and act on these)
-  - `PendingCHReason` — sent back to CH for clarification by RA
-  - `PendingRAReasonResponse` — CH responded to clarification, awaiting RA review
+  - `CHRejected` — rejected by Circle Head ("Rejected by Circle head")
+- **Note**: `PendingCHReason` and `PendingRAReasonResponse` are defined in the schema but marked as **Unused** in the Excel spec. The backend may still include them in the RA visible states list for backward compatibility, but they are not reachable in the active flow.
 
 ### Admin / HQ
 - No filters — sees all submissions
@@ -95,90 +94,135 @@ The `ListSubmissions` endpoint applies different filters depending on the authen
 
 ## Status Visibility Matrix
 
-| Status ID | Status Name | Agency Sees | CH (ASM) Sees | RA Sees | Can Accept | Can Reject | Can Ra Ask Reason |
-|---|---|---|---|---|---|---|---|
-| 0 | `Draft` | ❌ Hidden | ❌ Hidden | ❌ Hidden | ❌ | ❌ | ❌ |
-| 1 | `Uploaded` | Uploaded | Uploaded | ❌ Hidden | ❌ | ❌ | ❌ |
-| 2 | `Extracting` | Extracting | Processing | ❌ Hidden | ❌ | ❌ | ❌ |
-| 3 | `Validating` | Validating | Processing | ❌ Hidden | ❌ | ❌ | ❌ |
-| 4 | `PendingCH` | Pending with CH | Pending | ❌ Hidden | CH ✅ | CH ✅ | ❌ |
-| 5 | `CHRejected` | Rejected by CH | Rejected | CH Rejected | ❌ | RA ✅ | RA ✅ |
-| 6 | `PendingRA` | Pending with RA | Pending with RA | Pending | RA ✅ | RA ✅ | ❌ |
-| 7 | `RARejected` | Rejected by RA | Rejected by RA | Rejected | ❌ | ❌ | RA ✅ |
-| 8 | `Approved` | Approved | Approved | Approved | ❌ | ❌ | ❌ |
-| 9 | `PendingCHReason` | Pending with RA | RA Asked Reason | Asked Reason | ❌ | RA ✅ | RA ✅ |
-| 10 | `PendingRAReasonResponse` | Pending with RA | Reason Sent | CH Responded | RA ✅ | RA ✅ | RA ✅ |
+### First Submission (ReSubmit = 0)
+
+| Status ID | Status Name | In Use | Agency Sees | CH (ASM) Sees | RA Sees | Can Accept | Can Reject | Can RA Ask Reason | Agency Approval Flow | CH Approval Flow | RA Approval Flow |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | `Draft` | Used | ❌ Hidden | ❌ Hidden | ❌ Hidden | ❌ | ❌ | ❌ | — | — | — |
+| 1 | `Uploaded` | Used | Uploaded | Uploaded | ❌ Hidden | ❌ | ❌ | ❌ | — | — | — |
+| 2 | `Extracting` | Used | Extracting | Processing | ❌ Hidden | ❌ | ❌ | ❌ | — | — | — |
+| 3 | `Validating` | Used | Validating | Processing | ❌ Hidden | ❌ | ❌ | ❌ | — | — | — |
+| 4 | `PendingCH` | Used | Pending with CH | Pending | ❌ Hidden | CH ✅ | CH ✅ | ❌ | Pending with CH | Pending | ❌ Hidden |
+| 5 | `CHRejected` | Used | Rejected by Circle head | Rejected | Rejected by Circle head | ❌ | ❌ | ❌ | Rejected by Circle head | Rejected | Rejected by Circle head |
+| 6 | `PendingRA` | Used | Pending Finance approval | Pending Finance approval | Pending your Approval | RA ✅ | RA ✅ | ❌ | Pending Finance approval | Pending Finance approval | Pending your Approval |
+| 7 | `RARejected` | Used | Rejected by Finance | Rejected by Finance | Rejected by Finance | ❌ | ❌ | ❌ | Rejected by Finance | Rejected by Finance | Rejected by Finance |
+| 8 | `Approved` | Used | Approved | Approved | Approved | ❌ | ❌ | ❌ | Approved | Approved | Approved |
+| 9 | `PendingCHReason` | **Unused** | Pending with RA | RA Asked Reason | Asked Reason | ❌ | ❌ | ❌ | N/A | N/A | N/A |
+| 10 | `PendingRAReasonResponse` | **Unused** | Pending with RA | Reason Sent | CH Responded | ❌ | ❌ | ❌ | N/A | N/A | N/A |
+
+### ReSubmission (ReSubmit = 1)
+
+When a submission is resubmitted after rejection, the same status IDs (4–8) are reused with the `ReSubmit` bit set to `1`. The visibility labels and actions are identical to the first-submission equivalents.
+
+| Status ID | Status Name | In Use | Agency Sees | CH (ASM) Sees | RA Sees | Can Accept | Can Reject | Can RA Ask Reason | Agency Approval Flow | CH Approval Flow | RA Approval Flow |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 4 | `ReSubmitPendingCH` | Used | Re-Submit to CH | Pending Re-Submit | ❌ Hidden | CH ✅ | CH ✅ | ❌ | Pending with CH | Pending | ❌ Hidden |
+| 5 | `ReSubmitCHRejected` | Used | Rejected by Circle head | Rejected | ❌ Hidden | ❌ | ❌ | ❌ | Rejected by Circle head | Rejected | Rejected by Circle head |
+| 6 | `ReSubmitPendingRA` | Used | Pending Finance approval | Pending Finance approval | Pending your Approval | RA ✅ | RA ✅ | ❌ | Pending Finance approval | Pending Finance approval | Pending your Approval |
+| 7 | `ReSubmitRARejected` | Used | Rejected by Finance | Rejected by Finance | Rejected by Finance | ❌ | ❌ | ❌ | Rejected by Finance | Rejected by Finance | Rejected by Finance |
+| 8 | `ReSubmitApproved` | Used | Approved | Approved | Approved | ❌ | ❌ | ❌ | Approved | Approved | Approved |
+
+**Note on ReSubmit bit**: The `ReSubmit` flag is a **new `BIT` column on the `DocumentPackages` table** (default `0`). It distinguishes first-time submissions from resubmissions at the same approval stage. The same status IDs (4–8) are reused with `ReSubmit=1`, allowing the UI to show different labels (e.g., "Re-Submit to CH" vs "Pending with CH") and track resubmission history separately. The `ReSubmit` flag is set to `1` when the Agency resubmits a `CHRejected` or `RARejected` submission, and persists through the entire resubmission approval cycle. See `documentation_submission_details.md` § "ReSubmit Bit — Status Variant Mapping" for full DB schema, EF Core property, and per-role label mapping.
+
+**Note on Unused statuses**: Status IDs 9 (`PendingCHReason`) and 10 (`PendingRAReasonResponse`) are defined in the schema but currently unused in the active approval flow. The RA "Ask Reason" / CH clarification cycle is not active in the current FAP flow.
+---
+
+## Approval Flow (per Excel)
+
+The approval flow defines what each role sees at each stage. Colors indicate the flow point status.
+
+| Approval Flow Point | Agency | CH | RA | Color |
+|---|---|---|---|---|
+| Agency | Submitted | Submitted | Submitted | Green |
+| | Re-Submitted | Re-Submitted | Re-Submitted | Blue |
+| CH | Pending with CH | Pending | Pending with CH | Orange |
+| | Approved by CH | Approved | Approved by CH | Green |
+| | Rejected by CH | Rejected | Rejected by CH | Red |
+| RA | Pending with RA | Pending with RA | Pending | Orange |
+| | Approved by RA | Approved by RA | Approved | Green |
+| | Rejected by RA | Rejected by RA | Rejected | Red |
+
 ---
 
 ## Complete State Flow Graph
+
+### First Submission Flow
 
 ```
 Agency creates request
         │
         ▼
     [Uploaded] ──→ [Extracting] ──→ [Validating] ──→ [PendingCH]
+         (1)           (2)              (3)              (4)
                                                           │
-                                          ┌───────────────┼───────────────┐
-                                          ▼               ▼               │
-                                    CH Approves      CH Rejects           │
-                                          │               │               │
-                                          ▼               ▼               │
-                                     [PendingRA]    [CHRejected]          │
-                                          │               │               │
-                          ┌───────────────┼───────┐       │               │
-                          ▼               ▼       ▼       ▼               │
-                    RA Approves    RA Rejects   RA Asks  RA Sees          │
-                          │           │        Reason   CH Rejected       │
-                          ▼           ▼          │       │                │
-                     [Approved]  [RARejected]    │    ┌──┴──┐             │
-                                      │          │    ▼     ▼             │
-                                      │          │  RA     RA Asks       │
-                                      ▼          │ Rejects  Reason       │
-                                Agency must      │    │       │           │
-                                resubmit         │    ▼       │           │
-                                      │          │ [RARejected]           │
-                                      ▼          │              │         │
-                                 [Uploaded]      ▼              ▼         │
-                                 (new version)  [PendingCHReason]  │
-                                                      │                  │
-                                                      ▼                  │
-                                                CH Responds              │
-                                                with reason              │
-                                                      │                  │
-                                                      ▼                  │
-                                          [PendingRAReasonResponse]
-                                                      │
-                                          ┌───────────┼───────────┐
-                                          ▼           ▼           ▼
-                                    RA Approves  RA Rejects  RA Asks
-                                          │           │      Reason Again
-                                          ▼           ▼           │
-                                     [Approved] [RARejected]      │
+                                          ┌───────────────┴───────────────┐
+                                          ▼                               ▼
+                                    CH Approves                      CH Rejects
+                                          │                               │
+                                          ▼                               ▼
+                                     [PendingRA]                    [CHRejected]
+                                         (6)                            (5)
+                                          │                               │
+                          ┌───────────────┴───────────────┐               │
+                          ▼                               ▼               ▼
+                    RA Approves                      RA Rejects     Agency must
+                          │                               │         resubmit
+                          ▼                               ▼               │
+                     [Approved]                      [RARejected]         │
+                         (8)                             (7)              │
+                                                          │               │
+                                                          └───────┬───────┘
                                                                   ▼
-                                                    [PendingCHReason]
-                                                    (cycle repeats)
+                                                          Agency Resubmits
+                                                          (ReSubmit bit = 1)
+                                                                  │
+                                                                  ▼
+                                                        [ReSubmitPendingCH]
+                                                              (4, R=1)
+                                                                  │
+                                                    ┌─────────────┴─────────────┐
+                                                    ▼                           ▼
+                                              CH Approves                 CH Rejects
+                                                    │                           │
+                                                    ▼                           ▼
+                                          [ReSubmitPendingRA]       [ReSubmitCHRejected]
+                                               (6, R=1)                  (5, R=1)
+                                                    │
+                                    ┌───────────────┴───────────────┐
+                                    ▼                               ▼
+                              RA Approves                      RA Rejects
+                                    │                               │
+                                    ▼                               ▼
+                           [ReSubmitApproved]              [ReSubmitRARejected]
+                                (8, R=1)                       (7, R=1)
 ```
+
+**Note**: The PendingCHReason (9) and PendingRAReasonResponse (10) states are defined but currently unused. The RA "Ask Reason" clarification cycle is not active in the current FAP flow.
 
 ### State Transition Table
 
-| From State | Action | By | To State | ASM Label | RA Label |
-|---|---|---|---|---|---|
-| `Uploaded` | Process | System | `Extracting` | — | — |
-| `Extracting` | Extract complete | System | `Validating` | — | — |
-| `Validating` | Validate complete | System | `PendingCH` | Pending | — |
-| `PendingCH` | Approve | CH | `PendingRA` | Pending with RA | Pending |
-| `PendingCH` | Reject | CH | `CHRejected` | Rejected | CH Rejected |
-| `PendingRA` | Approve | RA | `Approved` | Approved | Approved |
-| `PendingRA` | Reject | RA | `RARejected` | Rejected by RA | Rejected |
-| `PendingRA` | Ask Reason | RA | `PendingCHReason` | RA Asked Reason | CH Clarification |
-| `CHRejected` | Reject | RA | `RARejected` | Rejected by RA | Rejected |
-| `CHRejected` | Ask Reason | RA | `PendingCHReason` | RA Asked Reason | CH Clarification |
-| `PendingCHReason` | Respond | CH | `PendingRAReasonResponse` | Reason Sent | CH Responded |
-| `PendingRAReasonResponse` | Approve | RA | `Approved` | Approved | Approved |
-| `PendingRAReasonResponse` | Reject | RA | `RARejected` | Rejected by RA | Rejected |
-| `PendingRAReasonResponse` | Ask Reason | RA | `PendingCHReason` | RA Asked Reason | CH Clarification |
-| `RARejected` | Resubmit | Agency | `Uploaded` | — | — |
-| `CHRejected` | Resubmit | Agency | `Uploaded` | — | — |
+#### First Submission (ReSubmit = 0)
+
+| From State | Action | By | To State | Agency Label | CH Label | RA Label |
+|---|---|---|---|---|---|---|
+| `Uploaded` (1) | Process | System | `Extracting` (2) | Extracting | Processing | ❌ Hidden |
+| `Extracting` (2) | Extract complete | System | `Validating` (3) | Validating | Processing | ❌ Hidden |
+| `Validating` (3) | Validate complete | System | `PendingCH` (4) | Pending with CH | Pending | ❌ Hidden |
+| `PendingCH` (4) | Approve | CH | `PendingRA` (6) | Pending Finance approval | Pending Finance approval | Pending your Approval |
+| `PendingCH` (4) | Reject | CH | `CHRejected` (5) | Rejected by Circle head | Rejected | Rejected by Circle head |
+| `PendingRA` (6) | Approve | RA | `Approved` (8) | Approved | Approved | Approved |
+| `PendingRA` (6) | Reject | RA | `RARejected` (7) | Rejected by Finance | Rejected by Finance | Rejected by Finance |
+| `RARejected` (7) | Resubmit | Agency | `ReSubmitPendingCH` (4, R=1) | Re-Submit to CH | Pending Re-Submit | ❌ Hidden |
+| `CHRejected` (5) | Resubmit | Agency | `ReSubmitPendingCH` (4, R=1) | Re-Submit to CH | Pending Re-Submit | ❌ Hidden |
+
+#### ReSubmission (ReSubmit = 1)
+
+| From State | Action | By | To State | Agency Label | CH Label | RA Label |
+|---|---|---|---|---|---|---|
+| `ReSubmitPendingCH` (4, R=1) | Approve | CH | `ReSubmitPendingRA` (6, R=1) | Pending Finance approval | Pending Finance approval | Pending your Approval |
+| `ReSubmitPendingCH` (4, R=1) | Reject | CH | `ReSubmitCHRejected` (5, R=1) | Rejected by Circle head | Rejected | ❌ Hidden |
+| `ReSubmitPendingRA` (6, R=1) | Approve | RA | `ReSubmitApproved` (8, R=1) | Approved | Approved | Approved |
+| `ReSubmitPendingRA` (6, R=1) | Reject | RA | `ReSubmitRARejected` (7, R=1) | Rejected by Finance | Rejected by Finance | Rejected by Finance |
 
 ---
 
@@ -220,22 +264,24 @@ File: `frontend/lib/features/submission/presentation/pages/agency_dashboard_page
 | `uploaded`, `draft` | `uploaded` | Submitted |
 | `extracting`, `validating`, `validated`, `scoring`, `recommending` | `extracting` | Extracting |
 | `pendingapproval`, `pendingchapproval`, `pendingch` | `pending_with_asm` | Pending with CH |
-| `asmapproved`, `pendinghqapproval`, `pendingra` | `pending_with_ra` | Pending with RA |
+| `asmapproved`, `pendinghqapproval`, `pendingra` | `pending_with_ra` | Pending Finance approval |
 | `approved` | `approved` | Approved |
-| `rejected`, `rejectedbyasm`, `reuploadrequested`, `chrejected` | `rejected_by_asm` | Rejected by CH |
-| `rejectedbyhq`, `rejectedbyra`, `rarejected` | `rejected_by_ra` | Rejected by RA |
+| `rejected`, `rejectedbyasm`, `reuploadrequested`, `chrejected` | `rejected_by_asm` | Rejected by Circle head |
+| `rejectedbyhq`, `rejectedbyra`, `rarejected` | `rejected_by_ra` | Rejected by Finance |
+
+**Note on Excel label mapping**: The Excel spec uses "Rejected by Circle head" (not "Rejected by CH") and "Rejected by Finance" / "Pending Finance approval" (not "Rejected by RA" / "Pending with RA") for the Agency view. The frontend may still use the shorter aliases internally.
 
 ### Status Badge Colors (Agency)
 
-The Agency badge uses the raw backend state for granular display:
+The Agency badge uses the raw backend state for granular display. Labels follow the Excel spec terminology:
 
 | Raw State | Label | Background | Text Color |
 |---|---|---|---|
 | `approved` | Approved | `#D1FAE5` | `#065F46` |
-| `rejectedbyasm`, `chrejected` | Rejected by CH | `#FEE2E2` | `#991B1B` |
-| `rejectedbyhq`, `rejectedbyra`, `rarejected` | Rejected by RA | `#FEE2E2` | `#991B1B` |
+| `rejectedbyasm`, `chrejected` | Rejected by Circle head | `#FEE2E2` | `#991B1B` |
+| `rejectedbyhq`, `rejectedbyra`, `rarejected` | Rejected by Finance | `#FEE2E2` | `#991B1B` |
 | `pendingchapproval`, `pendingwithch`, `pendingch` | Pending with CH | `#DBEAFE` | `#1E40AF` |
-| `pendinghqapproval`, `pendingwithra`, `pendingra` | Pending with RA | `#DBEAFE` | `#1E40AF` |
+| `pendinghqapproval`, `pendingwithra`, `pendingra` | Pending Finance approval | `#DBEAFE` | `#1E40AF` |
 | `processingfailed` | Processing Failed | `#FEF3C7` | `#92400E` |
 | `uploaded` | Uploaded | `#FEF3C7` | `#92400E` |
 | `extracting` | Extracting | `#FEF3C7` | `#92400E` |
@@ -290,13 +336,15 @@ File: `frontend/lib/features/approval/presentation/pages/asm_review_page.dart`
 | `pendingasmapproval`, `pendingapproval`, `pendingwithasm`, `pendingch`, `pendingchapproval` | `pending` | Pending |
 | `pendingchreason` | `ra-asked-reason` | RA Asked Reason |
 | `pendingrareasonresponse` | `reason-sent` | Reason Sent |
-| `pendinghqapproval`, `pendingwithra`, `pendingra`, `asmapproved` | `pending-with-ra` | Pending with RA |
+| `pendinghqapproval`, `pendingwithra`, `pendingra`, `asmapproved` | `pending-with-ra` | Pending Finance approval |
 | `approved` | `approved` | Approved |
 | `rejectedbyasm`, `rejected`, `asmrejected`, `chrejected`, `rejectedbych` | `rejected` | Rejected |
-| `rejectedbyhq`, `rejectedbyra`, `rarejected` | `rejected-by-ra` | Rejected by RA |
+| `rejectedbyhq`, `rejectedbyra`, `rarejected` | `rejected-by-ra` | Rejected by Finance |
 | `validationfailed`, `reuploadrequested` | `rejected` | Rejected |
 | `uploaded` | `uploaded` | (not in dropdown) |
 | `extracting`, `validating`, `scoring`, `recommending` | `processing` | (not in dropdown) |
+
+**Note on Excel label mapping**: The Excel spec uses "Pending Finance approval" (not "Pending with RA") and "Rejected by Finance" (not "Rejected by RA") for the CH view. Status IDs 9 and 10 (`PendingCHReason`, `PendingRAReasonResponse`) are marked as Unused in the Excel but are still handled in the frontend normalization for backward compatibility.
 
 ### Status Badge Colors (ASM)
 
@@ -305,10 +353,10 @@ File: `frontend/lib/features/approval/presentation/pages/asm_review_page.dart`
 | `pending` | Pending | `AppColors.pendingBackground` | `AppColors.pendingText` | `AppColors.pendingBorder` |
 | `ra-asked-reason` | RA Asked Reason | `#FFF7ED` | `#C2410C` | `#FDBA74` |
 | `reason-sent` | Reason Sent | `#ECFDF5` | `#065F46` | `#6EE7B7` |
-| `pending-with-ra` | Pending with RA | `#FEF3C7` | `#92400E` | `#F59E0B` |
+| `pending-with-ra` | Pending Finance approval | `#FEF3C7` | `#92400E` | `#F59E0B` |
 | `approved` | Approved | `AppColors.approvedBackground` | `AppColors.approvedText` | `AppColors.approvedBorder` |
 | `rejected` | Rejected | `AppColors.rejectedBackground` | `AppColors.rejectedText` | `AppColors.rejectedBorder` |
-| `rejected-by-ra` | Rejected by RA | `AppColors.rejectedBackground` | `AppColors.rejectedText` | `AppColors.rejectedBorder` |
+| `rejected-by-ra` | Rejected by Finance | `AppColors.rejectedBackground` | `AppColors.rejectedText` | `AppColors.rejectedBorder` |
 
 ### Filter Dropdown (static)
 
@@ -317,8 +365,8 @@ File: `frontend/lib/features/approval/presentation/pages/asm_review_page.dart`
 - RA Asked Reason
 - Reason Sent
 - Rejected
-- Rejected by RA
-- Pending with RA
+- Rejected by Finance
+- Pending Finance approval
 - Approved
 
 ### Sorting
@@ -348,7 +396,8 @@ File: `frontend/lib/features/approval/presentation/pages/hq_review_page.dart`
 ### Data Loading
 
 - Calls `GET /api/submissions` with `pageSize=100` (no explicit state filter — backend enforces RA scoping)
-- Backend returns only submissions matching RA's assigned `ActivityState` AND in `raVisibleStates`: `PendingRA`, `RARejected`, `Approved`, `CHRejected`, `PendingCHReason`, `PendingRAReasonResponse`
+- Backend returns only submissions matching RA's assigned `ActivityState` AND in `raVisibleStates`: `PendingRA`, `RARejected`, `Approved`, `CHRejected`
+- **Note**: `PendingCHReason` and `PendingRAReasonResponse` may still be in the backend's `raVisibleStates` list for backward compatibility, but these states are marked as **Unused** in the Excel spec and are not reachable in the active flow.
 - KPI data loaded separately from `GET /analytics/quarterly-fap`
 - Client-side quarter/year filtering via `_matchesQuarterYear()`
 
@@ -370,22 +419,24 @@ File: `frontend/lib/features/approval/presentation/pages/hq_review_page.dart`
 
 | Backend State(s) | Normalized Key | Dropdown Label |
 |---|---|---|
-| `pendingra`, `pendinghqapproval` | `pending` | Pending |
+| `pendingra`, `pendinghqapproval` | `pending` | Pending your Approval |
 | `pendingrareasonresponse` | `clarification-response` | CH Responded |
 | `approved` | `approved` | Approved |
-| `rarejected`, `rejectedbyhq`, `hqrejected`, `rejectedbyra` | `rejected` | Rejected |
-| `chrejected` | `ch-rejected` | CH Rejected |
+| `rarejected`, `rejectedbyhq`, `hqrejected`, `rejectedbyra` | `rejected` | Rejected by Finance |
+| `chrejected` | `ch-rejected` | Rejected by Circle head |
 | `pendingchreason`, `pendingch`, `pendingasmapproval` | `ch-clarification` | CH Clarification |
 | (anything else) | `other` | (raw state) |
+
+**Note on Excel label mapping**: The Excel spec uses "Pending your Approval" (not "Pending") and "Rejected by Finance" (not "Rejected") for the RA view. "Rejected by Circle head" is the RA-visible label for CH rejections.
 
 ### Status Badge Colors (RA)
 
 | Status Key | Label | Background | Text Color | Border |
 |---|---|---|---|---|
-| `pending` | Pending | `AppColors.pendingBackground` | `AppColors.pendingText` | `AppColors.pendingBorder` |
+| `pending` | Pending your Approval | `AppColors.pendingBackground` | `AppColors.pendingText` | `AppColors.pendingBorder` |
 | `approved` | Approved | `AppColors.approvedBackground` | `AppColors.approvedText` | `AppColors.approvedBorder` |
-| `rejected` | Rejected | `AppColors.rejectedBackground` | `AppColors.rejectedText` | `AppColors.rejectedBorder` |
-| `ch-rejected` | CH Rejected | `#FEF3C7` | `#92400E` | `#FCD34D` |
+| `rejected` | Rejected by Finance | `AppColors.rejectedBackground` | `AppColors.rejectedText` | `AppColors.rejectedBorder` |
+| `ch-rejected` | Rejected by Circle head | `#FEF3C7` | `#92400E` | `#FCD34D` |
 | `ch-clarification` | CH Clarification | `#FFF7ED` | `#C2410C` | `#FDBA74` |
 | `clarification-response` | CH Responded | `#ECFDF5` | `#065F46` | `#6EE7B7` |
 
@@ -393,9 +444,9 @@ File: `frontend/lib/features/approval/presentation/pages/hq_review_page.dart`
 
 - All
 - Approved
-- Pending
-- Rejected
-- CH Rejected
+- Pending your Approval
+- Rejected by Finance
+- Rejected by Circle head
 - CH Clarification
 - CH Responded
 
@@ -411,39 +462,36 @@ Clicking a row navigates to `HQReviewDetailPage` with `submissionId`, `token`, `
 
 ## RA Actions on Submission Detail
 
-When RA opens a submission from the dashboard, the available actions depend on the submission state:
+When RA opens a submission from the dashboard, the available actions depend on the submission state.
+
+**Per the Excel spec**: The "Can RA Ask Reason" action is ❌ (not available) for all active statuses. Status IDs 9 (`PendingCHReason`) and 10 (`PendingRAReasonResponse`) are marked as **Unused**. This means the RA clarification cycle (Ask CH Reason → CH Responds → RA reviews) is not active in the current FAP flow.
 
 | Submission State | Approve | Reject (to Agency) | Ask CH Clarification |
 |---|---|---|---|
-| `PendingRA` | ✅ | ✅ | ❌ |
-| `PendingRAReasonResponse` | ✅ | ✅ | ✅ |
-| `CHRejected` | ❌ | ✅ | ✅ |
-| `PendingCHReason` | ❌ | ✅ | ✅ |
-| `RARejected` | ❌ | ❌ | ✅ |
+| `PendingRA` | RA ✅ | RA ✅ | ❌ (unused) |
+| `CHRejected` | ❌ | ❌ | ❌ (unused) |
+| `RARejected` | ❌ | ❌ | ❌ (unused) |
 | `Approved` | ❌ | ❌ | ❌ |
+
+**Note**: The frontend may still have code paths for `PendingCHReason`, `PendingRAReasonResponse`, and the "Ask Reason" action for backward compatibility, but these states are not reachable in the current active flow per the Excel spec.
 
 ### Action Endpoints
 
 | Action | Endpoint | Accepted States | Result State |
 |---|---|---|---|
-| Approve | `PATCH /api/submissions/{id}/hq-approve` | `PendingRA`, `PendingRAReasonResponse` | `Approved` |
-| Reject to Agency | `PATCH /api/submissions/{id}/hq-reject` | `PendingRA`, `CHRejected`, `PendingCHReason`, `PendingRAReasonResponse` | `RARejected` |
-| Ask CH Reason | `PATCH /api/submissions/{id}/ra-send-back-to-ch` | `RARejected`, `CHRejected`, `PendingCHReason`, `PendingRAReasonResponse` | `PendingCHReason` |
-| CH Respond to Clarification | `PATCH /api/submissions/{id}/asm-respond-clarification` | `PendingCHReason` | `PendingRAReasonResponse` |
+| Approve | `PATCH /api/submissions/{id}/hq-approve` | `PendingRA` | `Approved` |
+| Reject to Agency | `PATCH /api/submissions/{id}/hq-reject` | `PendingRA` | `RARejected` |
+| ~~Ask CH Reason~~ | ~~`PATCH /api/submissions/{id}/ra-send-back-to-ch`~~ | ~~Various~~ | ~~`PendingCHReason`~~ (Unused) |
+| ~~CH Respond to Clarification~~ | ~~`PATCH /api/submissions/{id}/asm-respond-clarification`~~ | ~~`PendingCHReason`~~ | ~~`PendingRAReasonResponse`~~ (Unused) |
 
 ### State Flow After RA Actions
 
 ```
 PendingRA ──→ Approved                        (RA approves — final)
 PendingRA ──→ RARejected                      (RA rejects — Agency must resubmit)
-PendingRA ──→ PendingCHReason                  (RA asks CH for reason)
-CHRejected ──→ RARejected                     (RA fully rejects)
-CHRejected ──→ PendingCHReason                (RA asks CH to reconsider)
-PendingCHReason ──→ PendingRAReasonResponse    (CH responds with reason)
-PendingRAReasonResponse ──→ Approved           (RA approves after clarification)
-PendingRAReasonResponse ──→ RARejected         (RA rejects after clarification)
-PendingRAReasonResponse ──→ PendingCHReason    (RA asks again)
 ```
+
+The PendingCHReason/PendingRAReasonResponse clarification cycle is defined in the schema but not active per the Excel spec.
 
 ---
 
