@@ -134,6 +134,7 @@ class CampaignListSection extends StatefulWidget {
 
 class _CampaignListSectionState extends State<CampaignListSection> {
   late List<CampaignItemData> _campaigns;
+  late Dio _dio;
 
   // Controllers keyed by "campaignId_fieldName" so they survive setState rebuilds
   final Map<String, TextEditingController> _controllers = {};
@@ -279,6 +280,7 @@ class _CampaignListSectionState extends State<CampaignListSection> {
   @override
   void initState() {
     super.initState();
+    _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
     _campaigns = widget.campaigns.isEmpty
         ? [CampaignItemData(id: 'campaign_1')]
         : widget.campaigns;
@@ -306,10 +308,78 @@ class _CampaignListSectionState extends State<CampaignListSection> {
 
   // ─── Mutations ───────────────────────────────────────────────────────
 
+  /// Auto-save a newly added campaign to the backend (draft mode only)
+  Future<void> _autoSaveAddCampaign(CampaignItemData campaign) async {
+    if (widget.packageId == null || widget.token == null) {
+      debugPrint('Cannot auto-save campaign: packageId or token is null');
+      return;
+    }
+
+    try {
+      final response = await _dio.post(
+        '/hierarchical/${widget.packageId}/campaigns',
+        data: {
+          'campaignName': campaign.campaignName,
+          'teamCode': campaign.campaignName,
+          'startDate': campaign.startDate,
+          'endDate': campaign.endDate,
+          'workingDays': campaign.workingDays,
+          'dealershipName': campaign.dealershipName,
+          'dealershipAddress': campaign.dealershipAddress,
+          'gpsLocation': '',
+          'state': widget.selectedActivationState ?? '',
+        },
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        final campaignId = response.data['campaignId']?.toString();
+        if (campaignId != null && campaignId.isNotEmpty) {
+          // Update the campaign with the server-assigned ID
+          setState(() {
+            final idx = _campaigns.indexWhere((c) => c.id == campaign.id);
+            if (idx >= 0) {
+              _campaigns[idx].id = campaignId;
+            }
+          });
+          widget.onCampaignsChanged(_campaigns);
+          debugPrint('Campaign auto-saved with ID: $campaignId');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error auto-saving campaign: $e');
+      // Don't show error to user - this is a background operation
+    }
+  }
+
+  /// Auto-delete a campaign from the backend (draft mode only)
+  Future<void> _autoSaveRemoveCampaign(CampaignItemData campaign) async {
+    if (widget.packageId == null || widget.token == null || campaign.id.startsWith('campaign_')) {
+      // Don't try to delete campaigns that were never saved to the server
+      return;
+    }
+
+    try {
+      await _dio.delete(
+        '/hierarchical/${widget.packageId}/campaigns/${campaign.id}',
+        options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
+      );
+      debugPrint('Campaign auto-deleted: ${campaign.id}');
+    } catch (e) {
+      debugPrint('Error auto-deleting campaign: $e');
+      // Don't show error to user - this is a background operation
+    }
+  }
+
   void _addCampaign() {
-    setState(() => _campaigns
-        .add(CampaignItemData(id: 'campaign_${_campaigns.length + 1}')));
+    final newCampaign = CampaignItemData(id: 'campaign_${_campaigns.length + 1}');
+    setState(() => _campaigns.add(newCampaign));
     widget.onCampaignsChanged(_campaigns);
+    
+    // Auto-save to backend if in draft mode with packageId
+    if (widget.packageId != null && widget.token != null) {
+      _autoSaveAddCampaign(newCampaign);
+    }
   }
 
   Future<void> _removeCampaign(int index) async {
@@ -320,6 +390,12 @@ class _CampaignListSectionState extends State<CampaignListSection> {
     final confirmed = await _confirm('Delete Team', 'Delete "$name"?');
     if (!confirmed || !mounted) return;
     final removed = _campaigns[index];
+    
+    // Auto-delete from backend if it was saved to server
+    if (!removed.id.startsWith('campaign_')) {
+      await _autoSaveRemoveCampaign(removed);
+    }
+    
     setState(() => _campaigns.removeAt(index));
     _disposeControllersForCampaign(removed.id);
     widget.onCampaignsChanged(_campaigns);
