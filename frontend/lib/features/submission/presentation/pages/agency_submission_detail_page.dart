@@ -10,6 +10,7 @@ import 'package:web/web.dart' as web;
 import 'dart:js_interop';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../widgets/approval_flow_section.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/app_drawer.dart';
@@ -2091,14 +2092,16 @@ class _AgencySubmissionDetailPageState
         visible: false,
         child: _buildStatusCard(state, fapNumber),
       ),
-      if (state.toLowerCase() == 'rejectedbyasm') ...[
+      if (state.toLowerCase() == 'chrejected' ||
+          state.toLowerCase() == 'rejectedbyasm') ...[
         const SizedBox(height: 16),
         _buildRejectionCard(
-          rejectedBy: 'ASM',
+          rejectedBy: 'CH',
           reviewNotes: _submission!['asmReviewNotes']?.toString(),
         ),
       ],
-      if (state.toLowerCase() == 'rejectedbyhq' ||
+      if (state.toLowerCase() == 'rarejected' ||
+          state.toLowerCase() == 'rejectedbyhq' ||
           state.toLowerCase() == 'rejectedbyra') ...[
         const SizedBox(height: 16),
         _buildRejectionCard(
@@ -2154,7 +2157,7 @@ class _AgencySubmissionDetailPageState
                 const SizedBox(width: 20),
                 SizedBox(
                   width: MediaQuery.of(context).size.width * 0.22,
-                  child: _buildApprovalTimeline(),
+                  child: ApprovalFlowSection(submission: _submission!),
                 ),
               ],
             ),
@@ -2184,7 +2187,7 @@ class _AgencySubmissionDetailPageState
           _buildValidationReportSection(),
           ..._buildPhotoGallerySection(),
           const SizedBox(height: 24),
-          _buildApprovalTimeline(),
+          ApprovalFlowSection(submission: _submission!),
           const SizedBox(height: 80),
         ],
       ),
@@ -2870,206 +2873,6 @@ class _AgencySubmissionDetailPageState
     );
   }
 
-  Widget _buildApprovalTimeline() {
-    final state = _submission!['state']?.toString().toLowerCase() ?? '';
-    final createdAt = _submission!['createdAt'];
-    final asmReviewedAt = _submission!['asmReviewedAt'];
-    final asmReviewNotes = _submission!['asmReviewNotes']?.toString();
-    final hqReviewedAt = _submission!['hqReviewedAt'];
-    final hqReviewNotes = _submission!['hqReviewNotes']?.toString();
-
-    // Determine ASM status
-    String asmStatus = 'pending';
-    if (state.contains('rejectedbyasm')) {
-      asmStatus = 'rejected';
-    } else if (state.contains('approved') ||
-        state.contains('pendinghq') ||
-        state.contains('rejectedbyhq')) {
-      asmStatus = 'approved';
-    } else if (asmReviewedAt != null) {
-      asmStatus = asmReviewNotes != null && asmReviewNotes.isNotEmpty
-          ? 'rejected'
-          : 'approved';
-    }
-
-    // Determine HQ/RA status
-    String hqStatus = 'pending';
-    if (state == 'approved') {
-      hqStatus = 'approved';
-    } else if (state.contains('rejectedbyhq')) {
-      hqStatus = 'rejected';
-    } else if (hqReviewedAt != null) {
-      hqStatus = hqReviewNotes != null && hqReviewNotes.isNotEmpty
-          ? 'rejected'
-          : 'approved';
-    }
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: AppColors.border)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Approval Flow', style: AppTextStyles.h3),
-            const SizedBox(height: 20),
-            // Step 1: Submitted
-            _buildTimelineStep(
-              icon: Icons.upload_file,
-              color: const Color(0xFF3B82F6),
-              title: 'Submitted',
-              date: _formatDate(createdAt),
-              comment: null,
-              isCompleted: true,
-              isLast: false,
-            ),
-            // Step 2: ASM Review
-            _buildTimelineStep(
-              icon: asmStatus == 'approved'
-                  ? Icons.check_circle
-                  : asmStatus == 'rejected'
-                      ? Icons.cancel
-                      : Icons.schedule,
-              color: asmStatus == 'approved'
-                  ? const Color(0xFF10B981)
-                  : asmStatus == 'rejected'
-                      ? const Color(0xFFDC2626)
-                      : const Color(0xFF9CA3AF),
-              title: asmStatus == 'approved'
-                  ? 'Approved by CH'
-                  : asmStatus == 'rejected'
-                      ? 'Rejected by CH'
-                      : 'Pending CH Review',
-              date: asmReviewedAt != null ? _formatDate(asmReviewedAt) : null,
-              comment: asmReviewNotes,
-              isCompleted: asmStatus != 'pending',
-              isLast: false,
-            ),
-            // Step 3: HQ/RA Review
-            _buildTimelineStep(
-              icon: hqStatus == 'approved'
-                  ? Icons.check_circle
-                  : hqStatus == 'rejected'
-                      ? Icons.cancel
-                      : Icons.schedule,
-              color: hqStatus == 'approved'
-                  ? const Color(0xFF10B981)
-                  : hqStatus == 'rejected'
-                      ? const Color(0xFFDC2626)
-                      : const Color(0xFF9CA3AF),
-              title: hqStatus == 'approved'
-                  ? 'Approved by HQ/RA'
-                  : hqStatus == 'rejected'
-                      ? 'Rejected by HQ/RA'
-                      : 'Pending HQ/RA Review',
-              date: hqReviewedAt != null ? _formatDate(hqReviewedAt) : null,
-              comment: hqReviewNotes,
-              isCompleted: hqStatus != 'pending',
-              isLast: true,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTimelineStep({
-    required IconData icon,
-    required Color color,
-    required String title,
-    String? date,
-    String? comment,
-    required bool isCompleted,
-    required bool isLast,
-  }) {
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Timeline line + dot
-          SizedBox(
-            width: 32,
-            child: Column(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: isCompleted
-                        ? color.withOpacity(0.15)
-                        : const Color(0xFFF3F4F6),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: isCompleted ? color : const Color(0xFFD1D5DB),
-                        width: 2),
-                  ),
-                  child: Icon(icon,
-                      size: 14,
-                      color: isCompleted ? color : const Color(0xFF9CA3AF)),
-                ),
-                if (!isLast)
-                  Expanded(
-                    child: Container(
-                      width: 2,
-                      color: isCompleted
-                          ? color.withOpacity(0.3)
-                          : const Color(0xFFE5E7EB),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          // Content
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(bottom: isLast ? 0 : 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: AppTextStyles.bodyMedium.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: isCompleted
-                          ? const Color(0xFF111827)
-                          : const Color(0xFF9CA3AF),
-                    ),
-                  ),
-                  if (date != null) ...[
-                    const SizedBox(height: 2),
-                    Text(date,
-                        style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textSecondary, fontSize: 11)),
-                  ],
-                  if (comment != null && comment.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9FAFB),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                      ),
-                      child: Text(
-                        comment,
-                        style: AppTextStyles.bodySmall.copyWith(
-                            color: const Color(0xFF4B5563), height: 1.4),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Map<String, dynamic> _getStatusInfo(String state) {
     final stateLower = state.toLowerCase();
     if (stateLower.contains('approved') && !stateLower.contains('pending')) {
@@ -3080,7 +2883,7 @@ class _AgencySubmissionDetailPageState
         'borderColor': const Color(0xFF6EE7B7),
         'icon': Icons.check_circle,
       };
-    } else if (stateLower == 'rejectedbyasm') {
+    } else if (stateLower == 'chrejected' || stateLower == 'rejectedbyasm') {
       return {
         'label': 'Rejected by CH',
         'color': const Color(0xFFDC2626),
@@ -3088,7 +2891,7 @@ class _AgencySubmissionDetailPageState
         'borderColor': const Color(0xFFFCA5A5),
         'icon': Icons.cancel,
       };
-    } else if (stateLower == 'rejectedbyhq' || stateLower == 'rejectedbyra') {
+    } else if (stateLower == 'rarejected' || stateLower == 'rejectedbyhq' || stateLower == 'rejectedbyra') {
       return {
         'label': 'Rejected by RA',
         'color': const Color(0xFFDC2626),
@@ -3104,7 +2907,8 @@ class _AgencySubmissionDetailPageState
         'borderColor': const Color(0xFFFCA5A5),
         'icon': Icons.cancel,
       };
-    } else if (stateLower.contains('pendinghq') ||
+    } else if (stateLower.contains('pendingra') ||
+        stateLower.contains('pendinghq') ||
         stateLower == 'asmapproved') {
       return {
         'label': 'Pending with RA',

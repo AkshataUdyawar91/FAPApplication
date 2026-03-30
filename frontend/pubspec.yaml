@@ -41,6 +41,9 @@ dependencies:
   # Image Compression
   flutter_image_compress: ^2.1.0
 
+  # Logging
+  logger: ^2.0.2
+
   # Utilities
   intl: ^0.18.1
   equatable: ^2.0.5

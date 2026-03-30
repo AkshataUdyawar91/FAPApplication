@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import '../providers/analytics_providers.dart';
 import '../providers/analytics_notifier.dart';
 import '../widgets/kpi_card.dart';
@@ -37,9 +39,7 @@ class _AnalyticsDashboardPageState
           ref.read(analyticsNotifierProvider.notifier).resetExportSuccess();
         }
         if (next.error != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(next.error!)),
-          );
+          ErrorHandler.show(context, failure: ErrorHandler.failureFromMessage(next.error!));
           ref.read(analyticsNotifierProvider.notifier).clearError();
         }
       },

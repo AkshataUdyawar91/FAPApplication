@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import 'package:dio/dio.dart';
 
 class SapLogsPage extends StatefulWidget {
@@ -139,9 +141,9 @@ class _PoBalanceLogsTabState extends State<_PoBalanceLogsTab>
         });
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -435,9 +437,9 @@ class _PoSyncLogsTabState extends State<_PoSyncLogsTab>
         });
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

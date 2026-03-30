@@ -13,5 +13,7 @@ public enum PackageState
     CHRejected = 5,
     PendingRA = 6,
     RARejected = 7,
-    Approved = 8
+    Approved = 8,
+    PendingCHReason = 9,
+    PendingRAReasonResponse = 10
 }

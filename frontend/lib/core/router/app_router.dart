@@ -1,15 +1,16 @@
 import 'package:bajaj_document_processing/features/submission/presentation/pages/new_agency_upload_page.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
 import '../../features/auth/presentation/pages/login_page.dart';
 import '../../features/auth/presentation/pages/sso_callback_page.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
+import '../../features/auth/presentation/providers/auth_notifier.dart';
 import '../../features/conversational_submission/presentation/pages/conversational_submission_page.dart';
 import '../../features/conversational_submission/presentation/pages/my_submissions_page.dart';
 import '../../features/submission/presentation/pages/agency_submission_detail_page.dart';
 import '../../features/submission/presentation/pages/agency_dashboard_page.dart';
-import '../../features/submission/presentation/pages/agency_upload_page.dart';
 import '../../features/approval/presentation/pages/asm_review_page.dart';
 import '../../features/approval/presentation/pages/asm_review_detail_page.dart';
 import '../../features/approval/presentation/pages/hq_review_page.dart';
@@ -32,12 +33,31 @@ void handleLogout(BuildContext context, WidgetRef ref) {
   context.go('/login');
 }
 
+/// A [ChangeNotifier] that bridges Riverpod's [AuthState] to GoRouter's
+/// [refreshListenable]. This lets the router re-evaluate its redirect
+/// without being recreated from scratch — critical for release-mode web.
+class _AuthChangeNotifier extends ChangeNotifier {
+  _AuthChangeNotifier(Ref ref) {
+    ref.listen<AuthState>(authNotifierProvider, (_, __) {
+      notifyListeners();
+    });
+  }
+}
+
+/// Provides a stable [_AuthChangeNotifier] that GoRouter can listen to.
+final _authChangeNotifierProvider = Provider<_AuthChangeNotifier>((ref) {
+  return _AuthChangeNotifier(ref);
+});
+
 final appRouterProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authNotifierProvider);
+  final authChangeNotifier = ref.watch(_authChangeNotifierProvider);
 
   return GoRouter(
     initialLocation: '/login',
+    refreshListenable: authChangeNotifier,
     redirect: (context, state) {
+      // Read (not watch) — the refreshListenable handles reactivity.
+      final authState = ref.read(authNotifierProvider);
       final isAuthenticated = authState.isAuthenticated;
       final isLoggingIn = state.matchedLocation == '/login';
       final isSsoCallback = state.matchedLocation == '/sso-callback';
@@ -49,24 +69,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       if (isAuthenticated && isLoggingIn) {
         // Redirect to role-specific dashboard
         final userRole = authState.user?.role.toLowerCase();
-        print('[Router] User authenticated with role: $userRole');
+        if (kDebugMode) {
+          print('[Router] User authenticated with role: $userRole');
+        }
 
         switch (userRole) {
           case 'agency':
-            print('[Router] Redirecting to Agency dashboard: /home');
             return '/home';
           case 'asm':
-            print('[Router] Redirecting to ASM dashboard: /asm/dashboard');
             return '/asm/dashboard';
           case 'ra':
-            print('[Router] Redirecting to RA/HQ dashboard: /hq/dashboard');
             return '/hq/dashboard';
           case 'admin':
-            print('[Router] Redirecting to Admin dashboard: /admin/dashboard');
             return '/admin/dashboard';
           default:
-            print(
-                '[Router] Unknown role, defaulting to Agency dashboard: /home');
             return '/home';
         }
       }
@@ -85,7 +101,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final code = state.uri.queryParameters['code'];
           final error = state.uri.queryParameters['error'];
-          final errorDescription = state.uri.queryParameters['error_description'];
+          final errorDescription =
+              state.uri.queryParameters['error_description'];
           return SsoCallbackPage(
             code: code,
             error: error,

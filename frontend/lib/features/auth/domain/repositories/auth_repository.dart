@@ -4,8 +4,9 @@ import '../entities/user.dart';
 
 /// Authentication repository interface
 abstract class AuthRepository {
-  /// Login with email and password
-  Future<Either<Failure, User>> login(String email, String password);
+  /// Login with email and password.
+  /// Returns the [User] and the JWT token string.
+  Future<Either<Failure, (User, String)>> login(String email, String password);
 
   /// Logout current user
   Future<Either<Failure, void>> logout();
@@ -19,6 +20,7 @@ abstract class AuthRepository {
   /// Get Azure AD SSO authorization URL
   Future<Either<Failure, String>> getSsoAuthorizeUrl(String redirectUri);
 
-  /// Login via Azure AD SSO using authorization code
-  Future<Either<Failure, User>> ssoLogin(String code, String redirectUri);
+  /// Login via Azure AD SSO using authorization code.
+  /// Returns the [User] and the JWT token string.
+  Future<Either<Failure, (User, String)>> ssoLogin(String code, String redirectUri);
 }

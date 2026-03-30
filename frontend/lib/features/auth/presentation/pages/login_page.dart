@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import '../../../../core/utils/web_redirect_helper.dart';
 import '../providers/auth_providers.dart';
 import '../providers/auth_notifier.dart';
@@ -22,7 +24,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   void initState() {
     super.initState();
     // Prefill credentials for development
-    _emailController.text = 'agency@bajaj.com';
+    _emailController.text = 'agency.swift@test.bajaj.com';
     _passwordController.text = 'Password123!';
   }
 
@@ -61,15 +63,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Widget build(BuildContext context) {
     final authState = ref.watch(authNotifierProvider);
 
-    // Show error snackbar
+    // Show error toast for auth errors
     ref.listen<AuthState>(authNotifierProvider, (previous, next) {
-      if (next.error != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(next.error!),
-            backgroundColor: Colors.red,
-          ),
-        );
+      if (next.error != null && (previous == null || previous.error == null)) {
+        ErrorHandler.show(context, failure: ServerFailure(next.error!));
       }
     });
 
@@ -281,6 +278,37 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 ],
                               ),
                               const SizedBox(height: 24),
+
+                              // Inline error message
+                              if (authState.error != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 16),
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFEE2E2),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: const Color(0xFFFECACA)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.error_outline, color: Color(0xFFDC2626), size: 20),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            authState.error!,
+                                            style: const TextStyle(
+                                              color: Color(0xFFDC2626),
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
 
                               // Login button
                               SizedBox(
