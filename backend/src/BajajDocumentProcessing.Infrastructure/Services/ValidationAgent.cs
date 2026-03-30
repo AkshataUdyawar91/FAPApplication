@@ -395,7 +395,8 @@ public class ValidationAgent : IValidationAgent
                 result.PhotoCrossDocument = ValidatePhotoCrossDocument(
                     allTeamPhotos,
                     activityData,
-                    costSummaryData);
+                    costSummaryData,
+                    package.ActivitySummary?.TotalWorkingDays);
                 
                 if (!result.PhotoCrossDocument.AllChecksPass)
                 {
@@ -1494,7 +1495,8 @@ public class ValidationAgent : IValidationAgent
     private PhotoCrossDocumentResult ValidatePhotoCrossDocument(
         List<Domain.Entities.TeamPhotos> photos,
         ActivityData? activityData,
-        CostSummaryData? costSummaryData)
+        CostSummaryData? costSummaryData,
+        int? entityTotalWorkingDays = null)
     {
         var correlationId = _correlationIdService.GetCorrelationId();
         _logger.LogInformation(
@@ -2011,6 +2013,7 @@ public class ValidationAgent : IValidationAgent
             // Read agency/billing/state from ExtractedDataJson (not stored as dedicated columns on Invoice entity)
             string? invAgencyName = null, invAgencyAddr = null, invBillingName = null, invBillingAddr = null, invStateVal = null;
             decimal? invGstPercent = null;
+            string? invVendorCode = null;
             if (!string.IsNullOrEmpty(invoiceDoc.ExtractedDataJson))
             {
                 try
@@ -2026,6 +2029,7 @@ public class ValidationAgent : IValidationAgent
                     {
                         if (gp.ValueKind == JsonValueKind.Number) invGstPercent = gp.GetDecimal();
                     }
+                    if (invJson.TryGetProperty("VendorCode", out var vc) || invJson.TryGetProperty("vendorCode", out vc)) invVendorCode = vc.GetString();
                 }
                 catch { }
             }
@@ -2044,6 +2048,7 @@ public class ValidationAgent : IValidationAgent
                 new { ruleCode = "INV_AMOUNT_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("Invoice Amount") ?? false), isWarning = false, label = "Invoice Amount", extractedValue = invoiceDoc.TotalAmount.HasValue ? $"₹{invoiceDoc.TotalAmount:N0}" : null, message = (string?)null },
                 new { ruleCode = "INV_GST_PRESENT", type = "Required", passed = !(result.InvoiceFieldPresence?.MissingFields?.Contains("GST Number") ?? false), isWarning = false, label = "GST Number", extractedValue = invoiceDoc.GSTNumber, message = (string?)null },
                 new { ruleCode = "INV_AGENCY_NAME_ADDRESS", type = "Required", passed = invAgencyOk, isWarning = false, label = "Agency Name & Address", extractedValue = invAgencyExtracted, message = invAgencyOk ? null : (string.IsNullOrWhiteSpace(invAgencyName) ? "Supplier name not detected" : "Supplier address not detected") },
+                new { ruleCode = "INV_VENDOR_CODE_PRESENT", type = "Required", passed = !string.IsNullOrWhiteSpace(invVendorCode), isWarning = false, label = "Agency Code", extractedValue = invVendorCode, message = !string.IsNullOrWhiteSpace(invVendorCode) ? null : "Agency code not detected" },
                 new { ruleCode = "INV_BILLING_NAME_ADDRESS", type = "Required", passed = invBillingOk, isWarning = false, label = "Billing Name & Address", extractedValue = invBillingExtracted, message = invBillingOk ? null : (string.IsNullOrWhiteSpace(invBillingName) ? "Recipient name not detected" : "Recipient address not detected") },
                 new { ruleCode = "INV_SUPPLIER_STATE", type = "Required", passed = invStateOk, isWarning = false, label = "Supplier State", extractedValue = invStateVal, message = invStateOk ? null : "Supplier state not detected" },
                 new { ruleCode = "INV_PO_MATCH", type = "Required", passed = result.InvoiceCrossDocument?.PONumberMatches ?? true, isWarning = false, label = "PO Number Match", extractedValue = (string?)null, message = result.InvoiceCrossDocument?.PONumberMatches == false ? "PO number mismatch" : null },

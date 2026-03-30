@@ -124,6 +124,25 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
     super.dispose();
   }
 
+  // ── Test helpers (used by integration tests) ──
+  List<InvoiceItemData> get testInvoices => _invoices;
+  set testInvoices(List<InvoiceItemData> v) => _invoices = v;
+  PlatformFile? get testCostSummaryFile => _costSummaryFile;
+  set testCostSummaryFile(PlatformFile? v) => _costSummaryFile = v;
+  PlatformFile? get testActivitySummaryFile => _activitySummaryFile;
+  set testActivitySummaryFile(PlatformFile? v) => _activitySummaryFile = v;
+  PlatformFile? get testEnquiryDocFile => _enquiryDocFile;
+  set testEnquiryDocFile(PlatformFile? v) => _enquiryDocFile = v;
+  List<CampaignItemData> get testCampaigns => _campaigns;
+  set testCampaigns(List<CampaignItemData> v) => _campaigns = v;
+  String? get testPackageId => _currentPackageId;
+  Future<void> testExtractInvoice(InvoiceItemData inv) => _uploadAndAutofillInvoice(inv);
+  Future<void> testUploadCostSummary(PlatformFile file) => _uploadCostSummaryImmediately(file);
+  Future<void> testUploadActivitySummary(PlatformFile file) => _uploadActivitySummaryImmediately(file);
+  Future<void> testUploadEnquiryDoc(PlatformFile file) => _uploadEnquiryDocImmediately(file);
+  // ignore: invalid_use_of_protected_member
+  void testRebuild() => setState(() {});
+
   Future<void> _loadPOs({String? search}) async {
     setState(() => _isLoadingPOs = true);
     try {

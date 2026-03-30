@@ -379,6 +379,7 @@ public class SubmissionsController : ControllerBase
                 .Include(p => p.ActivitySummary)
                 .Include(p => p.EnquiryDocument)
                 .Include(p => p.RequestApprovalHistory)
+                    .ThenInclude(h => h.Approver)
                 .AsSplitQuery()
                 .AsQueryable();
 
@@ -636,7 +637,19 @@ public class SubmissionsController : ControllerBase
                 SubmissionNumber = package.SubmissionNumber,
                 AssignedCircleHeadUserId = package.AssignedCircleHeadUserId,
                 ActivityState = package.ActivityState,
-                SelectedPOId = package.SelectedPOId
+                SelectedPOId = package.SelectedPOId,
+                ApprovalHistory = package.RequestApprovalHistory
+                    .OrderBy(h => h.ActionDate)
+                    .Select(h => new ApprovalHistoryItemDto
+                    {
+                        Id = h.Id,
+                        ApproverName = h.Approver?.FullName,
+                        ApproverRole = h.ApproverRole.ToString(),
+                        Action = h.Action.ToString(),
+                        Comments = h.Comments,
+                        ActionDate = h.ActionDate,
+                        VersionNumber = h.VersionNumber,
+                    }).ToList(),
             };
 
             return Ok(response);
