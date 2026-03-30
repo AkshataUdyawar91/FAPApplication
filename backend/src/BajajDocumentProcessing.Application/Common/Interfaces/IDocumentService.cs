@@ -16,8 +16,9 @@ public interface IDocumentService
     /// <param name="documentType">Type of document (PO, Invoice, CostSummary, etc.)</param>
     /// <param name="packageId">Optional package ID to associate the document with</param>
     /// <param name="userId">User ID uploading the document</param>
+    /// <param name="invoiceIdToReplace">Optional invoice ID to replace (for invoice replacement in draft mode)</param>
     /// <returns>Upload response with document ID and blob URL</returns>
-    Task<UploadDocumentResponse> UploadDocumentAsync(IFormFile file, DocumentType documentType, Guid? packageId, Guid userId);
+    Task<UploadDocumentResponse> UploadDocumentAsync(IFormFile file, DocumentType documentType, Guid? packageId, Guid userId, Guid? invoiceIdToReplace = null);
 
     /// <summary>
     /// Validates a file before upload (size, type, malware scan)

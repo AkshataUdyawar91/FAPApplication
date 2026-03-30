@@ -58,7 +58,8 @@ public class DocumentService : IDocumentService
         IFormFile file,
         DocumentType documentType,
         Guid? packageId,
-        Guid userId)
+        Guid userId,
+        Guid? invoiceIdToReplace = null)
     {
         _logger.LogInformation("=== UPLOAD START === File: {FileName}, Type: {DocType}, PackageId: {PkgId}, UserId: {UserId}",
             file?.FileName, documentType, packageId, userId);
@@ -203,22 +204,60 @@ public class DocumentService : IDocumentService
 
                 _logger.LogInformation("=== INVOICE: PO found === POId: {POId}, PONumber: {PONum}", existingPo.Id, existingPo.PONumber);
 
-                var invoice = new Invoice
+                bool isReplacingInvoice = false;
+                
+                // Check if replacing an existing invoice
+                if (invoiceIdToReplace.HasValue)
                 {
-                    Id = entityId,
-                    PackageId = actualPackageId,
-                    POId = existingPo.Id,
-                    FileName = file.FileName,
-                    BlobUrl = blobUrl,
-                    FileSizeBytes = file.Length,
-                    ContentType = file.ContentType,
-                    VersionNumber = package.VersionNumber,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                    CreatedBy = createdBy,
-                    UpdatedBy = createdBy
-                };
-                await _context.Invoices.AddAsync(invoice);
+                    var invoiceToReplace = await _context.Invoices
+                        .FirstOrDefaultAsync(i => i.Id == invoiceIdToReplace.Value && !i.IsDeleted);
+                    
+                    if (invoiceToReplace != null)
+                    {
+                        // Update existing invoice
+                        invoiceToReplace.FileName = file.FileName;
+                        invoiceToReplace.BlobUrl = blobUrl;
+                        invoiceToReplace.FileSizeBytes = file.Length;
+                        invoiceToReplace.ContentType = file.ContentType;
+                        invoiceToReplace.UpdatedAt = now;
+                        invoiceToReplace.UpdatedBy = createdBy;
+                        invoiceToReplace.ExtractedDataJson = null; // Will be re-extracted
+                        invoiceToReplace.ExtractionConfidence = null;
+                        
+                        _logger.LogInformation("=== INVOICE REPLACED === InvoiceId: {InvoiceId}, OldFileName: {OldFile}, NewFileName: {NewFile}",
+                            invoiceToReplace.Id, invoiceToReplace.FileName, file.FileName);
+                        
+                        entityId = invoiceToReplace.Id; // Use existing ID for response
+                        isReplacingInvoice = true;
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Invoice to replace not found: {InvoiceId}", invoiceIdToReplace.Value);
+                        // Fall through to create new invoice
+                    }
+                }
+                
+                // Create new invoice if not replacing
+                if (!isReplacingInvoice)
+                {
+                    var invoice = new Invoice
+                    {
+                        Id = entityId,
+                        PackageId = actualPackageId,
+                        POId = existingPo.Id,
+                        FileName = file.FileName,
+                        BlobUrl = blobUrl,
+                        FileSizeBytes = file.Length,
+                        ContentType = file.ContentType,
+                        VersionNumber = package.VersionNumber,
+                        CreatedAt = now,
+                        UpdatedAt = now,
+                        CreatedBy = createdBy,
+                        UpdatedBy = createdBy
+                    };
+                    await _context.Invoices.AddAsync(invoice);
+                    _logger.LogInformation("=== NEW INVOICE CREATED === InvoiceId: {InvoiceId}, FileName: {FileName}", entityId, file.FileName);
+                }
                 break;
 
             case DocumentType.CostSummary:

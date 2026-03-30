@@ -41,6 +41,9 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
   late final Dio _dio;
 
   late final TabController _tabController;
+  late final ScrollController _invoiceScrollController;
+  late final ScrollController _teamsScrollController;
+  late final ScrollController _enquiryScrollController;
   int _currentStep = 1;
   bool _isUploading = false;
   bool _isChatOpen = false;
@@ -98,10 +101,15 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
     super.initState();
     _dio = widget.dio ?? Dio(BaseOptions(baseUrl: ApiConstants.baseUrl))
       ..interceptors.add(PrettyDioLogger());
+    _invoiceScrollController = ScrollController();
+    _teamsScrollController = ScrollController();
+    _enquiryScrollController = ScrollController();
     _tabController = TabController(length: _totalSteps, vsync: this)
       ..addListener(() {
         if (!_tabController.indexIsChanging) return;
         setState(() => _currentStep = _tabController.index + 1);
+        // Scroll to top when tab changes
+        _scrollToTop();
       });
     
     // Load POs and states first, then load existing submission if in edit mode
@@ -131,6 +139,9 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
   @override
   void dispose() {
     _tabController.dispose();
+    _invoiceScrollController.dispose();
+    _teamsScrollController.dispose();
+    _enquiryScrollController.dispose();
     _poSearchController.dispose();
     _stateSearchController.dispose();
     for (final inv in _invoices) {
@@ -687,7 +698,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
   /// Extracts invoice fields from the uploaded file using the extract-only endpoint.
   /// Uploads invoice file and auto-fills extracted data.
   /// If packageId is available, saves to database. Otherwise, just extracts for preview.
-  Future<void> _uploadAndAutofillInvoice(InvoiceItemData invoice) async {
+  Future<void> _uploadAndAutofillInvoice(InvoiceItemData invoice, {String? replaceInvoiceId}) async {
     if (invoice.file?.bytes == null) return;
     setState(() {
       invoice.isExtracting = true;
@@ -705,6 +716,12 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
       final packageId = _currentPackageId;
       if (packageId != null && packageId.isNotEmpty) {
         formDataMap['packageId'] = packageId;
+      }
+
+      // Include invoiceIdToReplace if replacing an existing invoice
+      if (replaceInvoiceId != null && replaceInvoiceId.isNotEmpty) {
+        formDataMap['invoiceIdToReplace'] = replaceInvoiceId;
+        debugPrint('Replacing invoice: $replaceInvoiceId');
       }
 
       final extractResponse = await _dio.post(
@@ -918,6 +935,7 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
     if (_currentStep < _totalSteps) {
       setState(() => _currentStep++);
       _tabController.animateTo(_currentStep - 1);
+      _scrollToTop();
     }
   }
 
@@ -925,7 +943,43 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
     if (_currentStep > 1) {
       setState(() => _currentStep--);
       _tabController.animateTo(_currentStep - 1);
+      _scrollToTop();
     }
+  }
+
+  void _scrollToTop() {
+    // Schedule scroll after the frame is rendered to ensure the content is laid out
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      switch (_currentStep) {
+        case 1:
+          if (_invoiceScrollController.hasClients) {
+            _invoiceScrollController.animateTo(
+              0,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          }
+          break;
+        case 2:
+          if (_teamsScrollController.hasClients) {
+            _teamsScrollController.animateTo(
+              0,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          }
+          break;
+        case 3:
+          if (_enquiryScrollController.hasClients) {
+            _enquiryScrollController.animateTo(
+              0,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          }
+          break;
+      }
+    });
   }
 
   void _navigateToDashboard() {
@@ -1637,11 +1691,20 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
     }
     switch (_currentStep) {
       case 1:
-        return SingleChildScrollView(child: _buildInvoiceDetailsStep(device));
+        return SingleChildScrollView(
+          controller: _invoiceScrollController,
+          child: _buildInvoiceDetailsStep(device),
+        );
       case 2:
-        return SingleChildScrollView(child: _buildTeamsStep(device));
+        return SingleChildScrollView(
+          controller: _teamsScrollController,
+          child: _buildTeamsStep(device),
+        );
       case 3:
-        return SingleChildScrollView(child: _buildEnquiryStep(device));
+        return SingleChildScrollView(
+          controller: _enquiryScrollController,
+          child: _buildEnquiryStep(device),
+        );
       default:
         return const SizedBox();
     }
@@ -2605,45 +2668,28 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
                         ],
                       ),
                     ),
-                    IconButton(
+                    // Replace button
+                    TextButton(
                       onPressed: () async {
-                        // Delete invoice from database if it has an ID
-                        if (invoice.id.isNotEmpty && invoice.savedToDb) {
-                          try {
-                            await _dio.delete(
-                              '/submissions/${_currentPackageId}/invoices/${invoice.id}',
-                              options: Options(headers: {'Authorization': 'Bearer ${widget.token}'}),
-                            );
-                            debugPrint('Invoice deleted from database: ${invoice.id}');
-                          } catch (e) {
-                            debugPrint('Error deleting invoice from database: $e');
-                            if (mounted) {
-                              _showError('Failed to delete invoice from database');
-                            }
-                          }
+                        final result = await FilePicker.platform.pickFiles(
+                            type: FileType.custom,
+                            allowedExtensions: _allowedExtensions);
+                        if (result != null && result.files.isNotEmpty) {
+                          setState(() => invoice.file = result.files.first);
+                          await _uploadAndAutofillInvoice(invoice, replaceInvoiceId: invoice.id);
                         }
-                        
-                        // Clear local state
-                        setState(() {
-                          invoice.file = null;
-                          invoice.existingFileName = null;
-                          invoice.extractionStatus = ExtractionStatus.none;
-                          invoice.extractionError = null;
-                          // Clear all invoice field values
-                          invoice.invoiceNumber = '';
-                          invoice.invoiceDate = '';
-                          invoice.totalAmount = '';
-                          invoice.gstNumber = '';
-                          invoice.invoiceNumberController.clear();
-                          invoice.invoiceDateController.clear();
-                          invoice.totalAmountController.clear();
-                          invoice.gstNumberController.clear();
-                          invoice.savedToDb = false;
-                        });
                       },
-                      icon: const Icon(Icons.close,
-                          color: AppColors.rejectedText, size: 24),
-                      tooltip: 'Remove file',
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      child: const Text(
+                        'Replace',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -2914,42 +2960,44 @@ class _AgencyUploadPageState extends ConsumerState<NewAgencyUploadPage>
     return Container(
       color: Colors.white,
       padding: EdgeInsets.all(device == DeviceType.mobile ? 16 : 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Activity Summary section ──
-          _buildSectionLabel(
-              'Activity Summary', 'Upload the activity summary document.',
-              required: true),
-          const SizedBox(height: 12),
-          _buildFlatFileRow(
-            file: _activitySummaryFile,
-            existingFileName: _existingActivitySummaryFileName,
-            isUploading: _isUploadingActivitySummary,
-            onPick: () async {
-              await _pickFile((f) {
-                setState(() => _activitySummaryFile = f);
-                // Auto-upload activity summary immediately
-                if (_currentPackageId != null && f?.bytes != null) {
-                  _uploadActivitySummaryImmediately(f!);
-                }
-              });
-            },
-            onRemove: () => setState(() => _activitySummaryFile = null),
-          ),
-          const SizedBox(height: 28),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Activity Summary section (displayed first) ──
+            _buildSectionLabel(
+                'Activity Summary', 'Upload the activity summary document.',
+                required: true),
+            const SizedBox(height: 12),
+            _buildFlatFileRow(
+              file: _activitySummaryFile,
+              existingFileName: _existingActivitySummaryFileName,
+              isUploading: _isUploadingActivitySummary,
+              onPick: () async {
+                await _pickFile((f) {
+                  setState(() => _activitySummaryFile = f);
+                  // Auto-upload activity summary immediately
+                  if (_currentPackageId != null && f?.bytes != null) {
+                    _uploadActivitySummaryImmediately(f!);
+                  }
+                });
+              },
+              onRemove: () => setState(() => _activitySummaryFile = null),
+            ),
+            const SizedBox(height: 28),
 
-          // ── Teams section ──
-          CampaignListSection(
-            campaigns: _campaigns,
-            onCampaignsChanged: (campaigns) =>
-                setState(() => _campaigns = campaigns),
-            token: widget.token,
-            packageId: _currentPackageId,
-            selectedActivationState: _selectedActivationState,
-            onEnsureTeamCreated: _ensureTeamCreated,
-          ),
-        ],
+            // ── Teams section ──
+            CampaignListSection(
+              campaigns: _campaigns,
+              onCampaignsChanged: (campaigns) =>
+                  setState(() => _campaigns = campaigns),
+              token: widget.token,
+              packageId: _currentPackageId,
+              selectedActivationState: _selectedActivationState,
+              onEnsureTeamCreated: _ensureTeamCreated,
+            ),
+          ],
+        ),
       ),
     );
   }

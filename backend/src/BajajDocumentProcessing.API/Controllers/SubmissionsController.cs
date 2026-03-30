@@ -565,7 +565,9 @@ public class SubmissionsController : ControllerBase
                             GSTNumber = i.GSTNumber,
                             TotalAmount = i.TotalAmount,
                             FileName = i.FileName ?? "",
-                            BlobUrl = i.BlobUrl ?? ""
+                            BlobUrl = i.BlobUrl ?? "",
+                            CreatedAt = i.CreatedAt,
+                            UpdatedAt = i.UpdatedAt
                         }).ToList()
                         : new List<CampaignInvoiceDto>()
                 }).ToList(),

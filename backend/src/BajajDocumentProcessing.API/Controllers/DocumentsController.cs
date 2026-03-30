@@ -64,6 +64,7 @@ public class DocumentsController : ControllerBase
         [FromForm] DocumentType documentType,
         [FromForm] Guid? packageId,
         [FromForm] Guid? submissionId = null,
+        [FromForm] Guid? invoiceIdToReplace = null,
         [FromForm] DateTime? campaignStartDate = null,
         [FromForm] DateTime? campaignEndDate = null,
         [FromForm] int? campaignWorkingDays = null,
@@ -100,7 +101,7 @@ public class DocumentsController : ControllerBase
             }
 
             // Upload document
-            var response = await _documentService.UploadDocumentAsync(file, documentType, effectivePackageId, userId);
+            var response = await _documentService.UploadDocumentAsync(file, documentType, effectivePackageId, userId, invoiceIdToReplace);
 
             // Update package with campaign and dealership data if provided
             if (response.PackageId != Guid.Empty && 
@@ -221,6 +222,7 @@ public class DocumentsController : ControllerBase
         [FromForm] IFormFile file,
         [FromForm] string documentType,
         [FromForm] Guid? packageId,
+        [FromForm] Guid? invoiceIdToReplace,
         [FromServices] IDocumentAgent documentAgent,
         CancellationToken cancellationToken)
     {
@@ -293,48 +295,110 @@ public class DocumentsController : ControllerBase
                         var confidence = invoiceData.FieldConfidences.Values.Any()
                             ? invoiceData.FieldConfidences.Values.Average() : 0.5;
 
-                        var invoice = new Domain.Entities.Invoice
+                        bool isReplacing = false;
+                        
+                        // Check if replacing an existing invoice
+                        if (invoiceIdToReplace.HasValue)
                         {
-                            Id = Guid.NewGuid(),
-                            PackageId = packageId.Value,
-                            POId = poId.Value,
-                            VersionNumber = package.VersionNumber,
-                            FileName = file.FileName,
-                            BlobUrl = blobUrl,
-                            ContentType = file.ContentType,
-                            FileSizeBytes = file.Length,
-                            InvoiceNumber = invoiceData.InvoiceNumber,
-                            InvoiceDate = invoiceData.InvoiceDate == default ? null : invoiceData.InvoiceDate,
-                            VendorName = invoiceData.VendorName,
-                            GSTNumber = invoiceData.GSTNumber,
-                            SubTotal = invoiceData.SubTotal,
-                            TaxAmount = invoiceData.TaxAmount,
-                            TotalAmount = invoiceData.TotalAmount,
-                            ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(invoiceData),
-                            ExtractionConfidence = confidence,
-                            IsFlaggedForReview = invoiceData.IsFlaggedForReview,
-                            CreatedAt = DateTime.UtcNow,
-                            UpdatedAt = DateTime.UtcNow
-                        };
-                        _context.Invoices.Add(invoice);
+                            var invoiceToReplace = await _context.Invoices
+                                .FirstOrDefaultAsync(i => i.Id == invoiceIdToReplace.Value && !i.IsDeleted, cancellationToken);
+                            
+                            if (invoiceToReplace != null)
+                            {
+                                // Update existing invoice
+                                invoiceToReplace.FileName = file.FileName;
+                                invoiceToReplace.BlobUrl = blobUrl;
+                                invoiceToReplace.ContentType = file.ContentType;
+                                invoiceToReplace.FileSizeBytes = file.Length;
+                                invoiceToReplace.InvoiceNumber = invoiceData.InvoiceNumber;
+                                invoiceToReplace.InvoiceDate = invoiceData.InvoiceDate == default ? null : invoiceData.InvoiceDate;
+                                invoiceToReplace.VendorName = invoiceData.VendorName;
+                                invoiceToReplace.GSTNumber = invoiceData.GSTNumber;
+                                invoiceToReplace.SubTotal = invoiceData.SubTotal;
+                                invoiceToReplace.TaxAmount = invoiceData.TaxAmount;
+                                invoiceToReplace.TotalAmount = invoiceData.TotalAmount;
+                                invoiceToReplace.ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(invoiceData);
+                                invoiceToReplace.ExtractionConfidence = confidence;
+                                invoiceToReplace.IsFlaggedForReview = invoiceData.IsFlaggedForReview;
+                                invoiceToReplace.UpdatedAt = DateTime.UtcNow;
+                                
+                                _logger.LogInformation("Invoice {InvoiceId} replaced for package {PackageId}", invoiceToReplace.Id, packageId.Value);
+                                
+                                savedDocumentId = invoiceToReplace.Id;
+                                isReplacing = true;
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Invoice to replace {InvoiceId} not found — creating new invoice", invoiceIdToReplace.Value);
+                            }
+                        }
+                        
+                        // Create new invoice if not replacing
+                        if (!isReplacing)
+                        {
+                            var invoice = new Domain.Entities.Invoice
+                            {
+                                Id = Guid.NewGuid(),
+                                PackageId = packageId.Value,
+                                POId = poId.Value,
+                                VersionNumber = package.VersionNumber,
+                                FileName = file.FileName,
+                                BlobUrl = blobUrl,
+                                ContentType = file.ContentType,
+                                FileSizeBytes = file.Length,
+                                InvoiceNumber = invoiceData.InvoiceNumber,
+                                InvoiceDate = invoiceData.InvoiceDate == default ? null : invoiceData.InvoiceDate,
+                                VendorName = invoiceData.VendorName,
+                                GSTNumber = invoiceData.GSTNumber,
+                                SubTotal = invoiceData.SubTotal,
+                                TaxAmount = invoiceData.TaxAmount,
+                                TotalAmount = invoiceData.TotalAmount,
+                                ExtractedDataJson = System.Text.Json.JsonSerializer.Serialize(invoiceData),
+                                ExtractionConfidence = confidence,
+                                IsFlaggedForReview = invoiceData.IsFlaggedForReview,
+                                CreatedAt = DateTime.UtcNow,
+                                UpdatedAt = DateTime.UtcNow
+                            };
+                            _context.Invoices.Add(invoice);
+                            savedDocumentId = invoice.Id;
+                            
+                            _logger.LogInformation("New invoice {InvoiceId} created for package {PackageId}", invoice.Id, packageId.Value);
+                        }
 
-                        var validationResult = new Domain.Entities.ValidationResult
+                        // Handle validation result: update if replacing, create if new
+                        if (savedDocumentId.HasValue)
                         {
-                            Id = Guid.NewGuid(),
-                            DocumentType = Domain.Enums.DocumentType.Invoice,
-                            DocumentId = invoice.Id,
-                            CompletenessCheckPassed = !string.IsNullOrEmpty(invoiceData.InvoiceNumber) && invoiceData.TotalAmount > 0,
-                            AllValidationsPassed = false, // full cross-doc validation runs at submit time
-                            CreatedAt = DateTime.UtcNow,
-                            UpdatedAt = DateTime.UtcNow
-                        };
-                        _context.ValidationResults.Add(validationResult);
+                            var existingValidation = await _context.ValidationResults
+                                .FirstOrDefaultAsync(vr => vr.DocumentType == Domain.Enums.DocumentType.Invoice 
+                                    && vr.DocumentId == savedDocumentId.Value, cancellationToken);
+                            
+                            if (existingValidation != null && isReplacing)
+                            {
+                                // Update existing validation result when replacing
+                                existingValidation.CompletenessCheckPassed = !string.IsNullOrEmpty(invoiceData.InvoiceNumber) && invoiceData.TotalAmount > 0;
+                                existingValidation.UpdatedAt = DateTime.UtcNow;
+                                _logger.LogInformation("ValidationResult updated for replaced invoice {InvoiceId}", savedDocumentId.Value);
+                            }
+                            else if (existingValidation == null)
+                            {
+                                // Create new validation result for new invoice
+                                var validationResult = new Domain.Entities.ValidationResult
+                                {
+                                    Id = Guid.NewGuid(),
+                                    DocumentType = Domain.Enums.DocumentType.Invoice,
+                                    DocumentId = savedDocumentId.Value,
+                                    CompletenessCheckPassed = !string.IsNullOrEmpty(invoiceData.InvoiceNumber) && invoiceData.TotalAmount > 0,
+                                    AllValidationsPassed = false, // full cross-doc validation runs at submit time
+                                    CreatedAt = DateTime.UtcNow,
+                                    UpdatedAt = DateTime.UtcNow
+                                };
+                                _context.ValidationResults.Add(validationResult);
+                                _logger.LogInformation("ValidationResult created for new invoice {InvoiceId}", savedDocumentId.Value);
+                            }
+                        }
 
                         await _context.SaveChangesAsync(cancellationToken);
-                        savedDocumentId = invoice.Id;
                         isPersisted = true;
-
-                        _logger.LogInformation("Invoice {InvoiceId} saved to DB for package {PackageId}", invoice.Id, packageId.Value);
                     }
                     else
                     {

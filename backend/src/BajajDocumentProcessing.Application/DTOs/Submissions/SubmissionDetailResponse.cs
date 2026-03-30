@@ -471,6 +471,12 @@ public class CampaignInvoiceDto
 
     [JsonPropertyName("blobUrl")]
     public string BlobUrl { get; init; } = "";
+
+    [JsonPropertyName("createdAt")]
+    public DateTime CreatedAt { get; init; }
+
+    [JsonPropertyName("updatedAt")]
+    public DateTime? UpdatedAt { get; init; }
 }
 
 /// <summary>
