@@ -488,13 +488,28 @@ class _AgencyDashboardPageState extends ConsumerState<AgencyDashboardPage> {
         color: AppColors.cardBackground,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text('My Requests', style: AppTextStyles.h2),
-          const SizedBox(height: 4),
-          Text('View and track all your reimbursement requests',
-              style: AppTextStyles.bodySmall),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('My Requests', style: AppTextStyles.h2),
+              const SizedBox(height: 4),
+              Text('View and track all your reimbursement requests',
+                  style: AppTextStyles.bodySmall),
+            ],
+          ),
+          // Refresh button
+          Tooltip(
+            message: 'Refresh requests',
+            child: IconButton(
+              icon: const Icon(Icons.refresh, color: AppColors.primary),
+              onPressed: _isLoading ? null : () => _loadRequests(page: 1),
+              tooltip: 'Refresh',
+            ),
+          ),
         ],
       ),
     );

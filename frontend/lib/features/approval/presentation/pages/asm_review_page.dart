@@ -674,7 +674,7 @@ class _ASMReviewPageState extends ConsumerState<ASMReviewPage> {
     return TextField(
       controller: _searchController,
       decoration: InputDecoration(
-        hintText: 'Search by agency name or document ID...',
+        hintText: 'Search by PO Number, Invoice Number, or Submission ID...',
         prefixIcon: const Icon(Icons.search),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       ),
