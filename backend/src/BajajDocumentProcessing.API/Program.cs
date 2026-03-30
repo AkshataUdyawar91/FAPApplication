@@ -10,6 +10,10 @@ using BajajDocumentProcessing.API.Hubs;
 using BajajDocumentProcessing.API.Services;
 using BajajDocumentProcessing.Application.Common.Interfaces;
 
+using Microsoft.AspNetCore.StaticFiles;
+using Microsoft.Extensions.FileProviders;
+
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
@@ -185,21 +189,30 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 app.UseCors("AllowFlutterApp");
 
 // Serve Flutter web build from wwwroot (or configured path)
-// In production the deploy script copies build/web here
 var flutterWebPath = builder.Configuration["FlutterWebPath"]
     ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
 
+var provider = new FileExtensionContentTypeProvider();
+provider.Mappings[".wasm"] = "application/wasm";
+provider.Mappings[".json"] = "application/json";
+provider.Mappings[".js"] = "application/javascript";
+provider.Mappings[".map"] = "application/octet-stream";
+
 if (Directory.Exists(flutterWebPath))
 {
+    var fileProvider = new PhysicalFileProvider(flutterWebPath);
+
     app.UseDefaultFiles(new DefaultFilesOptions
     {
-        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(flutterWebPath),
+        FileProvider = fileProvider,
         RequestPath = ""
     });
+    
     app.UseStaticFiles(new StaticFileOptions
     {
-        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(flutterWebPath),
-        RequestPath = ""
+        FileProvider = fileProvider,
+        RequestPath = "",
+        ContentTypeProvider = provider
     });
 }
 
@@ -220,7 +233,8 @@ if (Directory.Exists(flutterWebPath))
 {
     app.MapFallbackToFile("index.html", new StaticFileOptions
     {
-        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(flutterWebPath)
+        FileProvider = new PhysicalFileProvider(flutterWebPath),
+        ContentTypeProvider = provider
     });
 }
 

@@ -5,7 +5,7 @@
 # =============================================================
 
 param(
-    [string]$ApiUrl = "http://0.0.0.0:80;https://0.0.0.0:443;https://0.0.0.0:7001",
+    [string]$ApiUrl = "http://0.0.0.0:5000;https://0.0.0.0:8000;https://0.0.0.0:7001",
     [string]$PublicBaseUrl = "http://localhost"   # Change to VM IP or domain for external access
 )
 
@@ -108,18 +108,16 @@ Write-Host "`n[Step 6] Starting API..." -ForegroundColor Yellow
 $apiExe = "$apiDeployPath\BajajDocumentProcessing.API.exe"
 $apiDll = "$apiDeployPath\BajajDocumentProcessing.API.dll"
 
-# Start API with URLs and environment passed as command-line args
-# (Start-Process does not reliably inherit $env: variables)
-if (Test-Path $apiExe) {
-    Start-Process -FilePath $apiExe `
-        -ArgumentList "--urls `"$ApiUrl`" --environment Production --contentRoot `"$apiDeployPath`"" `
-        -WorkingDirectory $apiDeployPath `
+# Start API from the deploy directory so it finds appsettings.json
+# Using cmd /c with start to launch in background from correct working directory
+if (Test-Path $apiDll) {
+    Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c cd /d `"$apiDeployPath`" && start /B dotnet BajajDocumentProcessing.API.dll --urls `"$ApiUrl`" --contentRoot `"$apiDeployPath`" --environment Production" `
         -WindowStyle Hidden `
         -PassThru | Out-Null
-} elseif (Test-Path $apiDll) {
-    Start-Process -FilePath "dotnet" `
-        -ArgumentList "`"$apiDll`" --urls `"$ApiUrl`" --environment Production --contentRoot `"$apiDeployPath`"" `
-        -WorkingDirectory $apiDeployPath `
+} elseif (Test-Path $apiExe) {
+    Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c cd /d `"$apiDeployPath`" && start /B BajajDocumentProcessing.API.exe --urls `"$ApiUrl`" --contentRoot `"$apiDeployPath`" --environment Production" `
         -WindowStyle Hidden `
         -PassThru | Out-Null
 } else {
@@ -130,7 +128,7 @@ if (Test-Path $apiExe) {
 # Step 7 - Health check
 # -----------------------------
 Write-Host "`n[Step 7] Waiting for API to start..." -ForegroundColor Yellow
-$healthUrl = "http://localhost:80/swagger/index.html"
+$healthUrl = "http://localhost:5000/swagger/index.html"
 $maxAttempts = 10
 $attempt = 0
 $started = $false
@@ -148,7 +146,7 @@ while ($attempt -lt $maxAttempts) {
     } catch {
         # Also try swagger as a fallback health indicator
         try {
-            $swaggerResponse = Invoke-WebRequest -Uri "http://localhost:80/swagger" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            $swaggerResponse = Invoke-WebRequest -Uri "http://localhost:5000/swagger" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
             if ($swaggerResponse.StatusCode -eq 200) {
                 $started = $true
                 break
@@ -161,10 +159,11 @@ while ($attempt -lt $maxAttempts) {
 
 if ($started) {
     Write-Host "`nDeployment Completed Successfully!" -ForegroundColor Cyan
-    Write-Host "  HTTP  (internal + external): http://0.0.0.0:80"    -ForegroundColor Cyan
-    Write-Host "  HTTPS (internal + external): https://0.0.0.0:443"  -ForegroundColor Cyan
-    Write-Host "  HTTPS (alt port):            https://0.0.0.0:7001"  -ForegroundColor Cyan
-    Write-Host "  Swagger: http://<VM-IP>/swagger" -ForegroundColor Cyan
+    Write-Host "  API HTTP:  http://0.0.0.0:5000"    -ForegroundColor Cyan
+    Write-Host "  API HTTPS: https://0.0.0.0:8000"   -ForegroundColor Cyan
+    Write-Host "  API HTTPS: https://0.0.0.0:7001"   -ForegroundColor Cyan
+    Write-Host "  Swagger:   http://localhost:5000/swagger" -ForegroundColor Cyan
+    Write-Host "  Nginx (port 80) serves Flutter UI and proxies /api to Kestrel" -ForegroundColor Cyan
 } else {
     Write-Host "`nAPI did not respond to health check after $maxAttempts attempts." -ForegroundColor Red
     Write-Host "Check logs in $apiDeployPath or run: dotnet $apiDll" -ForegroundColor Yellow
