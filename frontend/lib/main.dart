@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'core/error/global_error_handler.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  GlobalErrorHandler.init();
+
   runApp(
     const ProviderScope(
       child: MyApp(),

@@ -1,10 +1,10 @@
 import 'package:dartz/dartz.dart';
+import 'package:dio/dio.dart';
 import '../../../../core/error/failures.dart';
 import '../../domain/entities/user.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../datasources/auth_local_datasource.dart';
 import '../datasources/auth_remote_datasource.dart';
-import '../models/user_model.dart';
 
 /// Implementation of AuthRepository
 class AuthRepositoryImpl implements AuthRepository {
@@ -15,6 +15,33 @@ class AuthRepositoryImpl implements AuthRepository {
     required this.remoteDataSource,
     required this.localDataSource,
   });
+
+  /// Maps exceptions to user-friendly Failure subtypes.
+  Failure _mapException(Object e) {
+    if (e is DioException) {
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+        case DioExceptionType.connectionError:
+          return const NetworkFailure('No internet connection. Check your network and try again.');
+        case DioExceptionType.badResponse:
+          final statusCode = e.response?.statusCode;
+          final serverMsg = e.response?.data?['message']?.toString();
+          if (statusCode == 401) {
+            return AuthFailure(serverMsg ?? 'Invalid email or password.');
+          }
+          if (statusCode == 403) {
+            return const AuthFailure('Access denied. Contact your administrator.');
+          }
+          if (statusCode == 404) return const NotFoundFailure();
+          return ServerFailure(serverMsg ?? 'Something went wrong. Please try again.');
+        default:
+          return const NetworkFailure('No internet connection. Check your network and try again.');
+      }
+    }
+    return const ServerFailure('Something went wrong. Please try again.');
+  }
 
   @override
   Future<Either<Failure, User>> login(String email, String password) async {
@@ -30,7 +57,7 @@ class AuthRepositoryImpl implements AuthRepository {
 
       return Right(response.user);
     } catch (e) {
-      return Left(ServerFailure(e.toString()));
+      return Left(_mapException(e));
     }
   }
 
@@ -40,7 +67,7 @@ class AuthRepositoryImpl implements AuthRepository {
       await localDataSource.clearCache();
       return const Right(null);
     } catch (e) {
-      return Left(CacheFailure(e.toString()));
+      return Left(_mapException(e));
     }
   }
 
@@ -50,7 +77,7 @@ class AuthRepositoryImpl implements AuthRepository {
       final user = await localDataSource.getCachedUser();
       return Right(user);
     } catch (e) {
-      return Left(CacheFailure(e.toString()));
+      return Left(_mapException(e));
     }
   }
 
@@ -65,7 +92,7 @@ class AuthRepositoryImpl implements AuthRepository {
       await remoteDataSource.refreshToken(refreshToken);
       return const Right(null);
     } catch (e) {
-      return Left(ServerFailure(e.toString()));
+      return Left(_mapException(e));
     }
   }
 
@@ -75,7 +102,7 @@ class AuthRepositoryImpl implements AuthRepository {
       final url = await remoteDataSource.getSsoAuthorizeUrl(redirectUri);
       return Right(url);
     } catch (e) {
-      return Left(ServerFailure(e.toString()));
+      return Left(_mapException(e));
     }
   }
 
@@ -90,7 +117,7 @@ class AuthRepositoryImpl implements AuthRepository {
 
       return Right(response.user);
     } catch (e) {
-      return Left(ServerFailure(e.toString()));
+      return Left(_mapException(e));
     }
   }
 }

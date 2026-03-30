@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 import 'package:dio/dio.dart';
 import '../../data/models/agency_dto.dart';
 import '../widgets/agency_form_dialog.dart';
@@ -62,11 +64,7 @@ class _SupplierAgencyMasterPageState
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Failed to load agencies: $e'),
-              backgroundColor: Colors.red),
-        );
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);

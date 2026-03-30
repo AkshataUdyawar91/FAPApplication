@@ -22,6 +22,8 @@ import '../../../../core/network/dio_client.dart';
 import '../../../../core/utils/chat_intent_detector.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../submission/presentation/pages/agency_submission_detail_page.dart';
+import '../../../../core/error/error_handler.dart';
+import '../../../../core/error/failures.dart';
 
 /// Embeddable side-panel version of the Field Activity Assistant.
 /// Mirrors ChatScreen logic but renders as a Column (no Scaffold).
@@ -458,9 +460,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load document: $e')),
-        );
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
       }
     }
   }
@@ -499,9 +499,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to download: $e')),
-        );
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
       }
     }
   }
@@ -1762,28 +1760,32 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           child: Opacity(
             opacity: isLast ? 1.0 : 0.4,
             child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              ElevatedButton.icon(
-                onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).reUploadInvoice(),
-                icon: const Icon(Icons.upload_file, size: 16),
-                label: const Text('Re-upload invoice', style: TextStyle(fontWeight: FontWeight.bold)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red.shade700,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              Flexible(
+                child: ElevatedButton.icon(
+                  onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).reUploadInvoice(),
+                  icon: const Icon(Icons.upload_file, size: 16),
+                  label: const Text('Re-upload invoice', style: TextStyle(fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
-              ElevatedButton.icon(
-                onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
-                icon: const Icon(Icons.arrow_forward, size: 14),
-                label: Text(hasIssues ? 'Continue with warnings' : 'Continue',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF003087),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              Flexible(
+                child: ElevatedButton.icon(
+                  onPressed: isLoading ? null : () => ref.read(assistantNotifierProvider.notifier).continueAfterValidation(),
+                  icon: const Icon(Icons.arrow_forward, size: 14),
+                  label: Text(hasIssues ? 'Continue with warnings' : 'Continue',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis, softWrap: false),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF003087),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
                 ),
               ),
             ]),
@@ -1990,9 +1992,7 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load photo: $e')),
-        );
+        ErrorHandler.show(context, failure: ServerFailure(e.toString()));
       }
     }
   }
@@ -3010,6 +3010,16 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
         setState(() => _currentTeamPayload = lastBot.response!.payloadJson!);
       }
       if (newMode != _inputMode) setState(() => _inputMode = newMode);
+
+      // Show error toast for assistant errors
+      if (next.error != null && (prev == null || prev.error == null)) {
+        ErrorHandler.show(context, failure: ErrorHandler.failureFromMessage(next.error!));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ref.read(assistantNotifierProvider.notifier).clearError();
+          }
+        });
+      }
     });
 
     return Container(
@@ -3071,18 +3081,6 @@ class _AssistantChatPanelState extends ConsumerState<AssistantChatPanel> {
           ),
           // Step tracker — only visible during submission flow
           if (state.isSubmissionFlow) _buildStepTracker(state.currentStep),
-          // Error banner
-          if (state.error != null)
-            MaterialBanner(
-              content: Text(state.error!),
-              backgroundColor: Colors.red.shade50,
-              actions: [
-                TextButton(
-                  onPressed: () => ref.read(assistantNotifierProvider.notifier).clearError(),
-                  child: const Text('DISMISS'),
-                ),
-              ],
-            ),
           // Messages
           Expanded(
             child: state.messages.isEmpty && state.isLoading
