@@ -12,11 +12,16 @@ class AuthState extends Equatable {
   final String? error;
   final bool isAuthenticated;
 
+  /// In-memory token so the app can proceed even when secure storage
+  /// fails (common on web release builds).
+  final String? token;
+
   const AuthState({
     this.user,
     this.isLoading = false,
     this.error,
     this.isAuthenticated = false,
+    this.token,
   });
 
   AuthState copyWith({
@@ -24,17 +29,19 @@ class AuthState extends Equatable {
     bool? isLoading,
     String? error,
     bool? isAuthenticated,
+    String? token,
   }) {
     return AuthState(
       user: user ?? this.user,
       isLoading: isLoading ?? this.isLoading,
       error: error,
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
+      token: token ?? this.token,
     );
   }
 
   @override
-  List<Object?> get props => [user, isLoading, error, isAuthenticated];
+  List<Object?> get props => [user, isLoading, error, isAuthenticated, token];
 }
 
 /// Authentication state notifier
@@ -70,7 +77,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = state.copyWith(isLoading: true, error: null);
 
     final result = await loginUseCase(email, password);
-
     result.fold(
       (failure) {
         state = state.copyWith(
@@ -79,9 +85,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
           isAuthenticated: false,
         );
       },
-      (user) {
+      (loginResult) {
+        final (user, token) = loginResult;
         state = state.copyWith(
           user: user,
+          token: token,
           isLoading: false,
           error: null,
           isAuthenticated: true,
@@ -134,9 +142,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
           isAuthenticated: false,
         );
       },
-      (user) {
+      (loginResult) {
+        final (user, token) = loginResult;
         state = state.copyWith(
           user: user,
+          token: token,
           isLoading: false,
           error: null,
           isAuthenticated: true,

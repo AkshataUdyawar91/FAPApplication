@@ -24,7 +24,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   void initState() {
     super.initState();
     // Prefill credentials for development
-    _emailController.text = 'agency@bajaj.com';
+    _emailController.text = 'agency.swift@test.bajaj.com';
     _passwordController.text = 'Password123!';
   }
 
